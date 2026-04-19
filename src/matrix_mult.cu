@@ -77,3 +77,56 @@ void multiplyMatricesOnGPU(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
 // Explicit template instantiations for float and double types
 template void multiplyMatricesOnGPU<float>(const float*, const float*, float*, int, int, int);
 template void multiplyMatricesOnGPU<double>(const double*, const double*, double*, int, int, int);
+
+namespace cuda_kernel {
+
+template <typename T>
+__global__ void matrixMulNaiveKernel(const T* A, const T* B, T* C, int M, int N, int K) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < M && col < K) {
+        T sum = 0;
+        for (int i = 0; i < N; i++) {
+            sum += A[row * N + i] * B[i * K + col];
+        }
+        C[row * K + col] = sum;
+    }
+}
+
+}  // namespace cuda_kernel
+
+template <typename T>
+void multiplyMatricesNaive(const T* hostMatrixA, const T* hostMatrixB, T* hostResultMatrix,
+                           int numRowsA, int numColsA, int numColsB) {
+    size_t byteSizeA = numRowsA * numColsA * sizeof(T);
+    size_t byteSizeB = numColsA * numColsB * sizeof(T);
+    size_t byteSizeC = numRowsA * numColsB * sizeof(T);
+
+    T *deviceMatrixA, *deviceMatrixB, *deviceResultMatrix;
+
+    CUDA_CHECK(cudaMalloc(&deviceMatrixA, byteSizeA));
+    CUDA_CHECK(cudaMalloc(&deviceMatrixB, byteSizeB));
+    CUDA_CHECK(cudaMalloc(&deviceResultMatrix, byteSizeC));
+
+    CUDA_CHECK(cudaMemcpy(deviceMatrixA, hostMatrixA, byteSizeA, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(deviceMatrixB, hostMatrixB, byteSizeB, cudaMemcpyHostToDevice));
+
+    dim3 threadsPerBlock(16, 16);
+    dim3 numBlocks((numColsB + threadsPerBlock.x - 1) / threadsPerBlock.x,
+                   (numRowsA + threadsPerBlock.y - 1) / threadsPerBlock.y);
+
+    cuda_kernel::matrixMulNaiveKernel<<<numBlocks, threadsPerBlock>>>(
+        deviceMatrixA, deviceMatrixB, deviceResultMatrix, numRowsA, numColsA, numColsB);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    CUDA_CHECK(cudaMemcpy(hostResultMatrix, deviceResultMatrix, byteSizeC, cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(deviceMatrixA));
+    CUDA_CHECK(cudaFree(deviceMatrixB));
+    CUDA_CHECK(cudaFree(deviceResultMatrix));
+}
+
+template void multiplyMatricesNaive<float>(const float*, const float*, float*, int, int, int);
+template void multiplyMatricesNaive<double>(const double*, const double*, double*, int, int, int);
