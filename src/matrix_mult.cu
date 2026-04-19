@@ -98,6 +98,48 @@ __global__ void matrixMulNaiveKernel(const T* A, const T* B, T* C, int M, int N,
     }
 }
 
+template <typename T>
+__global__ void matrixMulTiledKernel(const T* A, const T* B, T* C, int M, int N, int K) {
+    __shared__ T sharedA[16][17];
+    __shared__ T sharedB[16][17];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int row = by * 16 + ty;
+    int col = bx * 16 + tx;
+
+    T sum = 0;
+
+    for (int phase = 0; phase < (N + 15) / 16; phase++) {
+        if (row < M && (phase * 16 + tx) < N) {
+            sharedA[ty][tx] = A[row * N + phase * 16 + tx];
+        } else {
+            sharedA[ty][tx] = 0;
+        }
+
+        if ((phase * 16 + ty) < N && col < K) {
+            sharedB[ty][tx] = B[(phase * 16 + ty) * K + col];
+        } else {
+            sharedB[ty][tx] = 0;
+        }
+
+        __syncthreads();
+
+        for (int i = 0; i < 16; i++) {
+            sum += sharedA[ty][i] * sharedB[i][tx];
+        }
+
+        __syncthreads();
+    }
+
+    if (row < M && col < K) {
+        C[row * K + col] = sum;
+    }
+}
+
 }  // namespace cuda_kernel
 
 template <typename T>
@@ -134,3 +176,38 @@ void multiplyMatricesNaive(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
 
 template void multiplyMatricesNaive<float>(const float*, const float*, float*, int, int, int);
 template void multiplyMatricesNaive<double>(const double*, const double*, double*, int, int, int);
+
+template <typename T>
+void multiplyMatricesTiled(const T* hostMatrixA, const T* hostMatrixB, T* hostResultMatrix,
+                           int numRowsA, int numColsA, int numColsB) {
+    size_t byteSizeA = numRowsA * numColsA * sizeof(T);
+    size_t byteSizeB = numColsA * numColsB * sizeof(T);
+    size_t byteSizeC = numRowsA * numColsB * sizeof(T);
+
+    T *deviceMatrixA, *deviceMatrixB, *deviceResultMatrix;
+
+    CUDA_CHECK(cudaMalloc(&deviceMatrixA, byteSizeA));
+    CUDA_CHECK(cudaMalloc(&deviceMatrixB, byteSizeB));
+    CUDA_CHECK(cudaMalloc(&deviceResultMatrix, byteSizeC));
+
+    CUDA_CHECK(cudaMemcpy(deviceMatrixA, hostMatrixA, byteSizeA, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(deviceMatrixB, hostMatrixB, byteSizeB, cudaMemcpyHostToDevice));
+
+    dim3 threadsPerBlock(16, 16);
+    dim3 numBlocks((numColsB + threadsPerBlock.x - 1) / threadsPerBlock.x,
+                   (numRowsA + threadsPerBlock.y - 1) / threadsPerBlock.y);
+
+    cuda_kernel::matrixMulTiledKernel<<<numBlocks, threadsPerBlock>>>(
+        deviceMatrixA, deviceMatrixB, deviceResultMatrix, numRowsA, numColsA, numColsB);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    CUDA_CHECK(cudaMemcpy(hostResultMatrix, deviceResultMatrix, byteSizeC, cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(deviceMatrixA));
+    CUDA_CHECK(cudaFree(deviceMatrixB));
+    CUDA_CHECK(cudaFree(deviceResultMatrix));
+}
+
+template void multiplyMatricesTiled<float>(const float*, const float*, float*, int, int, int);
+template void multiplyMatricesTiled<double>(const double*, const double*, double*, int, int, int);

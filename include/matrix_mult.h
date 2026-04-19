@@ -18,3 +18,10 @@ void multiplyMatricesNaive(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
 
 extern template void multiplyMatricesNaive<float>(const float*, const float*, float*, int, int, int);
 extern template void multiplyMatricesNaive<double>(const double*, const double*, double*, int, int, int);
+
+template <typename T>
+void multiplyMatricesTiled(const T* hostMatrixA, const T* hostMatrixB, T* hostResultMatrix,
+                           int numRowsA, int numColsA, int numColsB);
+
+extern template void multiplyMatricesTiled<float>(const float*, const float*, float*, int, int, int);
+extern template void multiplyMatricesTiled<double>(const double*, const double*, double*, int, int, int);
