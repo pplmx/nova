@@ -1,3 +1,4 @@
+#include <type_traits>    // For std::is_same_v
 #include "cuda_utils.h"   // Custom CUDA utility functions and macros for error checking
 #include "matrix_mult.h"  // Header for this matrix multiplication module
 
@@ -39,25 +40,28 @@ void multiplyMatricesOnGPU(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
     const T beta = 0.0;
 
     // Perform matrix multiplication using cuBLAS based on the type of T (float or double)
-    // For float: Use cublasSgemm (single precision)
+    // Matrices are stored row-major (M×K for A, K×N for B, M×N for C), but cuBLAS expects column-major.
+    // For row-major A (M×K), cuBLAS sees it as K×M column-major: lda = numRowsA
+    // For row-major B (K×N), cuBLAS sees it as N×K column-major: ldb = numColsA
+    // For row-major C (M×N), cuBLAS sees it as N×M column-major: ldc = numRowsA
     if constexpr (std::is_same_v<T, float>) {
         CUBLAS_CHECK(cublasSgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,  // No transposition for both matrices
-                                 numColsB, numRowsA, numColsA,            // Dimensions of matrices
+                                 numColsB, numRowsA, numColsA,            // m=N, n=M, k=K
                                  &alpha,                                  // Scalar alpha
-                                 deviceMatrixB, numColsB,                 // Matrix B in device memory
-                                 deviceMatrixA, numColsA,                 // Matrix A in device memory
+                                 deviceMatrixB, numColsA,                 // B: N×K, lda=K
+                                 deviceMatrixA, numRowsA,                 // A: K×M, lda=M
                                  &beta,                                   // Scalar beta
-                                 deviceResultMatrix, numColsB));          // Result matrix C in device memory
+                                 deviceResultMatrix, numRowsA));          // C: N×M, ldc=M
     }
     // For double: Use cublasDgemm (double precision)
     else if constexpr (std::is_same_v<T, double>) {
         CUBLAS_CHECK(cublasDgemm(cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N,  // No transposition for both matrices
-                                 numColsB, numRowsA, numColsA,            // Dimensions of matrices
+                                 numColsB, numRowsA, numColsA,            // m=N, n=M, k=K
                                  &alpha,                                  // Scalar alpha
-                                 deviceMatrixB, numColsB,                 // Matrix B in device memory
-                                 deviceMatrixA, numColsA,                 // Matrix A in device memory
+                                 deviceMatrixB, numColsA,                 // B: N×K, lda=K
+                                 deviceMatrixA, numRowsA,                 // A: K×M, lda=M
                                  &beta,                                   // Scalar beta
-                                 deviceResultMatrix, numColsB));          // Result matrix C in device memory
+                                 deviceResultMatrix, numRowsA));          // C: N×M, ldc=M
     }
     // If neither float nor double, throw a compile-time error
     else {
