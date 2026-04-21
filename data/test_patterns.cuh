@@ -5,12 +5,6 @@
 #include <cmath>
 #include <cstdlib>
 
-struct ImageDimensions {
-    size_t width;
-    size_t height;
-    size_t channels;
-};
-
 void generateCheckerboard(unsigned char* buffer, size_t width, size_t height, size_t cellSize) {
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
