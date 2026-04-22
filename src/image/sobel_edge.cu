@@ -1,5 +1,5 @@
 #include "image/sobel_edge.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <math.h>
 
 __global__ void sobelKernel(const uint8_t* input, uint8_t* output,

@@ -1,5 +1,5 @@
 #include "image/gaussian_blur.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 
 constexpr int MAX_KERNEL_SIZE = 31;
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <cstddef>
 
 namespace cuda::memory {

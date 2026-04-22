@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include "cuda/algo/reduce.h"
 #include <numeric>
 

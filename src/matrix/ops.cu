@@ -1,5 +1,5 @@
 #include "matrix/ops.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <cuda_runtime.h>
 
 constexpr int TILE_SIZE = 16;

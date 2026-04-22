@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "convolution/conv2d.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <vector>
 #include <cmath>
 

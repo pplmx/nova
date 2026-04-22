@@ -1,4 +1,4 @@
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include "matrix/add.h"
 
 // Namespace to encapsulate CUDA kernel functions

@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "parallel/histogram.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <vector>
 
 class HistogramTest : public ::testing::Test {

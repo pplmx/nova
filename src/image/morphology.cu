@@ -1,5 +1,5 @@
 #include "image/morphology.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <cuda_runtime.h>
 
 __global__ void sharpenKernel(const uint8_t* input, uint8_t* output,

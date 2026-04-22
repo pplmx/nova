@@ -3,7 +3,7 @@
 #include <ctime>
 #include <iostream>
 #include <vector>
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include "matrix/mult.h"
 
 // Function to perform matrix multiplication on the GPU using cuBLAS

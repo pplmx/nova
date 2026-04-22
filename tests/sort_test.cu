@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include "parallel/sort.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <algorithm>
 
 class SortTest : public ::testing::Test {

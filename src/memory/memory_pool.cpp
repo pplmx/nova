@@ -1,5 +1,5 @@
 #include "cuda/memory/memory_pool.h"
-#include "cuda/kernel/cuda_utils.h"
+#include "cuda/device/device_utils.h"
 #include <algorithm>
 
 namespace cuda::memory {
