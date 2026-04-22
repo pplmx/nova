@@ -33,6 +33,13 @@ __global__ void exclusiveScanKernel(const T* input, T* output, size_t size) {
 
 template<typename T>
 void exclusiveScan(const T* d_input, T* d_output, size_t size) {
+    if (size == 0) return;
+
+    if (size > 1024) {
+        fprintf(stderr, "Error: exclusiveScan only supports size <= 1024. Got %zu\n", size);
+        exit(EXIT_FAILURE);
+    }
+
     exclusiveScanKernel<<<1, 1024, 1024 * sizeof(T)>>>(d_input, d_output, size);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -70,6 +77,13 @@ __global__ void inclusiveScanKernel(const T* input, T* output, size_t size) {
 
 template<typename T>
 void inclusiveScan(const T* d_input, T* d_output, size_t size) {
+    if (size == 0) return;
+
+    if (size > 1024) {
+        fprintf(stderr, "Error: inclusiveScan only supports size <= 1024. Got %zu\n", size);
+        exit(EXIT_FAILURE);
+    }
+
     inclusiveScanKernel<<<1, 1024, 1024 * sizeof(T)>>>(d_input, d_output, size);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -101,6 +115,13 @@ __global__ void exclusiveScanOptimizedKernel(const T* input, T* output, size_t s
 
 template<typename T>
 void exclusiveScanOptimized(const T* d_input, T* d_output, size_t size) {
+    if (size == 0) return;
+
+    if (size > 1024) {
+        fprintf(stderr, "Error: exclusiveScanOptimized only supports size <= 1024. Got %zu\n", size);
+        exit(EXIT_FAILURE);
+    }
+
     exclusiveScanOptimizedKernel<<<1, 1024, 1024 * sizeof(T)>>>(d_input, d_output, size);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());

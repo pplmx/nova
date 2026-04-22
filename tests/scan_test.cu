@@ -92,3 +92,32 @@ TEST_F(ScanTest, InclusiveScan) {
 
     EXPECT_EQ(h_output_, expected);
 }
+
+TEST_F(ScanTest, EmptyArray) {
+    EXPECT_NO_THROW(exclusiveScan(d_input_, d_output_, 0));
+}
+
+TEST_F(ScanTest, MaximumSize) {
+    size_t maxSize = 1024;
+    h_input_.resize(maxSize);
+    h_output_.resize(maxSize);
+
+    CUDA_CHECK(cudaFree(d_input_));
+    CUDA_CHECK(cudaFree(d_output_));
+    CUDA_CHECK(cudaMalloc(&d_input_, maxSize * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_output_, maxSize * sizeof(int)));
+
+    for (size_t i = 0; i < maxSize; ++i) {
+        h_input_[i] = 1;
+    }
+    std::vector<int> expected(maxSize);
+    for (size_t i = 0; i < maxSize; ++i) {
+        expected[i] = static_cast<int>(i);
+    }
+
+    CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), maxSize * sizeof(int), cudaMemcpyHostToDevice));
+    exclusiveScan(d_input_, d_output_, maxSize);
+    CUDA_CHECK(cudaMemcpy(h_output_.data(), d_output_, maxSize * sizeof(int), cudaMemcpyDeviceToHost));
+
+    EXPECT_EQ(h_output_, expected);
+}
