@@ -31,10 +31,11 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/lib>")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/lib>")
 
 set(CUDA_MEMORY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/memory)
+set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
 set(CUDA_KERNEL_DIR ${CMAKE_SOURCE_DIR}/include/cuda/kernel)
 set(CUDA_ALGO_DIR ${CMAKE_SOURCE_DIR}/include/cuda/algo)
 set(CUDA_API_DIR ${CMAKE_SOURCE_DIR}/include/cuda/api)
-set(CUDA_SRC_KERNEL ${CMAKE_SOURCE_DIR}/src/cuda/kernel)
+set(CUDA_SRC_DEVICE ${CMAKE_SOURCE_DIR}/src/cuda/device)
 set(CUDA_SRC_ALGO ${CMAKE_SOURCE_DIR}/src/cuda/algo)
 
 set(IMAGE_DIR ${CMAKE_SOURCE_DIR}/src/image)
@@ -50,25 +51,26 @@ target_include_directories(cuda_memory INTERFACE
 )
 target_link_libraries(cuda_memory INTERFACE CUDA::cudart)
 
-add_library(cuda_kernel INTERFACE)
-target_include_directories(cuda_kernel INTERFACE
-        $<BUILD_INTERFACE:${CUDA_KERNEL_DIR}>
-        $<BUILD_INTERFACE:${CUDA_SRC_KERNEL}>
+add_library(cuda_device INTERFACE)
+target_include_directories(cuda_device INTERFACE
+        $<BUILD_INTERFACE:${CUDA_DEVICE_DIR}>
+        $<BUILD_INTERFACE:${CUDA_SRC_DEVICE}>
 )
-target_link_libraries(cuda_kernel INTERFACE CUDA::cudart cuda_memory)
-set_target_properties(cuda_kernel PROPERTIES
+target_link_libraries(cuda_device INTERFACE CUDA::cudart cuda_memory)
+set_target_properties(cuda_device PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
 )
 
 add_library(cuda_algo INTERFACE)
 target_include_directories(cuda_algo INTERFACE
         $<BUILD_INTERFACE:${CUDA_ALGO_DIR}>
+        $<BUILD_INTERFACE:${CUDA_DEVICE_DIR}>
         $<BUILD_INTERFACE:${CUDA_KERNEL_DIR}>
-        $<BUILD_INTERFACE:${CUDA_SRC_KERNEL}>
+        $<BUILD_INTERFACE:${CUDA_SRC_DEVICE}>
         $<BUILD_INTERFACE:${CUDA_MEMORY_DIR}>
 )
 target_link_libraries(cuda_algo INTERFACE
-        cuda_kernel
+        cuda_device
         CUDA::cublas
 )
 
@@ -80,12 +82,13 @@ target_include_directories(cuda_api INTERFACE
 )
 target_link_libraries(cuda_api INTERFACE cuda_algo)
 
-file(GLOB_RECURSE KERNEL_SOURCES CONFIGURE_DEPENDS
-        ${CUDA_SRC_KERNEL}/*.cu
+file(GLOB_RECURSE DEVICE_SOURCES CONFIGURE_DEPENDS
+        ${CUDA_SRC_DEVICE}/*.cu
 )
 
 file(GLOB_RECURSE ALGO_SOURCES CONFIGURE_DEPENDS
         ${CUDA_SRC_ALGO}/*.cpp
+        ${CUDA_SRC_ALGO}/*.cu
 )
 
 file(GLOB_RECURSE IMAGE_SOURCES CONFIGURE_DEPENDS
@@ -109,7 +112,7 @@ file(GLOB_RECURSE MEMORY_SOURCES CONFIGURE_DEPENDS
 )
 
 set(ALL_CUDA_SOURCES
-        ${KERNEL_SOURCES}
+        ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
         ${IMAGE_SOURCES}
         ${PARALLEL_SOURCES}
@@ -121,11 +124,13 @@ set(ALL_CUDA_SOURCES
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
 target_include_directories(cuda_impl PUBLIC
         ${CMAKE_SOURCE_DIR}/include
+        ${CUDA_DEVICE_DIR}
         ${CUDA_KERNEL_DIR}
         ${CUDA_ALGO_DIR}
+        ${CUDA_MEMORY_DIR}
 )
 target_link_libraries(cuda_impl PUBLIC
-        cuda_kernel
+        cuda_device
         cuda_algo
         CUDA::cudart
         CUDA::cublas
@@ -138,9 +143,11 @@ add_executable(${PROJECT_NAME} src/main.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE cuda_impl cuda_api)
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/data
+        ${CUDA_DEVICE_DIR}
         ${CUDA_KERNEL_DIR}
         ${CUDA_ALGO_DIR}
         ${CUDA_API_DIR}
+        ${CUDA_MEMORY_DIR}
 )
 
 include(FetchContent)

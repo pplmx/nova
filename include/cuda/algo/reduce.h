@@ -1,6 +1,6 @@
 #pragma once
 
-#include "device_buffer.h"
+#include "cuda/memory/buffer.h"
 #include <cstddef>
 
 namespace cuda::algo {
