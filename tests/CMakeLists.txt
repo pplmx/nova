@@ -19,8 +19,10 @@ add_executable(cu-tests
     scan_test.cu
     sort_test.cu
     matrix_mult_test.cu
+    convolution_test.cu
     memory_pool_test.cpp
     stream_event_test.cpp
+    cublas_context_test.cu
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

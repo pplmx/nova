@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 #include "cuda/device/error.h"
 
@@ -30,6 +31,7 @@ namespace cuda::memory {
 
         void copy_from(const T* host_data, size_t count);
         void copy_to(T* host_data, size_t count) const;
+        void fill(const T& value);
 
     private:
         T* data_ = nullptr;
@@ -147,6 +149,12 @@ namespace cuda::memory {
         data_ = nullptr;
         size_ = 0;
         return ptr;
+    }
+
+    template <typename T>
+    void Buffer<T>::fill(const T& value) {
+        std::vector<T> temp(size_, value);
+        copy_from(temp.data(), size_);
     }
 
 }  // namespace cuda::memory
