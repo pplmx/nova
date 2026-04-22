@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "matrix_mult.h"
-#include "cuda_utils.h"
+#include "matrix/mult.h"
+#include "cuda/kernel/cuda_utils.h"
 
 #include <vector>
 #include <cmath>

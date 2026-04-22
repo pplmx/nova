@@ -1,5 +1,5 @@
-#include "sort.h"
-#include "cuda_utils.h"
+#include "parallel/sort.h"
+#include "cuda/kernel/cuda_utils.h"
 #include <cuda_runtime.h>
 #include <limits>
 #include <type_traits>

@@ -1,5 +1,5 @@
-#include "brightness.h"
-#include "image_utils.h"
+#include "image/brightness.h"
+#include "image/types.h"
 
 __global__ void brightnessContrastKernel(const uint8_t* input, uint8_t* output,
                                          size_t width, size_t height,

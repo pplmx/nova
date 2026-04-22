@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image_utils.h"
-#include "gaussian_blur.h"
+#include "image/types.h"
+#include "image/gaussian_blur.h"
 #include "test_patterns.cuh"
 
 class GaussianBlurTest : public ::testing::Test {

@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "scan.h"
-#include "cuda_utils.h"
+#include "parallel/scan.h"
+#include "cuda/kernel/cuda_utils.h"
 #include <vector>
 
 class ScanTest : public ::testing::Test {

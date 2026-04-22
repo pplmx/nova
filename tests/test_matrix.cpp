@@ -2,8 +2,8 @@
 
 #include <vector>
 
-#include "matrix_add.h"
-#include "matrix_mult.h"
+#include "matrix/add.h"
+#include "matrix/mult.h"
 
 // Template-based parameterized test for matrix operations
 template <typename T>

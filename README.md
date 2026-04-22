@@ -21,9 +21,10 @@ include/cuda/
 └── api/              # Layer 3: High-level STL-style API
     └── device_vector.h  # STL-style container
 
-include/
-├── cuda_utils.h      # Backward compatibility forwarding
-└── reduce.h          # Backward compatibility forwarding
+src/
+├── kernel/           # Kernel implementations (.cu)
+├── algo/             # Algorithm implementations (.cpp)
+└── main.cpp          # Benchmark demo
 ```
 
 ### Layer Responsibilities
@@ -86,17 +87,6 @@ cuda::api::DeviceVector<int> d_vec(N);
 d_vec.copy_from(input);
 
 int sum = cuda::algo::reduce_sum(d_vec.data(), d_vec.size());
-```
-
-### Backward Compatibility
-
-Legacy code continues to work with forwarded headers:
-
-```cpp
-#include "reduce.h"  // Still works!
-
-int sum = reduceSum<int>(d_input, N);
-int max = reduceMax<int>(d_input, N);
 ```
 
 ## Development

@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image_utils.h"
-#include "sobel_edge.h"
+#include "image/types.h"
+#include "image/sobel_edge.h"
 #include "test_patterns.cuh"
 
 class SobelTest : public ::testing::Test {

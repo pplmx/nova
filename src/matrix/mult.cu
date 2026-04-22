@@ -1,10 +1,10 @@
-#include <type_traits>    // For std::is_same_v
+#include <type_traits>
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <vector>
-#include "cuda_utils.h"   // Custom CUDA utility functions and macros for error checking
-#include "matrix_mult.h"  // Header for this matrix multiplication module
+#include "cuda/kernel/cuda_utils.h"
+#include "matrix/mult.h"
 
 // Function to perform matrix multiplication on the GPU using cuBLAS
 // This function transfers the input matrices from the host (CPU) to the device (GPU),

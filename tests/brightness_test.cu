@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image_utils.h"
-#include "brightness.h"
+#include "image/types.h"
+#include "image/brightness.h"
 #include "test_patterns.cuh"
 
 class BrightnessTest : public ::testing::Test {

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "image_utils.h"
+#include "image/types.h"
 #include "test_patterns.cuh"
 #include <vector>
 

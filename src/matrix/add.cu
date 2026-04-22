@@ -1,5 +1,5 @@
-#include "cuda_utils.h"  // Custom CUDA utilities for error checking, etc.
-#include "matrix_add.h"  // Header file for this matrix addition module
+#include "cuda/kernel/cuda_utils.h"
+#include "matrix/add.h"
 
 // Namespace to encapsulate CUDA kernel functions
 namespace cuda_kernel {

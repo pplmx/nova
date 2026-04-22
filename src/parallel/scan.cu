@@ -1,5 +1,5 @@
-#include "scan.h"
-#include "cuda_utils.h"
+#include "parallel/scan.h"
+#include "cuda/kernel/cuda_utils.h"
 
 template<typename T>
 __global__ void exclusiveScanKernel(const T* input, T* output, size_t size) {
