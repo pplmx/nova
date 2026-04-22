@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <cuda/device/device_utils.h>
+#include <cuda/device/error.h>
 #include <utility>
 
 namespace cuda::memory {

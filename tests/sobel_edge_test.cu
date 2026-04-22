@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image/types.h"
+#include "cuda/device/device_utils.h"
 #include "image/sobel_edge.h"
 #include "test_patterns.cuh"
 
@@ -17,19 +17,19 @@ protected:
         h_input_ = std::make_unique<unsigned char[]>(size_);
         h_output_ = std::make_unique<unsigned char[]>(size_);
 
-        CUDA_CHECK_IMAGE(cudaMalloc(&d_input_, size_));
-        CUDA_CHECK_IMAGE(cudaMalloc(&d_output_, size_));
+        CUDA_CHECK(cudaMalloc(&d_input_, size_));
+        CUDA_CHECK(cudaMalloc(&d_output_, size_));
     }
 
     void TearDown() override {
-        CUDA_CHECK_IMAGE(cudaFree(d_input_));
-        CUDA_CHECK_IMAGE(cudaFree(d_output_));
+        CUDA_CHECK(cudaFree(d_input_));
+        CUDA_CHECK(cudaFree(d_output_));
     }
 
     void runAndDownload(float threshold = 30.0f) {
-        CUDA_CHECK_IMAGE(cudaMemcpy(d_input_, h_input_.get(), size_, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_input_, h_input_.get(), size_, cudaMemcpyHostToDevice));
         sobelEdgeDetection(d_input_, d_output_, width_, height_, threshold);
-        CUDA_CHECK_IMAGE(cudaMemcpy(h_output_.get(), d_output_, size_, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h_output_.get(), d_output_, size_, cudaMemcpyDeviceToHost));
     }
 
     size_t width_;
@@ -103,17 +103,17 @@ TEST_F(SobelTest, SinglePixel) {
     h_input_.get()[0] = 128;
 
     uint8_t *d_input, *d_output;
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_input, size_));
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_output, size_));
+    CUDA_CHECK(cudaMalloc(&d_input, size_));
+    CUDA_CHECK(cudaMalloc(&d_output, size_));
 
-    CUDA_CHECK_IMAGE(cudaMemcpy(d_input, h_input_.get(), size_, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, h_input_.get(), size_, cudaMemcpyHostToDevice));
     sobelEdgeDetection(d_input, d_output, 1, 1, 30.0f);
-    CUDA_CHECK_IMAGE(cudaMemcpy(h_output_.get(), d_output, size_, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_output_.get(), d_output, size_, cudaMemcpyDeviceToHost));
 
     EXPECT_EQ(h_output_.get()[0], 0);
 
-    CUDA_CHECK_IMAGE(cudaFree(d_input));
-    CUDA_CHECK_IMAGE(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 TEST_F(SobelTest, EdgeAtBoundary) {
@@ -133,12 +133,12 @@ TEST_F(SobelTest, EdgeAtBoundary) {
     }
 
     uint8_t *d_input, *d_output;
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_input, size_));
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_output, size_));
+    CUDA_CHECK(cudaMalloc(&d_input, size_));
+    CUDA_CHECK(cudaMalloc(&d_output, size_));
 
-    CUDA_CHECK_IMAGE(cudaMemcpy(d_input, h_input_.get(), size_, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, h_input_.get(), size_, cudaMemcpyHostToDevice));
     sobelEdgeDetection(d_input, d_output, width_, height_, 30.0f);
-    CUDA_CHECK_IMAGE(cudaMemcpy(h_output_.get(), d_output, size_, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_output_.get(), d_output, size_, cudaMemcpyDeviceToHost));
 
     int edgeCount = 0;
     for (size_t y = 0; y < height_; ++y) {
@@ -149,8 +149,8 @@ TEST_F(SobelTest, EdgeAtBoundary) {
     }
     EXPECT_GT(edgeCount, 0);
 
-    CUDA_CHECK_IMAGE(cudaFree(d_input));
-    CUDA_CHECK_IMAGE(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 TEST_F(SobelTest, HighThreshold) {

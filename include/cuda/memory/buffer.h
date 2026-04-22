@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cuda/device/device_utils.h"
+#include "cuda/device/error.h"
 #include <cstddef>
 
 namespace cuda::memory {
@@ -8,6 +8,8 @@ namespace cuda::memory {
 template<typename T>
 class Buffer {
 public:
+    Buffer() : data_(nullptr), size_(0) {}
+
     explicit Buffer(size_t count);
 
     ~Buffer();

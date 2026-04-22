@@ -4,17 +4,7 @@
 #include <memory>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-
-#define CUDA_CHECK_IMAGE(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, \
-                    cudaGetErrorString(err)); \
-            exit(EXIT_FAILURE); \
-        } \
-    } while (0)
+#include "cuda/device/device_utils.h"
 
 struct ImageDimensions {
     size_t width;
@@ -49,7 +39,7 @@ public:
         : dims_{width, height, channels} {
         if (size() > 0) {
             PixelType* raw_ptr = nullptr;
-            CUDA_CHECK_IMAGE(cudaMalloc(&raw_ptr, size() * sizeof(PixelType)));
+            CUDA_CHECK(cudaMalloc(&raw_ptr, size() * sizeof(PixelType)));
             data_owner_.reset(raw_ptr);
             d_data_ = data_owner_.get();
         }
@@ -62,13 +52,13 @@ public:
 
     void upload(const PixelType* h_data) {
         if (d_data_ && h_data) {
-            CUDA_CHECK_IMAGE(cudaMemcpy(d_data_, h_data, size() * sizeof(PixelType), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_data_, h_data, size() * sizeof(PixelType), cudaMemcpyHostToDevice));
         }
     }
 
     void download(PixelType* h_data) const {
         if (d_data_ && h_data) {
-            CUDA_CHECK_IMAGE(cudaMemcpy(h_data, d_data_, size() * sizeof(PixelType), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(h_data, d_data_, size() * sizeof(PixelType), cudaMemcpyDeviceToHost));
         }
     }
 };
@@ -95,7 +85,7 @@ public:
         : dims_{width, height, channels} {
         if (size() > 0) {
             PixelType* raw_ptr = nullptr;
-            CUDA_CHECK_IMAGE(cudaMalloc(&raw_ptr, size() * sizeof(PixelType)));
+            CUDA_CHECK(cudaMalloc(&raw_ptr, size() * sizeof(PixelType)));
             data_owner_.reset(raw_ptr);
             d_data_ = data_owner_.get();
         }
@@ -108,13 +98,13 @@ public:
 
     void upload(const PixelType* h_data) {
         if (d_data_ && h_data) {
-            CUDA_CHECK_IMAGE(cudaMemcpy(d_data_, h_data, size() * sizeof(PixelType), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_data_, h_data, size() * sizeof(PixelType), cudaMemcpyHostToDevice));
         }
     }
 
     void download(PixelType* h_data) const {
         if (d_data_ && h_data) {
-            CUDA_CHECK_IMAGE(cudaMemcpy(h_data, d_data_, size() * sizeof(PixelType), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(h_data, d_data_, size() * sizeof(PixelType), cudaMemcpyDeviceToHost));
         }
     }
 };

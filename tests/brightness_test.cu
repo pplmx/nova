@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "image/types.h"
+#include "cuda/device/device_utils.h"
 #include "image/brightness.h"
 #include "test_patterns.cuh"
 
@@ -19,26 +19,26 @@ protected:
         h_output_ = std::make_unique<unsigned char[]>(size_);
         h_expected_ = std::make_unique<unsigned char[]>(size_);
 
-        CUDA_CHECK_IMAGE(cudaMalloc(&d_input_, size_));
-        CUDA_CHECK_IMAGE(cudaMalloc(&d_output_, size_));
+        CUDA_CHECK(cudaMalloc(&d_input_, size_));
+        CUDA_CHECK(cudaMalloc(&d_output_, size_));
     }
 
     void TearDown() override {
-        CUDA_CHECK_IMAGE(cudaFree(d_input_));
-        CUDA_CHECK_IMAGE(cudaFree(d_output_));
+        CUDA_CHECK(cudaFree(d_input_));
+        CUDA_CHECK(cudaFree(d_output_));
     }
 
     void runAndDownload() {
-        CUDA_CHECK_IMAGE(cudaMemcpy(d_input_, h_input_.get(), size_, cudaMemcpyHostToDevice));
-        adjustBrightnessContrast(d_input_, d_output_, width_, height_, alpha_, beta_);
-        CUDA_CHECK_IMAGE(cudaMemcpy(h_output_.get(), d_output_, size_, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(d_input_, h_input_.get(), size_, cudaMemcpyHostToDevice));
+        adjustBrightnessContrast(d_input_, d_output_, width_, height_, contrast_factor_, brightness_offset_);
+        CUDA_CHECK(cudaMemcpy(h_output_.get(), d_output_, size_, cudaMemcpyDeviceToHost));
     }
 
     size_t width_;
     size_t height_;
     size_t size_;
-    float alpha_ = 1.0f;
-    float beta_ = 0.0f;
+    float contrast_factor_ = 1.0f;
+    float brightness_offset_ = 0.0f;
     std::unique_ptr<unsigned char[]> h_input_;
     std::unique_ptr<unsigned char[]> h_output_;
     std::unique_ptr<unsigned char[]> h_expected_;
@@ -50,8 +50,8 @@ TEST_F(BrightnessTest, Identity) {
     generateSolid(h_input_.get(), width_, height_, 128);
     std::memset(h_expected_.get(), 128, size_);
 
-    alpha_ = 1.0f;
-    beta_ = 0.0f;
+    contrast_factor_ = 1.0f;
+    brightness_offset_ = 0.0f;
     runAndDownload();
 
     EXPECT_TRUE(compareBuffers(h_expected_.get(), h_output_.get(), size_));
@@ -61,8 +61,8 @@ TEST_F(BrightnessTest, BrightnessIncrease) {
     generateSolid(h_input_.get(), width_, height_, 100);
     std::memset(h_expected_.get(), 150, size_);
 
-    alpha_ = 1.0f;
-    beta_ = 50.0f;
+    contrast_factor_ = 1.0f;
+    brightness_offset_ = 50.0f;
     runAndDownload();
 
     EXPECT_TRUE(compareBuffers(h_expected_.get(), h_output_.get(), size_));
@@ -72,8 +72,8 @@ TEST_F(BrightnessTest, BrightnessDecrease) {
     generateSolid(h_input_.get(), width_, height_, 200);
     std::memset(h_expected_.get(), 150, size_);
 
-    alpha_ = 1.0f;
-    beta_ = -50.0f;
+    contrast_factor_ = 1.0f;
+    brightness_offset_ = -50.0f;
     runAndDownload();
 
     EXPECT_TRUE(compareBuffers(h_expected_.get(), h_output_.get(), size_));
@@ -83,8 +83,8 @@ TEST_F(BrightnessTest, ContrastIncrease) {
     generateSolid(h_input_.get(), width_, height_, 64);
     std::memset(h_expected_.get(), 128, size_);
 
-    alpha_ = 2.0f;
-    beta_ = 0.0f;
+    contrast_factor_ = 2.0f;
+    brightness_offset_ = 0.0f;
     runAndDownload();
 
     EXPECT_TRUE(compareBuffers(h_expected_.get(), h_output_.get(), size_));
@@ -93,8 +93,8 @@ TEST_F(BrightnessTest, ContrastIncrease) {
 TEST_F(BrightnessTest, BrightnessAndContrastCombined) {
     generateSolid(h_input_.get(), width_, height_, 100);
 
-    alpha_ = 1.5f;
-    beta_ = 30.0f;
+    contrast_factor_ = 1.5f;
+    brightness_offset_ = 30.0f;
     runAndDownload();
 
     for (size_t i = 0; i < size_; ++i) {
@@ -108,8 +108,8 @@ TEST_F(BrightnessTest, ClampingAtUpperBound) {
     generateSolid(h_input_.get(), width_, height_, 200);
     std::memset(h_expected_.get(), 255, size_);
 
-    alpha_ = 1.5f;
-    beta_ = 100.0f;
+    contrast_factor_ = 1.5f;
+    brightness_offset_ = 100.0f;
     runAndDownload();
 
     EXPECT_TRUE(compareBuffers(h_expected_.get(), h_output_.get(), size_));
@@ -119,8 +119,8 @@ TEST_F(BrightnessTest, ClampingAtLowerBound) {
     generateSolid(h_input_.get(), width_, height_, 50);
     std::memset(h_expected_.get(), 0, size_);
 
-    alpha_ = 0.5f;
-    beta_ = -100.0f;
+    contrast_factor_ = 0.5f;
+    brightness_offset_ = -100.0f;
     runAndDownload();
 
     EXPECT_TRUE(compareBuffers(h_expected_.get(), h_output_.get(), size_));
@@ -132,19 +132,19 @@ TEST_F(BrightnessTest, SinglePixel) {
     std::vector<unsigned char> output(size, 0);
 
     uint8_t *d_input, *d_output;
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_input, size));
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_output, size));
+    CUDA_CHECK(cudaMalloc(&d_input, size));
+    CUDA_CHECK(cudaMalloc(&d_output, size));
 
-    CUDA_CHECK_IMAGE(cudaMemcpy(d_input, input.data(), size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input.data(), size, cudaMemcpyHostToDevice));
     adjustBrightnessContrast(d_input, d_output, 1, 1, 1.5f, 30.0f);
-    CUDA_CHECK_IMAGE(cudaMemcpy(output.data(), d_output, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(output.data(), d_output, size, cudaMemcpyDeviceToHost));
 
     EXPECT_EQ(output[0], 180);  // 100 * 1.5 + 30 = 180
     EXPECT_EQ(output[1], 180);
     EXPECT_EQ(output[2], 180);
 
-    CUDA_CHECK_IMAGE(cudaFree(d_input));
-    CUDA_CHECK_IMAGE(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 TEST_F(BrightnessTest, LargeImage) {
@@ -153,19 +153,19 @@ TEST_F(BrightnessTest, LargeImage) {
     std::vector<unsigned char> output(size, 0);
 
     uint8_t *d_input, *d_output;
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_input, size));
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_output, size));
+    CUDA_CHECK(cudaMalloc(&d_input, size));
+    CUDA_CHECK(cudaMalloc(&d_output, size));
 
-    CUDA_CHECK_IMAGE(cudaMemcpy(d_input, input.data(), size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input.data(), size, cudaMemcpyHostToDevice));
     adjustBrightnessContrast(d_input, d_output, 2048, 2048, 1.0f, 10.0f);
-    CUDA_CHECK_IMAGE(cudaMemcpy(output.data(), d_output, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(output.data(), d_output, size, cudaMemcpyDeviceToHost));
 
     for (size_t i = 0; i < size; ++i) {
         EXPECT_EQ(output[i], 138);
     }
 
-    CUDA_CHECK_IMAGE(cudaFree(d_input));
-    CUDA_CHECK_IMAGE(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 TEST_F(BrightnessTest, ExtremeBrightness) {
@@ -174,16 +174,16 @@ TEST_F(BrightnessTest, ExtremeBrightness) {
     std::vector<unsigned char> output(size, 0);
 
     uint8_t *d_input, *d_output;
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_input, size));
-    CUDA_CHECK_IMAGE(cudaMalloc(&d_output, size));
+    CUDA_CHECK(cudaMalloc(&d_input, size));
+    CUDA_CHECK(cudaMalloc(&d_output, size));
 
-    CUDA_CHECK_IMAGE(cudaMemcpy(d_input, input.data(), size, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input.data(), size, cudaMemcpyHostToDevice));
     adjustBrightnessContrast(d_input, d_output, 1, 1, 2.0f, 100.0f);
-    CUDA_CHECK_IMAGE(cudaMemcpy(output.data(), d_output, size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(output.data(), d_output, size, cudaMemcpyDeviceToHost));
 
     // 255 * 2 + 100 = 610, clamped to 255
     EXPECT_EQ(output[0], 255);
 
-    CUDA_CHECK_IMAGE(cudaFree(d_input));
-    CUDA_CHECK_IMAGE(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
 }

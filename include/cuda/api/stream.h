@@ -2,6 +2,7 @@
 
 #include <cuda_runtime.h>
 #include <memory>
+#include "cuda/device/error.h"
 
 namespace cuda::api {
 
@@ -95,7 +96,7 @@ public:
         return cudaEventQuery(event_) == cudaSuccess;
     }
 
-    float elapsed_time(const Event& start, const Event& end) {
+    static float elapsed_time(const Event& start, const Event& end) {
         float ms = 0.0f;
         CUDA_CHECK(cudaEventElapsedTime(&ms, start.event_, end.event_));
         return ms;

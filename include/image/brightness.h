@@ -5,4 +5,4 @@
 
 void adjustBrightnessContrast(const uint8_t* d_input, uint8_t* d_output,
                               size_t width, size_t height,
-                              float alpha, float beta);
+                              float contrast_factor, float brightness_offset);

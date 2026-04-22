@@ -1,14 +1,15 @@
+#include "cuda/device/device_utils.h"
 #include "cuda/device/reduce_kernels.h"
 
 namespace cuda::device {
 
 template<typename T>
 __global__ void reduce_basic_kernel(const T* input, T* output, size_t size, ReduceOp op) {
-    __shared__ T sdata[256];
-    size_t tid = threadIdx.x;
-    size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+    __shared__ T sdata[REDUCE_BLOCK_SIZE];
+    const size_t tid = threadIdx.x;
+    const size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
 
-    T val = 0;
+    T val = T{};
     if (i < size) val = input[i];
     if (i + blockDim.x < size) {
         if (op == ReduceOp::SUM) {
@@ -40,11 +41,11 @@ __global__ void reduce_basic_kernel(const T* input, T* output, size_t size, Redu
 
 template<typename T>
 __global__ void reduce_optimized_kernel(const T* input, T* output, size_t size, ReduceOp op) {
-    __shared__ T sdata[32];
-    size_t tid = threadIdx.x;
-    size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+    __shared__ T sdata[REDUCE_OPTIMIZED_SHMEM_SIZE];
+    const size_t tid = threadIdx.x;
+    const size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
 
-    T val = 0;
+    T val = T{};
     if (i < size) val = input[i];
     if (i + blockDim.x < size) {
         if (op == ReduceOp::SUM) {

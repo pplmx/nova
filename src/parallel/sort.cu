@@ -1,8 +1,13 @@
 #include "parallel/sort.h"
 #include "cuda/device/device_utils.h"
+#include "cuda/memory/buffer.h"
 #include <cuda_runtime.h>
 #include <limits>
 #include <type_traits>
+
+namespace cuda::parallel {
+
+namespace {
 
 template<typename T>
 __global__ void oddEvenPhaseKernel(const T* input, T* output, size_t size, bool evenPhase) {
@@ -28,37 +33,6 @@ __global__ void copyKernel(const T* input, T* output, size_t size) {
     if (i < size) {
         output[i] = input[i];
     }
-}
-
-template<typename T>
-void oddEvenSort(const T* d_input, T* d_output, size_t size) {
-    if (size == 0) return;
-
-    CUDA_CHECK(cudaMemcpy(d_output, d_input, size * sizeof(T), cudaMemcpyHostToDevice));
-
-    T* d_temp;
-    CUDA_CHECK(cudaMalloc(&d_temp, size * sizeof(T)));
-
-    const int blockSize = 256;
-    dim3 block(blockSize);
-
-    for (size_t phase = 0; phase < size; ++phase) {
-        int gridSize = (size + blockSize - 1) / blockSize;
-        dim3 grid(gridSize);
-        copyKernel<<<grid, block>>>(d_output, d_temp, size);
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
-
-        bool evenPhase = (phase % 2 == 0);
-        int elementsPerBlock = blockSize * 2;
-        int compGridSize = (size + elementsPerBlock - 1) / elementsPerBlock;
-        dim3 compGrid(compGridSize);
-        oddEvenPhaseKernel<<<compGrid, block>>>(d_temp, d_output, size, evenPhase);
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
-    }
-
-    CUDA_CHECK(cudaFree(d_temp));
 }
 
 template<typename T>
@@ -88,7 +62,7 @@ __global__ void bitonicSortKernel(T* data, size_t size, int k, int j) {
     }
 }
 
-static size_t nextPowerOf2(size_t n) {
+constexpr size_t nextPowerOf2(size_t n) {
     size_t p = 1;
     while (p < n) p *= 2;
     return p;
@@ -102,39 +76,67 @@ __global__ void padWithMaxKernel(T* data, size_t size, size_t paddedSize, T maxV
     }
 }
 
+}
+
+template<typename T>
+void oddEvenSort(const T* d_input, T* d_output, size_t size) {
+    if (size == 0) return;
+
+    CUDA_CHECK(cudaMemcpy(d_output, d_input, size * sizeof(T), cudaMemcpyHostToDevice));
+
+    cuda::memory::Buffer<T> d_temp(size);
+
+    constexpr size_t blockSize = 256;
+    dim3 block(blockSize);
+
+    for (size_t phase = 0; phase < size; ++phase) {
+        size_t gridSize = (size + blockSize - 1) / blockSize;
+        dim3 grid(gridSize);
+        copyKernel<<<grid, block>>>(d_output, d_temp.data(), size);
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        bool evenPhase = (phase % 2 == 0);
+        size_t elementsPerBlock = blockSize * 2;
+        size_t compGridSize = (size + elementsPerBlock - 1) / elementsPerBlock;
+        dim3 compGrid(compGridSize);
+        oddEvenPhaseKernel<<<compGrid, block>>>(d_temp.data(), d_output, size, evenPhase);
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
+    }
+}
+
 template<typename T>
 void bitonicSort(const T* d_input, T* d_output, size_t size) {
     if (size == 0) return;
 
-    size_t paddedSize = nextPowerOf2(size);
+    const size_t paddedSize = nextPowerOf2(size);
 
-    T* d_data;
-    CUDA_CHECK(cudaMalloc(&d_data, paddedSize * sizeof(T)));
-    CUDA_CHECK(cudaMemcpy(d_data, d_input, size * sizeof(T), cudaMemcpyHostToDevice));
+    cuda::memory::Buffer<T> d_data(paddedSize);
+    CUDA_CHECK(cudaMemcpy(d_data.data(), d_input, size * sizeof(T), cudaMemcpyHostToDevice));
 
-    T maxVal = 0;
-    if (std::is_integral<T>::value) {
+    T maxVal = T{};
+    if constexpr (std::is_integral_v<T>) {
         maxVal = std::numeric_limits<T>::max();
     }
 
     if (paddedSize > size) {
         dim3 block(256);
         dim3 grid((paddedSize - size + block.x - 1) / block.x);
-        padWithMaxKernel<<<grid, block>>>(d_data, size, paddedSize, maxVal);
+        padWithMaxKernel<<<grid, block>>>(d_data.data(), size, paddedSize, maxVal);
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
     for (int k = 2; k <= static_cast<int>(paddedSize); k *= 2) {
         for (int j = k / 2; j > 0; j /= 2) {
-            bitonicSortKernel<<<1, paddedSize>>>(d_data, paddedSize, k, j);
+            bitonicSortKernel<<<1, paddedSize>>>(d_data.data(), paddedSize, k, j);
             CUDA_CHECK(cudaGetLastError());
             CUDA_CHECK(cudaDeviceSynchronize());
         }
     }
 
-    CUDA_CHECK(cudaMemcpy(d_output, d_data, size * sizeof(T), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaFree(d_data));
+    CUDA_CHECK(cudaMemcpy(d_output, d_data.data(), size * sizeof(T), cudaMemcpyDeviceToHost));
 }
 
 template void bitonicSort<int>(const int*, int*, size_t);
@@ -142,3 +144,5 @@ template void bitonicSort<float>(const float*, float*, size_t);
 
 template void oddEvenSort<int>(const int*, int*, size_t);
 template void oddEvenSort<float>(const float*, float*, size_t);
+
+} // namespace cuda::parallel

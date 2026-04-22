@@ -2,6 +2,19 @@
 #include "parallel/sort.h"
 #include "cuda/device/device_utils.h"
 #include <algorithm>
+#include <numeric>
+
+namespace {
+
+bool isPermutation(const std::vector<int>& a, const std::vector<int>& b) {
+    if (a.size() != b.size()) return false;
+    std::vector<int> sorted_a = a, sorted_b = b;
+    std::sort(sorted_a.begin(), sorted_a.end());
+    std::sort(sorted_b.begin(), sorted_b.end());
+    return sorted_a == sorted_b;
+}
+
+}
 
 class SortTest : public ::testing::Test {
 protected:
@@ -19,13 +32,13 @@ protected:
     }
 
     void TearDown() override {
-        CUDA_CHECK(cudaFree(d_input_));
-        CUDA_CHECK(cudaFree(d_output_));
+        if (d_input_) CUDA_CHECK(cudaFree(d_input_));
+        if (d_output_) CUDA_CHECK(cudaFree(d_output_));
     }
 
     void runSort(size_t size) {
         CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), size * sizeof(int), cudaMemcpyHostToDevice));
-        bitonicSort(d_input_, d_output_, size);
+        cuda::parallel::bitonicSort(d_input_, d_output_, size);
         CUDA_CHECK(cudaMemcpy(h_output_.data(), d_output_, size * sizeof(int), cudaMemcpyDeviceToHost));
     }
 };
@@ -79,6 +92,7 @@ TEST_F(SortTest, Duplicates) {
     for (size_t i = 1; i < h_output_.size(); ++i) {
         EXPECT_LE(h_output_[i-1], h_output_[i]);
     }
+    EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }
 
 TEST_F(SortTest, LargeArray) {
@@ -100,6 +114,7 @@ TEST_F(SortTest, LargeArray) {
     for (size_t i = 1; i < size; ++i) {
         EXPECT_LE(h_output_[i-1], h_output_[i]);
     }
+    EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }
 
 TEST_F(SortTest, AllSame) {
@@ -121,6 +136,8 @@ TEST_F(SortTest, AllSame) {
 class OddEvenSortTest : public ::testing::Test {
 protected:
     std::vector<int> h_input_, h_output_;
+    int *d_input_ = nullptr;
+    int *d_output_ = nullptr;
 
     void SetUp() override {
         CUDA_CHECK(cudaMalloc(&d_input_, 1024 * sizeof(int)));
@@ -128,17 +145,15 @@ protected:
     }
 
     void TearDown() override {
-        CUDA_CHECK(cudaFree(d_input_));
-        CUDA_CHECK(cudaFree(d_output_));
+        if (d_input_) CUDA_CHECK(cudaFree(d_input_));
+        if (d_output_) CUDA_CHECK(cudaFree(d_output_));
     }
 
     void runAndDownload(size_t size) {
         CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), size * sizeof(int), cudaMemcpyHostToDevice));
-        oddEvenSort(d_input_, d_output_, size);
+        cuda::parallel::oddEvenSort(d_input_, d_output_, size);
         CUDA_CHECK(cudaMemcpy(h_output_.data(), d_output_, size * sizeof(int), cudaMemcpyDeviceToHost));
     }
-
-    int *d_input_, *d_output_;
 };
 
 TEST_F(OddEvenSortTest, RandomArray) {
@@ -166,6 +181,7 @@ TEST_F(OddEvenSortTest, LargeArray) {
     for (size_t i = 1; i < size; ++i) {
         EXPECT_LE(h_output_[i-1], h_output_[i]);
     }
+    EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }
 
 TEST_F(OddEvenSortTest, AllSame) {

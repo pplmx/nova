@@ -113,3 +113,25 @@ x86/
 *.orig
 *.backup
 build/
+build-*/
+dist/
+
+### CUDA
+*.ptx
+*.cubin
+*.fatbin
+*.isa
+*.cudafe1.*
+*.cudafe2.*
+*.cudagpu.o.*
+*.cu.deps
+*.cu.o
+*.cuh
+nvcc_*.log
+cuda_profile_*.log
+*.gputhings
+.nsight-compute-data/
+.nv/
+*.cudax
+cub_cache/
+nvcc_cache/

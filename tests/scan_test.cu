@@ -2,6 +2,7 @@
 #include "parallel/scan.h"
 #include "cuda/device/device_utils.h"
 #include <vector>
+#include <numeric>
 
 class ScanTest : public ::testing::Test {
 protected:
@@ -20,7 +21,7 @@ protected:
         CUDA_CHECK(cudaFree(d_output_));
     }
 
-    int *d_input_, *d_output_;
+    int *d_input_ = nullptr, *d_output_ = nullptr;
 };
 
 TEST_F(ScanTest, BasicPrefixSum) {
@@ -131,6 +132,25 @@ TEST_F(ScanTest, AlternatingPattern) {
 
 TEST_F(ScanTest, EmptyArray) {
     EXPECT_NO_THROW(exclusiveScan(d_input_, d_output_, 0));
+}
+
+TEST_F(ScanTest, ExceedsMaxSize) {
+    size_t largeSize = MAX_SCAN_SIZE + 1;
+    std::vector<int> large_input(largeSize, 1);
+    std::vector<int> large_output(largeSize);
+
+    int* d_large_input = nullptr;
+    int* d_large_output = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_large_input, largeSize * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_large_output, largeSize * sizeof(int)));
+
+    CUDA_CHECK(cudaMemcpy(d_large_input, large_input.data(), largeSize * sizeof(int), cudaMemcpyHostToDevice));
+
+    EXPECT_THROW(exclusiveScan(d_large_input, d_large_output, largeSize), std::invalid_argument);
+    EXPECT_THROW(inclusiveScan(d_large_input, d_large_output, largeSize), std::invalid_argument);
+
+    CUDA_CHECK(cudaFree(d_large_input));
+    CUDA_CHECK(cudaFree(d_large_output));
 }
 
 TEST_F(ScanTest, MaximumSize) {

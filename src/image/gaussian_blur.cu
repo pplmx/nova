@@ -1,5 +1,7 @@
 #include "image/gaussian_blur.h"
 #include "cuda/device/device_utils.h"
+#include "cuda/memory/buffer.h"
+#include <vector>
 
 constexpr int MAX_KERNEL_SIZE = 31;
 
@@ -56,12 +58,12 @@ __global__ void gaussianBlurVertical(const float* temp, uint8_t* output,
 void gaussianBlur(const uint8_t* d_input, uint8_t* d_output,
                   size_t width, size_t height,
                   float sigma, int kernel_size) {
-    int half = kernel_size / 2;
+    const int half = kernel_size / 2;
 
-    float* h_kernel = new float[kernel_size];
+    std::vector<float> h_kernel(kernel_size);
     float sum = 0.0f;
     for (int i = 0; i < kernel_size; ++i) {
-        int x = i - half;
+        const int x = i - half;
         h_kernel[i] = expf(-(x * x) / (2.0f * sigma * sigma));
         sum += h_kernel[i];
     }
@@ -69,23 +71,19 @@ void gaussianBlur(const uint8_t* d_input, uint8_t* d_output,
         h_kernel[i] /= sum;
     }
 
-    CUDA_CHECK(cudaMemcpyToSymbol(d_kernel_horizontal, h_kernel, kernel_size * sizeof(float)));
-    CUDA_CHECK(cudaMemcpyToSymbol(d_kernel_vertical, h_kernel, kernel_size * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_kernel_horizontal, h_kernel.data(), kernel_size * sizeof(float)));
+    CUDA_CHECK(cudaMemcpyToSymbol(d_kernel_vertical, h_kernel.data(), kernel_size * sizeof(float)));
 
-    float* d_temp = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_temp, width * height * 3 * sizeof(float)));
+    cuda::memory::Buffer<float> d_temp(width * height * 3);
 
     dim3 block(16, 16);
     dim3 grid((width + 15) / 16, (height + 15) / 16);
 
-    gaussianBlurHorizontal<<<grid, block>>>(d_input, d_temp, width, height, kernel_size, half);
+    gaussianBlurHorizontal<<<grid, block>>>(d_input, d_temp.data(), width, height, kernel_size, half);
     CUDA_CHECK(cudaGetLastError());
 
-    gaussianBlurVertical<<<grid, block>>>(d_temp, d_output, width, height, kernel_size, half);
+    gaussianBlurVertical<<<grid, block>>>(d_temp.data(), d_output, width, height, kernel_size, half);
     CUDA_CHECK(cudaGetLastError());
 
     CUDA_CHECK(cudaDeviceSynchronize());
-
-    CUDA_CHECK(cudaFree(d_temp));
-    delete[] h_kernel;
 }

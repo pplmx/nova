@@ -11,8 +11,8 @@ template<typename T>
 T execute_reduce(const T* input, size_t size, bool optimized, cuda::device::ReduceOp op) {
     if (size == 0) return T{};
 
-    const int blockSize = 256;
-    int gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
+    constexpr size_t blockSize = cuda::device::REDUCE_BLOCK_SIZE;
+    const size_t gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
 
     cuda::memory::Buffer<T> output(gridSize);
 
