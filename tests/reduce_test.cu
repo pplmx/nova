@@ -65,3 +65,23 @@ TEST_F(ReduceTest, MinTest) {
     int result = reduceMin(d_input_, size_);
     EXPECT_EQ(result, 100);
 }
+
+TEST_F(ReduceTest, EmptyInput) {
+    int result = reduceSum(d_input_, 0);
+    EXPECT_EQ(result, 0);
+}
+
+TEST_F(ReduceTest, SingleElement) {
+    h_input_[0] = 42;
+    CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), sizeof(int), cudaMemcpyHostToDevice));
+    int result = reduceSum(d_input_, 1);
+    EXPECT_EQ(result, 42);
+}
+
+TEST_F(ReduceTest, NonPowerOfTwo) {
+    h_input_.resize(1000);
+    for (int i = 0; i < 1000; ++i) h_input_[i] = i + 1;
+    CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), 1000 * sizeof(int), cudaMemcpyHostToDevice));
+    int result = reduceSum(d_input_, 1000);
+    EXPECT_EQ(result, 1000 * 1001 / 2);
+}

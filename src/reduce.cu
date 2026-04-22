@@ -27,6 +27,8 @@ __global__ void reduceBasicKernel(const T* input, T* output, size_t size) {
 
 template<typename T>
 T reduceSum(const T* d_input, size_t size) {
+    if (size == 0) return T{};
+
     const int blockSize = 256;
     int gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
 
@@ -78,6 +80,8 @@ __global__ void reduceOptimizedKernel(const T* input, T* output, size_t size) {
 
 template<typename T>
 T reduceSumOptimized(const T* d_input, size_t size) {
+    if (size == 0) return T{};
+
     const int blockSize = 256;
     int gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
 
@@ -120,7 +124,9 @@ __global__ void reduceMaxKernel(const T* input, T* output, size_t size) {
 }
 
 template<typename T>
-T reduceMax(const T* d_input, size_t size, int* maxIndex) {
+T reduceMax(const T* d_input, size_t size) {
+    if (size == 0) return T{};
+
     const int blockSize = 256;
     int gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
 
@@ -166,6 +172,8 @@ __global__ void reduceMinKernel(const T* input, T* output, size_t size) {
 
 template<typename T>
 T reduceMin(const T* d_input, size_t size) {
+    if (size == 0) return T{};
+
     const int blockSize = 256;
     int gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
 
@@ -197,10 +205,10 @@ template float reduceSumOptimized(const float* d_input, size_t size);
 template double reduceSumOptimized(const double* d_input, size_t size);
 template unsigned int reduceSumOptimized(const unsigned int* d_input, size_t size);
 
-template int reduceMax(const int* d_input, size_t size, int* maxIndex);
-template float reduceMax(const float* d_input, size_t size, int* maxIndex);
-template double reduceMax(const double* d_input, size_t size, int* maxIndex);
-template unsigned int reduceMax(const unsigned int* d_input, size_t size, int* maxIndex);
+template int reduceMax(const int* d_input, size_t size);
+template float reduceMax(const float* d_input, size_t size);
+template double reduceMax(const double* d_input, size_t size);
+template unsigned int reduceMax(const unsigned int* d_input, size_t size);
 
 template int reduceMin(const int* d_input, size_t size);
 template float reduceMin(const float* d_input, size_t size);
