@@ -17,22 +17,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Layer 3: STL-style DeviceVector container
 - **DeviceBuffer**: RAII wrapper for CUDA device memory management
 - **DeviceVector**: High-level STL-style container for device memory
-- **Forwarding Headers**: Backward compatibility for existing code
+- **Image Processing Module**: types, brightness, gaussian_blur, sobel_edge
+- **Parallel Primitives Module**: scan (prefix sum), sort (odd-even, bitonic)
+- **Matrix Operations Module**: add, mult (naive/tiled/cuBLAS)
 - **AGENTS.md**: Agent guidelines for development workflow
 
 ### Changed
 
 - **CMake**: Modernized with INTERFACE libraries (cuda_kernel, cuda_algo, cuda_api)
-- **Directory Structure**: Flat structure reorganized into layered architecture
+- **Directory Structure**: Organized by functional modules (image/, parallel/, matrix/)
 - **API Namespaces**: New API uses `cuda::kernel`, `cuda::algo`, `cuda::api`
+- **API**: Removed backward compatibility forwarding headers
 
-### Fixed
+### Deprecated
 
-- Test linking to proper layered libraries
-- Pre-existing CUBLAS_CHECK macro issue
+- Legacy flat include structure (use module paths instead)
+
+### Removed
+
+- **my_lib**: Example utility files deleted
+- **Forwarding headers**: Removed for cleaner API
 
 ### Documentation
 
-- Updated README with architecture diagrams and usage examples
+- Updated README with complete directory structure and module descriptions
 - Added implementation plan to docs/superpowers/
 - Added design specification to docs/superpowers/

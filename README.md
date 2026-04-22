@@ -8,23 +8,37 @@ A production-ready CUDA parallel algorithms library with layered architecture, s
 
 ## Architecture
 
-Three-layer architecture following cuBLAS/cuDNN patterns:
+### Directory Structure
 
 ```
-include/cuda/
-├── kernel/           # Layer 1: Pure device kernels
-│   ├── cuda_utils.h  # CUDA_CHECK macro, ReduceOp, warp_reduce
-│   └── reduce.h      # Kernel declarations
-├── algo/             # Layer 2: Algorithm wrappers
-│   ├── device_buffer.h  # RAII device memory management
-│   └── reduce.h      # reduce_sum, reduce_max, reduce_min, etc.
-└── api/              # Layer 3: High-level STL-style API
-    └── device_vector.h  # STL-style container
+include/
+├── cuda/                # Layered architecture (core)
+│   ├── kernel/          # Layer 1: Pure device kernels
+│   │   ├── cuda_utils.h # CUDA_CHECK macro, ReduceOp, warp_reduce
+│   │   └── reduce.h     # Kernel declarations
+│   ├── algo/            # Layer 2: Algorithm wrappers
+│   │   ├── device_buffer.h  # RAII device memory management
+│   │   └── reduce.h     # reduce_sum, reduce_max, reduce_min
+│   └── api/             # Layer 3: High-level STL-style API
+│       └── device_vector.h  # STL-style container
+├── image/               # Image processing
+│   ├── types.h          # ImageBuffer, ImageDimensions, PixelFormat
+│   ├── brightness.h     # Brightness/contrast adjustment
+│   ├── gaussian_blur.h  # Gaussian blur filter
+│   └── sobel_edge.h     # Sobel edge detection
+├── parallel/            # Parallel primitives
+│   ├── scan.h           # Prefix sum (exclusive/inclusive)
+│   └── sort.h           # Odd-even sort, bitonic sort
+└── matrix/              # Matrix operations
+    ├── add.h            # Matrix addition
+    └── mult.h           # Matrix multiplication (naive/tiled/cuBLAS)
 
 src/
-├── kernel/           # Kernel implementations (.cu)
-├── algo/             # Algorithm implementations (.cpp)
-└── main.cpp          # Benchmark demo
+├── cuda/kernel/         # Layer 1 kernel implementations
+├── image/               # Image processing implementations
+├── parallel/            # Parallel primitive implementations
+├── matrix/              # Matrix operation implementations
+└── main.cpp             # Benchmark demo
 ```
 
 ### Layer Responsibilities
@@ -70,7 +84,6 @@ int* d_input;
 cudaMalloc(&d_input, N * sizeof(int));
 // ... copy data to device ...
 
-// Use layered API with namespace
 int sum = cuda::algo::reduce_sum(d_input, N);
 int max = cuda::algo::reduce_max(d_input, N);
 ```
@@ -89,6 +102,17 @@ d_vec.copy_from(input);
 int sum = cuda::algo::reduce_sum(d_vec.data(), d_vec.size());
 ```
 
+## Modules
+
+| Module | Description | Files |
+|--------|-------------|-------|
+| **cuda/kernel** | Core CUDA kernels | reduce.cu |
+| **cuda/algo** | Algorithm wrappers | reduce.h |
+| **cuda/api** | High-level API | device_vector.h |
+| **image** | Image processing | types, brightness, gaussian_blur, sobel_edge |
+| **parallel** | Parallel primitives | scan, sort |
+| **matrix** | Matrix operations | add, mult |
+
 ## Development
 
 ### Makefile Targets
@@ -98,7 +122,7 @@ int sum = cuda::algo::reduce_sum(d_vec.data(), d_vec.size());
 | `make build` | Configure and build project |
 | `make run` | Run benchmark demo |
 | `make test` | Run all tests |
-| `make test-unit` | Run algorithm unit tests |
+| `make test-unit` | Run CUDA algorithm tests |
 | `make test-patterns` | Run test pattern generators |
 | `make clean` | Clean build artifacts |
 | `make image` | Build Docker image |
@@ -106,7 +130,7 @@ int sum = cuda::algo::reduce_sum(d_vec.data(), d_vec.size());
 
 ## Requirements
 
-- CUDA Toolkit 17+
+- CUDA Toolkit 12+
 - CMake 3.25+
 - C++20 compatible compiler
 - CUDA-capable GPU
