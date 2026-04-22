@@ -6,6 +6,7 @@ add_executable(cuda-samples-tests
     sobel_edge_test.cu
     brightness_test.cu
     reduce_test.cu
+    scan_test.cu
 )
 
 target_link_libraries(cuda-samples-tests
