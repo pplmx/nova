@@ -1,26 +1,46 @@
-.PHONY: help init build image
-.DEFAULT_GOAL := help
+.PHONY: help init build clean run test test-patterns benchmark image lint fmt
 
+DEFAULT_GOAL := help
 APP_NAME := cuda-samples
 
 # init
 init:
 	@prek install --hook-type commit-msg --hook-type pre-commit --hook-type pre-push
 
-# compile and build
-build:
+# configure
+configure:
 	@cmake -S . -B build
+
+# build
+build: configure
 	@cmake --build build --parallel
 
-# run
-run:
+# clean
+clean:
+	@rm -rf build
+
+# run demo
+run: build
 	@./build/bin/$(APP_NAME)
 
-# test
-test:
+# run all tests
+test: build
+	@./build/bin/$(APP_NAME)-tests
+	@./build/bin/test_patterns-tests
+
+# run unit tests only
+test-unit: build
 	@./build/bin/$(APP_NAME)-tests
 
-# build image
+# run pattern tests only
+test-patterns: build
+	@./build/bin/test_patterns-tests
+
+# run benchmark demo
+benchmark: build
+	@./build/bin/$(APP_NAME)
+
+# build docker image
 image:
 	@docker image build -t $(APP_NAME) .
 
