@@ -43,26 +43,26 @@ FetchContent_MakeAvailable(googletest)
 ```cmake
 find_package(CUDAToolkit REQUIRED)
 
-add_executable(cuda-samples-tests
+add_executable(cu-tests
     image_utils_test.cu
     gaussian_blur_test.cu
     sobel_edge_test.cu
     brightness_test.cu
 )
 
-target_link_libraries(cuda-samples-tests
+target_link_libraries(cu-tests
     PRIVATE
     GTest::gtest_main
     GTest::gmock
     CUDA::cudart
 )
 
-target_include_directories(cuda-samples-tests PRIVATE
+target_include_directories(cu-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/data
 )
 
-target_compile_options(cuda-samples-tests PRIVATE
+target_compile_options(cu-tests PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:
         --expt-relaxed-constexpr
         -lineinfo
@@ -70,7 +70,7 @@ target_compile_options(cuda-samples-tests PRIVATE
 )
 
 include(GoogleTest)
-gtest_discover_tests(cuda-samples-tests)
+gtest_discover_tests(cu-tests)
 ```
 
 - [ ] **Step 4: 下载 stb_image.h**
@@ -412,7 +412,7 @@ TEST_F(BrightnessTest, ContrastIncrease) {
 - [ ] **Step 4: 编译测试验证**
 
 ```bash
-mkdir -p build && cd build && cmake .. && make cuda-samples-tests && ./tests/cuda-samples-tests
+mkdir -p build && cd build && cmake .. && make cu-tests && ./tests/cu-tests
 ```
 
 - [ ] **Step 5: Commit**

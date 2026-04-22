@@ -1,6 +1,6 @@
 # Contribution guidelines
 
-First off, thank you for considering contributing to `cuda-samples`.
+First off, thank you for considering contributing to `cu`.
 
 If your contribution is not straightforward, please first discuss the change you
 wish to make by creating a new issue before making the change.
@@ -8,7 +8,7 @@ wish to make by creating a new issue before making the change.
 ## Reporting issues
 
 Before reporting an issue on the
-[issue tracker](https://github.com/pplmx/cuda-samples/issues),
+[issue tracker](https://github.com/pplmx/cu/issues),
 please check that it has not already been reported by searching for some related
 keywords.
 
@@ -42,8 +42,8 @@ If the required subsection does not exist yet under **Unreleased**, create it!
 This is no different from other C++ projects.
 
 ```shell
-git clone https://github.com/pplmx/cuda-samples
-cd cuda-samples
+git clone https://github.com/pplmx/cu
+cd cu
 make test
 ```
 

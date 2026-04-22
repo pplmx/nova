@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(cuda-samples
+project(cu
         VERSION 0.1.0
         DESCRIPTION "A CUDA parallel algorithms library with layered architecture"
-        HOMEPAGE_URL "https://github.com/pplmx/cuda-samples"
+        HOMEPAGE_URL "https://github.com/pplmx/cu"
         LANGUAGES CXX CUDA
 )
 

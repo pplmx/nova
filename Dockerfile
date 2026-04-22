@@ -19,11 +19,11 @@ RUN dnf upgrade --refresh -y && \
 
 COPY .. .
 
-RUN cmake -B build && cmake --build build --target cuda-samples --config Release --parallel 8
+RUN cmake -B build && cmake --build build --target cu --config Release --parallel 8
 
 # DEPLOYING
 FROM rockylinux:9-minimal
 
-COPY --from=builder /app/build/cuda-samples /cuda-samples
+COPY --from=builder /app/build/cu /cu
 
-CMD ["/cuda-samples"]
+CMD ["/cu"]

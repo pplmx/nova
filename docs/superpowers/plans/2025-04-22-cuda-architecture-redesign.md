@@ -94,10 +94,10 @@ git add -A && git commit -m "chore: create layered directory structure"
 ```cmake
 cmake_minimum_required(VERSION 3.25)
 
-project(cuda-samples
+project(cu
         VERSION 0.0.1
         DESCRIPTION "A CUDA parallel algorithms library"
-        HOMEPAGE_URL "https://github.com/pplmx/cuda-samples"
+        HOMEPAGE_URL "https://github.com/pplmx/cu"
         LANGUAGES CXX CUDA
 )
 
@@ -740,7 +740,7 @@ target_include_directories(test_patterns-tests PRIVATE
 include(GoogleTest)
 gtest_discover_tests(test_patterns-tests)
 
-add_executable(cuda-samples-tests
+add_executable(cu-tests
     image_utils_test.cu
     gaussian_blur_test.cu
     sobel_edge_test.cu
@@ -751,7 +751,7 @@ add_executable(cuda-samples-tests
     matrix_mult_test.cu
 )
 
-target_link_libraries(cuda-samples-tests
+target_link_libraries(cu-tests
     PRIVATE
     GTest::gtest_main
     GTest::gmock
@@ -760,12 +760,12 @@ target_link_libraries(cuda-samples-tests
     cuda_kernel_impl
 )
 
-target_include_directories(cuda-samples-tests PRIVATE
+target_include_directories(cu-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/data
 )
 
-target_compile_options(cuda-samples-tests PRIVATE
+target_compile_options(cu-tests PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:
         --expt-relaxed-constexpr
         -lineinfo
@@ -773,7 +773,7 @@ target_compile_options(cuda-samples-tests PRIVATE
 )
 
 include(GoogleTest)
-gtest_discover_tests(cuda-samples-tests)
+gtest_discover_tests(cu-tests)
 ```
 
 - [ ] **Step 3: Rebuild and run tests**
@@ -883,7 +883,7 @@ int main() {
 
 - [ ] **Step 2: Build and run demo**
 
-Run: `cmake --build build && ./build/bin/cuda-samples`
+Run: `cmake --build build && ./build/bin/cu`
 Expected: Demo runs successfully
 
 - [ ] **Step 3: Commit**

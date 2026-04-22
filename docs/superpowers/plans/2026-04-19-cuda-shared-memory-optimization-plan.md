@@ -94,7 +94,7 @@ template void multiplyMatricesNaive<double>(const double*, const double*, double
 
 - [ ] **Step 3: 编译验证**
 
-Run: `cd /home/mystvio/repos/cuda-samples && make build`
+Run: `cd /home/mystvio/repos/cu && make build`
 Expected: 编译成功,无 warnings
 
 - [ ] **Step 4: Commit**
@@ -225,7 +225,7 @@ template void multiplyMatricesTiled<double>(const double*, const double*, double
 
 - [ ] **Step 4: 编译验证**
 
-Run: `cd /home/mystvio/repos/cuda-samples && make build`
+Run: `cd /home/mystvio/repos/cu && make build`
 Expected: 编译成功,无 warnings
 
 - [ ] **Step 5: Commit**
@@ -337,7 +337,7 @@ int main() {
 
 - [ ] **Step 4: 编译验证**
 
-Run: `cd /home/mystvio/repos/cuda-samples && make build`
+Run: `cd /home/mystvio/repos/cu && make build`
 Expected: 编译成功
 
 - [ ] **Step 5: 运行测试**

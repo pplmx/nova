@@ -32,13 +32,13 @@ jobs:
                     context: .
                     load: true
                     tags: |
-                        ghcr.io/pplmx/cuda-samples:latest
-                        ghcr.io/pplmx/cuda-samples:${GITHUB_REF_NAME:1}
+                        ghcr.io/pplmx/cu:latest
+                        ghcr.io/pplmx/cu:${GITHUB_REF_NAME:1}
             -
                 name: Test it before Push
                 run: |
-                    docker run --rm ghcr.io/pplmx/cuda-samples:latest
-                    docker run --rm ghcr.io/pplmx/cuda-samples:${GITHUB_REF_NAME:1}
+                    docker run --rm ghcr.io/pplmx/cu:latest
+                    docker run --rm ghcr.io/pplmx/cu:${GITHUB_REF_NAME:1}
             -
                 name: Build and Push
                 uses: docker/build-push-action@v6
@@ -47,5 +47,5 @@ jobs:
                     platforms: linux/amd64,linux/arm64
                     push: true
                     tags: |
-                        ghcr.io/pplmx/cuda-samples:latest
-                        ghcr.io/pplmx/cuda-samples:${GITHUB_REF_NAME:1}
+                        ghcr.io/pplmx/cu:latest
+                        ghcr.io/pplmx/cu:${GITHUB_REF_NAME:1}

@@ -1,7 +1,7 @@
 .PHONY: help init build clean run test test-patterns benchmark image lint fmt
 
 DEFAULT_GOAL := help
-APP_NAME := cuda-samples
+APP_NAME := cu
 
 # init
 init:
@@ -25,12 +25,12 @@ run: build
 
 # run all tests
 test: build
-	@./build/bin/$(APP_NAME)-tests
+	@./build/bin/cu-tests
 	@./build/bin/test_patterns-tests
 
 # run unit tests only
 test-unit: build
-	@./build/bin/$(APP_NAME)-tests
+	@./build/bin/cu-tests
 
 # run pattern tests only
 test-patterns: build

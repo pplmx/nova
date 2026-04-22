@@ -1,11 +1,11 @@
 service:
-    cuda_samples:
+    cu:
         build: .
-        image: cuda-samples
+        image: cu
 
 networks:
-    cuda_samples-net:
-        name: cuda_samples-net
+    cu-net:
+        name: cu-net
         ipam:
             config:
                 -   subnet: 172.16.238.0/24

@@ -305,8 +305,8 @@ target_link_libraries(cuda_impl PUBLIC cuda_api CUDA::cudart CUDA::cublas)
 | Target | Description |
 |--------|-------------|
 | cuda_impl | Static library with all implementations |
-| cuda-samples | Benchmark demo executable |
-| cuda-samples-tests | Test executable (119 tests) |
+| cu | Benchmark demo executable |
+| cu-tests | Test executable (81 tests) |
 | test_patterns-tests | Pattern generator tests (14 tests) |
 
 ### 7.3 Makefile Targets
