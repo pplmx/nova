@@ -92,7 +92,7 @@ T execute_reduce(const T* input, size_t size, bool optimized, cuda::kernel::Redu
     const int blockSize = 256;
     int gridSize = (size + blockSize * 2 - 1) / (blockSize * 2);
 
-    DeviceBuffer<T> output(gridSize);
+    cuda::algo::DeviceBuffer<T> output(gridSize);
 
     if (optimized) {
         cuda::kernel::reduce_optimized_kernel<T><<<gridSize, blockSize>>>(input, output.data(), size, op);
