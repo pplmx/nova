@@ -42,6 +42,7 @@ set(PARALLEL_DIR ${CMAKE_SOURCE_DIR}/src/parallel)
 set(MATRIX_DIR ${CMAKE_SOURCE_DIR}/src/matrix)
 set(CONVOLUTION_DIR ${CMAKE_SOURCE_DIR}/src/convolution)
 set(MEMORY_DIR ${CMAKE_SOURCE_DIR}/src/memory)
+set(CUDA_FFT_DIR ${CMAKE_SOURCE_DIR}/src/cuda/fft)
 
 add_library(cuda_memory INTERFACE)
 target_include_directories(cuda_memory INTERFACE
@@ -117,6 +118,10 @@ set(MEMORY_SOURCES
         ${MEMORY_DIR}/memory_pool.cpp
 )
 
+set(FFT_SOURCES
+        ${CUDA_FFT_DIR}/fft.cu
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -125,6 +130,7 @@ set(ALL_CUDA_SOURCES
         ${MATRIX_SOURCES}
         ${CONVOLUTION_SOURCES}
         ${MEMORY_SOURCES}
+        ${FFT_SOURCES}
 )
 
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
@@ -139,6 +145,7 @@ target_link_libraries(cuda_impl PUBLIC
         cuda_algo
         CUDA::cudart
         CUDA::cublas
+        CUDA::cufft
 )
 set_target_properties(cuda_impl PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON

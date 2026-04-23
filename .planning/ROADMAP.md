@@ -117,8 +117,13 @@ Plans:
 
 **Key Files:**
 - `include/cuda/fft/fft.h` (new)
+- `include/cuda/fft/fft_types.h` (new)
 - `src/cuda/fft/fft.cu` (new)
 - `tests/fft/*_test.cu` (new)
+
+**Plans:** 1 plan
+Plans:
+- [ ] 03-01-PLAN.md — FFT Module Implementation (FFT-01, FFT-02, FFT-03, FFT-04)
 
 ---
 
