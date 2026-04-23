@@ -43,6 +43,7 @@ set(MATRIX_DIR ${CMAKE_SOURCE_DIR}/src/matrix)
 set(CONVOLUTION_DIR ${CMAKE_SOURCE_DIR}/src/convolution)
 set(MEMORY_DIR ${CMAKE_SOURCE_DIR}/src/memory)
 set(CUDA_FFT_DIR ${CMAKE_SOURCE_DIR}/src/cuda/fft)
+set(CUDA_RAYTRACE_DIR ${CMAKE_SOURCE_DIR}/src/cuda/raytrace)
 
 add_library(cuda_memory INTERFACE)
 target_include_directories(cuda_memory INTERFACE
@@ -122,6 +123,11 @@ set(FFT_SOURCES
         ${CUDA_FFT_DIR}/fft.cu
 )
 
+set(RAYTRACE_SOURCES
+        ${CUDA_RAYTRACE_DIR}/primitives.cu
+        ${CUDA_RAYTRACE_DIR}/bvh.cu
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -131,6 +137,7 @@ set(ALL_CUDA_SOURCES
         ${CONVOLUTION_SOURCES}
         ${MEMORY_SOURCES}
         ${FFT_SOURCES}
+        ${RAYTRACE_SOURCES}
 )
 
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
