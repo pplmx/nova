@@ -27,6 +27,9 @@ add_executable(nova-tests
     device_info_test.cpp
     memory_metrics_test.cpp
     error_context_test.cpp
+    benchmark/benchmark_test.cpp
+    benchmark/throughput_test.cpp
+    benchmark/regression_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -34,6 +37,7 @@ set(CUDA_ALGO_DIR ${CMAKE_SOURCE_DIR}/include/cuda/algo)
 set(CUDA_STREAM_DIR ${CMAKE_SOURCE_DIR}/include/cuda/stream)
 set(CUDA_PERFORMANCE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/performance)
 set(CUDA_MEMORY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/memory)
+set(CUDA_BENCHMARK_DIR ${CMAKE_SOURCE_DIR}/include/cuda/benchmark)
 
 target_link_libraries(nova-tests
     PRIVATE
@@ -51,6 +55,7 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_STREAM_DIR}
     ${CUDA_PERFORMANCE_DIR}
     ${CUDA_MEMORY_DIR}
+    ${CUDA_BENCHMARK_DIR}
 )
 
 target_compile_options(nova-tests PRIVATE
