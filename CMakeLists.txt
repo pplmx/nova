@@ -44,6 +44,7 @@ set(CONVOLUTION_DIR ${CMAKE_SOURCE_DIR}/src/convolution)
 set(MEMORY_DIR ${CMAKE_SOURCE_DIR}/src/memory)
 set(CUDA_FFT_DIR ${CMAKE_SOURCE_DIR}/src/cuda/fft)
 set(CUDA_RAYTRACE_DIR ${CMAKE_SOURCE_DIR}/src/cuda/raytrace)
+set(CUDA_GRAPH_DIR ${CMAKE_SOURCE_DIR}/src/cuda/graph)
 
 add_library(cuda_memory INTERFACE)
 target_include_directories(cuda_memory INTERFACE
@@ -128,6 +129,12 @@ set(RAYTRACE_SOURCES
         ${CUDA_RAYTRACE_DIR}/bvh.cu
 )
 
+set(GRAPH_SOURCES
+        ${CUDA_GRAPH_DIR}/csr_graph.cu
+        ${CUDA_GRAPH_DIR}/bfs.cu
+        ${CUDA_GRAPH_DIR}/pagerank.cu
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -138,6 +145,7 @@ set(ALL_CUDA_SOURCES
         ${MEMORY_SOURCES}
         ${FFT_SOURCES}
         ${RAYTRACE_SOURCES}
+        ${GRAPH_SOURCES}
 )
 
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})

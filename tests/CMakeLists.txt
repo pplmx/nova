@@ -40,6 +40,9 @@ add_executable(nova-tests
     raytrace/ray_box_test.cpp
     raytrace/ray_sphere_test.cpp
     raytrace/bvh_test.cpp
+    graph/csr_graph_test.cpp
+    graph/bfs_test.cpp
+    graph/pagerank_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -51,6 +54,7 @@ set(CUDA_BENCHMARK_DIR ${CMAKE_SOURCE_DIR}/include/cuda/benchmark)
 set(CUDA_ASYNC_DIR ${CMAKE_SOURCE_DIR}/include/cuda/async)
 set(CUDA_FFT_DIR ${CMAKE_SOURCE_DIR}/include/cuda/fft)
 set(CUDA_RAYTRACE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/raytrace)
+set(CUDA_GRAPH_DIR ${CMAKE_SOURCE_DIR}/include/cuda/graph)
 
 target_link_libraries(nova-tests
     PRIVATE
@@ -72,6 +76,7 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_ASYNC_DIR}
     ${CUDA_FFT_DIR}
     ${CUDA_RAYTRACE_DIR}
+    ${CUDA_GRAPH_DIR}
 )
 
 target_compile_options(nova-tests PRIVATE
