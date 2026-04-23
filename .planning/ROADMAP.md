@@ -12,7 +12,7 @@
 | 3 | FFT Module | Fast Fourier Transform implementation | FFT-01 to FFT-04 | 4 criteria |
 | 4 | Ray Tracing Primitives | Intersection tests and BVH helpers | RAY-01 to RAY-04 | 4 criteria | 1 plan |
 | 5 | Graph Algorithms | BFS and PageRank on GPU | GRAPH-01 to GRAPH-04 | 4 criteria |
-| 6 | Neural Net Primitives | Matmul, softmax, ReLU, layer norm | NN-01 to NN-04 | 4 criteria |
+| 6 | Neural Net Primitives | Matmul, softmax, ReLU, layer norm | NN-01 to NN-04 | 4 criteria | 1 plan |
 
 ---
 
@@ -207,6 +207,36 @@ Plans:
 - `include/cuda/neural/layer_norm.h` (new)
 - `src/cuda/neural/*.cu` (new)
 - `tests/neural/*_test.cu` (new)
+
+---
+
+## Phase 6: Neural Net Primitives
+
+**Goal:** GPU kernels for common deep learning operations
+
+**Requirements:**
+- NN-01: Matrix multiply matches cuBLAS reference for correctness
+- NN-02: Softmax computes numerically stable results (no NaN)
+- NN-03: Leaky ReLU supports configurable negative slope
+- NN-04: Layer normalization produces correct mean and variance
+
+**Success Criteria:**
+1. Matmul output matches cuBLAS reference within 1e-3 absolute error
+2. Softmax produces no NaN values for any input range
+3. Leaky ReLU supports configurable alpha (default 0.01)
+4. Layer normalization produces correct mean (approx 0) and variance (approx 1)
+
+**Key Files:**
+- `include/cuda/neural/matmul.h` (new)
+- `include/cuda/neural/softmax.h` (new)
+- `include/cuda/neural/activations.h` (new)
+- `include/cuda/neural/layer_norm.h` (new)
+- `src/cuda/neural/*.cu` (new)
+- `tests/neural/*_test.cpp` (new)
+
+**Plans:** 1 plan
+Plans:
+- [ ] 06-01-PLAN.md — Neural Net Primitives (NN-01, NN-02, NN-03, NN-04)
 
 ---
 
