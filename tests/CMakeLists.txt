@@ -22,6 +22,7 @@ add_executable(nova-tests
     convolution_test.cu
     memory_pool_test.cpp
     memory_pool_metrics_test.cpp
+    memory_pool_stream_test.cpp
     stream_event_test.cpp
     cublas_context_test.cu
     device_info_test.cpp
@@ -32,6 +33,7 @@ add_executable(nova-tests
     benchmark/regression_test.cpp
     stream_manager_test.cpp
     pinned_memory_test.cpp
+    async_copy_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

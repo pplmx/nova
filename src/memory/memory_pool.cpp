@@ -1,6 +1,7 @@
 #include "cuda/memory/memory_pool.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 #include "cuda/device/error.h"
 
@@ -90,7 +91,7 @@ namespace cuda::memory {
         return nullptr;
     }
 
-    void* MemoryPool::allocate(size_t bytes) {
+    void* MemoryPool::allocate(size_t bytes, int stream_id) {
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (bytes == 0) {
@@ -105,15 +106,21 @@ namespace cuda::memory {
             ++misses_;
             block = allocate_block();
             if (!block) {
+                if (!throw_on_failure_) {
+                    return nullptr;
+                }
                 throw std::runtime_error("MemoryPool: failed to allocate block");
             }
         }
 
         void* result = static_cast<char*>(block->ptr) + block->offset;
-        allocation_map_[result] = block - blocks_.data();
+        allocation_map_[result] = {static_cast<size_t>(block - blocks_.data()), stream_id};
         block->offset += bytes;
+        block->stream_id = stream_id;
         total_allocated_ += bytes;
         total_available_ -= bytes;
+
+        peak_allocated_bytes_ = std::max(peak_allocated_bytes_, total_allocated_);
 
         return result;
     }
@@ -130,7 +137,7 @@ namespace cuda::memory {
             return;
         }
 
-        size_t block_idx = it->second;
+        size_t block_idx = it->second.block_idx;
         if (block_idx >= blocks_.size()) {
             return;
         }
@@ -143,6 +150,7 @@ namespace cuda::memory {
 
             if (block.offset == 0) {
                 block.ptr = nullptr;
+                block.stream_id = -1;
             }
         }
 
@@ -172,15 +180,21 @@ namespace cuda::memory {
         PoolMetrics metrics;
         metrics.hits = hits_;
         metrics.misses = misses_;
+        metrics.peak_allocated_bytes = peak_allocated_bytes_;
 
+        std::unordered_set<int> active_streams;
         size_t total_block_space = 0;
         size_t total_free_space = 0;
         for (const auto& block : blocks_) {
             if (block.ptr) {
                 total_block_space += block.size;
                 total_free_space += (block.size - block.offset);
+                if (block.stream_id >= 0) {
+                    active_streams.insert(block.stream_id);
+                }
             }
         }
+        metrics.num_active_streams = static_cast<int>(active_streams.size());
 
         if (total_block_space > 0) {
             metrics.fragmentation_bytes = total_free_space;
@@ -212,6 +226,28 @@ namespace cuda::memory {
                 total_available_ += (block.size - block.offset);
             }
         }
+    }
+
+    std::unordered_map<int, size_t> MemoryPool::get_allocations_by_stream() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        std::unordered_map<int, size_t> result;
+        for (const auto& [ptr, info] : allocation_map_) {
+            if (info.block_idx < blocks_.size()) {
+                const Block& block = blocks_[info.block_idx];
+                result[info.stream_id] += block.offset;
+            }
+        }
+        return result;
+    }
+
+    void MemoryPool::synchronize_stream(int stream_id) {
+        CUDA_CHECK(cudaStreamSynchronize(nullptr));
+    }
+
+    void MemoryPool::set_throw_on_failure(bool throw_on_failure) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        throw_on_failure_ = throw_on_failure;
     }
 
 }  // namespace cuda::memory
