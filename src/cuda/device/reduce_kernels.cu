@@ -4,7 +4,7 @@
 namespace cuda::device {
 
     template <typename T>
-    __global__ void reduce_basic_kernel(const T* input, T* output, size_t size, ReduceOp op) {
+    __global__ __launch_bounds__(REDUCE_BLOCK_SIZE, 2) void reduce_basic_kernel(const T* input, T* output, size_t size, ReduceOp op) {
         __shared__ T sdata[REDUCE_BLOCK_SIZE];
         const size_t tid = threadIdx.x;
         const size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
@@ -44,7 +44,7 @@ namespace cuda::device {
     }
 
     template <typename T>
-    __global__ void reduce_optimized_kernel(const T* input, T* output, size_t size, ReduceOp op) {
+    __global__ __launch_bounds__(REDUCE_BLOCK_SIZE, 2) void reduce_optimized_kernel(const T* input, T* output, size_t size, ReduceOp op) {
         __shared__ T sdata[REDUCE_OPTIMIZED_SHMEM_SIZE];
         const size_t tid = threadIdx.x;
         const size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;

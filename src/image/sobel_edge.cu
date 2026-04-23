@@ -3,7 +3,7 @@
 #include "cuda/device/device_utils.h"
 #include "image/sobel_edge.h"
 
-__global__ void sobelKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float threshold) {
+__global__ __launch_bounds__(256, 2) void sobelKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float threshold) {
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 

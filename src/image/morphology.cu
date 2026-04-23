@@ -3,7 +3,7 @@
 #include "cuda/device/device_utils.h"
 #include "image/morphology.h"
 
-__global__ void sharpenKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float strength) {
+__global__ __launch_bounds__(256, 2) void sharpenKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float strength) {
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -43,7 +43,7 @@ void sharpenImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-__global__ void thresholdKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, uint8_t threshold) {
+__global__ __launch_bounds__(256, 2) void thresholdKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, uint8_t threshold) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t total = width * height * 3;
 
@@ -62,7 +62,7 @@ void applyThreshold(const uint8_t* d_input, uint8_t* d_output, size_t width, siz
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-__global__ void erodeKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, int half) {
+__global__ __launch_bounds__(256, 2) void erodeKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, int half) {
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -100,7 +100,7 @@ void erodeImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t 
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-__global__ void dilateKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, int half) {
+__global__ __launch_bounds__(256, 2) void dilateKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, int half) {
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 

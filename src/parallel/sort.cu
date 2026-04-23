@@ -10,7 +10,7 @@ namespace cuda::parallel {
     namespace {
 
         template <typename T>
-        __global__ void oddEvenPhaseKernel(const T* input, T* output, size_t size, bool evenPhase) {
+        __global__ __launch_bounds__(256, 2) void oddEvenPhaseKernel(const T* input, T* output, size_t size, bool evenPhase) {
             size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
             size_t i = evenPhase ? (tid * 2) : (tid * 2 + 1);
 
@@ -28,7 +28,7 @@ namespace cuda::parallel {
         }
 
         template <typename T>
-        __global__ void copyKernel(const T* input, T* output, size_t size) {
+        __global__ __launch_bounds__(256, 2) void copyKernel(const T* input, T* output, size_t size) {
             size_t i = blockIdx.x * blockDim.x + threadIdx.x;
             if (i < size) {
                 output[i] = input[i];
@@ -71,7 +71,7 @@ namespace cuda::parallel {
         }
 
         template <typename T>
-        __global__ void padWithMaxKernel(T* data, size_t size, size_t paddedSize, T maxVal) {
+        __global__ __launch_bounds__(256, 2) void padWithMaxKernel(T* data, size_t size, size_t paddedSize, T maxVal) {
             size_t i = blockIdx.x * blockDim.x + threadIdx.x;
             if (i >= size && i < paddedSize) {
                 data[i] = maxVal;

@@ -6,7 +6,7 @@
 constexpr int HIST_BLOCK_SIZE = 256;
 constexpr int HIST_BINS = 256;
 
-__global__ void histogramKernel(const uint8_t* input, uint32_t* histogram, size_t width, size_t height) {
+__global__ __launch_bounds__(HIST_BLOCK_SIZE, 2) void histogramKernel(const uint8_t* input, uint32_t* histogram, size_t width, size_t height) {
     __shared__ uint32_t temp[HIST_BINS];
 
     size_t tid = threadIdx.x;
@@ -29,7 +29,7 @@ __global__ void histogramKernel(const uint8_t* input, uint32_t* histogram, size_
     }
 }
 
-__global__ void histogramPerChannelKernel(const uint8_t* input, uint32_t* histogram_r, uint32_t* histogram_g, uint32_t* histogram_b, size_t width, size_t height) {
+__global__ __launch_bounds__(HIST_BLOCK_SIZE, 2) void histogramPerChannelKernel(const uint8_t* input, uint32_t* histogram_r, uint32_t* histogram_g, uint32_t* histogram_b, size_t width, size_t height) {
     __shared__ uint32_t temp_r[HIST_BINS];
     __shared__ uint32_t temp_g[HIST_BINS];
     __shared__ uint32_t temp_b[HIST_BINS];
@@ -85,7 +85,7 @@ void computeHistogramPerChannel(const uint8_t* d_input, uint32_t* d_histogram_r,
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-__global__ void histogramEqualizeKernel(const uint8_t* input, uint8_t* output, const uint32_t* histogram, size_t width, size_t height, float scale) {
+__global__ __launch_bounds__(256, 2) void histogramEqualizeKernel(const uint8_t* input, uint8_t* output, const uint32_t* histogram, size_t width, size_t height, float scale) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t total = width * height * 3;
 

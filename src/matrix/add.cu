@@ -7,7 +7,7 @@ namespace cuda::algo {
     namespace {
 
         template <typename T>
-        __global__ void addMatricesKernel(const T* matrixA, const T* matrixB, T* resultMatrix, int numRows, int numCols) {
+        __global__ __launch_bounds__(256, 2) void addMatricesKernel(const T* matrixA, const T* matrixB, T* resultMatrix, int numRows, int numCols) {
             int row = blockIdx.y * blockDim.y + threadIdx.y;
             int col = blockIdx.x * blockDim.x + threadIdx.x;
 

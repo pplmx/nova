@@ -8,7 +8,7 @@
 namespace {
 
     template <typename T>
-    __global__ void convolve2DKernel(const T* input, T* output, const T* kernel, size_t width, size_t height, int kernel_size, int half) {
+    __global__ __launch_bounds__(256, 2) void convolve2DKernel(const T* input, T* output, const T* kernel, size_t width, size_t height, int kernel_size, int half) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 

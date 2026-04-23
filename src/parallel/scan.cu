@@ -4,7 +4,7 @@
 namespace {
 
     template <typename T>
-    __global__ void exclusiveScanKernel(const T* input, T* output, size_t size) {
+    __global__ __launch_bounds__(MAX_SCAN_SIZE, 1) void exclusiveScanKernel(const T* input, T* output, size_t size) {
         extern __shared__ T temp[];
         const size_t tid = threadIdx.x;
 
@@ -34,7 +34,7 @@ namespace {
     }
 
     template <typename T>
-    __global__ void inclusiveScanKernel(const T* input, T* output, size_t size) {
+    __global__ __launch_bounds__(MAX_SCAN_SIZE, 1) void inclusiveScanKernel(const T* input, T* output, size_t size) {
         extern __shared__ T temp[];
         const size_t tid = threadIdx.x;
 
@@ -64,7 +64,7 @@ namespace {
     }
 
     template <typename T>
-    __global__ void exclusiveScanOptimizedKernel(const T* input, T* output, size_t size) {
+    __global__ __launch_bounds__(MAX_SCAN_SIZE, 1) void exclusiveScanOptimizedKernel(const T* input, T* output, size_t size) {
         extern __shared__ T temp[];
         const size_t tid = threadIdx.x;
 

@@ -6,7 +6,7 @@
 constexpr int TILE_SIZE = 16;
 
 template <typename T>
-__global__ void transposeKernel(const T* input, T* output, int rows, int cols) {
+__global__ __launch_bounds__(256, 2) void transposeKernel(const T* input, T* output, int rows, int cols) {
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -28,7 +28,7 @@ void transposeMatrix(const T* d_input, T* d_output, int rows, int cols) {
 }
 
 template <typename T>
-__global__ void transposeTiledKernel(const T* input, T* output, int rows, int cols) {
+__global__ __launch_bounds__(256, 2) void transposeTiledKernel(const T* input, T* output, int rows, int cols) {
     __shared__ T tile[TILE_SIZE][TILE_SIZE];
 
     size_t x = blockIdx.x * TILE_SIZE + threadIdx.x;
@@ -58,7 +58,7 @@ void transposeMatrixTiled(const T* d_input, T* d_output, int rows, int cols) {
 }
 
 template <typename T>
-__global__ void elementwiseAddKernel(const T* a, const T* b, T* c, int rows, int cols) {
+__global__ __launch_bounds__(256, 2) void elementwiseAddKernel(const T* a, const T* b, T* c, int rows, int cols) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t total = rows * cols;
 
@@ -79,7 +79,7 @@ void matrixElementwiseAdd(const T* d_a, const T* d_b, T* d_c, int rows, int cols
 }
 
 template <typename T>
-__global__ void elementwiseMultiplyKernel(const T* a, const T* b, T* c, int rows, int cols) {
+__global__ __launch_bounds__(256, 2) void elementwiseMultiplyKernel(const T* a, const T* b, T* c, int rows, int cols) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t total = rows * cols;
 
@@ -100,7 +100,7 @@ void matrixElementwiseMultiply(const T* d_a, const T* d_b, T* d_c, int rows, int
 }
 
 template <typename T>
-__global__ void scaleKernel(T* matrix, T scalar, size_t size) {
+__global__ __launch_bounds__(256, 2) void scaleKernel(T* matrix, T scalar, size_t size) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < size) {

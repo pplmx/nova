@@ -79,33 +79,42 @@ target_include_directories(cuda_api INTERFACE
 )
 target_link_libraries(cuda_api INTERFACE cuda_algo)
 
-file(GLOB_RECURSE DEVICE_SOURCES CONFIGURE_DEPENDS
-        ${CUDA_SRC_DEVICE}/*.cu
+set(DEVICE_SOURCES
+        ${CUDA_SRC_DEVICE}/reduce_kernels.cu
+        ${CUDA_SRC_DEVICE}/cublas_context.cu
 )
 
-file(GLOB_RECURSE ALGO_SOURCES CONFIGURE_DEPENDS
-        ${CUDA_SRC_ALGO}/*.cpp
-        ${CUDA_SRC_ALGO}/*.cu
+set(ALGO_SOURCES
+        ${CUDA_SRC_ALGO}/reduce.cu
 )
 
-file(GLOB_RECURSE IMAGE_SOURCES CONFIGURE_DEPENDS
-        ${IMAGE_DIR}/*.cu
+set(IMAGE_SOURCES
+        ${IMAGE_DIR}/brightness.cu
+        ${IMAGE_DIR}/gaussian_blur.cu
+        ${IMAGE_DIR}/morphology.cu
+        ${IMAGE_DIR}/sobel_edge.cu
+        ${IMAGE_DIR}/types.cu
 )
 
-file(GLOB_RECURSE PARALLEL_SOURCES CONFIGURE_DEPENDS
-        ${PARALLEL_DIR}/*.cu
+set(PARALLEL_SOURCES
+        ${PARALLEL_DIR}/histogram.cu
+        ${PARALLEL_DIR}/scan.cu
+        ${PARALLEL_DIR}/sort.cu
 )
 
-file(GLOB_RECURSE MATRIX_SOURCES CONFIGURE_DEPENDS
-        ${MATRIX_DIR}/*.cu
+set(MATRIX_SOURCES
+        ${MATRIX_DIR}/add.cu
+        ${MATRIX_DIR}/mult.cu
+        ${MATRIX_DIR}/ops.cu
 )
 
-file(GLOB_RECURSE CONVOLUTION_SOURCES CONFIGURE_DEPENDS
-        ${CONVOLUTION_DIR}/*.cu
+set(CONVOLUTION_SOURCES
+        ${CONVOLUTION_DIR}/conv2d.cu
 )
 
-file(GLOB_RECURSE MEMORY_SOURCES CONFIGURE_DEPENDS
-        ${MEMORY_DIR}/*.cpp
+set(MEMORY_SOURCES
+        ${MEMORY_DIR}/buffer.cpp
+        ${MEMORY_DIR}/memory_pool.cpp
 )
 
 set(ALL_CUDA_SOURCES

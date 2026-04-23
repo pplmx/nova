@@ -1,7 +1,7 @@
 #include "cuda/device/device_utils.h"
 #include "image/brightness.h"
 
-__global__ void brightnessContrastKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float contrast_factor, float brightness_offset) {
+__global__ __launch_bounds__(256, 2) void brightnessContrastKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float contrast_factor, float brightness_offset) {
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
