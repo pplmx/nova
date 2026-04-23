@@ -7,10 +7,10 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase** | 4 (Complete) |
-| **Overall Progress** | 31% (18/58 requirements) |
-| **Active Requirements** | 16 |
-| **Completed Requirements** | 18 |
+| **Phase** | 5 (Complete) |
+| **Overall Progress** | 38% (22/58 requirements) |
+| **Active Requirements** | 12 |
+| **Completed Requirements** | 22 |
 
 ## Project Reference
 
@@ -18,7 +18,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** A reliable, high-performance CUDA compute library that can be trusted in production environments, with comprehensive algorithms for scientific computing, image processing, and emerging workloads.
 
-**Current focus:** Phase 5 - Graph Algorithms
+**Current focus:** Phase 6 - Neural Net Primitives
 
 ## Phase Progress
 
@@ -28,13 +28,14 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 | 2: Async & Streaming | ✓ Complete | 2026-04-23 | 2026-04-23 | 8 |
 | 3: FFT Module | ✓ Complete | 2026-04-23 | 2026-04-23 | 4 |
 | 4: Ray Tracing Primitives | ✓ Complete | 2026-04-23 | 2026-04-23 | 4 |
-| 5: Graph Algorithms | Not Started | — | — | 4 |
+| 5: Graph Algorithms | ✓ Complete | 2026-04-23 | 2026-04-23 | 4 |
 | 6: Neural Net Primitives | Not Started | — | — | 4 |
 
 ## Recent Activity
 
 | Date | Action | Details |
 |------|--------|---------|
+| 2026-04-23 | Complete Phase 5 | Graph algorithms, BFS, PageRank, 31 tests |
 | 2026-04-23 | Complete Phase 4 | Ray tracing primitives, BVH, 29 tests |
 | 2026-04-23 | Complete Phase 3 | FFT plan, forward/inverse transforms, 20 tests |
 | 2026-04-23 | Complete Phase 2 | Stream manager, pinned memory, async copy |
@@ -42,7 +43,6 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 | 2026-04-23 | Complete Phase 1 | Device info, memory metrics, benchmark framework |
 | 2026-04-23 | Initialize project | Created PROJECT.md |
 | 2026-04-23 | Research | Added 5 research documents |
-| 2026-04-23 | Requirements | Defined 28 v1 requirements |
 
 ## Notes
 
@@ -52,7 +52,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 ## Next Action
 
-Execute: `/gsd-plan-phase 5` to plan Phase 5 (Graph Algorithms).
+Execute: `/gsd-plan-phase 6` to plan Phase 6 (Neural Net Primitives).
 
 ---
 
