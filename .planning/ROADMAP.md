@@ -10,7 +10,7 @@
 | 1 | Performance Foundations | Device-aware kernels, memory metrics, validation, benchmarks | PERF-01 to PERF-06, BMCH-01 to BMCH-04 | 10 criteria |
 | 2 | Async & Streaming | CUDA streams, pinned memory, pool improvements | ASYNC-01 to ASYNC-04, POOL-01 to POOL-04 | 8 criteria |
 | 3 | FFT Module | Fast Fourier Transform implementation | FFT-01 to FFT-04 | 4 criteria |
-| 4 | Ray Tracing Primitives | Intersection tests and BVH helpers | RAY-01 to RAY-04 | 4 criteria |
+| 4 | Ray Tracing Primitives | Intersection tests and BVH helpers | RAY-01 to RAY-04 | 4 criteria | 1 plan |
 | 5 | Graph Algorithms | BFS and PageRank on GPU | GRAPH-01 to GRAPH-04 | 4 criteria |
 | 6 | Neural Net Primitives | Matmul, softmax, ReLU, layer norm | NN-01 to NN-04 | 4 criteria |
 
@@ -148,6 +148,10 @@ Plans:
 - `include/cuda/raytrace/bvh.h` (new)
 - `src/cuda/raytrace/*.cu` (new)
 - `tests/raytrace/*_test.cu` (new)
+
+**Plans:** 1 plan
+Plans:
+- [ ] 04-01-PLAN.md — Ray Tracing Primitives (RAY-01, RAY-02, RAY-03, RAY-04)
 
 ---
 
