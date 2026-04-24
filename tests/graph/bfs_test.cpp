@@ -8,7 +8,10 @@ using namespace cuda::graph;
 class BFSTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        cudaDeviceReset();
+        cudaError_t err = cudaSetDevice(0);
+        if (err != cudaSuccess && err != cudaErrorNoDevice) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
     }
 
     std::vector<std::vector<int>> create_simple_graph() {

@@ -9,7 +9,10 @@
 class FFTInverseTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        cudaDeviceReset();
+        cudaError_t err = cudaSetDevice(0);
+        if (err != cudaSuccess && err != cudaErrorNoDevice) {
+            GTEST_SKIP() << "No CUDA device available";
+        }
     }
 
     static constexpr size_t FFT_SIZE = 256;
