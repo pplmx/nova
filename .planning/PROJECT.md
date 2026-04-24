@@ -47,10 +47,11 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 
 ### Active
 
-- [ ] NCCL integration for optimized multi-GPU collectives
-- [ ] Tensor parallelism for large layer support
-- [ ] Pipeline parallelism for deep model support
-- [ ] Distributed batch normalization
+- [ ] NCCL integration for optimized multi-GPU collectives — Phase 13-14
+- [ ] Extended NCCL collectives with unified fallback — Phase 15
+- [ ] Tensor parallelism for large layer support — Phase 16
+- [ ] Pipeline parallelism for deep model support — Phase 17
+- [ ] Distributed batch normalization — v2 (deferred)
 
 ### Out of Scope
 

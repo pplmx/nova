@@ -2,15 +2,16 @@
 gsd_state_version: 1.1
 milestone: v1.3
 milestone_name: NCCL Integration, Tensor & Pipeline Parallelism
-status: milestone started
-last_updated: "2026-04-24T14:00:00.000Z"
+status: planning complete
+last_updated: "2026-04-24T15:00:00.000Z"
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
   percent: 0
 milestone_complete: false
+current_phase: 13
 ---
 
 # Project State
@@ -23,9 +24,20 @@ milestone_complete: false
 | Field | Value |
 |-------|-------|
 | **Milestone** | v1.3 NCCL Integration, Tensor & Pipeline Parallelism |
-| **Overall Progress** | 0% (0/0 phases, 0/0 plans) |
-| **Total Requirements** | 80 (validated), 4 (active) |
-| **Status** | Defining requirements |
+| **Phase** | 13 (next: NCCL Foundation) |
+| **Overall Progress** | 0% (0/5 phases, 0/0 plans) |
+| **Total Requirements** | 26 |
+| **Status** | Planning complete, ready to build |
+
+## Phase Progress
+
+| Phase | Status | Requirements |
+|-------|--------|--------------|
+| 13: NCCL Foundation | Pending | NCCL-01 to NCCL-05 |
+| 14: Core Collectives | Pending | COLL-01 to COLL-05 |
+| 15: Extended Collectives | Pending | EXTD-01 to EXTD-05 |
+| 16: Tensor Parallelism | Pending | TENS-01 to TENS-06 |
+| 17: Pipeline Parallelism | Pending | PIPE-01 to PIPE-06 |
 
 ## Milestone Goals
 
@@ -33,7 +45,7 @@ Enable efficient multi-GPU training with:
 - NCCL integration for optimized multi-GPU collectives
 - Tensor parallelism for large layer support
 - Pipeline parallelism for deep model support
-- Distributed batch normalization
+- Distributed batch normalization (v2)
 
 ## Milestone History
 
@@ -42,12 +54,14 @@ Enable efficient multi-GPU training with:
 | v1.0 Production Release | ✅ Shipped | 2026-04-24 | 58 |
 | v1.1 Multi-GPU Support | ✅ Shipped | 2026-04-24 | 13 |
 | v1.2 Toolchain Upgrade | ✅ Shipped | 2026-04-24 | 9 |
-| v1.3 NCCL Integration | 🔄 Active | 2026-04-24 | 4 (deferred from v1.2) |
+| v1.3 NCCL Integration | 🔄 Active | 2026-04-24 | 26 |
 
 ## Next Action
 
-Define requirements and create roadmap for v1.3.
+Run `/gsd-discuss-phase 13` to gather context and clarify approach for Phase 13 (NCCL Foundation).
+
+Also: `/gsd-plan-phase 13` — skip discussion, plan directly.
 
 ---
 
-*State updated: 2026-04-24 for v1.3 milestone started*
+*State updated: 2026-04-24 after v1.3 roadmap creation*
