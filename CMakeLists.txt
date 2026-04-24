@@ -48,6 +48,8 @@ set(CUDA_GRAPH_DIR ${CMAKE_SOURCE_DIR}/src/cuda/graph)
 set(CUDA_NEURAL_DIR ${CMAKE_SOURCE_DIR}/src/cuda/neural)
 set(CUDA_MESH_DIR ${CMAKE_SOURCE_DIR}/include/cuda/mesh)
 set(SRC_CUDA_MESH ${CMAKE_SOURCE_DIR}/src/cuda/mesh)
+set(CUDA_DISTRIBUTED_DIR ${CMAKE_SOURCE_DIR}/include/cuda/distributed)
+set(SRC_CUDA_DISTRIBUTED ${CMAKE_SOURCE_DIR}/src/cuda/distributed)
 
 add_library(cuda_memory INTERFACE)
 target_include_directories(cuda_memory INTERFACE
@@ -150,6 +152,14 @@ set(MESH_SOURCES
         ${SRC_CUDA_MESH}/peer_copy.cu
 )
 
+set(DISTRIBUTED_SOURCES
+        ${SRC_CUDA_DISTRIBUTED}/common.cu
+        ${SRC_CUDA_DISTRIBUTED}/reduce.cu
+        ${SRC_CUDA_DISTRIBUTED}/broadcast.cu
+        ${SRC_CUDA_DISTRIBUTED}/all_gather.cu
+        ${SRC_CUDA_DISTRIBUTED}/barrier.cu
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -163,6 +173,7 @@ set(ALL_CUDA_SOURCES
         ${GRAPH_SOURCES}
         ${NEURAL_SOURCES}
         ${MESH_SOURCES}
+        ${DISTRIBUTED_SOURCES}
 )
 
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
