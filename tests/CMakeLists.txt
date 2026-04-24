@@ -50,6 +50,7 @@ add_executable(nova-tests
     mesh/device_mesh_test.cu
     distributed/distributed_ops_test.cu
     distributed/distributed_pool_test.cu
+    distributed/distributed_matmul_test.cu
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

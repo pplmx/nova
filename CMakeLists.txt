@@ -164,6 +164,7 @@ set(DISTRIBUTED_SOURCES
         ${SRC_CUDA_DISTRIBUTED}/broadcast.cu
         ${SRC_CUDA_DISTRIBUTED}/all_gather.cu
         ${SRC_CUDA_DISTRIBUTED}/barrier.cu
+        ${SRC_CUDA_DISTRIBUTED}/matmul.cu
 )
 
 set(ALL_CUDA_SOURCES
