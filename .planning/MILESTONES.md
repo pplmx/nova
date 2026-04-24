@@ -66,4 +66,53 @@
 - CMake 4.0+ minimum version
 - All 444 tests passing
 
-**Future roadmap:** v1.3 with NCCL integration, tensor parallelism, and pipeline parallelism
+**Future roadmap:** v1.4 with Multi-Node Support (MPI integration, topology-aware collectives, cross-node communicators)
+
+---
+
+## v1.3 NCCL Integration, Tensor & Pipeline Parallelism (Shipped: 2026-04-24)
+
+**Phases completed:** 5 phases, 15 plans, 26 requirements
+
+**Key accomplishments:**
+
+- **Phase 13: NCCL Foundation** - Library detection, NcclContext, communicator init, error handling
+- **Phase 14: Core Collectives** - AllReduce, Broadcast, Barrier with async stream-based operations
+- **Phase 15: Extended Collectives** - AllGather, ReduceScatter, group ops, unified fallback
+- **Phase 16: Tensor Parallelism** - Column/row parallel matmul, transformer layer patterns
+- **Phase 17: Pipeline Parallelism** - 1F1B scheduler, P2P primitives, activation buffer management
+
+**Requirements delivered:** 26 total (NCCL-01 to NCCL-05, COLL-01 to COLL-05, EXTD-01 to EXTD-05, TENS-01 to TENS-06, PIPE-01 to PIPE-06)
+
+**Core features implemented:**
+- NCCL 2.25+ integration with P2P fallback
+- Stream-based NCCL collectives with async error handling
+- Column/row parallel matmul for transformer layers
+- TensorParallelLayer abstractions
+- PipelineScheduler with 1F1B and interleaved schedules
+- P2P send/recv for inter-stage communication
+
+**Next:** v1.4 Multi-Node Support
+
+---
+
+## v1.4 Multi-Node Support (Shipped: 2026-04-24)
+
+**Phases completed:** 3 phases, 9 plans, 15 requirements
+
+**Key accomplishments:**
+
+- **Phase 18: MPI Integration** - CMake FindMPI.cmake, MpiContext with rank/node discovery, RAII lifecycle
+- **Phase 19: Topology-Aware Collectives** - TopologyDetector, NIC enumeration, CollectiveSelector, CollectiveProfiler
+- **Phase 20: Cross-Node Communicators** - MultiNodeContext singleton, HierarchicalAllReduce, HierarchicalBarrier
+
+**Requirements delivered:** 15 total (MULN-01 to MULN-05, TOPO-01 to TOPO-05, CNOD-01 to CNOD-05)
+
+**Core features implemented:**
+- MPI 3.1+ detection with OpenMPI/MPICH support
+- MpiContext with world_rank, local_rank, node_id discovery
+- TopologyMap with NIC type and RDMA capability detection
+- CollectiveSelector with RDMA-aware algorithm selection (Ring/Tree/CollNet)
+- MultiNodeContext for cluster-scale communicator management
+- HierarchicalAllReduce and HierarchicalBarrier collectives
+- Graceful fallback when NCCL/MPI unavailable

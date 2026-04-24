@@ -1,7 +1,7 @@
 # Roadmap: Nova CUDA Library Enhancement
 
 **Created:** 2026-04-23
-**Updated:** 2026-04-24
+**Updated:** 2026-04-24 (v1.4 added)
 **Granularity:** Standard
 
 ## Milestones
@@ -9,7 +9,8 @@
 - ✅ **v1.0 Production Release** — Phases 1-6 (shipped 2026-04-24)
 - ✅ **v1.1 Multi-GPU Support** — Phases 7-10 (shipped 2026-04-24)
 - ✅ **v1.2 Toolchain Upgrade** — Phases 11-12 (shipped 2026-04-24)
-- 🔄 **v1.3 NCCL Integration, Tensor & Pipeline Parallelism** — Phases 13-17
+- ✅ **v1.3 NCCL Integration, Tensor & Pipeline Parallelism** — Phases 13-17 (shipped 2026-04-24)
+- ✅ **v1.4 Multi-Node Support** — Phases 18-20 (shipped 2026-04-24)
 
 ## Phase Progress
 
@@ -62,10 +63,10 @@
 | # | Phase | Goal | Requirements | Plans | Status |
 |---|-------|------|--------------|-------|--------|
 | 13 | NCCL Foundation | Library detection, NcclContext, communicator init, error handling | NCCL-01 to NCCL-05 | 3/3 | ✅ Complete |
-| 14 | Core Collectives | AllReduce, Broadcast, Barrier with async stream-based operations | COLL-01 to COLL-05 | 3/3 | 🔄 Planning |
-| 15 | Extended Collectives | AllGather, ReduceScatter, group ops, unified fallback | EXTD-01 to EXTD-05 | Pending | 🔄 Pending |
-| 16 | Tensor Parallelism | Column/row parallel matmul, transformer layer patterns | TENS-01 to TENS-06 | Pending | 🔄 Pending |
-| 17 | Pipeline Parallelism | 1F1B scheduler, P2P primitives, activation buffer management | PIPE-01 to PIPE-06 | Pending | 🔄 Pending |
+| 14 | Core Collectives | AllReduce, Broadcast, Barrier with async stream-based operations | COLL-01 to COLL-05 | 3/3 | ✅ Complete |
+| 15 | Extended Collectives | AllGather, ReduceScatter, group ops, unified fallback | EXTD-01 to EXTD-05 | 3/3 | ✅ Complete |
+| 16 | Tensor Parallelism | Column/row parallel matmul, transformer layer patterns | TENS-01 to TENS-06 | 3/3 | ✅ Complete |
+| 17 | Pipeline Parallelism | 1F1B scheduler, P2P primitives, activation buffer management | PIPE-01 to PIPE-06 | 3/3 | ✅ Complete |
 
 ### Phase Details
 
@@ -217,6 +218,97 @@
 - Unbalanced stage compute (stage balance validation)
 - Bubble overhead (microbatch count tuning M >= 4*K)
 - Multi-communicator deadlocks (NCCL 2.26+ launch ordering)
+
+</details>
+
+---
+
+## v1.4 Multi-Node Support
+
+**Status:** Phase 20 Planning - 3/3 phases complete
+
+**Goal:** Enable efficient multi-node training with MPI-based NCCL initialization, topology-aware collective selection, and cross-node communicator management.
+
+### Phase Overview
+
+| # | Phase | Goal | Requirements | Plans | Status |
+|---|-------|------|--------------|-------|--------|
+| 18 | MPI Integration | MPI detection, MpiContext, rank discovery, lifecycle | MULN-01 to MULN-05 | 3/3 | ✅ Complete |
+| 19 | Topology-Aware Collectives | NIC enumeration, topology detection, algo selection | TOPO-01 to TOPO-05 | 3/3 | ✅ Complete |
+| 20 | Cross-Node Communicators | MultiNodeContext, hierarchical collectives, fallback | CNOD-01 to CNOD-05 | 3/3 | ✅ Complete |
+
+### Phase Details
+
+<details>
+<summary>Phase 18: MPI Integration ✅ COMPLETE</summary>
+
+**Goal:** Set up MPI integration for multi-node NCCL bootstrapping and rank discovery.
+
+**Commits:** Phase 18 implementation
+
+**Files Created:**
+- `cmake/FindMPI.cmake` - MPI detection for OpenMPI/MPICH
+- `include/cuda/mpi/mpi_context.h` - MpiContext with singleton + RAII
+- `src/cuda/mpi/mpi_context.cpp` - Rank discovery, local_rank calculation
+- Updated `CMakeLists.txt` - NOVA_ENABLE_MPI option, cuda_mpi target
+
+**Requirements:**
+- MULN-01: MPI library detection and version validation via CMake find module ✅
+- MULN-02: MpiContext with rank/node discovery and NCCL bootstrapping ✅
+- MULN-03: MPI init/finalize lifecycle management with RAII semantics ✅
+- MULN-04: Cross-node device assignment (local_rank calculation) ✅
+- MULN-05: Environment variable and config file options for MPI parameters ✅
+
+**Plans:**
+- `18-01-PLAN.md` — CMake MPI detection and find module ✅
+- `18-02-PLAN.md` — MpiContext implementation ✅
+- `18-03-PLAN.md` — Lifecycle and configuration ✅
+
+</details>
+
+<details>
+<summary>Phase 19: Topology-Aware Collectives ✅ COMPLETE</summary>
+
+**Goal:** Detect node topology and select optimal NCCL collective algorithms.
+
+**Files Created:**
+- `include/cuda/topology/topology_map.h` — TopologyMap, NcclTopologyContext, CollectiveSelector
+- `src/cuda/topology/topology_map.cpp` — NIC detection, bandwidth estimation, algorithm selection
+
+**Requirements:**
+- TOPO-01: Node topology detection (intra-node vs inter-node paths) ✅
+- TOPO-02: Network interface card (NIC) enumeration and selection ✅
+- TOPO-03: Topology-aware NCCL communicator splitting by NIC ✅
+- TOPO-04: Bandwidth-aware collective algorithm selection (ring vs tree vs collnet) ✅
+- TOPO-05: Topology validation with performance profiling ✅
+
+**Plans:**
+- `19-01-PLAN.md` — Topology detection implementation ✅
+- `19-02-PLAN.md` — NIC selection and NCCL communicator splitting ✅
+- `19-03-PLAN.md` — Algorithm selection and profiling ✅
+
+</details>
+
+<details>
+<summary>Phase 20: Cross-Node Communicators ✅ COMPLETE</summary>
+
+**Goal:** Implement hierarchical communicators and graceful degradation.
+
+**Files Created:**
+- `include/cuda/multinode/multi_node_context.h` — MultiNodeContext singleton
+- `src/cuda/multinode/multi_node_context.cpp` — Hierarchical communicators, fallback
+
+**Requirements:**
+- CNOD-01: MultiNodeContext extending NcclContext for cluster scale ✅
+- CNOD-02: Intra-node NCCL communicator (per-node GPU groups) ✅
+- CNOD-03: Inter-node NCCL communicator (cross-node GPU groups) ✅
+- CNOD-04: Hierarchical collectives (node-local then cross-node) ✅
+- CNOD-05: Graceful degradation when MPI/NCCL-NET unavailable ✅
+
+**Plans:**
+- `20-01-PLAN.md` — MultiNodeContext and communicator hierarchy ✅
+- `20-02-PLAN.md` — Hierarchical collective implementation ✅
+- `20-03-PLAN.md` — Integration, tests, and fallback path ✅
 
 </details>
 

@@ -30,6 +30,23 @@ find_package(CUDAToolkit REQUIRED)
 # Enable NCCL for optimized multi-GPU collectives with P2P fallback when unavailable
 option(NOVA_ENABLE_NCCL "Enable NCCL for optimized multi-GPU collectives" ON)
 
+# MPI support (optional)
+# Enable multi-node training with MPI-based NCCL bootstrapping
+option(NOVA_ENABLE_MPI "Enable MPI for multi-node support" OFF)
+
+if(NOVA_ENABLE_MPI)
+    find_package(MPI 3.1 REQUIRED)
+    if(MPI_FOUND)
+        message(STATUS "MPI ${MPI_VERSION} found -- enabling multi-node support")
+        set(NOVA_MPI_ENABLED TRUE)
+    else()
+        message(FATAL_ERROR "MPI 3.1+ required when NOVA_ENABLE_MPI=ON")
+    endif()
+else()
+    message(STATUS "MPI disabled by user option (multi-node not needed)")
+    set(NOVA_MPI_ENABLED FALSE)
+endif()
+
 if(NOVA_ENABLE_NCCL)
     find_package(NCCL 2.25 QUIET)
     if(NCCL_FOUND)
@@ -72,6 +89,12 @@ set(CUDA_NCCL_DIR ${CMAKE_SOURCE_DIR}/include/cuda/nccl)
 set(SRC_CUDA_NCCL ${CMAKE_SOURCE_DIR}/src/cuda/nccl)
 set(CUDA_PIPELINE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/pipeline)
 set(SRC_CUDA_PIPELINE ${CMAKE_SOURCE_DIR}/src/cuda/pipeline)
+set(CUDA_MPI_DIR ${CMAKE_SOURCE_DIR}/include/cuda/mpi)
+set(SRC_CUDA_MPI ${CMAKE_SOURCE_DIR}/src/cuda/mpi)
+set(CUDA_TOPOLOGY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/topology)
+set(SRC_CUDA_TOPOLOGY ${CMAKE_SOURCE_DIR}/src/cuda/topology)
+set(CUDA_MULTINODE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/multinode)
+set(SRC_CUDA_MULTINODE ${CMAKE_SOURCE_DIR}/src/cuda/multinode)
 
 add_library(cuda_memory INTERFACE)
 target_include_directories(cuda_memory INTERFACE
@@ -214,6 +237,18 @@ set(DISTRIBUTED_SOURCES
         ${SRC_CUDA_DISTRIBUTED}/matmul.cu
 )
 
+set(MPI_SOURCES
+        ${SRC_CUDA_MPI}/mpi_context.cpp
+)
+
+set(TOPOLOGY_SOURCES
+        ${SRC_CUDA_TOPOLOGY}/topology_map.cpp
+)
+
+set(MULTINODE_SOURCES
+        ${SRC_CUDA_MULTINODE}/multi_node_context.cpp
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -249,6 +284,36 @@ else()
         target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=0)
 endif()
 
+add_library(cuda_mpi STATIC ${MPI_SOURCES})
+target_include_directories(cuda_mpi PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+        ${CUDA_MPI_DIR}
+)
+target_link_libraries(cuda_mpi PUBLIC CUDA::cudart)
+if(MPI_FOUND)
+        target_link_libraries(cuda_mpi PUBLIC MPI::MPI_CXX)
+        target_compile_definitions(cuda_mpi PUBLIC NOVA_MPI_ENABLED=1)
+else()
+        target_compile_definitions(cuda_mpi PUBLIC NOVA_MPI_ENABLED=0)
+endif()
+
+add_library(cuda_topology STATIC ${TOPOLOGY_SOURCES})
+target_include_directories(cuda_topology PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+        ${CUDA_TOPOLOGY_DIR}
+)
+target_link_libraries(cuda_topology PUBLIC CUDA::cudart)
+if(NCCL_FOUND)
+        target_link_libraries(cuda_topology PUBLIC NCCL::nccl)
+endif()
+
+add_library(cuda_multinode STATIC ${MULTINODE_SOURCES})
+target_include_directories(cuda_multinode PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+        ${CUDA_MULTINODE_DIR}
+)
+target_link_libraries(cuda_multinode PUBLIC CUDA::cudart cuda_nccl)
+
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
 target_include_directories(cuda_impl PUBLIC
         ${CMAKE_SOURCE_DIR}/include
@@ -260,6 +325,9 @@ target_link_libraries(cuda_impl PUBLIC
         cuda_device
         cuda_algo
         cuda_nccl
+        cuda_mpi
+        cuda_topology
+        cuda_multinode
         CUDA::cudart
         CUDA::cublas
         CUDA::cufft

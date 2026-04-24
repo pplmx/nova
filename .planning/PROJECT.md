@@ -4,17 +4,16 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v1.3 NCCL Integration, Tensor & Pipeline Parallelism
+## Current Milestone: v1.4 Multi-Node Support
 
-**Previous milestone:** v1.2 Toolchain Upgrade — SHIPPED 2026-04-24
+**Previous milestone:** v1.3 NCCL Integration, Tensor & Pipeline Parallelism — SHIPPED 2026-04-24
 
-**Goal:** Enable efficient multi-GPU training with NCCL-based collectives, tensor parallelism for large layers, and pipeline parallelism for deep models.
+**Goal:** Enable efficient multi-node training with MPI-based NCCL initialization, topology-aware collective selection, and cross-node communicator management.
 
 **Target features:**
-- NCCL integration for optimized multi-GPU collectives
-- Tensor parallelism for large layer support
-- Pipeline parallelism for deep model support
-- Distributed batch normalization
+- MPI-based NCCL initialization for inter-node communication
+- Topology-aware collective selection across nodes
+- Cross-node NCCL communicator management
 
 ## Core Value
 
@@ -44,18 +43,19 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ CUDA 20 standard (CMAKE_CUDA_STANDARD 20) — v1.2
 - ✓ CMake 4.0+ minimum version — v1.2
 - ✓ 444 tests passing — v1.2
+- ✓ NCCL integration for optimized multi-GPU collectives — v1.3
+- ✓ Extended NCCL collectives with unified fallback — v1.3
+- ✓ Tensor parallelism for large layer support — v1.3
+- ✓ Pipeline parallelism for deep model support — v1.3
 
 ### Active
 
-- [ ] NCCL integration for optimized multi-GPU collectives — Phase 13-14
-- [ ] Extended NCCL collectives with unified fallback — Phase 15
-- [ ] Tensor parallelism for large layer support — Phase 16
-- [ ] Pipeline parallelism for deep model support — Phase 17
-- [ ] Distributed batch normalization — v2 (deferred)
+- [ ] MPI-based NCCL initialization for inter-node communication — Phase 18
+- [ ] Topology-aware collective selection across nodes — Phase 19
+- [ ] Cross-node NCCL communicator management — Phase 20
 
 ### Out of Scope
 
-- Distributed multi-node computation (multiple nodes, not just multiple GPUs) — future work
 - Python bindings — separate project
 - Real-time video processing pipeline — not in scope
 
@@ -73,7 +73,15 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - Multi-GPU collective operations (all-reduce, broadcast, all-gather, barrier)
 - Distributed memory pool spanning multiple GPUs
 - Multi-GPU matrix multiply with single-GPU fallback
-- All v1.0 features: FFT, Ray Tracing, Graph Algorithms, Neural Net Primitives, Async/Streaming
+- All v1.0-v1.3 features: FFT, Ray Tracing, Graph Algorithms, Neural Net Primitives, Async/Streaming, NCCL, Tensor Parallelism, Pipeline Parallelism
+
+**Added in v1.3:**
+- NCCL 2.25+ integration with P2P fallback
+- Stream-based NCCL collectives with async error handling
+- Column/row parallel matmul for transformer layers
+- TensorParallelLayer abstractions
+- PipelineScheduler with 1F1B and interleaved schedules
+- P2P send/recv for inter-stage communication
 
 ## Constraints
 
@@ -96,6 +104,10 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 | C++23 adoption | std::expected, constexpr, ranges for modern patterns | ✓ v1.2 shipped |
 | CUDA 20 standard | Next-generation CUDA toolkit for new features | ✓ v1.2 shipped |
 | CMake 4.0+ | Modern CMake features and policy support | ✓ v1.2 shipped |
+| Optional NCCL with P2P fallback | Preserve single-node without NCCL | ✓ v1.3 shipped |
+| TensorParallelMatmul (col/row) | Build on existing DistributedMatmul | ✓ v1.3 shipped |
+| 1F1B pipeline scheduler | Classic GPipe-style scheduling | ✓ v1.3 shipped |
+| MPI for multi-node init | Standard for cluster NCCL bootstrapping | v1.4 planning |
 
 ## Evolution
 
@@ -115,4 +127,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-04-24 after v1.3 milestone started*
+*Last updated: 2026-04-24 after v1.4 milestone started*

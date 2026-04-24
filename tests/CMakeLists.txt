@@ -54,6 +54,9 @@ add_executable(nova-tests
     distributed/distributed_pool_test.cu
     distributed/distributed_matmul_test.cu
     pipeline/pipeline_test.cpp
+    mpi/test_mpi_context.cpp
+    topology/test_topology_map.cpp
+    multinode/test_multi_node_context.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -71,6 +74,9 @@ set(CUDA_MESH_DIR ${CMAKE_SOURCE_DIR}/include/cuda/mesh)
 set(CUDA_NCCL_DIR ${CMAKE_SOURCE_DIR}/include/cuda/nccl)
 set(CUDA_PIPELINE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/pipeline)
 set(CUDA_DISTRIBUTED_DIR ${CMAKE_SOURCE_DIR}/include/cuda/distributed)
+set(CUDA_MPI_DIR ${CMAKE_SOURCE_DIR}/include/cuda/mpi)
+set(CUDA_TOPOLOGY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/topology)
+set(CUDA_MULTINODE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/multinode)
 set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
 target_link_libraries(nova-tests
@@ -99,6 +105,9 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_NCCL_DIR}
     ${CUDA_PIPELINE_DIR}
     ${CUDA_DISTRIBUTED_DIR}
+    ${CUDA_MPI_DIR}
+    ${CUDA_TOPOLOGY_DIR}
+    ${CUDA_MULTINODE_DIR}
     ${DISTRIBUTED_TESTS_DIR}
 )
 

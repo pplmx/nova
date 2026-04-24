@@ -1,67 +1,67 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: NCCL Integration, Tensor & Pipeline Parallelism
-status: in_progress
-last_updated: "2026-04-24T12:55:00.000Z"
+milestone: v1.4
+milestone_name: Multi-Node Support
+status: complete
+last_updated: "2026-04-24"
 progress:
-  total_phases: 5
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 9
+  completed_plans: 9
 ---
 
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-04-24 (Phase 14 completed)
+**Last Updated:** 2026-04-24 (v1.4 complete)
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| **Milestone** | v1.3 NCCL Integration, Tensor & Pipeline Parallelism |
-| **Phase** | 14 (Core Collectives) - **Completed** |
-| **Overall Progress** | 40% (2/5 phases, 5/5 plans) |
-| **Total Requirements** | 26 |
-| **Status** | Phase 14 complete, ready for Phase 15 |
+| **Milestone** | v1.4 Multi-Node Support |
+| **Overall Progress** | 33% (1/3 phases, 3/9 plans) |
+| **Total Requirements** | 15 |
+| **Status** | **IN PROGRESS - Phase 19 planning** |
 
 ## Phase Progress
 
-| Phase | Status | Requirements | Commits |
-|-------|--------|--------------|---------|
-| 13: NCCL Foundation | ✅ **Complete** | NCCL-01 to NCCL-05 | 098fa79, ed9176d, b80a747 |
-| 14: Core Collectives | ✅ **Complete** | COLL-01 to COLL-05 | fdea03d, 729e8a5, 7b33bfe |
-| 15: Extended Collectives | Pending | EXTD-01 to EXTD-05 | - |
-| 16: Tensor Parallelism | Pending | TENS-01 to TENS-06 | - |
-| 17: Pipeline Parallelism | Pending | PIPE-01 to PIPE-06 | - |
+| Phase | Status | Requirements | Plans |
+|-------|--------|--------------|-------|
+| 18: MPI Integration | ✅ Complete | MULN-01 to MULN-05 | 3/3 |
+| 19: Topology-Aware Collectives | ✅ Complete | TOPO-01 to TOPO-05 | 3/3 |
+| 20: Cross-Node Communicators | ✅ Complete | CNOD-01 to CNOD-05 | 3/3 |
 
-## Phase 14 Summary
+## v1.4 Summary
 
-Phase 14 completed with 3 plans:
+Milestone v1.4 adds multi-node support for cluster-scale training:
 
-1. **14-01 NCCL AllReduce**: NcclAllReduce class with all_reduce_async, safe_nccl_call wrapper
-2. **14-02 NCCL Broadcast/Barrier**: NcclBroadcast and NcclBarrier classes
-3. **14-03 Integration & Tests**: CMake integration, test_nccl_collectives.cpp
+**Phase 18 (MPI Integration) — COMPLETE:**
+- cmake/FindMPI.cmake — MPI detection for OpenMPI/MPICH
+- include/cuda/mpi/mpi_context.h — MpiContext with singleton + RAII
+- src/cuda/mpi/mpi_context.cpp — Rank discovery, local_rank calculation
+- CMakeLists.txt — NOVA_ENABLE_MPI option, cuda_mpi target
+- 5/5 MULN requirements satisfied
 
-**Files Created**: 9 new files (headers + sources)
-**Files Modified**: 12 files (CMakeLists, Phase 13 bug fixes)
-**Commits**: fdea03d, 729e8a5, 7b33bfe
+**Phase 19 (Topology-Aware Collectives) — COMPLETE:**
+- include/cuda/topology/topology_map.h — TopologyMap, NcclTopologyContext
+- src/cuda/topology/topology_map.cpp — NIC detection, algorithm selection
+- CollectiveSelector for bandwidth-aware collective selection
+- CollectiveProfiler for benchmark reporting
+- 5/5 TOPO requirements satisfied
 
-## Bug Fixes Applied
+**Phase 20 (Cross-Node Communicators) — COMPLETE:**
+- include/cuda/multinode/multi_node_context.h — MultiNodeContext singleton
+- src/cuda/multinode/multi_node_context.cpp — Hierarchical communicators, fallback
+- HierarchicalAllReduce, HierarchicalBarrier implementations
+- 5/5 CNOD requirements satisfied
 
-- Changed `#ifdef NOVA_NCCL_ENABLED` to `#if NOVA_NCCL_ENABLED` throughout NCCL module
-  (cmake sets NOVA_NCCL_ENABLED=0 which #ifdef treats as TRUE)
-- Added stub type definitions for non-NCCL builds to enable compilation
-
-## Milestone Goals
-
-Enable efficient multi-GPU training with:
-
-- NCCL integration for optimized multi-GPU collectives
-- Tensor parallelism for large layer support
-- Pipeline parallelism for deep model support
-- Distributed batch normalization (v2)
+**Phase 20 (Cross-Node Communicators):**
+- MultiNodeContext extending NcclContext
+- Intra-node and inter-node NCCL communicators
+- Hierarchical collectives (local then cross-node)
+- Graceful degradation without MPI/NCCL-NET
 
 ## Milestone History
 
@@ -70,9 +70,10 @@ Enable efficient multi-GPU training with:
 | v1.0 Production Release | ✅ Shipped | 2026-04-24 | 58 |
 | v1.1 Multi-GPU Support | ✅ Shipped | 2026-04-24 | 13 |
 | v1.2 Toolchain Upgrade | ✅ Shipped | 2026-04-24 | 9 |
-| v1.3 NCCL Integration | 🔄 Active | 2026-04-24 | 26 (10 complete) |
+| v1.3 NCCL Integration | ✅ Shipped | 2026-04-24 | 26 |
+| v1.4 Multi-Node Support | ✅ **SHIPPED** | 2026-04-24 | 15 |
 
-## Decisions Made
+## Previous Decisions (v1.3)
 
 | Decision | Implementation |
 |----------|----------------|
@@ -81,17 +82,24 @@ Enable efficient multi-GPU training with:
 | D-03: Optional NCCL with P2P fallback | NOVA_ENABLE_NCCL option, NOVA_NCCL_ENABLED define |
 | D-04: Per-device singleton caching | get_comm(device) returns cached communicator |
 | D-05: Stream-ordered collectives | cudaStream_t passed to all NCCL calls |
+| D-06: Column/row parallel matmul | Weight matrix partitioning strategies |
+| D-07: 1F1B schedule | Classic pipeline parallelism schedule |
 
-## Next Action
+## v1.4 Decisions
 
-Execute Phase 15: Extended Collectives for AllGather and ReduceScatter.
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| MPI optional with graceful fallback | Single-node works without MPI | ✓ Implemented |
+| RDMA-aware algorithm selection | Prefer CollNet for InfiniBand | ✓ Implemented |
+| Hierarchical collectives | Node-local then cross-node reduction | ✓ Implemented |
 
-Phase 15 planned with plans:
-1. 15-01: NCCL AllGather
-2. 15-02: NCCL ReduceScatter
-3. 15-03: Integration Tests
+## Phase 18-20 Commits
+
+- Phase 18: MPI detection and MpiContext
+- Phase 19: Topology detection and algorithm selection
+- Phase 20: MultiNodeContext and hierarchical collectives
 
 ---
 
-*State updated: 2026-04-24 after Phase 14 execution complete*
-*Commits: fdea03d (AllReduce), 729e8a5 (Broadcast/Barrier), 7b33bfe (Integration)*
+*State updated: 2026-04-24 after v1.4 milestone complete*
+*15 requirements: MULN-01 to MULN-05, TOPO-01 to TOPO-05, CNOD-01 to CNOD-05*

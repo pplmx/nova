@@ -1,54 +1,36 @@
 # Requirements: Nova CUDA Library Enhancement
 
 **Defined:** 2026-04-24
-**Milestone:** v1.3 NCCL Integration, Tensor & Pipeline Parallelism
-**Core Value:** Enable efficient multi-GPU training with NCCL-based collectives, tensor parallelism for large layers, and pipeline parallelism for deep models.
+**Milestone:** v1.4 Multi-Node Support
+**Core Value:** Enable efficient multi-node training with MPI-based NCCL initialization, topology-aware collective selection, and cross-node communicator management.
 
-## v1 Requirements
+## v1.4 Requirements
 
-Requirements for v1.3 milestone. Each maps to roadmap phases.
+Requirements for v1.4 milestone. Each maps to roadmap phases.
 
-### NCCL Foundation (Phase 1)
+### MPI Integration (Phase 1)
 
-- [ ] **NCCL-01**: Library detection and version validation via CMake find module
-- [ ] **NCCL-02**: NcclContext with dependency injection pattern and DeviceMesh integration
-- [ ] **NCCL-03**: Communicator initialization and lifecycle management per device
-- [ ] **NCCL-04**: Shared memory validation (require 512MB+) with clear error messages
-- [ ] **NCCL-05**: Async error polling infrastructure with ncclCommGetAsyncError
+- [ ] **MULN-01**: MPI library detection and version validation via CMake find module
+- [ ] **MULN-02**: MpiContext with rank/node discovery and NCCL bootstrapping
+- [ ] **MULN-03**: MPI init/finalize lifecycle management with RAII semantics
+- [ ] **MULN-04**: Cross-node device assignment (local_rank calculation)
+- [ ] **MULN-05**: Environment variable and config file options for MPI parameters
 
-### Core Collectives (Phase 2)
+### Topology-Aware Collectives (Phase 2)
 
-- [ ] **COLL-01**: Stream-based all-reduce replacing P2P ring-allreduce fallback
-- [ ] **COLL-02**: Broadcast wrapper for weight synchronization across devices
-- [ ] **COLL-03**: Barrier implementation for explicit synchronization points
-- [ ] **COLL-04**: Safe NCCL call wrapper with async error detection
-- [ ] **COLL-05**: Stream-ordered collectives passing cudaStream_t to all operations
+- [ ] **TOPO-01**: Node topology detection (intra-node vs inter-node paths)
+- [ ] **TOPO-02**: Network interface card (NIC) enumeration and selection
+- [ ] **TOPO-03**: Topology-aware NCCL communicator splitting by NIC
+- [ ] **TOPO-04**: Bandwidth-aware collective algorithm selection (ring vs tree vs collnet)
+- [ ] **TOPO-05**: Topology validation with performance profiling
 
-### Extended Collectives (Phase 3)
+### Cross-Node Communicators (Phase 3)
 
-- [ ] **EXTD-01**: All-gather for row-parallel activation gathering
-- [ ] **EXTD-02**: Reduce-scatter for alternative gradient aggregation
-- [ ] **EXTD-03**: Group operations with ncclGroupStart/End batching
-- [ ] **EXTD-04**: Unified NCCL/legacy fallback path for deployment flexibility
-- [ ] **EXTD-05**: Communicator caching for repeated collective operations
-
-### Tensor Parallelism (Phase 4)
-
-- [ ] **TENS-01**: TensorParallelMatmul with column-parallel strategy
-- [ ] **TENS-02**: TensorParallelMatmul with row-parallel strategy
-- [ ] **TENS-03**: ColumnParallelLayer for QKV projection pattern
-- [ ] **TENS-04**: RowParallelLayer for output projection pattern
-- [ ] **TENS-05**: Integration with existing DistributedMatmul infrastructure
-- [ ] **TENS-06**: Memory-aware TP degree selection with profiling
-
-### Pipeline Parallelism (Phase 5)
-
-- [ ] **PIPE-01**: PipelineScheduler with 1F1B schedule implementation
-- [ ] **PIPE-02**: P2P send/recv primitives for inter-stage communication
-- [ ] **PIPE-03**: Activation buffer management with ping-pong overlap
-- [ ] **PIPE-04**: Communicator splitting via ncclCommSplit for TP+DP
-- [ ] **PIPE-05**: Interleaved schedule option for reduced bubble overhead
-- [ ] **PIPE-06**: Stage balance validation within 10% compute variance
+- [ ] **CNOD-01**: MultiNodeContext extending NcclContext for cluster scale
+- [ ] **CNOD-02**: Intra-node NCCL communicator (per-node GPU groups)
+- [ ] **CNOD-03**: Inter-node NCCL communicator (cross-node GPU groups)
+- [ ] **CNOD-04**: Hierarchical collectives (node-local then cross-node)
+- [ ] **CNOD-05**: Graceful degradation when MPI/NCCL-NET unavailable
 
 ## v2 Requirements
 
@@ -60,23 +42,17 @@ Deferred to future release.
 - **DBN-02**: Distributed sync BatchNorm layer
 - **DBN-03**: Memory-efficient distributed BatchNorm with tensor parallelism
 
-### Multi-Node Support
-
-- **MULN-01**: MPI-based NCCL initialization for inter-node communication
-- **MULN-02**: Topology-aware collective selection across nodes
-- **MULN-03**: NCCL communicator across multiple nodes
-
 ## Out of Scope
 
 Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Hard NCCL dependency | Must preserve P2P fallback for environments without NCCL |
-| DeepSpeed integration | Over-engineered for single-node scope |
-| Megatron-LM integration | Too opinionated, single-node simplicity preferred |
-| FlashAttention integration | Sequence parallelism is separate concern |
-| NVSHMEM | Single-node scope, InfiniBand not required |
+| MPI collective algorithms | NCCL handles collective optimization; MPI only for init |
+| RDMA/InfiniBand specifics | Abstraction via NCCL-NET; platform-specific tuning separate |
+| Kubernetes/job scheduler integration | Separate project (nova-cluster) |
+| Fault tolerance/recovery | v1.5 scope |
+| Python bindings | Separate project |
 
 ## Traceability
 
@@ -84,39 +60,27 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| NCCL-01 | Phase 1 | Pending |
-| NCCL-02 | Phase 1 | Pending |
-| NCCL-03 | Phase 1 | Pending |
-| NCCL-04 | Phase 1 | Pending |
-| NCCL-05 | Phase 1 | Pending |
-| COLL-01 | Phase 2 | Pending |
-| COLL-02 | Phase 2 | Pending |
-| COLL-03 | Phase 2 | Pending |
-| COLL-04 | Phase 2 | Pending |
-| COLL-05 | Phase 2 | Pending |
-| EXTD-01 | Phase 3 | Pending |
-| EXTD-02 | Phase 3 | Pending |
-| EXTD-03 | Phase 3 | Pending |
-| EXTD-04 | Phase 3 | Pending |
-| EXTD-05 | Phase 3 | Pending |
-| TENS-01 | Phase 4 | Pending |
-| TENS-02 | Phase 4 | Pending |
-| TENS-03 | Phase 4 | Pending |
-| TENS-04 | Phase 4 | Pending |
-| TENS-05 | Phase 4 | Pending |
-| TENS-06 | Phase 4 | Pending |
-| PIPE-01 | Phase 5 | Pending |
-| PIPE-02 | Phase 5 | Pending |
-| PIPE-03 | Phase 5 | Pending |
-| PIPE-04 | Phase 5 | Pending |
-| PIPE-05 | Phase 5 | Pending |
-| PIPE-06 | Phase 5 | Pending |
+| MULN-01 | Phase 1 | Pending |
+| MULN-02 | Phase 1 | Pending |
+| MULN-03 | Phase 1 | Pending |
+| MULN-04 | Phase 1 | Pending |
+| MULN-05 | Phase 1 | Pending |
+| TOPO-01 | Phase 2 | Pending |
+| TOPO-02 | Phase 2 | Pending |
+| TOPO-03 | Phase 2 | Pending |
+| TOPO-04 | Phase 2 | Pending |
+| TOPO-05 | Phase 2 | Pending |
+| CNOD-01 | Phase 3 | Pending |
+| CNOD-02 | Phase 3 | Pending |
+| CNOD-03 | Phase 3 | Pending |
+| CNOD-04 | Phase 3 | Pending |
+| CNOD-05 | Phase 3 | Pending |
 
 **Coverage:**
-- v1 requirements: 26 total
-- Mapped to phases: 26
+- v1.4 requirements: 15 total
+- Mapped to phases: 15
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-24*
-*Last updated: 2026-04-24 after v1.3 requirements definition*
+*Last updated: 2026-04-24 after v1.4 requirements definition*
