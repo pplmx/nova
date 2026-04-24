@@ -24,16 +24,16 @@ current_phase: 13
 | Field | Value |
 |-------|-------|
 | **Milestone** | v1.3 NCCL Integration, Tensor & Pipeline Parallelism |
-| **Phase** | 13 (next: NCCL Foundation) |
+| **Phase** | 13 (NCCL Foundation) |
 | **Overall Progress** | 0% (0/5 phases, 0/0 plans) |
 | **Total Requirements** | 26 |
-| **Status** | Planning complete, ready to build |
+| **Status** | Context gathered, ready to plan |
 
 ## Phase Progress
 
 | Phase | Status | Requirements |
 |-------|--------|--------------|
-| 13: NCCL Foundation | Pending | NCCL-01 to NCCL-05 |
+| 13: NCCL Foundation | 🔄 Context gathered | NCCL-01 to NCCL-05 |
 | 14: Core Collectives | Pending | COLL-01 to COLL-05 |
 | 15: Extended Collectives | Pending | EXTD-01 to EXTD-05 |
 | 16: Tensor Parallelism | Pending | TENS-01 to TENS-06 |
@@ -58,10 +58,8 @@ Enable efficient multi-GPU training with:
 
 ## Next Action
 
-Run `/gsd-discuss-phase 13` to gather context and clarify approach for Phase 13 (NCCL Foundation).
-
-Also: `/gsd-plan-phase 13` — skip discussion, plan directly.
+Run `/gsd-plan-phase 13` to create implementation plan for Phase 13 (NCCL Foundation).
 
 ---
 
-*State updated: 2026-04-24 after v1.3 roadmap creation*
+*State updated: 2026-04-24 after Phase 13 context gathered*
