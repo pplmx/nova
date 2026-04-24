@@ -39,12 +39,24 @@ If the required subsection does not exist yet under **Unreleased**, create it!
 
 ### Set up
 
-This is no different from other C++ projects.
-
 ```shell
 git clone https://github.com/pplmx/nova
 cd nova
-make test
+
+# Fastest build with Ninja
+make configure-ninja NOVA_ENABLE_NCCL=OFF
+make build-ninja
+
+# Run tests
+make test-ninja
 ```
+
+### Build Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `NOVA_ENABLE_NCCL` | ON | NCCL multi-GPU collectives |
+| `NOVA_ENABLE_MPI` | OFF | MPI multi-node support |
+| `NOVA_ENABLE_UNITY_BUILD` | ON | Unity builds for speed |
 
 ### Useful Commands

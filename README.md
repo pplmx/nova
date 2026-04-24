@@ -94,25 +94,33 @@ src/
 
 ## Quick Start
 
-### Build
+### Build (Make)
 
 ```sh
 git clone https://github.com/pplmx/nova.git
 cd nova
-make build
+cmake -B build -DNOVA_ENABLE_NCCL=OFF
+cmake --build build --parallel
+```
+
+### Build (Ninja - Faster)
+
+```sh
+cmake -G Ninja -B build-ninja -DNOVA_ENABLE_NCCL=OFF
+cmake --build build-ninja --parallel
 ```
 
 ### Run Demo
 
 ```sh
-make run
+./build/bin/nova  # or ./build-ninja/bin/nova
 ```
 
 ### Run Tests
 
 ```sh
-make test          # Run all tests
-make test-unit     # Run algorithm tests
+cd build-ninja
+ctest -j16        # Parallel tests (GPU memory limited to 16)
 ```
 
 ## Usage Examples
@@ -176,31 +184,43 @@ auto config = cuda::api::ReduceConfig::optimized_config();
 
 ## Testing
 
-**81 tests across 13 test suites, all passing:**
+**505 tests across multiple test suites, 99%+ passing:**
 
-| Test Suite | Tests |
-|------------|-------|
-| ReduceTest | 11 |
-| ScanTest | 10 |
-| SortTest | 7 |
-| OddEvenSortTest | 3 |
-| MatrixMultTest | 7 |
-| MatrixOpsTest | 16 |
-| ImageBufferTest | 5 |
-| GaussianBlurTest | 7 |
-| SobelTest | 7 |
-| BrightnessTest | 10 |
-| TestPatternsTest | 14 |
+```sh
+# Full test suite
+ctest -j16
+
+# Single test
+./bin/nova-tests --gtest_filter="BufferTest.*"
+
+# v1.4 specific tests
+./bin/nova-tests --gtest_filter="*MpiContext*:*TopologyMap*:*MultiNodeContext*"
+```
+
+### Test Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `NOVA_ENABLE_NCCL` | ON | Enable NCCL collectives (requires NCCL) |
+| `NOVA_ENABLE_MPI` | OFF | Enable MPI multi-node support |
+| `NOVA_ENABLE_UNITY_BUILD` | ON | Faster compilation via unity builds |
+| `CTEST_PARALLEL_LEVEL` | NCPU | Test parallelism (capped at 16 for GPU memory) |
 
 ## Development
 
-### Makefile Targets
+### Build Options
+
+| Generator | Command | Speed |
+|-----------|---------|-------|
+| Ninja | `cmake -G Ninja -B build` | **Fastest** |
+| Make | `cmake -B build` | Standard |
+
+### Build Targets
 
 | Target | Description |
 |--------|-------------|
-| `make build` | Configure and build project |
-| `make run` | Run benchmark demo |
-| `make test` | Run all tests (81 tests) |
+| `cmake --build <dir>` | Build project (use `--parallel` for multi-core) |
+| `ctest -j<N>` | Run tests in parallel |
 | `make clean` | Clean build artifacts |
 
 ## Requirements
@@ -209,6 +229,9 @@ auto config = cuda::api::ReduceConfig::optimized_config();
 - CMake 4.0+
 - C++23 compatible compiler
 - CUDA-capable GPU
+- (Optional) NCCL 2.25+ for multi-GPU collectives
+- (Optional) MPI 3.1+ for multi-node support
+- (Optional) Ninja for faster builds
 
 ## License
 

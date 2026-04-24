@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v1.4 Multi-Node Support**: Cluster-scale training infrastructure
+  - MPI integration (MpiContext, rank discovery)
+  - Topology detection (NIC enumeration, RDMA capability)
+  - Cross-node communicators (MultiNodeContext, HierarchicalAllReduce)
+- **Build System**: Multi-core optimization and Ninja support
+  - Auto-detect CPU cores for parallel builds
+  - Ninja generator support for faster builds
+  - Unity build for compilation speedup
+  - CPU-aware test parallelism (capped at 16 for GPU memory)
+
 - **Five-Layer Architecture**: Production-ready layered architecture
   - Layer 0: `cuda::memory` - Buffer<T>, unique_ptr<T>, MemoryPool, Allocator concepts
   - Layer 1: `cuda::device` - Pure device kernels, CUDA_CHECK, ReduceOp, warp_reduce
@@ -21,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **CMake**: Modernized with INTERFACE libraries (cuda_memory, cuda_device, cuda_algo, cuda_api)
+- **CMake**: Auto-detect CPU cores, Unity build, Ninja generator support
 - **Namespace Renaming**: `cuda::kernel` → `cuda::device`
 - **Directory Structure**: All CUDA headers in `include/cuda/` subdirectories
 

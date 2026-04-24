@@ -135,3 +135,4 @@ cuda_profile_*.log
 *.cudax
 cub_cache/
 nvcc_cache/
+build-ninja/

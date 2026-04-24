@@ -1,3 +1,29 @@
+# =============================================================================
+# Nova CUDA Library - CMake Build Configuration
+# =============================================================================
+#
+# Build Options:
+#   -DNOVA_ENABLE_NCCL=ON|OFF         Enable NCCL multi-GPU collectives (default: ON)
+#   -DNOVA_ENABLE_MPI=ON|OFF           Enable MPI multi-node support (default: OFF)
+#   -DNOVA_ENABLE_UNITY_BUILD=ON|OFF    Faster compilation via unity builds (default: ON)
+#
+# Generators:
+#   Ninja (recommended): cmake -G Ninja -B build -D<options>
+#   Make:                  cmake -B build -D<options>
+#
+# Build & Test:
+#   cmake --build build --parallel          # Compile with all CPU cores
+#   ctest -j16                             # Run tests (GPU memory limited)
+#
+# Example (fastest build):
+#   cmake -G Ninja -B build-ninja \
+#       -DNOVA_ENABLE_NCCL=OFF \
+#       -DNOVA_ENABLE_MPI=OFF
+#   cmake --build build-ninja --parallel 128
+#   cd build-ninja && ctest -j16
+#
+# =============================================================================
+
 cmake_minimum_required(VERSION 4.0)
 
 project(nova
@@ -7,8 +33,14 @@ project(nova
         LANGUAGES CXX CUDA
 )
 
+# =============================================================================
+# Module Path
+# =============================================================================
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
+# =============================================================================
+# Language Standards
+# =============================================================================
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -26,6 +58,10 @@ endif()
 
 find_package(CUDAToolkit REQUIRED)
 
+# =============================================================================
+# Build Options
+# =============================================================================
+
 # NCCL support (optional)
 # Enable NCCL for optimized multi-GPU collectives with P2P fallback when unavailable
 option(NOVA_ENABLE_NCCL "Enable NCCL for optimized multi-GPU collectives" ON)
@@ -37,7 +73,9 @@ option(NOVA_ENABLE_MPI "Enable MPI for multi-node support" OFF)
 # Unity build for faster compilation (CMake 3.16+)
 option(NOVA_ENABLE_UNITY_BUILD "Enable unity build to speed up compilation" ON)
 
-# Parallel compilation
+# =============================================================================
+# Parallel Build Configuration
+# =============================================================================
 include(ProcessorCount)
 if(NOT DEFINED CMAKE_SYSTEM_PROCESSOR)
     set(CMAKE_SYSTEM_PROCESSOR "unknown")
