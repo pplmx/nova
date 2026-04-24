@@ -365,7 +365,16 @@ FetchContent_MakeAvailable(googletest)
 
 # Enable parallel test execution
 include(CTest)
-set(CTEST_PARALLEL_LEVEL 4 CACHE STRING "Number of parallel test jobs")
+include(ProcessorCount)
+if(NOT DEFINED CMAKE_SYSTEM_PROCESSOR)
+    set(CMAKE_SYSTEM_PROCESSOR "unknown")
+endif()
+ProcessorCount(NCPU)
+if(NCPU EQUAL 0)
+    set(NCPU 4)
+endif()
+set(CTEST_PARALLEL_LEVEL ${NCPU} CACHE STRING "Number of parallel test jobs")
+message(STATUS "CPU cores detected: ${NCPU} - using ${CTEST_PARALLEL_LEVEL} parallel test jobs")
 
 enable_testing()
 add_subdirectory(tests)
