@@ -120,9 +120,15 @@ set(CONVOLUTION_SOURCES
         ${CONVOLUTION_DIR}/conv2d.cu
 )
 
+set(SRC_CUDA_MEMORY ${CMAKE_SOURCE_DIR}/src/cuda/memory)
+
 set(MEMORY_SOURCES
         ${MEMORY_DIR}/buffer.cpp
         ${MEMORY_DIR}/memory_pool.cpp
+)
+
+set(MEMORY_DISTRIBUTED_SOURCES
+        ${SRC_CUDA_MEMORY}/distributed_pool.cpp
 )
 
 set(FFT_SOURCES
@@ -168,6 +174,7 @@ set(ALL_CUDA_SOURCES
         ${MATRIX_SOURCES}
         ${CONVOLUTION_SOURCES}
         ${MEMORY_SOURCES}
+        ${MEMORY_DISTRIBUTED_SOURCES}
         ${FFT_SOURCES}
         ${RAYTRACE_SOURCES}
         ${GRAPH_SOURCES}
