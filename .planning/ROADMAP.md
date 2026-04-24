@@ -53,7 +53,7 @@
 
 ## v1.3 NCCL Integration, Tensor & Pipeline Parallelism
 
-**Status:** Phase 13 Complete - 1/5 phases
+**Status:** Phase 14 Planning - 1/5 phases
 
 **Goal:** Enable efficient multi-GPU training with NCCL-based collectives, tensor parallelism for large layers, and pipeline parallelism for deep models.
 
@@ -62,7 +62,7 @@
 | # | Phase | Goal | Requirements | Plans | Status |
 |---|-------|------|--------------|-------|--------|
 | 13 | NCCL Foundation | Library detection, NcclContext, communicator init, error handling | NCCL-01 to NCCL-05 | 3/3 | ✅ Complete |
-| 14 | Core Collectives | AllReduce, Broadcast, Barrier with async stream-based operations | COLL-01 to COLL-05 | Pending | 🔄 Pending |
+| 14 | Core Collectives | AllReduce, Broadcast, Barrier with async stream-based operations | COLL-01 to COLL-05 | 3/3 | 🔄 Planning |
 | 15 | Extended Collectives | AllGather, ReduceScatter, group ops, unified fallback | EXTD-01 to EXTD-05 | Pending | 🔄 Pending |
 | 16 | Tensor Parallelism | Column/row parallel matmul, transformer layer patterns | TENS-01 to TENS-06 | Pending | 🔄 Pending |
 | 17 | Pipeline Parallelism | 1F1B scheduler, P2P primitives, activation buffer management | PIPE-01 to PIPE-06 | Pending | 🔄 Pending |
@@ -130,6 +130,11 @@
 - Cross-collective deadlocks (single-threaded dispatch)
 - Timeout hangs (proper async error polling)
 - Stream serialization issues (explicit cudaStream_t passing)
+
+**Plans:**
+- `14-01-PLAN.md` — NCCL AllReduce implementation ✅
+- `14-02-PLAN.md` — NCCL Broadcast and Barrier ✅
+- `14-03-PLAN.md` — Integration, tests, and CMakeLists updates ✅
 
 </details>
 
