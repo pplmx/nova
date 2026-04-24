@@ -4,15 +4,11 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v1.1 Multi-GPU Support
+## Current Milestone: v1.2 Planning Needed
 
-**Goal:** Enable distributed GPU compute across device meshes with data parallelism primitives and multi-GPU matmul.
+**Previous milestone:** v1.1 Multi-GPU Support — COMPLETE
 
-**Target features:**
-- Device mesh detection and peer memory access
-- Multi-GPU data parallelism primitives (reduce, broadcast, all-gather, distributed batch norm)
-- Distributed memory pool across GPU devices
-- Multi-GPU matmul with approach TBD (tensor parallelism, pipeline parallelism, or hybrid)
+**Next milestone:** v1.2 with NCCL integration, tensor parallelism, and pipeline parallelism
 
 ## Core Value
 
@@ -34,15 +30,18 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ Ray tracing primitives (ray-box, ray-sphere, BVH) — v1.0
 - ✓ Graph processing (BFS, PageRank) — v1.0
 - ✓ Deep learning primitives (matmul, activations, normalization) — v1.0
-- ✓ 81+ tests across 13 test suites — existing
-- ✓ CMake build with Google Test — existing
+- ✓ Device mesh detection and peer memory access — v1.1
+- ✓ Multi-GPU data parallelism primitives (reduce, broadcast, all-gather, barrier) — v1.1
+- ✓ Distributed memory pool across GPU devices — v1.1
+- ✓ Multi-GPU matmul with single-GPU fallback — v1.1
+- ✓ 418 tests passing — existing
 
-### Active
+### Active (v1.2 Planning)
 
-- [ ] Device mesh detection and peer memory access (MGPU-01)
-- [ ] Multi-GPU data parallelism primitives (MGPU-02)
-- [ ] Distributed memory pool across GPU devices (MGPU-03)
-- [ ] Multi-GPU matmul (MGPU-04)
+- [ ] NCCL integration for optimized multi-GPU collectives
+- [ ] Tensor parallelism for large layer support
+- [ ] Pipeline parallelism for deep model support
+- [ ] Distributed batch normalization
 
 ### Out of Scope
 
@@ -56,14 +55,15 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - C++20, CUDA 17, CMake 3.25+
 - Target architectures: 6.0, 7.0, 8.0, 9.0 (Pascal through Ampere)
 - Five-layer architecture with clear separation of concerns
-- 81+ tests using Google Test v1.14.0
-- v1.0 shipped: FFT, Ray Tracing, Graph Algorithms, Neural Net Primitives, Async/Streaming
-- **v1.1 focus:** Multi-GPU support (device mesh, data parallelism, distributed memory pool, multi-GPU matmul)
+- **418 tests using Google Test v1.14.0**
+- **v1.1 shipped:** Multi-GPU support with DeviceMesh, PeerCopy, DistributedReduce, DistributedMemoryPool, DistributedMatmul
 
-**Known limitations from codebase map:**
-- No multi-GPU support (v1.1 target)
-- No peer memory access between devices
-- No distributed memory pool across GPUs
+**Current capabilities:**
+- Device mesh detection and peer memory access between GPUs
+- Multi-GPU collective operations (all-reduce, broadcast, all-gather, barrier)
+- Distributed memory pool spanning multiple GPUs
+- Multi-GPU matrix multiply with single-GPU fallback
+- All v1.0 features: FFT, Ray Tracing, Graph Algorithms, Neural Net Primitives, Async/Streaming
 
 ## Constraints
 
@@ -80,8 +80,9 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 | Streams for async | Native CUDA streams, not abstraction layer | ✓ Implemented |
 | FFTW-style API | Familiar interface for signal processing users | ✓ Implemented |
 | BVH helpers over full ray tracer | Focus on GPU compute primitives | ✓ Implemented |
-| CUDA MPS for multi-GPU shared memory | Native, low-overhead GPU sharing | — TBD |
-| Multi-GPU matmul approach | Tensor vs pipeline vs hybrid parallelism | — Research in v1.1 |
+| P2P ring-allreduce fallback | No NCCL dependency for v1.1 | ✓ Implemented |
+| Row-wise split matmul | Simple, builds on existing infrastructure | ✓ Implemented |
+| Device mesh singleton | Lazy initialization, single source of truth | ✓ Implemented |
 
 ## Evolution
 
@@ -101,4 +102,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-04-24 — Milestone v1.1 started*
+*Last updated: 2026-04-24 after v1.1 milestone completion*

@@ -2,145 +2,58 @@
 
 **Created:** 2026-04-23
 **Updated:** 2026-04-24
-**Granularity:** Standard (10 phases, 1-3 plans each)
+**Granularity:** Standard
 
-## Phase Summary
+## Milestones
 
-| # | Phase | Goal | Requirements | Success Criteria |
-|---|-------|------|--------------|------------------|
-| 1 | Performance Foundations | Device-aware kernels, memory metrics, validation, benchmarks | PERF-01 to PERF-06, BMCH-01 to BMCH-04 | 10 criteria |
-| 2 | Async & Streaming | CUDA streams, pinned memory, pool improvements | ASYNC-01 to ASYNC-04, POOL-01 to POOL-04 | 8 criteria |
-| 3 | FFT Module | Fast Fourier Transform implementation | FFT-01 to FFT-04 | 4 criteria |
-| 4 | Ray Tracing Primitives | Intersection tests and BVH helpers | RAY-01 to RAY-04 | 4 criteria |
-| 5 | Graph Algorithms | BFS and PageRank on GPU | GRAPH-01 to GRAPH-04 | 4 criteria |
-| 6 | Neural Net Primitives | Matmul, softmax, ReLU, layer norm | NN-01 to NN-04 | 4 criteria |
-| 7 | Device Mesh Detection | GPU enumeration, peer access matrix, async P2P copy | MGPU-01 to MGPU-04 | 4 criteria |
-| 8 | Multi-GPU Data Parallelism | All-reduce, broadcast, all-gather, barrier sync | MGPU-05 to MGPU-08 | 4 criteria |
-| 9 | Distributed Memory Pool | Per-device pools, auto-allocation, cross-device tracking | MGPU-09 to MGPU-11 | 4 criteria |
-| 10 | Multi-GPU Matmul | Row-wise split matmul, single-GPU fallback | MGPU-12 to MGPU-13 | 3 criteria |
+- ✅ **v1.0 Production Release** — Phases 1-6 (shipped 2026-04-24)
+- ✅ **v1.1 Multi-GPU Support** — Phases 7-10 (shipped 2026-04-24)
+- 🚧 **v1.2** — Planning needed
 
----
+## Phase Progress
 
-## Phase 7: Device Mesh Detection
+<details>
+<summary>✅ v1.0 Production Release (Phases 1-6) — SHIPPED 2026-04-24</summary>
 
-**Goal:** Enable GPU topology discovery and peer memory access between devices
+| # | Phase | Goal | Requirements | Status |
+|---|-------|------|--------------|--------|
+| 1 | Performance Foundations | Device-aware kernels, memory metrics, validation, benchmarks | PERF-01 to PERF-06, BMCH-01 to BMCH-04 | ✅ Complete |
+| 2 | Async & Streaming | CUDA streams, pinned memory, pool improvements | ASYNC-01 to ASYNC-04, POOL-01 to POOL-04 | ✅ Complete |
+| 3 | FFT Module | Fast Fourier Transform implementation | FFT-01 to FFT-04 | ✅ Complete |
+| 4 | Ray Tracing Primitives | Intersection tests and BVH helpers | RAY-01 to RAY-04 | ✅ Complete |
+| 5 | Graph Algorithms | BFS and PageRank on GPU | GRAPH-01 to GRAPH-04 | ✅ Complete |
+| 6 | Neural Net Primitives | Matmul, softmax, ReLU, layer norm | NN-01 to NN-04 | ✅ Complete |
 
-**Requirements:**
-- MGPU-01: Device enumeration and properties query
-- MGPU-02: Peer access capability between GPU pairs
-- MGPU-03: Peer access matrix with cached lookup
-- MGPU-04: Async peer-to-peer copy primitives
+See `.planning/milestones/v1.0-ROADMAP.md` for full phase details.
 
-**Success Criteria:**
-1. User can enumerate all CUDA devices and query properties (memory, compute capability, clock rates)
-2. User can query peer access capability between any GPU pair with validation (cudaDeviceCanAccessPeer)
-3. User can access a cached peer access matrix for O(1) topology lookups
-4. Async peer-to-peer copy works with existing StreamManager streams on peer-capable GPUs
+</details>
 
-**Key Files:**
-- `include/cuda/mesh/device_mesh.h` (new)
-- `include/cuda/mesh/peer_copy.h` (new)
-- `include/cuda/mesh/scoped_device.h` (new)
-- `src/cuda/mesh/device_mesh.cu` (new)
-- `src/cuda/mesh/peer_copy.cu` (new)
-- `tests/mesh/*_test.cu` (new)
+<details>
+<summary>✅ v1.1 Multi-GPU Support (Phases 7-10) — SHIPPED 2026-04-24</summary>
 
-**Plans:** 1 plan
-Plans:
-- [ ] 07-01-PLAN.md — Device Mesh Detection (MGPU-01, MGPU-02, MGPU-03, MGPU-04)
+| # | Phase | Goal | Requirements | Status |
+|---|-------|------|--------------|--------|
+| 7 | Device Mesh Detection | GPU enumeration, peer access matrix, async P2P copy | MGPU-01 to MGPU-04 | ✅ Complete |
+| 8 | Multi-GPU Data Parallelism | All-reduce, broadcast, all-gather, barrier sync | MGPU-05 to MGPU-08 | ✅ Complete |
+| 9 | Distributed Memory Pool | Per-device pools, auto-allocation, cross-device tracking | MGPU-09 to MGPU-11 | ✅ Complete |
+| 10 | Multi-GPU Matmul | Row-wise split matmul, single-GPU fallback | MGPU-12 to MGPU-13 | ✅ Complete |
+
+See `.planning/milestones/v1.1-ROADMAP.md` for full phase details.
+
+</details>
 
 ---
 
-## Phase 8: Multi-GPU Data Parallelism Primitives
+## Next Milestone (v1.2)
 
-**Goal:** Provide collective operations for multi-GPU synchronization and data movement
+**Status:** Planning needed
 
-**Requirements:**
-- MGPU-05: Multi-GPU all-reduce (ring algorithm, 2+ GPUs)
-- MGPU-06: Multi-GPU broadcast
-- MGPU-07: Multi-GPU all-gather
-- MGPU-08: Multi-GPU barrier synchronization
-
-**Success Criteria:**
-1. Multi-GPU all-reduce produces correct sum across 2+ GPUs using ring algorithm
-2. Broadcast correctly distributes data from source GPU to all other GPUs
-3. All-gather correctly gathers data from all GPUs to all GPUs
-4. Multi-GPU barrier synchronizes all devices before proceeding (no deadlock)
-
-**Key Files:**
-- `include/cuda/distributed/reduce.h` (new)
-- `include/cuda/distributed/broadcast.h` (new)
-- `include/cuda/distributed/all_gather.h` (new)
-- `include/cuda/distributed/barrier.h` (new)
-- `src/cuda/distributed/reduce.cu` (new)
-- `src/cuda/distributed/broadcast.cu` (new)
-- `src/cuda/distributed/all_gather.cu` (new)
-- `tests/distributed/*_test.cu` (new)
-
-**Plans:** 1 plan
-Plans:
-- [ ] 08-01-PLAN.md — Multi-GPU Data Parallelism Primitives (MGPU-05, MGPU-06, MGPU-07, MGPU-08)
-
----
-
-## Phase 9: Distributed Memory Pool
-
-**Goal:** Extend memory management to span multiple GPUs with coherent allocation
-
-**Requirements:**
-- MGPU-09: Distributed memory pool with per-device pools
-- MGPU-10: Auto-device allocation (select device with most memory)
-- MGPU-11: Cross-device pointer ownership tracking
-
-**Success Criteria:**
-1. Distributed memory pool maintains separate sub-pools per device
-2. Auto-device allocation selects device with most available memory
-3. Memory pool tracks device ownership for each pointer (correct deallocation)
-4. Memory pool reports per-device and aggregate statistics
-
-**Key Files:**
-- `include/cuda/memory/distributed_pool.h` (new)
-- `src/cuda/memory/distributed_pool.cpp` (new)
-- `tests/distributed/*_pool_test.cu` (new)
-
-**Plans:** 1 plan
-Plans:
-- [ ] 09-01-PLAN.md — Distributed Memory Pool (MGPU-09, MGPU-10, MGPU-11)
-
----
-
-## Phase 10: Multi-GPU Matmul
-
-**Goal:** Enable large-matrix operations across multiple GPUs with data parallelism
-
-**Requirements:**
-- MGPU-12: Row-wise split multi-GPU matmul (numerically correct)
-- MGPU-13: Single-GPU fallback for multi-GPU matmul
-
-**Success Criteria:**
-1. Row-wise split multi-GPU matmul produces numerically correct results (within 1e-3 of single-GPU reference)
-2. Single-GPU fallback bypasses all multi-GPU code paths (no dependency on peer access)
-3. Multi-GPU matmul accepts configurable number of GPUs with graceful handling of non-peer-capable pairs
-
-**Key Files:**
-- `include/cuda/distributed/matmul.h` (new)
-- `src/cuda/distributed/matmul.cu` (new)
-- `tests/distributed/*_matmul_test.cu` (new)
-
-**Plans:** 1 plan
-Plans:
-- [ ] 10-01-PLAN.md — Multi-GPU Matmul (MGPU-12, MGPU-13)
-
----
-
-## Milestone
-
-| Milestone | Phases | Target |
-|-----------|--------|--------|
-| Production Ready | 1-2 | Core infrastructure complete |
-| Feature Complete | 1-6 | All algorithms implemented |
-| v1.0 Production Release | 1-6 | Shipped 2026-04-24 |
-| v1.1 Multi-GPU Support | 7-10 | Single-node multi-GPU data parallelism |
+**Candidate features:**
+- NCCL integration for optimized multi-GPU collectives
+- Tensor parallelism for large layer support
+- Pipeline parallelism for deep model support
+- Distributed batch normalization
+- Device mesh topology optimization (NVLink-aware)
 
 ---
 
