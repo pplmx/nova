@@ -13,7 +13,7 @@ NcclResult safe_stream_wait(ncclComm_t comm, cudaStream_t stream,
                              int timeout_ms) {
     NcclResult result;
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(timeout_ms);
 

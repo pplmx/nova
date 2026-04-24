@@ -48,6 +48,7 @@ add_executable(nova-tests
     neural/activations_test.cpp
     neural/layer_norm_test.cpp
     mesh/device_mesh_test.cu
+    cuda/nccl/test_nccl_collectives.cpp
     distributed/distributed_ops_test.cu
     distributed/distributed_pool_test.cu
     distributed/distributed_matmul_test.cu
@@ -65,6 +66,7 @@ set(CUDA_RAYTRACE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/raytrace)
 set(CUDA_GRAPH_DIR ${CMAKE_SOURCE_DIR}/include/cuda/graph)
 set(CUDA_NEURAL_DIR ${CMAKE_SOURCE_DIR}/include/cuda/neural)
 set(CUDA_MESH_DIR ${CMAKE_SOURCE_DIR}/include/cuda/mesh)
+set(CUDA_NCCL_DIR ${CMAKE_SOURCE_DIR}/include/cuda/nccl)
 set(CUDA_DISTRIBUTED_DIR ${CMAKE_SOURCE_DIR}/include/cuda/distributed)
 set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
@@ -91,6 +93,7 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_GRAPH_DIR}
     ${CUDA_NEURAL_DIR}
     ${CUDA_MESH_DIR}
+    ${CUDA_NCCL_DIR}
     ${CUDA_DISTRIBUTED_DIR}
     ${DISTRIBUTED_TESTS_DIR}
 )

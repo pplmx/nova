@@ -6,7 +6,7 @@
 #include "cuda/nccl/nccl_barrier.h"
 #include "cuda/nccl/nccl_error.h"
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
 #include <nccl.h>
 #endif
 

@@ -36,7 +36,7 @@
 #include <string>
 #include <vector>
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
 #include <nccl.h>
 #endif
 
@@ -49,7 +49,7 @@ namespace cuda::nccl {
  * Follows the CUDA_CHECK pattern from cuda/device/error.h.
  * Throws NcclException on failure with file, line, and error details.
  */
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
 #define NCCL_CHECK(call)                                                          \
     do {                                                                          \
         ncclResult_t err = call;                                                  \

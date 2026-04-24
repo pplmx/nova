@@ -182,6 +182,10 @@ set(NCCL_SOURCES
         ${SRC_CUDA_NCCL}/nccl_context.cpp
         ${SRC_CUDA_NCCL}/nccl_error.cpp
         ${SRC_CUDA_NCCL}/nccl_validation.cpp
+        ${SRC_CUDA_NCCL}/nccl_collective.cpp
+        ${SRC_CUDA_NCCL}/nccl_all_reduce.cpp
+        ${SRC_CUDA_NCCL}/nccl_broadcast.cpp
+        ${SRC_CUDA_NCCL}/nccl_barrier.cpp
 )
 
 set(DISTRIBUTED_SOURCES
@@ -213,6 +217,7 @@ set(ALL_CUDA_SOURCES
 
 add_library(cuda_nccl STATIC ${NCCL_SOURCES})
 target_include_directories(cuda_nccl PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
         ${CUDA_NCCL_DIR}
 )
 target_link_libraries(cuda_nccl PUBLIC

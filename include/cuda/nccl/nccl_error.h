@@ -37,7 +37,7 @@
 #include <string>
 #include <thread>
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
 #include <nccl.h>
 #endif
 
@@ -119,7 +119,7 @@ template<typename Fn>
 NcclResult safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000) {
     NcclResult result;
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
     // Execute the NCCL call
     result.code = fn();
 

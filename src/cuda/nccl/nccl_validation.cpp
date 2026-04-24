@@ -13,7 +13,7 @@
 #include <sstream>
 #include <sys/statfs.h>
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
 #include <nccl.h>
 #endif
 
@@ -22,7 +22,7 @@ namespace cuda::nccl {
 VersionInfo get_version() {
     VersionInfo info;
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
     int version;
     ncclResult_t result = ncclGetVersion(&version);
 

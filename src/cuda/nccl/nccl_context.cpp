@@ -76,7 +76,7 @@ void NcclContext::initialize(const NcclContextConfig& config) {
         return;  // Idempotent
     }
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
     // Use provided device IDs or detect from mesh
     if (!config.device_ids.empty()) {
         device_ids_ = config.device_ids;
@@ -146,7 +146,7 @@ ncclComm_t NcclContext::get_comm(int device) const {
     std::lock_guard<std::mutex> lock(init_mutex_);
 
     if (!initialized_) {
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
         throw NcclException("NcclContext not initialized", ncclInvalidArgument,
                             "get_comm", __FILE__, __LINE__);
 #else
@@ -156,7 +156,7 @@ ncclComm_t NcclContext::get_comm(int device) const {
 
     auto it = std::find(device_ids_.begin(), device_ids_.end(), device);
     if (it == device_ids_.end()) {
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
         throw NcclException("Device not in NCCL group", ncclInvalidArgument,
                             "get_comm", __FILE__, __LINE__);
 #else
@@ -172,7 +172,7 @@ cudaStream_t NcclContext::get_stream(int device) const {
 
     auto it = std::find(device_ids_.begin(), device_ids_.end(), device);
     if (it == device_ids_.end()) {
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
         throw NcclException("Device not in NCCL group", ncclInvalidArgument,
                             "get_stream", __FILE__, __LINE__);
 #else
@@ -198,7 +198,7 @@ void NcclContext::destroy() {
     }
     streams_.clear();
 
-#ifdef NOVA_NCCL_ENABLED
+#if NOVA_NCCL_ENABLED
     // Destroy NCCL communicators
     for (auto& comm : communicators_) {
         if (comm != nullptr) {
