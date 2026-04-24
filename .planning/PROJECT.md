@@ -4,11 +4,17 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v1.3 Planning Needed
+## Current Milestone: v1.3 NCCL Integration, Tensor & Pipeline Parallelism
 
 **Previous milestone:** v1.2 Toolchain Upgrade — SHIPPED 2026-04-24
 
-**Next milestone:** v1.3 NCCL Integration, Tensor Parallelism, Pipeline Parallelism
+**Goal:** Enable efficient multi-GPU training with NCCL-based collectives, tensor parallelism for large layers, and pipeline parallelism for deep models.
+
+**Target features:**
+- NCCL integration for optimized multi-GPU collectives
+- Tensor parallelism for large layer support
+- Pipeline parallelism for deep model support
+- Distributed batch normalization
 
 ## Core Value
 
@@ -39,7 +45,7 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ CMake 4.0+ minimum version — v1.2
 - ✓ 444 tests passing — v1.2
 
-### Deferrals from v1.2 (moved to v1.3)
+### Active
 
 - [ ] NCCL integration for optimized multi-GPU collectives
 - [ ] Tensor parallelism for large layer support
@@ -108,4 +114,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-04-24 after v1.2 milestone completion*
+*Last updated: 2026-04-24 after v1.3 milestone started*
