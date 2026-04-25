@@ -1,67 +1,50 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: Multi-Node Support
-status: complete
-last_updated: "2026-04-24"
+milestone: v1.5
+milestone_name: Fault Tolerance
+status: planning
+last_updated: "2026-04-26"
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 9
-  completed_plans: 9
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-04-24 (v1.4 complete)
+**Last Updated:** 2026-04-26 (v1.5 planning)
 
 ## Current Position
 
 | Field | Value |
 |-------|-------|
-| **Milestone** | v1.4 Multi-Node Support |
-| **Overall Progress** | 33% (1/3 phases, 3/9 plans) |
-| **Total Requirements** | 15 |
-| **Status** | **IN PROGRESS - Phase 19 planning** |
+| **Milestone** | v1.5 Fault Tolerance |
+| **Overall Progress** | 0% (0/4 phases, 0/12 plans) |
+| **Total Requirements** | 20 |
+| **Status** | **PLANNING - Phase 21 not started** |
 
 ## Phase Progress
 
 | Phase | Status | Requirements | Plans |
 |-------|--------|--------------|-------|
-| 18: MPI Integration | ✅ Complete | MULN-01 to MULN-05 | 3/3 |
-| 19: Topology-Aware Collectives | ✅ Complete | TOPO-01 to TOPO-05 | 3/3 |
-| 20: Cross-Node Communicators | ✅ Complete | CNOD-01 to CNOD-05 | 3/3 |
+| 21: Checkpoint/Restart | 🚧 Planning | CKPT-01 to CKPT-05 | 0/3 |
+| 22: Comm Error Recovery | Pending | COMM-01 to COMM-05 | 0/3 |
+| 23: Memory Error Detection | Pending | MEM-01 to MEM-05 | 0/3 |
+| 24: Job Preemption | Pending | PEMP-01 to PEMP-05 | 0/3 |
 
-## v1.4 Summary
+## v1.5 Summary
 
-Milestone v1.4 adds multi-node support for cluster-scale training:
+Milestone v1.5 adds production-grade fault tolerance for cluster deployments.
 
-**Phase 18 (MPI Integration) — COMPLETE:**
-- cmake/FindMPI.cmake — MPI detection for OpenMPI/MPICH
-- include/cuda/mpi/mpi_context.h — MpiContext with singleton + RAII
-- src/cuda/mpi/mpi_context.cpp — Rank discovery, local_rank calculation
-- CMakeLists.txt — NOVA_ENABLE_MPI option, cuda_mpi target
-- 5/5 MULN requirements satisfied
+**Goals:**
+- GPU checkpoint/restart with full state serialization (weights + optimizer + RNG)
+- Communication error recovery for NCCL/TCP failures
+- Memory error detection and ECC error handling
+- Job preemption signal handling for scheduler integration
 
-**Phase 19 (Topology-Aware Collectives) — COMPLETE:**
-- include/cuda/topology/topology_map.h — TopologyMap, NcclTopologyContext
-- src/cuda/topology/topology_map.cpp — NIC detection, algorithm selection
-- CollectiveSelector for bandwidth-aware collective selection
-- CollectiveProfiler for benchmark reporting
-- 5/5 TOPO requirements satisfied
-
-**Phase 20 (Cross-Node Communicators) — COMPLETE:**
-- include/cuda/multinode/multi_node_context.h — MultiNodeContext singleton
-- src/cuda/multinode/multi_node_context.cpp — Hierarchical communicators, fallback
-- HierarchicalAllReduce, HierarchicalBarrier implementations
-- 5/5 CNOD requirements satisfied
-
-**Phase 20 (Cross-Node Communicators):**
-- MultiNodeContext extending NcclContext
-- Intra-node and inter-node NCCL communicators
-- Hierarchical collectives (local then cross-node)
-- Graceful degradation without MPI/NCCL-NET
+**Requirements:** 20 total (CKPT-01 to CKPT-05, COMM-01 to COMM-05, MEM-01 to MEM-05, PEMP-01 to PEMP-05)
 
 ## Milestone History
 
@@ -71,35 +54,25 @@ Milestone v1.4 adds multi-node support for cluster-scale training:
 | v1.1 Multi-GPU Support | ✅ Shipped | 2026-04-24 | 13 |
 | v1.2 Toolchain Upgrade | ✅ Shipped | 2026-04-24 | 9 |
 | v1.3 NCCL Integration | ✅ Shipped | 2026-04-24 | 26 |
-| v1.4 Multi-Node Support | ✅ **SHIPPED** | 2026-04-24 | 15 |
+| v1.4 Multi-Node Support | ✅ Shipped | 2026-04-24 | 15 |
+| v1.5 Fault Tolerance | 🚧 Planning | 2026-04-26 | 20 |
 
-## Previous Decisions (v1.3)
+## Previous Decisions (v1.4)
 
 | Decision | Implementation |
 |----------|----------------|
-| D-01: DI with singleton fallback | NcclContext constructor + static instance() |
-| D-02: safe_nccl_call() wrapper | Template with automatic ncclCommGetAsyncError polling |
-| D-03: Optional NCCL with P2P fallback | NOVA_ENABLE_NCCL option, NOVA_NCCL_ENABLED define |
-| D-04: Per-device singleton caching | get_comm(device) returns cached communicator |
-| D-05: Stream-ordered collectives | cudaStream_t passed to all NCCL calls |
-| D-06: Column/row parallel matmul | Weight matrix partitioning strategies |
-| D-07: 1F1B schedule | Classic pipeline parallelism schedule |
+| D-01: MPI optional with graceful fallback | Single-node works without MPI |
+| D-02: RDMA-aware algorithm selection | Prefer CollNet for InfiniBand |
+| D-03: Hierarchical collectives | Node-local then cross-node reduction |
 
-## v1.4 Decisions
+## v1.5 Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| MPI optional with graceful fallback | Single-node works without MPI | ✓ Implemented |
-| RDMA-aware algorithm selection | Prefer CollNet for InfiniBand | ✓ Implemented |
-| Hierarchical collectives | Node-local then cross-node reduction | ✓ Implemented |
-
-## Phase 18-20 Commits
-
-- Phase 18: MPI detection and MpiContext
-- Phase 19: Topology detection and algorithm selection
-- Phase 20: MultiNodeContext and hierarchical collectives
+| Checkpoint granularity | Full state for complete recovery | v1.5 planning |
+| Error recovery strategy | Detect → isolate → recover → retry | v1.5 planning |
+| Signal handling | SIGTERM/SIGUSR1 for graceful shutdown | v1.5 planning |
 
 ---
-
-*State updated: 2026-04-24 after v1.4 milestone complete*
-*15 requirements: MULN-01 to MULN-05, TOPO-01 to TOPO-05, CNOD-01 to CNOD-05*
+*State updated: 2026-04-26 after v1.5 milestone started*
+*20 requirements: CKPT-01 to CKPT-05, COMM-01 to COMM-05, MEM-01 to MEM-05, PEMP-01 to PEMP-05*

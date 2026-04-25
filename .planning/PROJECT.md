@@ -4,16 +4,17 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v1.4 Multi-Node Support
+## Current Milestone: v1.5 Fault Tolerance
 
-**Previous milestone:** v1.3 NCCL Integration, Tensor & Pipeline Parallelism — SHIPPED 2026-04-24
+**Previous milestone:** v1.4 Multi-Node Support — SHIPPED 2026-04-24
 
-**Goal:** Enable efficient multi-node training with MPI-based NCCL initialization, topology-aware collective selection, and cross-node communicator management.
+**Goal:** Enable production-grade fault tolerance with checkpoint/restart, error recovery, and graceful handling of cluster preemption.
 
 **Target features:**
-- MPI-based NCCL initialization for inter-node communication
-- Topology-aware collective selection across nodes
-- Cross-node NCCL communicator management
+- GPU checkpoint/restart with full state serialization (weights + optimizer + RNG)
+- Communication error recovery for NCCL/TCP failures
+- Memory error detection and ECC error handling
+- Job preemption signal handling for scheduler integration
 
 ## Core Value
 
@@ -47,12 +48,16 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ Extended NCCL collectives with unified fallback — v1.3
 - ✓ Tensor parallelism for large layer support — v1.3
 - ✓ Pipeline parallelism for deep model support — v1.3
+- ✓ MPI-based NCCL initialization for inter-node communication — v1.4
+- ✓ Topology-aware collective selection across nodes — v1.4
+- ✓ Cross-node NCCL communicator management — v1.4
 
 ### Active
 
-- [ ] MPI-based NCCL initialization for inter-node communication — Phase 18
-- [ ] Topology-aware collective selection across nodes — Phase 19
-- [ ] Cross-node NCCL communicator management — Phase 20
+- [ ] GPU checkpoint/restart with full state serialization — Phase 21
+- [ ] Communication error recovery for NCCL/TCP failures — Phase 22
+- [ ] Memory error detection and ECC error handling — Phase 23
+- [ ] Job preemption signal handling — Phase 24
 
 ### Out of Scope
 
@@ -107,7 +112,10 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 | Optional NCCL with P2P fallback | Preserve single-node without NCCL | ✓ v1.3 shipped |
 | TensorParallelMatmul (col/row) | Build on existing DistributedMatmul | ✓ v1.3 shipped |
 | 1F1B pipeline scheduler | Classic GPipe-style scheduling | ✓ v1.3 shipped |
-| MPI for multi-node init | Standard for cluster NCCL bootstrapping | v1.4 planning |
+| MPI for multi-node init | Standard for cluster NCCL bootstrapping | ✓ v1.4 shipped |
+| Checkpoint granularity | Full state (weights + optimizer + RNG) | v1.5 planning |
+| Error recovery strategy | Detect → isolate → recover → retry | v1.5 planning |
+| Signal handling | SIGTERM/SIGUSR1 for graceful shutdown | v1.5 planning |
 
 ## Evolution
 
@@ -127,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-04-24 after v1.4 milestone started*
+*Last updated: 2026-04-26 after v1.5 milestone started*

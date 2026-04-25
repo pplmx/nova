@@ -1,7 +1,7 @@
 # Roadmap: Nova CUDA Library Enhancement
 
 **Created:** 2026-04-23
-**Updated:** 2026-04-24 (v1.4 added)
+**Updated:** 2026-04-26 (v1.5 added)
 **Granularity:** Standard
 
 ## Milestones
@@ -11,6 +11,7 @@
 - ✅ **v1.2 Toolchain Upgrade** — Phases 11-12 (shipped 2026-04-24)
 - ✅ **v1.3 NCCL Integration, Tensor & Pipeline Parallelism** — Phases 13-17 (shipped 2026-04-24)
 - ✅ **v1.4 Multi-Node Support** — Phases 18-20 (shipped 2026-04-24)
+- 🚧 **v1.5 Fault Tolerance** — Phases 21-24 (in progress)
 
 ## Phase Progress
 
@@ -314,6 +315,132 @@
 
 ---
 
+## v1.5 Fault Tolerance
+
+**Status:** Phase 21 Planning - 0/4 phases
+
+**Goal:** Enable production-grade fault tolerance with checkpoint/restart, error recovery, and graceful handling of cluster preemption.
+
+### Phase Overview
+
+| # | Phase | Goal | Requirements | Plans | Status |
+|---|-------|------|--------------|-------|--------|
+| 21 | Checkpoint/Restart | Full state serialization, async writes, storage abstraction | CKPT-01 to CKPT-05 | 0/3 | 🚧 Planning |
+| 22 | Comm Error Recovery | NCCL timeout detection, health monitoring, automatic retry | COMM-01 to COMM-05 | 0/3 | Pending |
+| 23 | Memory Error Detection | ECC error handling, device health monitoring, graceful degradation | MEM-01 to MEM-05 | 0/3 | Pending |
+| 24 | Job Preemption | Signal handlers, graceful shutdown, resume-from-checkpoint | PEMP-01 to PEMP-05 | 0/3 | Pending |
+
+### Phase Details
+
+<details>
+<summary>Phase 21: Checkpoint/Restart (🚧 Planning)</summary>
+
+**Goal:** Implement full state checkpoint/restart for training recovery.
+
+**Requirements:**
+- CKPT-01: CheckpointManager with async writes and configurable interval
+- CKPT-02: Full state serialization (weights, optimizer states, RNG state)
+- CKPT-03: Storage backend abstraction (filesystem, object store paths)
+- CKPT-04: Incremental checkpoint support for reduced I/O overhead
+- CKPT-05: Automatic checkpoint on error detection before recovery
+
+**Success Criteria:**
+1. CheckpointManager supports async writes without blocking training
+2. Full state includes weights, optimizer states, and RNG seed
+3. Storage abstraction allows file paths and future object store support
+4. Incremental checkpoints reduce I/O by only saving changed tensors
+5. Automatic checkpoint triggered before error recovery attempts
+
+**Pitfalls Addressed:**
+- Blocking I/O during checkpoint (async with dedicated stream)
+- Large checkpoint sizes (compression, incremental saves)
+- Partial writes on crash (atomic writes with rename)
+- Cross-rank synchronization (coordinated checkpoint)
+
+</details>
+
+<details>
+<summary>Phase 22: Communication Error Recovery (Pending)</summary>
+
+**Goal:** Detect and recover from NCCL/TCP communication failures.
+
+**Requirements:**
+- COMM-01: NCCL timeout detection with configurable thresholds
+- COMM-02: Health monitoring for collective operations (watchdog thread)
+- COMM-03: Automatic retry with exponential backoff for transient errors
+- COMM-04: Cross-node connection repair and communicator recreation
+- COMM-05: Error classification (transient vs permanent) for retry decisions
+
+**Success Criteria:**
+1. Timeout detection triggers within configured threshold (default 60s)
+2. Health monitor detects stalled collectives without false positives
+3. Transient errors retry with exponential backoff (max 3 attempts)
+4. Communicators recreated after permanent failures
+5. Error classification guides retry vs abort decisions
+
+**Pitfalls Addressed:**
+- False positive timeouts on slow networks (adaptive thresholds)
+- Deadlock during recovery (single-threaded recovery coordinator)
+- Resource leaks on communicator recreation (proper cleanup)
+- Cascading failures (circuit breaker pattern)
+
+</details>
+
+<details>
+<summary>Phase 23: Memory Error Detection (Pending)</summary>
+
+**Goal:** Detect and handle memory errors gracefully.
+
+**Requirements:**
+- MEM-01: CUDA error detection and classification via cudaDeviceGetErrorString
+- MEM-02: ECC error callback registration and handling infrastructure
+- MEM-03: Device health monitoring with periodic checks during idle
+- MEM-04: Graceful degradation strategies (reduce TP degree, fall back to CPU)
+- MEM-05: Memory error telemetry and logging for diagnostics
+
+**Success Criteria:**
+1. CUDA errors caught and classified with descriptive messages
+2. ECC callbacks registered with device-level error notification
+3. Health checks run periodically without impacting performance
+4. Graceful degradation maintains partial functionality on errors
+5. Error telemetry provides actionable diagnostics
+
+**Pitfalls Addressed:**
+- Unhandled CUDA errors crashing training (catch and handle)
+- Silent ECC errors degrading accuracy (detect and report)
+- Degradation causing cascading failures (controlled fallback)
+- Missing diagnostics for root cause analysis (telemetry)
+
+</details>
+
+<details>
+<summary>Phase 24: Job Preemption Handling (Pending)</summary>
+
+**Goal:** Graceful handling of cluster scheduler preemption.
+
+**Requirements:**
+- PEMP-01: Signal handlers for SIGTERM/SIGUSR1 with graceful shutdown
+- PEMP-02: Training state preservation sequence on preemption
+- PEMP-03: Resume-from-checkpoint validation and recovery
+- PEMP-04: Configurable shutdown timeout (default 30s, extendable)
+- PEMP-05: Coordinated checkpoint across multi-node ranks
+
+**Success Criteria:**
+1. Signal handlers installed at startup for SIGTERM/SIGUSR1
+2. Shutdown sequence completes gracefully within timeout
+3. Checkpoints validated before resume attempt
+4. Coordinated checkpoint ensures all ranks consistent
+
+**Pitfalls Addressed:**
+- Abrupt termination losing progress (graceful shutdown on signal)
+- Timeout too short for large checkpoints (configurable, extendable)
+- Resume from corrupted checkpoint (validation before use)
+- Cross-node inconsistency after preemption (coordinated checkpoint)
+
+</details>
+
+---
+
 ## Backlog
 
 Deferred work from future milestones.
@@ -334,4 +461,4 @@ Deferred work from future milestones.
 
 ---
 
-*Roadmap updated: 2026-04-24 after v1.3 roadmap creation*
+*Roadmap updated: 2026-04-26 after v1.5 roadmap creation*

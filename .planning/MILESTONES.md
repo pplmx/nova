@@ -116,3 +116,27 @@
 - MultiNodeContext for cluster-scale communicator management
 - HierarchicalAllReduce and HierarchicalBarrier collectives
 - Graceful fallback when NCCL/MPI unavailable
+
+---
+
+## v1.5 Fault Tolerance (In Progress)
+
+**Phases planned:** 4 phases, 12 plans, 20 requirements
+
+**Planned capabilities:**
+
+- **Phase 21: Checkpoint/Restart** - Full state serialization, async writes, storage abstraction
+- **Phase 22: Comm Error Recovery** - NCCL timeout detection, health monitoring, automatic retry
+- **Phase 23: Memory Error Detection** - ECC error handling, device health monitoring, graceful degradation
+- **Phase 24: Job Preemption** - Signal handlers, graceful shutdown, resume-from-checkpoint
+
+**Requirements planned:** 20 total (CKPT-01 to CKPT-05, COMM-01 to COMM-05, MEM-01 to MEM-05, PEMP-01 to PEMP-05)
+
+**Core features planned:**
+- CheckpointManager with async writes and configurable interval
+- Full state serialization (weights + optimizer states + RNG state)
+- NCCL timeout detection and automatic retry with exponential backoff
+- ECC error callback infrastructure and device health monitoring
+- SIGTERM/SIGUSR1 signal handlers for graceful preemption
+
+**Next:** Phase 21 execution
