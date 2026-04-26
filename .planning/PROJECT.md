@@ -8,7 +8,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 **Previous milestone:** v2.0 Testing & Quality — SHIPPED 2026-04-26
 
-**Status:** Planning
+**Status:** ✅ COMPLETE
 
 **Goal:** Add new algorithm capabilities including sparse matrices, graph neural networks, and quantization.
 
@@ -16,6 +16,8 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - Sparse Matrix Support: CSR/CSC formats, sparse matmul, SpMM kernels
 - Graph Neural Networks: GNN primitives, message passing, graph attention
 - Quantization: INT8/FP16 quantization, QAT support, mixed precision
+
+**Completed:** 2026-04-26
 
 ## Core Value
 
@@ -56,6 +58,9 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ Property-based testing with reproducible seeds — v2.0
 - ✓ Code coverage reports with lcov/genhtml — v2.0
 - ✓ CI integration with coverage gates — v2.0
+- ✓ Sparse matrix CSR/CSC formats — v2.1
+- ✓ Graph neural network primitives — v2.1
+- ✓ INT8/FP16 quantization — v2.1
 
 ### Completed (v1.6)
 

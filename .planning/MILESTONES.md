@@ -238,4 +238,27 @@
 - Coverage report generation with gap analysis
 - CI workflow with 80% minimum coverage gate
 
+**Next:** v2.1 New Algorithms
+
+---
+
+## v2.1 New Algorithms (Shipped: 2026-04-26)
+
+**Phases completed:** 4 phases, 12 requirements
+
+**Key accomplishments:**
+
+- **Phase 44: Sparse Matrix Support** - CSR/CSC formats with SpMV and SpMM operations
+- **Phase 45: Graph Neural Networks** - Message passing, attention, sampling, k-hop aggregation
+- **Phase 46: Quantization Foundation** - INT8 and FP16 tensor quantization
+- **Phase 47: Quantized Operations** - Quantized matmul and mixed precision
+
+**Requirements delivered:** 12 total (SPARSE-01 to SPARSE-04, GNN-01 to GNN-04, QUANT-01 to QUANT-04)
+
+**Core features implemented:**
+- Sparse matrix operations using CSR/CSC formats
+- GNN primitives for message passing and graph attention
+- Tensor quantization for INT8 and FP16
+- Quantized matmul with mixed precision support
+
 **Next:** TBD
