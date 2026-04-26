@@ -50,6 +50,7 @@ add_executable(nova-tests
     neural/sync_batch_norm_test.cu
     neural/tensor_parallel_test.cpp
     neural/fusion/fused_matmul_bias_act_test.cpp
+    neural/fusion/fused_matmul_bias_act_edge_test.cpp
     neural/transformer/attention_test.cpp
     neural/loss/loss_functions_test.cpp
     neural/optimizers/optimizers_test.cpp
@@ -65,7 +66,9 @@ add_executable(nova-tests
     multinode/test_multi_node_context.cpp
     performance/profiler_test.cpp
     performance/autotuner_test.cu
+    performance/autotuner_edge_test.cpp
     memory_opt/memory_optimizer_test.cpp
+    memory_opt/memory_optimizer_edge_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
