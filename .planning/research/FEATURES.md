@@ -1,6 +1,6 @@
 # Feature Research
 
-**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Domain:** CUDA Library Developer Experience
 **Researched:** 2026-04-26
 **Confidence:** HIGH
 
@@ -8,31 +8,31 @@
 
 ### Table Stakes (Users Expect These)
 
-Features users assume exist. Missing these = product feels incomplete.
+Features users assume exist in a production CUDA library. Missing these = product feels incomplete or unprofessional.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| **Basic throughput measurement** | Core benchmark requirement | LOW | Already implemented in `cuda::benchmark::Benchmark` |
-| **Latency measurement** | Kernel timing is fundamental | LOW | Already implemented via cudaEvent timing |
-| **Statistical aggregation** | Single runs are noisy | LOW | Mean, stddev, min, max already implemented |
-| **Regression detection** | Catch performance degradation | MEDIUM | Tolerance-based comparison exists; needs baseline storage |
-| **Warm-up iterations** | GPU clocks need stabilization | LOW | Already implemented |
-| **CI integration** | Automated performance validation | MEDIUM | Requires JSON baseline storage and CI workflow |
-| **Memory throughput metrics** | GPU memory bandwidth is critical | LOW | `compute_throughput_gbps` helper exists |
+| CMake integration with `find_package()` support | Users expect standard CMake workflows: `find_package(nova)`, `target_link_libraries(myapp PRIVATE nova::nova)` | MEDIUM | Requires `novaTargets.cmake`, `novaConfig.cmake`, version file. Build should export targets to `lib/cmake/nova/` |
+| `compile_commands.json` generation | Required for clangd, VS Code intellisense, and other tooling to work | LOW | Add `CMAKE_EXPORT_COMPILE_COMMANDS=ON` and set output path to project root |
+| CUDA error messages with context | Raw `cudaError_t` codes are unhelpful ("cudaErrorIllegalAddress: an illegal memory access was encountered") | MEDIUM | Wrap with file:line, device info, kernel name if available, suggested fixes |
+| ccache integration | Dramatically speeds rebuilds; users expect it to work out of box | LOW | Detect ccache, set `CMAKE_CUDA_COMPILER_LAUNCHER`, document in README |
+| Parallel compilation support | Users expect `-j$(nproc)` to work effectively | LOW | Ensure CMake targets have no serialization bottlenecks; use unity builds if needed |
+| pkg-config support | Some build systems prefer `.pc` files | LOW | Generate via CMake's `export()` with pkg_check_modules |
 
 ### Differentiators (Competitive Advantage)
 
-Features that set the product apart. Not required, but valuable.
+Features that set the library apart. Not required, but valuable for adoption and retention.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| **Multi-GPU scaling curves** | Validate distributed training scalability | HIGH | Requires NCCL integration, node coordination |
-| **Automated regression alerting** | Proactive performance monitoring | MEDIUM | GitHub Actions with threshold-based gates |
-| **NVTX-instrumented kernels** | Timeline visualization of kernel execution | MEDIUM | NVIDIA Nsight Systems integration |
-| **Memory leak detection** | Catch allocation bugs in benchmarks | MEDIUM | Track allocations per benchmark run |
-| **Pool fragmentation metrics** | Understand memory allocator behavior | MEDIUM | Requires memory pool instrumentation |
-| **HTML trend reports** | Visual performance history | MEDIUM | Chart.js or similar for browser-based dashboards |
-| **Weak/strong scaling benchmarks** | Validate parallel efficiency | HIGH | Algorithmic scalability measurement |
+| Kernel-level error attribution | "Reduce kernel failed at thread (42,0) on device 1" instead of just "illegal address" | HIGH | Requires capturing kernel launch info, threading through async error paths |
+| Interactive debugger helpers | `NOVA_DEBUG_KERNEL=1` env var to inject breakpoints, logging | MEDIUM | Conditional compilation, GPU debugging macros |
+| CUDA error recovery suggestions | "Try reducing block size" or "Check memory alignment" based on error type | MEDIUM | Error-specific hints; maps common errors to actionable advice |
+| IDE config presets (.clangd, compile_flags.txt) | "Works in VS Code immediately" - zero config for users | LOW | Ship `.clangd` with compilation flags, include paths |
+| Build performance diagnostics | `nova::benchmark_build` target or cmake --preset with build timing | MEDIUM | Useful for users debugging their own CUDA build performance |
+| CMake presets | `cmake --preset developer` with sensible defaults for common workflows | LOW | Include: dev, release, ndebug, unity builds |
+| Header-only diagnostic layer | Optional `nova/diagnostics/errors.hpp` for users who want rich errors | MEDIUM | Opt-in via CMake flag `NOVA_ENABLE_RICH_ERRORS` |
+| Continuous integration build matrix | `.github/workflows/build.yml` with multiple CUDA/GCC versions | MEDIUM | Validates compatibility; builds serve as working examples |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
@@ -40,129 +40,110 @@ Features that seem good but create problems.
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| **Real-time dashboard streaming** | "Would be cool" appeal | Continuous GPU state polling adds overhead; complexity explosion | Periodic JSON exports + static HTML |
-| **Automatic kernel tuning** | Optimize launch parameters | Takes hours to run; changes kernel behavior | Document optimal configs separately |
-| **Cross-vendor validation** | AMD/Intel compatibility | Different architectures, different metrics, massive scope | Focus on NVIDIA, document limitations |
-| **Machine learning-based anomaly detection** | "AI will find everything" | False positives in noisy GPU workloads | Statistical tolerance bands are sufficient |
-| **Per-instruction profiling** | SASS-level granularity | Prohibitive overhead; requires NSight Compute | Offer as opt-in manual tool |
+| Automatic error recovery/resilience | "Just make it work even when CUDA fails" | Masks real bugs, creates silent data corruption, user loses awareness of issues | Explicit `try_recover()` API; let errors propagate by default |
+| Language bindings (Python, Rust) in same repo | "I want to use it from Python" | Massive scope, ABI complexity, release cycle overhead | Separate `nova-python` repo with clear versioning |
+| Runtime CUDA version detection/switching | "Support both CUDA 11 and 12" | Massive complexity, feature fragmentation, testing matrix explosion | Document minimum CUDA version (already 20); recommend upgrade path |
+| GUI debugging tools | "Make it easier to debug" | Custom GUI dev is not library work; distracts from core value | Document ncu,Nsight usage; provide integration scripts |
+| Cross-vendor support (AMD HIP) | "Also work on AMD GPUs" | Entirely different runtime, not a feature add, fundamental rearchitecture | Document as out-of-scope; suggest rocAL for AMD |
 
 ## Feature Dependencies
 
 ```
-Comprehensive Benchmark Suite
-    ├──requires──> Statistical Aggregation (exists)
-    ├──requires──> Throughput Calculation (exists)
-    └──requires──> CI Integration Pipeline
+CMake Integration
+    └──requires──> Version file generation
+    └──requires──> Target export configuration
+    └──requires──> FindModule compatibility
 
-Performance Regression Testing
-    ├──requires──> Baseline Storage (JSON files)
-    ├──requires──> Regression Detection (exists)
-    └──requires──> CI Integration Pipeline
+IDE Support (clangd/VS Code)
+    └──requires──> compile_commands.json
+    └──requires──> CMake integration (for include paths)
 
-Memory Profiling & Validation
-    ├──requires──> Memory Metrics (exists)
-    ├──requires──> Allocation Tracking
-    └──requires──> Fragmentation Analysis
+Better Error Messages
+    └──requires──> CUDA error wrapper infrastructure
+    └──requires──> Kernel launch context capture
 
-Distributed Training Benchmarks
-    ├──requires──> NCCL Integration (exists in codebase)
-    ├──requires──> Multi-GPU Context Management
-    └──requires──> Scaling Curve Framework
-
-Continuous Profiling Hooks
-    ├──requires──> NVTX Integration
-    ├──requires──> Profiler Infrastructure (exists)
-    └──requires──> NSight CLI Integration
-
-Performance Dashboards
-    ├──requires──> JSON Export (partial - exists)
-    ├──requires──> Baseline Comparison
-    └──requires──> HTML Generation Framework
+Build Performance
+    └──enhances──> CMake Integration (faster iteration)
+    └──enhances──> IDE Support (faster reparse)
 ```
 
 ### Dependency Notes
 
-- **Baseline Storage requires CI Integration:** Without automated CI runs, baselines become stale and useless.
-- **Distributed Benchmarks enhance Comprehensive Suite:** Multi-GPU tests are a superset of single-GPU benchmarking.
-- **NVTX hooks conflict with pure throughput measurement:** NVTX adds overhead; separate measurement modes needed.
-- **Memory leak detection conflicts with pool fragmentation:** Different memory tracking strategies; don't combine in same run.
+- **CMake integration requires version file generation:** The `novaConfigVersion.cmake` file is needed for `find_package()` to work with version constraints
+- **IDE support requires compile_commands.json:** Clangd and VS Code both rely on this JSON file for code intelligence
+- **Better error messages require CUDA error wrapper:** A centralized error handling system that enriches `cudaError_t` with context
+- **Build performance enhances everything:** Faster builds improve iteration speed for all DX features
 
 ## MVP Definition
 
-### Launch With (v1)
+### Launch With (v1.8)
 
-Minimum viable product — what's needed to validate the concept.
+Minimum viable developer experience — what's needed to validate the approach.
 
-- [ ] **Baseline storage system** — JSON files for persisting benchmark results across commits. Essential for regression testing. Storage format: `{ "commit": "...", "results": [...] }`.
-- [ ] **CI integration with regression gates** — GitHub Actions workflow that runs benchmarks, compares to stored baselines, and fails PR if tolerance exceeded. Threshold: 10% default, configurable per-benchmark.
-- [ ] **Algorithmic benchmarks (reduce, scan, sort)** — These expose scaling behavior clearly. Throughput + latency per problem size.
-- [ ] **JSON export for all benchmark results** — Machine-readable output enabling trend analysis and dashboard generation.
+- [ ] CMake integration with exported targets and `find_package()` support — essential for library adoption
+- [ ] `compile_commands.json` generation — required for any IDE to function
+- [ ] Rich CUDA error messages with file:line context and device info — immediately useful debugging
+- [ ] ccache detection and integration — quick win for build time
+- [ ] `.clangd` configuration file — zero-config clangd support
 
-### Add After Validation (v1.x)
+### Add After Validation (v1.8.x)
 
 Features to add once core is working.
 
-- [ ] **Memory profiling suite** — Leak detection (allocation count mismatch), pool utilization metrics, fragmentation analysis. Trigger: Memory bugs appearing in CI.
-- [ ] **Multi-GPU benchmark harness** — NCCL-based collective benchmarks (all-reduce, broadcast, all-gather) with scaling curves. Trigger: Distributed training needs.
-- [ ] **HTML report generator** — Static pages with Chart.js trend charts, baseline comparison, regression annotations. Trigger: Team grows beyond 3 people.
-- [ ] **NVTX annotation framework** — Lightweight range markers for kernel-level timeline in Nsight Systems. Trigger: Profiling sessions needed.
+- [ ] CMake presets for common workflows (dev, release) — trigger: user feedback about build configuration
+- [ ] Error recovery suggestions — trigger: documented common error patterns from users
+- [ ] Kernel-level error attribution — trigger: users debugging async kernel failures
+- [ ] pkg-config support — trigger: user requests from non-CMake build systems
 
 ### Future Consideration (v2+)
 
 Features to defer until product-market fit is established.
 
-- [ ] **Pipeline parallelism benchmarks** — Micro-benchmarks for 1F1B schedule, interleaved schedules. Defer: Requires full distributed context.
-- [ ] **Tensor parallelism benchmarks** — All-reduce + all-gather patterns at scale. Defer: Hardware-dependent validation.
-- [ ] **Automatic alert routing** — Slack/Teams notifications on regressions. Defer: After baseline storage validated.
-- [ ] **Interactive Nsight integration** — Launch Nsight Systems from benchmark tooling. Defer: UI complexity.
+- [ ] Interactive debugger helpers — low priority; advanced users use ncu/nsight
+- [ ] CI build matrix — valuable but not blocking; depends on resource availability
+- [ ] Header-only diagnostic layer — nice-to-have; requires API stability
+- [ ] Build performance diagnostics target — low priority for library users
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Baseline storage system | HIGH | LOW | P1 |
-| CI regression gates | HIGH | MEDIUM | P1 |
-| Algorithmic benchmarks (reduce/scan/sort) | HIGH | LOW | P1 |
-| JSON export for results | HIGH | LOW | P1 |
-| Memory leak detection | MEDIUM | MEDIUM | P2 |
-| Memory pool metrics | MEDIUM | MEDIUM | P2 |
-| Multi-GPU NCCL benchmarks | MEDIUM | HIGH | P2 |
-| HTML trend reports | MEDIUM | MEDIUM | P2 |
-| NVTX annotation framework | MEDIUM | MEDIUM | P2 |
-| FFT benchmarks | MEDIUM | LOW | P2 |
-| Matmul benchmarks | MEDIUM | LOW | P2 |
-| Collective scaling curves | LOW | HIGH | P3 |
-| Pipeline parallelism suite | LOW | HIGH | P3 |
-| Tensor parallelism suite | LOW | HIGH | P3 |
-| Alert routing integration | LOW | MEDIUM | P3 |
+| CMake integration with exported targets | HIGH | MEDIUM | P1 |
+| compile_commands.json generation | HIGH | LOW | P1 |
+| Rich error messages with context | HIGH | MEDIUM | P1 |
+| .clangd configuration | HIGH | LOW | P1 |
+| ccache integration | MEDIUM | LOW | P1 |
+| Error recovery suggestions | MEDIUM | MEDIUM | P2 |
+| CMake presets | MEDIUM | LOW | P2 |
+| Kernel-level error attribution | MEDIUM | HIGH | P2 |
+| pkg-config support | LOW | LOW | P3 |
+| Interactive debugger helpers | LOW | MEDIUM | P3 |
+| CI build matrix | LOW | MEDIUM | P3 |
 
 **Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
+- P1: Must have for v1.8 launch
+- P2: Should have, add in v1.8.x
 - P3: Nice to have, future consideration
 
 ## Competitor Feature Analysis
 
-| Feature | Google Benchmark | NVIDIA Nsight Compute | cuBLAS/cuFFT Benchmarks | Our Approach |
-|---------|------------------|----------------------|-------------------------|--------------|
-| **Basic microbenchmarking** | Yes - CPU only | CLI profiling | Reference implementations | Extend existing `cuda::benchmark::Benchmark` |
-| **Kernel throughput** | Via manual timing | Metrics collection | Throughput in docs | First-class citizen with GB/s metrics |
-| **Statistical aggregation** | Built-in with reporters | Via ncu-rep parsing | Manual | Mean/stddev/min/max built-in |
-| **Baseline comparison** | Custom reporters needed | Via `ncu --diff` | None | JSON-based with tolerance thresholds |
-| **CI integration** | CMake/CTest | GitHub Actions samples | None | Native GitHub Actions workflow |
-| **Multi-GPU support** | No | Via mpirun/NCCL | No | NCCL-aware benchmark harness |
-| **HTML reports** | Via custom reporters | Nsight Systems GUI | None | Static site generator |
-| **Memory leak detection** | AddressSanitizer | Via replay | None | Integration with existing memory pool |
+| Feature | cuBLAS | Thrust | Our Approach |
+|---------|--------|--------|--------------|
+| CMake integration | Yes, via CMake | Yes, via CMake | Same - export targets to `lib/cmake/nova/` |
+| compile_commands.json | Not prominent | Not prominent | Ship `.clangd` for zero-config IDE support |
+| Error messages | Raw CUDA errors | Exceptions with basic context | Wrap with device info, kernel context, recovery hints |
+| ccache support | Not documented | Not documented | Document in README, auto-detect in CMake |
+| IDE config | Not shipped | Not shipped | Ship `.clangd`, `.vscode/settings.json` |
 
 ## Sources
 
-- [Google Benchmark Library](https://github.com/google/benchmark) - CPU microbenchmarking standard
-- [NVIDIA Nsight Compute Documentation](https://docs.nvidia.com/nsight-compute/) - GPU profiling guide
-- [NVIDIA NVTX Documentation](https://docs.nvidia.com/nsight-compute/) - Timeline annotation
-- [CUTLASS Benchmarks](https://github.com/NVIDIA/cutlass) - GEMM benchmarking patterns
-- [cuBLAS Benchmarks](https://docs.nvidia.com/cuda/cublas/) - BLAS performance reference
-- [NCCL Tests](https://github.com/NVIDIA/nccl-tests) - Collective communication benchmarks
+- CMake 3.20+ `find_package()` documentation and import/export patterns
+- NVIDIA CUDA Toolkit documentation for error codes and diagnostics
+- clangd documentation for `.clangd` configuration format
+- ccache documentation for CMake integration (`CMAKE_CUDA_COMPILER_LAUNCHER`)
+- GoogleTest/GoogleBenchmark patterns for CMake integration (used by project already)
+- libcu++ error handling patterns
 
 ---
-*Feature research for: CUDA/C++ Benchmarking and Performance Testing Infrastructure*
+*Feature research for: CUDA Library Developer Experience*
 *Researched: 2026-04-26*

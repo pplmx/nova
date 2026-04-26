@@ -1,321 +1,319 @@
-# Architecture Research
+# Architecture Research: Developer Experience for CUDA Library
 
-**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Domain:** CUDA C++ Library Developer Experience
 **Researched:** 2026-04-26
-**Confidence:** HIGH
+**Confidence:** MEDIUM
 
 ## Executive Summary
 
-This document defines the architecture for adding benchmarking infrastructure to an existing CUDA library with a five-layer architecture (device → memory → algo → api → distributed). The infrastructure will integrate Google Benchmark for C++ kernels, provide a Python harness for orchestration and regression detection, add NVTX profiling annotations to existing code, and generate HTML dashboards for trend visualization.
+The v1.8 Developer Experience improvements integrate four cross-cutting concerns—error messaging, CMake packaging, IDE support, and build performance—into the existing five-layer CUDA architecture. These are **infrastructure additions**, not feature additions, so they touch the build system, library layer boundaries, and developer tooling rather than algorithm implementations.
 
-## System Overview
+## Current Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          BENCHMARKING INFRASTRUCTURE                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    Python Harness Layer                              │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │   │
-│  │  │   Runner    │  │   Reporter  │  │   Baselines │  │  Dashboard  │ │   │
-│  │  │  (invoke)   │  │  (JSON)     │  │  (storage)  │  │  (HTML)     │ │   │
-│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘ │   │
-│  └─────────┼────────────────┼────────────────┼────────────────┼────────┘   │
-│            │                │                │                │             │
-│  ┌─────────┴────────────────┴────────────────┴────────────────┴────────┐   │
-│  │                    C++ Google Benchmark Layer                        │   │
-│  │  ┌──────────────────────────────────────────────────────────────────┐ │   │
-│  │  │  benchmark/                                                     │ │   │
-│  │  │  ├── benchmark_reduce.cpp       # algo layer kernels            │ │   │
-│  │  │  ├── benchmark_scan.cpp         # algo layer kernels            │ │   │
-│  │  │  ├── benchmark_matmul.cpp       # neural layer kernels          │ │   │
-│  │  │  ├── benchmark_distributed.cpp  # distributed layer kernels     │ │   │
-│  │  │  └── benchmark_memory.cpp       # memory layer kernels          │ │   │
-│  │  └──────────────────────────────────────────────────────────────────┘ │   │
-│  └───────────────────────────────────────────────────────────────────────┘   │
-│            │                                                                 │
-│  ┌─────────┴─────────────────────────────────────────────────────────────┐   │
-│  │                    Source Code with NVTX Annotations                   │   │
-│  ├────────────────────────────────────────────────────────────────────────┤
-│  │  nova/algo/      → NVTX ranges for reduce, scan, sort, FFT, matmul     │   │
-│  │  nova/distributed/ → NVTX ranges for NCCL/MPI collectives              │   │
-│  │  nova/memory/    → NVTX ranges for pool alloc, buffer ops              │   │
-│  └────────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                         API Layer                            │
+│          (include/cuda/api/) - Public interface              │
+├─────────────────────────────────────────────────────────────┤
+│                      Algorithm Layer                         │
+│       (include/cuda/algo/) - Parallel algorithm wrappers     │
+├─────────────────────────────────────────────────────────────┤
+│                       Device Layer                           │
+│         (include/cuda/device/) - Device management           │
+├─────────────────────────────────────────────────────────────┤
+│                      Memory Layer                            │
+│           (include/cuda/memory/) - Memory abstractions       │
+├─────────────────────────────────────────────────────────────┤
+│                    Infrastructure                            │
+│     (CMakeLists.txt, cmake/*, src/*, tests/*, include/*)    │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+## DX Integration Architecture
+
+### System Overview
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                     Developer Experience Layer                      │
+├────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│  │Error Messages│  │CMake Package │  │  IDE Support │             │
+│  │  (headers)   │  │  (exports)   │  │  (configs)   │             │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘             │
+│         │                 │                 │                      │
+│         ▼                 ▼                 ▼                      │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │                  Build Performance Layer                  │     │
+│  │            (ccache, unity builds, parallel)              │     │
+│  └──────────────────────────────────────────────────────────┘     │
+└────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                     Five-Layer CUDA Stack                          │
+│              (memory → device → algo → api)                        │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+## Component Responsibilities
+
+### New Components (v1.8)
+
+| Component | Location | Purpose | Implementation |
+|-----------|----------|---------|----------------|
+| `cuda_error` | `include/cuda/error/` | Structured error types with recovery hints | Header-only, `std::error_code` + custom category |
+| `cmake-exports` | Root `CMakeLists.txt` additions | CMake package config + targets export | Modern CMake `export()` + `CMakeLists.txt` additions |
+| `clangd-config` | `.clangd` | Compilation database path + CUDA compilation flags | YAML configuration file |
+| `vscode-settings` | `.vscode/` | Build tasks, debug configs, extensions recommendations | JSON configuration files |
+| `build-wrappers` | `scripts/build-*` | ccache + Ninja launcher scripts | Shell scripts |
+| `compile-commands` | Generated by CMake | JSON compilation database for IDE indexing | CMake `CMAKE_EXPORT_COMPILE_COMMANDS=ON` |
+
+### Modified Components
+
+| Component | Change | Rationale |
+|-----------|--------|-----------|
+| `CMakeLists.txt` | Add `export()` and `find_package` config | Enable `find_package(nova)` for downstream |
+| `cmake/Find*.cmake` | Add CMake config file version | Modern CMake requires `novaConfig.cmake` |
+| `include/cuda/*` | Add error context to API headers | Rich error messages for failed operations |
+| `src/cuda/*` | Wrap CUDA API calls with error translation | Convert `cudaError_t` → `nova::error` |
 
 ## Recommended Project Structure
 
 ```
 nova/
-├── benchmark/                          # C++ Google Benchmark kernels (NEW)
-│   ├── CMakeLists.txt                  # Build config for benchmarks
-│   ├── benchmark_kernels.cu            # Kernel benchmark definitions
-│   ├── benchmark_utils.cu              # Shared benchmark utilities
-│   ├── benchmark_harness.cpp           # Main entry point
-│   └── configs/                        # Benchmark configurations
-│       ├── standard.json               # Standard workload configs
-│       └── regression.json             # Regression test configs
-│
-├── scripts/benchmark/                  # Python harness (NEW)
-│   ├── run_benchmarks.py               # Main orchestration script
-│   ├── collect_results.py              # JSON result collection
-│   ├── check_regression.py             # Baseline comparison logic
-│   ├── generate_dashboard.py           # HTML dashboard generation
-│   ├── baselines/                      # Stored baselines (committed)
-│   │   └── v0.1.0/
-│   │       ├── reduce.json
-│   │       ├── scan.json
-│   │       └── matmul.json
-│   └── templates/                      # Dashboard templates
-│       └── dashboard.html
-│
-├── results/                            # Current run results (gitignore)
-│   ├── 2026-04-26/
-│   │   ├── reduce.json
-│   │   └── matmul.json
-│   └── baselines/
-│
-├── reports/                            # Generated dashboards
-│   ├── index.html                      # Main dashboard
-│   ├── trends/
-│   │   ├── reduce_trend.html
-│   │   └── matmul_trend.html
-│   └── regression/
-│       └── latest.html
-│
-├── include/cuda/benchmark/             # Existing (keep)
-│   ├── benchmark.h                     # Custom harness (consider migrating to Google Benchmark)
-│   └── nvtx.h                          # NVTX wrapper utilities (NEW)
-│
-├── src/benchmark/                      # Existing but empty (populate)
-│   └── nvtx.cu                         # NVTX implementation (NEW)
-│
-├── include/cuda/algo/                  # Add NVTX annotations
-│   ├── reduce.h                        # + NVTX_RANGE in functions
-│   ├── scan.h
-│   ├── sort.h
+├── .clangd                    # NEW: clangd configuration
+├── .vscode/                   # NEW: VS Code settings
+│   ├── settings.json
+│   ├── tasks.json
+│   └── extensions.json
+├── cmake/                     # Existing: find modules
+│   ├── FindNCCL.cmake
+│   ├── FindMPI.cmake
+│   ├── novaConfig.cmake.in    # NEW: package config template
+│   └── novaTargets.cmake      # NEW: exported targets
+├── include/cuda/
+│   ├── error/                 # NEW: error handling layer
+│   │   ├── cuda_error.hpp     # Structured error types
+│   │   ├── error_category.hpp # Custom error categories
+│   │   └── stack_trace.hpp    # CUDA call stack capture
 │   └── ...
-│
-├── tests/benchmark/                    # Existing benchmark tests
-│   ├── benchmark_test.cpp              # Keep for regression checks
-│   ├── throughput_test.cpp
-│   └── regression_test.cpp
-│
-└── CMakeLists.txt                      # Update with benchmark targets
+├── src/cuda/
+│   ├── error/                 # NEW: error implementation
+│   │   └── cuda_error.cpp     # Error translation + hints
+│   └── ...
+├── scripts/                   # Existing
+│   ├── build-ccache.sh        # NEW: ccache wrapper
+│   ├── build-fast.sh          # NEW: optimized build
+│   └── ...
+└── CMakeLists.txt             # MODIFIED: export targets
 ```
 
-## Component Responsibilities
+### Structure Rationale
 
-| Component | Responsibility | Implementation |
-|-----------|----------------|----------------|
-| `benchmark/` directory | C++ Google Benchmark kernels | Compile as separate executable, link against `cuda_impl` |
-| `scripts/benchmark/` | Python orchestration | argparse CLI, subprocess calls to benchmark executable |
-| `scripts/benchmark/run_benchmarks.py` | Invoke benchmarks with configurable workloads | Python subprocess with JSON config parsing |
-| `scripts/benchmark/check_regression.py` | Compare results against baselines | JSON diff with configurable tolerance |
-| `scripts/benchmark/generate_dashboard.py` | Create HTML reports | Jinja2 templates, Chart.js for visualization |
-| `include/cuda/benchmark/nvtx.h` | NVTX helper macros | C++ header with RAII range guards |
-| `results/` | Transient result storage | JSON files, gitignored |
-| `scripts/benchmark/baselines/` | Versioned baselines | Committed to repo for regression tracking |
+- **`.clangd` / `.vscode/`:** Tool-specific configs at repo root for immediate discovery by IDEs
+- **`include/cuda/error/`:** Error layer lives at same level as other layers—cross-cutting concern
+- **`cmake/novaConfig.cmake.in`:** CMake 4.0+ pattern: config file + generated targets
+- **`scripts/build-*.sh`:** Developer convenience scripts, not CMake dependencies
 
 ## Architectural Patterns
 
-### Pattern 1: Google Benchmark Kernel Registration
+### Pattern 1: Structured Error Translation
 
-**What:** Standard Google Benchmark pattern where each kernel registers itself via `BENCHMARK` macro.
+**What:** Wrap CUDA runtime errors in `std::error_code` with context-aware recovery hints.
 
-**When to use:** All C++ benchmark kernels should follow this pattern for consistency with Google's conventions.
+**When to use:** Any CUDA API call that can fail and where users need actionable error messages.
 
 **Trade-offs:**
-- Pro: Built-in parameterization, statistical analysis, and JSON output
-- Pro: Integration with existing Google infrastructure (gbench_install.cmake)
-- Con: Additional dependency (but already using Google Test)
+- Pros: Consistent error interface, machine-parseable, rich context
+- Cons: Additional abstraction layer, error category registration overhead
 
 **Example:**
 ```cpp
-// benchmark/benchmark_reduce.cu
-#include <benchmark/benchmark.h>
-#include "cuda/algo/reduce.h"
+// include/cuda/error/cuda_error.hpp
+namespace nova::error {
+    enum class cuda_errc {
+        out_of_memory = 1,
+        invalid_launch_config,
+        kernel_failed,
+        peer_access_unsupported,
+        // ... per error category
+    };
 
-static void BM_ReduceFloat(benchmark::State& state) {
-    const size_t n = state.range(0);
-    // ... setup, warmup, benchmark loop
-    for (auto _ : state) {
-        cuda::algo::reduce(d_data.get(), result, n);
-    }
-    state.SetBytesProcessed(n * sizeof(float));
-    state.SetItemsProcessed(n * state.iterations());
-}
-BENCHMARK(BM_ReduceFloat)->RangeMultiplier(2)->Ranges({{1024, 1<<24}});
-BENCHMARK(BM_ReduceFloat)->Unit(benchmark::kMillisecond);
+    const char* cuda_category_name();
+    const std::error_category& cuda_category();
 
-BENCHMARK_MAIN();
-```
-
-### Pattern 2: RAII NVTX Range Guard
-
-**What:** Scoped NVTX annotation using RAII destructor semantics.
-
-**When to use:** Annotating existing functions without changing their signature.
-
-**Trade-offs:**
-- Pro: Zero-cost abstraction, automatic end on scope exit
-- Pro: Exception-safe (destructor runs even on exceptions)
-- Con: Requires include of nvtx.h in all annotated files
-
-**Example:**
-```cpp
-// include/cuda/benchmark/nvtx.h
-#pragma once
-#include <nvtx3/nvtx3.hpp>
-
-class NVTXRange {
-public:
-    explicit NVTXRange(const char* name, nvtx3::color color = nvtx3::color::blue) 
-        : marker_(name) {
-        marker_.start();
-    }
-    ~NVTXRange() { marker_.end(); }
-    
-    // Prevent copying, allow moving
-    NVTXRange(const NVTXRange&) = delete;
-    NVTXRange& operator=(const NVTXRange&) = delete;
-    NVTXRange(NVTXRange&&) = default;
-    NVTXRange& operator=(NVTXRange&&) = default;
-
-private:
-    nvtx3::scoped_marker marker_;
-};
-
-// Macro for convenience
-#define NVTX_SCOPED_RANGE(name) NVTXRange _nvtx_range_(name)
-```
-
-### Pattern 3: Configuration-Driven Benchmark Execution
-
-**What:** JSON configuration files that control which benchmarks run with what parameters.
-
-**When to use:** Standardizing benchmark execution across different environments (local, CI, release).
-
-**Trade-offs:**
-- Pro: Easy to add new configurations without code changes
-- Pro: Reproducible benchmarks across runs
-- Con: Additional parsing layer
-
-**Example:**
-```json
-// benchmark/configs/standard.json
-{
-    "name": "standard",
-    "description": "Standard workload for CI regression",
-    "filters": ["*/Reduce/*", "*/Scan/*"],
-    "workloads": [
-        {"name": "small", "size": 1024},
-        {"name": "medium", "size": 1024*1024},
-        {"name": "large", "size": 1024*1024*64}
-    ],
-    "iterations": 10,
-    "warmup": 3,
-    "tolerance_percent": 10.0
+    // RAII helper for CUDA error translation
+    class cuda_error_guard {
+    public:
+        ~cuda_error_guard() {
+            if (code != cudaSuccess) {
+                throw cuda_exception(code, context);
+            }
+        }
+        cudaError_t code{cudaSuccess};
+        std::string context;
+    };
 }
 ```
 
-### Pattern 4: Baseline Versioning
+### Pattern 2: CMake Target Export
 
-**What:** Store baselines with version tags for regression comparison.
+**What:** Use CMake 4.0+ `export()` to generate installable targets.
 
-**When to use:** Tracking performance across releases and identifying when regressions occurred.
-
-**Trade-offs:**
-- Pro: Clear history of performance expectations
-- Pro: Easy to rollback baselines if needed
-- Con: Requires discipline to update baselines on intentional changes
-
-**Directory structure:**
-```
-scripts/benchmark/baselines/
-├── v0.1.0/           # Initial baseline
-│   └── reduce.json
-├── v0.2.0/           # After optimization
-│   └── reduce.json
-└── main/             # Current main branch baseline (symlink or copy)
-    └── reduce.json
-```
-
-### Pattern 5: Dashboard Generation with Trend Analysis
-
-**What:** HTML dashboards with embedded Chart.js visualizations showing performance over time.
-
-**When to use:** Visualizing benchmark trends and communicating performance to stakeholders.
+**When to use:** Library distribution via `find_package()`.
 
 **Trade-offs:**
-- Pro: Self-contained HTML that can be served statically
-- Pro: Interactive charts for exploration
-- Con: Static generation means no real-time updates
+- Pros: Standard CMake integration, transitive dependencies, version checking
+- Cons: Requires CMake 4.0+, config file maintenance
 
-**Data flow:**
+**Example:**
+```cmake
+# CMakeLists.txt additions for v1.8
+include(GNUInstallDirs)
+
+# Generate installable targets
+install(TARGETS cuda_impl cuda_device cuda_algo cuda_memory cuda_api
+    EXPORT novaTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(EXPORT novaTargets
+    FILE novaTargets.cmake
+    NAMESPACE nova::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nova
+)
+
+# Generate package config
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/novaConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/novaConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nova
+)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/novaConfig.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/nova
+)
 ```
-Benchmark Run → JSON Results → Python Parser → Jinja2 Template → HTML Dashboard
-                     ↓
-              Baseline Comparison
-                     ↓
-              Regression Alerts
+
+### Pattern 3: IDE Compilation Database Bridge
+
+**What:** Generate `compile_commands.json` and configure clangd to use CUDA-aware compilation flags.
+
+**When to use:** Any IDE/indexer integration (VS Code, CLion, Neovim with nvim-lspconfig).
+
+**Trade-offs:**
+- Pros: Full IDE support, semantic code navigation, refactoring
+- Cons: Requires CMake regeneration when flags change, CUDA-specific flags in clangd config
+
+**Example:**
+```yaml
+# .clangd
+CompileFlags:
+  Add:
+    - "--cuda-gpu-arch=sm_80"
+    - "-xcuda"
+    - "-Xcuda-ptx=-march=sm_80"
+  Remove:
+    - "-std=*"
+  Compiler: nvcc
+  CompilationDatabase: "."
+
+Diagnostics:
+  ClangTidy:
+    Remove: [readability-identifier-naming]
+    Add:
+      - modernize-use-nullptr
+      - performance-*
+```
+
+### Pattern 4: ccache Integration
+
+**What:** Transparent compilation cache via environment wrapper or CMake cache variable.
+
+**When to use:** Iterative development with repeated rebuilds.
+
+**Trade-offs:**
+- Pros: 5-10x faster rebuilds, reduced compute costs
+- Cons: Cache invalidation complexity, disk usage, occasional stale cache issues
+
+**Example:**
+```cmake
+# CMakeLists.txt cache option
+option(NOVA_USE_CCACHE "Use ccache if available" ON)
+if(NOVA_USE_CCACHE)
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        message(STATUS "ccache found: ${CCACHE_PROGRAM}")
+        set(CMAKE_CUDA_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    endif()
+endif()
 ```
 
 ## Data Flow
 
-### Benchmark Execution Flow
+### Error Handling Flow
 
 ```
-User runs: python scripts/benchmark/run_benchmarks.py --config standard --gpu 0
-
-1. Python harness parses config
-         ↓
-2. Invokes ./build/bin/benchmark_kernels --benchmark_filter="*/Reduce/*" --benchmark_format=json
-         ↓
-3. C++ kernels execute with NVTX annotations (visible in Nsight Graphics/Compute)
-         ↓
-4. Google Benchmark outputs JSON to stdout or file
-         ↓
-5. Python harness parses JSON, stores in results/YYYY-MM-DD/
-         ↓
-6. Regression check compares against baselines/
-         ↓
-7. Dashboard generation creates HTML reports in reports/
+[CUDA API Call]
+      │
+      ▼
+[cudaError_t returned]
+      │
+      ▼
+[nova::error::cuda_error_guard RAII]
+      │
+      ├─── Success ───→ Continue execution
+      │
+      └─── Failure ───→ [cuda_exception with context]
+                              │
+                              ▼
+                      [std::error_code]
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+        [API caller]  [Log message]   [IDE tooltip]
+              │               │               │
+              ▼               ▼               ▼
+        [Recovery      [human-readable   [actionable hint
+         action]        message +          in editor]
+                       stack trace]
 ```
 
-### NVTX Integration Flow
+### CMake Package Discovery Flow
 
 ```
-Source Code (nova/algo/reduce.h)
-    │
-    ├─ #include "cuda/benchmark/nvtx.h"
-    │
-    └─ NVTX_SCOPED_RANGE("reduce_float")
-           │
-           ├─ nvtx3::scoped_marker created
-           │
-           ├─ marker.start() called (NVTX event pushed)
-           │
-           ├─ Actual reduce operation executes
-           │
-           └─ ~NVTXRange() destructor calls marker.end()
-                   │
-                   └─ NVTX event popped
+[Downstream project: find_package(nova)]
+          │
+          ▼
+[novaConfig.cmake loaded]
+          │
+          ├─── Version check passed ───→ [novaTargets.cmake]
+          │                                      │
+          │                                      ▼
+          │                            [Targets: nova::cuda_impl,
+          │                                     nova::cuda_device,
+          │                                     ...]
+          │
+          └─── Version check failed → [CMake error with required version]
 ```
 
-### Multi-GPU/Multi-Node Benchmark Flow
+### IDE Indexing Flow
 
 ```
-# Single GPU benchmark
-python scripts/benchmark/run_benchmarks.py --gpu 0 --config single_gpu
-
-# Multi-GPU benchmark
-python scripts/benchmark/run_benchmarks.py --gpu all --config multi_gpu --nnodes 2
-
-# For multi-node, SSH to each node and invoke via MPI
-mpirun -n 4 python scripts/benchmark/run_benchmarks.py --gpu 0 --config multi_node
+[CMake Configure]
+        │
+        ▼
+[compile_commands.json generated]
+        │
+        ▼
+[clangd reads JSON, spawns nvcc for semantic analysis]
+        │
+        ├─── Headers parsed ──→ [Code completion, goto definition]
+        │
+        └─── CUDA-specific analysis via clangd CUDA support
 ```
 
 ## Integration Points
@@ -324,196 +322,128 @@ mpirun -n 4 python scripts/benchmark/run_benchmarks.py --gpu 0 --config multi_no
 
 | Service | Integration Pattern | Notes |
 |---------|---------------------|-------|
-| NVIDIA Nsight Compute | nvcc --generate-line-info + NVTX ranges | Profile kernel-level performance |
-| NVIDIA Nsight Systems | NVTX annotations visible in timeline | System-wide timeline view |
-| CUDA Profiler | NVTX domains categorize ranges | Use nvtx.* options for profiling |
-| GitHub Actions | Python harness exit codes | Non-zero on regression detection |
+| **ccache** | `CMAKE_CUDA_COMPILER_LAUNCHER` | Transparent cache, no source changes |
+| **Ninja** | `-G Ninja` generator | Faster incremental builds than Make |
+| **clangd** | `.clangd` + `compile_commands.json` | Requires CMake regeneration on flag changes |
+| **VS Code** | `.vscode/` settings | Extensions: CUDA, CMake Tools, clangd |
+| **CLion** | Built-in CMake + CUDA plugin | Native support |
 
 ### Internal Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| benchmark/ → cuda_impl | Link-time dependency | Benchmarks link against cuda_impl library |
-| Python harness → benchmark binary | stdin/stdout JSON | Subprocess invocation |
-| scripts/benchmark/ → results/ | File system | JSON files written/read |
-| Dashboard generator → results/ | File system | Reads and transforms data |
+| **Error layer ↔ Memory layer** | `throw cuda_exception` | Errors propagate up through API |
+| **CMake exports ↔ Library layers** | Imported targets | Transitive include paths |
+| **IDE config ↔ CMake** | Flag sync via variables | `.clangd` mirrors CMake flags |
 
-### Layer Integration (Existing Codebase)
+## Build Order Recommendation
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    algo layer (nova/algo/)                   │
-├──────────────────────────────────────────────────────────────┤
-│  reduce.h     → benchmark_reduce.cpp invokes cuda::algo::reduce│
-│  scan.h       → benchmark_scan.cpp invokes cuda::algo::scan    │
-│  sort.h       → benchmark_sort.cpp invokes cuda::algo::sort    │
-│                                                              │
-│  + NVTX_SCOPED_RANGE("reduce") annotations added to headers   │
-└──────────────────────────────────────────────────────────────┘
-                              ↓
-┌──────────────────────────────────────────────────────────────┐
-│               distributed layer (nova/distributed/)          │
-├──────────────────────────────────────────────────────────────┤
-│  all_reduce.h → benchmark_distributed.cpp tests NCCL ops     │
-│                                                              │
-│  + NVTX_SCOPED_RANGE("all_reduce") for collective ops        │
-└──────────────────────────────────────────────────────────────┘
-                              ↓
-┌──────────────────────────────────────────────────────────────┐
-│                memory layer (nova/memory/)                   │
-├──────────────────────────────────────────────────────────────┤
-│  memory_pool.h → benchmark_memory.cpp tests pool alloc       │
-│                                                              │
-│  + NVTX_SCOPED_RANGE("pool_alloc") for memory ops            │
-└──────────────────────────────────────────────────────────────┘
+Phase 1: Error Layer Foundation
+├── Create include/cuda/error/ header structure
+├── Implement cuda_error.hpp with error categories
+├── Wrap existing CUDA API calls in error guard
+└── Add tests for error translation
+
+Phase 2: CMake Package Export
+├── Create cmake/novaConfig.cmake.in
+├── Add export() targets to CMakeLists.txt
+├── Add install() rules
+├── Test find_package(nova) in test project
+└── Update CONTRIBUTING.md with install instructions
+
+Phase 3: IDE Support
+├── Create .clangd configuration
+├── Create .vscode/settings.json
+├── Create .vscode/tasks.json
+├── Document clangd setup in README
+└── Test navigation in VS Code/Neovim
+
+Phase 4: Build Performance
+├── Add NOVA_USE_CCACHE CMake option
+├── Create scripts/build-fast.sh
+├── Document ccache setup
+├── Benchmark build times (first/incr.)
+└── Update build instructions in README
+```
+
+### Phase Dependencies
+
+```
+Phase 1 (Error) ─────────────────────────┐
+     │                                    │
+     ▼                                    │
+Phase 2 (CMake) ─────────────────────────┤
+     │                                    │
+     │         All phases are independent │
+     │         of each other after Phase 1│
+     ▼                                    ▼
+Phase 3 (IDE)      Phase 4 (Build Perf) ─┘
+     │                   │
+     └─────────┬─────────┘
+               │
+               ▼
+        (Integration test)
 ```
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Benchmarking Without Warm-up
+### Anti-Pattern 1: Error Layer Pollution
 
-**What people do:** Run benchmarks immediately without GPU warm-up, leading to inflated first-run times.
+**What people do:** Adding `try/catch` at every CUDA call site.
 
-**Why it's wrong:** CUDA kernels experience initialization overhead on first launch (kernel compilation, cache warming).
+**Why it's wrong:** Verbose, inconsistent, and doesn't provide context for recovery.
 
-**Do this instead:**
-```cpp
-// Google Benchmark handles warmup automatically
-// For custom harness, ensure warmup iterations before measurement:
-for (int i = 0; i < options.warmup_iterations; ++i) {
-    kernel();
-}
-cudaDeviceSynchronize();
-```
+**Do this instead:** Use RAII guard (`cuda_error_guard`) with centralized error translation.
 
-### Anti-Pattern 2: Ignoring Variance
+### Anti-Pattern 2: Hardcoded Compilation Flags
 
-**What people do:** Reporting only mean execution time without standard deviation.
+**What people do:** Hardcoding CUDA architectures in both CMake and `.clangd`.
 
-**Why it's wrong:** GPU performance varies due to dynamic frequency scaling, memory timing, and kernel launch overhead.
+**Why it's wrong:** Flags drift out of sync, causing IDE errors that don't match build.
 
-**Do this instead:**
-```cpp
-// Use Google Benchmark's built-in statistics
-// Or custom implementation:
-BenchmarkResult result = compute_statistics(measurements);
-std::cout << result.mean_ms << " +/- " << result.stddev_ms << " ms\n";
-```
+**Do this instead:** Extract flags to CMake variables, generate `.clangd` from CMake output or document manual sync.
 
-### Anti-Pattern 3: Benchmarking Small Data Sizes
+### Anti-Pattern 3: Complex Build Scripts
 
-**What people do:** Testing with sizes too small to saturate GPU resources.
+**What people do:** Complex shell scripts that hide build configuration.
 
-**Why it's wrong:** GPU benefits only manifest at sufficient parallelism; small workloads hide algorithmic inefficiencies.
+**Why it's wrong:** Hard to debug, not reproducible, breaks IDE integration.
 
-**Do this instead:**
-```cpp
-// Test across meaningful sizes
-BENCHMARK(BM_Kernel)->Range(1<<10, 1<<28);  // 1KB to 256MB
-// Include throughput metric (GB/s) not just latency
-state.SetBytesProcessed(data_size * state.iterations());
-```
+**Do this instead:** Put all config in CMake. Scripts should only be thin wrappers (`ccache`, `-G Ninja`).
 
-### Anti-Pattern 4: Not Isolating Benchmark Code
+### Anti-Pattern 4: Exporting Everything
 
-**What people do:** Mixing benchmark logic with production code in the same translation unit.
+**What people do:** Exporting all internal targets (test, benchmark, etc.).
 
-**Why it's wrong:** Benchmark instrumentation (timing, NVTX) adds overhead to production builds.
+**Why it's wrong:** Leaks implementation details, pollutes downstream `find_package()`.
 
-**Do this instead:**
-```cpp
-// Production: include headers only
-#include "cuda/algo/reduce.h"
-auto result = cuda::algo::reduce(...);
-
-// Benchmark: separate executable
-// benchmark/benchmark_reduce.cpp
-// - Includes same headers
-// - Adds BENCHMARK macros
-// - Compiled as separate target
-```
-
-### Anti-Pattern 5: Hardcoding Regression Thresholds
-
-**What people do:** Using tight tolerances (e.g., 1%) that trigger false positives.
-
-**Why it's wrong:** GPU performance has inherent variance; tight thresholds cause flaky CI failures.
-
-**Do this instead:**
-```cpp
-// Use reasonable tolerances based on operation type
-constexpr double TOLERANCE_MEMORY_OPS = 5.0;    // Memory ops are stable
-constexpr double TOLERANCE_COMPUTE = 10.0;       // Compute varies more
-constexpr double TOLERANCE_DISTRIBUTED = 15.0;   // Network-bound ops vary most
-```
+**Do this instead:** Export only public API targets: `cuda_impl`, `cuda_device`, `cuda_algo`, `cuda_memory`, `cuda_api`.
 
 ## Scaling Considerations
 
 | Scale | Architecture Adjustments |
-|-------|--------------------------|
-| Single GPU, single benchmark | Simple: single binary, direct JSON output |
-| Multi-GPU benchmarks | Add `--gpu` flag, aggregate results from each GPU |
-| Multi-node benchmarks | Use MPI wrapper, results aggregated via rank 0 |
-| Large test matrix | Parallelize benchmark runs via `xargs -P` or Python `concurrent.futures` |
+|-------|-------------------------|
+| Single developer | `.clangd` + `compile_commands.json` sufficient |
+| 2-5 developers | Standard CMake export + shared CI cache (ccache) |
+| 5+ developers | Distributed ccache (ccache-manager or sccache) + precompiled headers |
 
 ### Scaling Priorities
 
-1. **First bottleneck: CI time** — Use selective filtering to run only changed benchmarks in PRs
-2. **Second bottleneck: Result storage** — Prune old results, keep only baseline-tagged versions
-
-## CMake Integration
-
-The benchmark targets should integrate with the existing CMake setup:
-
-```cmake
-# benchmark/CMakeLists.txt
-find_package(benchmark REQUIRED)
-
-add_executable(nova_benchmarks
-    benchmark_kernels.cu
-    benchmark_utils.cu
-    benchmark_harness.cpp
-)
-
-target_link_libraries(nova_benchmarks PRIVATE
-    cuda_impl
-    benchmark::benchmark
-    CUDA::cudart
-)
-
-target_include_directories(nova_benchmarks PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-# Install benchmark binary for Python harness to invoke
-install(TARGETS nova_benchmarks DESTINATION bin)
-```
-
-## Recommended Execution Flow
-
-```bash
-# Full benchmark suite
-python scripts/benchmark/run_benchmarks.py --all --output results/latest
-
-# Regression check against baselines
-python scripts/benchmark/run_benchmarks.py --config regression --check
-
-# Generate dashboard
-python scripts/benchmark/generate_dashboard.py --results results/latest --output reports/
-
-# Update baselines (after intentional changes)
-python scripts/benchmark/update_baselines.py --results results/latest --version v0.2.0
-```
+1. **First bottleneck:** Incremental build time → Enable unity builds + ccache
+2. **Second bottleneck:** IDE indexing lag → Configure clangd with correct flags
+3. **Third bottleneck:** CI build time → ccache in CI, pre-built targets cache
 
 ## Sources
 
-- [Google Benchmark Documentation](https://google.github.io/benchmark/)
-- [NVTX Documentation](https://docs.nvidia.com/gameworks/content/gameworkslibrary/cudart/nvtx3.html)
-- [NVIDIA Nsight Systems profiling](https://developer.nvidia.com/nsight-systems)
-- [CMU 15-418 GPU benchmarking best practices](https://www.cs.cmu.edu/~gahan/15418/)
-- [Google Benchmark GitHub](https://github.com/google/benchmark)
+- [CMake 4.0 Modern CMake Documentation](https://cmake.org/cmake/help/latest/)
+- [CUDA Compilation with clangd](https://clangd.llvm.org/)
+- [ccache Documentation](https://ccache.dev/documentation.html)
+- [CMake Export/Install Tutorial](https://cmake.org/cmake/help/latest/guide/importing-exporting/)
+- [GoogleTest CMake Integration](https://google.github.io/googletest/)
+- Existing nova codebase patterns
 
 ---
 
-*Architecture research for: CUDA/C++ Benchmarking Infrastructure*
+*Architecture research for: Nova CUDA Library v1.8 Developer Experience*
 *Researched: 2026-04-26*

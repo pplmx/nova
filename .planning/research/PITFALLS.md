@@ -1,237 +1,244 @@
 # Pitfalls Research
 
-**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Domain:** CUDA Library Developer Experience — Error Messages, CMake Integration, IDE Support, Build Performance
 **Researched:** 2026-04-26
 **Confidence:** HIGH
 
 ## Critical Pitfalls
 
-### Pitfall 1: Unstable Baselines Due to GPU Frequency Scaling
+### Pitfall 1: Generic Error Messages Mask the Root Cause
 
 **What goes wrong:**
-Benchmark results vary by 15-40% between runs on the same hardware performing the same computation, making it impossible to detect meaningful performance regressions or improvements.
+CUDA errors surface as opaque codes like `CUDA error: cudaErrorLaunchFailure` with only a file and line number. Users cannot determine which kernel failed, what inputs caused the failure, or how to recover. The error message provides no actionable guidance.
 
 **Why it happens:**
-Modern GPUs use dynamic frequency scaling (boost clocks) that adjust based on temperature, power budget, and workload characteristics. CUDA kernels that don't fully utilize the GPU's execution resources trigger lower clock speeds. Additionally, thermal throttling during extended benchmark runs drops frequencies unpredictably.
+The existing `CUDA_CHECK` macro in `include/cuda/device/error.h` only captures `cudaGetErrorString(err)`, which is the same text NVIDIA's driver returns. It does not capture:
+- The kernel or operation that was being performed
+- Input dimensions, device count, or memory state at the time of failure
+- Recovery suggestions specific to the error type
+- The call stack leading to the failure
+
+The `OperationContext` struct exists but is not used by `CUDA_CHECK` — only by the `CUDA_VALIDATE_SIZE` macro. cuBLAS errors print only the integer status code, not the meaningful name.
 
 **How to avoid:**
-- Force a fixed GPU clock frequency using `nvidia-smi -lgc <min>,<max>` before benchmarking
-- Implement GPU temperature monitoring and discard results when thermal throttling is active (check `nvidia-smi` for temperatures >85C)
-- Use `cudaSetDeviceFlags(cudaSetDeviceFlags::cudaDeviceScheduleYield)` to allow better clock stability
-- Run benchmarks in a warm-up-then-measure pattern: discard first N iterations to reach steady-state thermal state
-- Consider using persistence mode: `nvidia-smi -pm 1`
+- Extend `CUDA_CHECK` to accept optional operation context and capture it in the exception
+- Add error-category-specific recovery hints: `cudaErrorMemoryAllocation` → suggest reducing batch size, checking for memory leaks; `cudaErrorLaunchFailure` → suggest checking kernel parameters and device compatibility
+- Map cuBLAS status codes to readable names and recovery actions (e.g., `CUBLAS_STATUS_NOT_INITIALIZED` → "cuBLAS handle not created. Call cublasCreate() before this operation.")
+- Include device ID, stream ID, and operation name in every error
+- Use structured error output: `[nova] ERROR in <kernel_name> on device <N>: <error> — suggest: <recovery>`
 
 **Warning signs:**
-- Standard deviation >5% across repeated benchmark runs
-- First run of a benchmark suite always slower than subsequent runs
-- Benchmark times correlate with GPU temperature
-- Results improve after running a "warm-up" kernel first
+- Errors say "CUDA error" without naming the operation
+- Users report errors without knowing which kernel triggered them
+- Error messages are identical for different failure modes
+- No recovery guidance in any error message
 
 **Phase to address:**
-Phase 1: Benchmark Infrastructure Foundation — establish stable measurement methodology before any benchmark code is written.
+Phase 1: Error Message Framework — establish structured error taxonomy and context propagation before adding new error types.
 
 ---
 
-### Pitfall 2: Missing or Incorrect CUDA Synchronization
+### Pitfall 2: CMake Exports Produce Non-Relocatable Packages
 
 **What goes wrong:**
-Benchmark reports 0.001ms for kernels that actually take 10ms, or times include only kernel launch overhead without kernel execution time. Results are fundamentally misleading.
+Downstream projects that `find_package(nova)` get hard-coded include paths like `/home/user/repos/nova/include` and library paths like `/home/user/repos/nova/build/libnova.a`. The package works on the original machine but breaks when the build directory moves or the project is installed to a system path.
 
 **Why it happens:**
-CUDA kernels execute asynchronously. `cudaEventRecord()` captures the time of launch, not completion. Without explicit synchronization (`cudaDeviceSynchronize()`, `cudaEventSynchronize()`, or `cudaStreamSynchronize()`), timing stops immediately after queuing the kernel, not after it completes.
+The current `CMakeLists.txt` uses raw paths in `target_include_directories` and does not use generator expressions like `$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>`. When targets are exported, the absolute paths from the build tree are embedded. Additionally, there is no `install(EXPORT)` declaration — the library has no install rules beyond `add_subdirectory` usage.
+
+The existing custom `FindNCCL.cmake` and `FindMPI.cmake` modules create imported targets but do not set `IMPORTED_LOCATION` with generator expressions for relocatable packaging.
 
 **How to avoid:**
-- Always synchronize before stopping timing: `cudaEventRecord(stop); cudaEventSynchronize(stop); cudaEventElapsedTime(&ms, start, stop);`
-- Use CUDA events (already in v1.6 of this codebase) consistently for all measurements
-- Be explicit about which stream is being timed — time measurements are stream-specific
-- When benchmarking multiple sequential kernels, synchronize between each one if measuring individually
-- Use `cudaStreamQuery()` to detect if a stream has work pending before assuming it's complete
+- Use `$<BUILD_INTERFACE:>` and `$<INSTALL_INTERFACE:>` generator expressions in all `target_include_directories` and `target_link_directories` calls
+- Add `install(TARGETS ... EXPORT novaTargets)` with `install(EXPORT novaTargets FILE novaTargets.cmake NAMESPACE nova:: DESTINATION lib/cmake/nova)`
+- Add `include(CMakePackageConfigHelpers)` with `configure_package_config_file()` for a versioned package config
+- Replace custom FindXXX modules with CMake's built-in FindNCCL/FindMPI where available, or ensure custom FindXXX modules produce truly relocatable imported targets
+- Export only interface libraries and properly-configured static/shared libraries, not OBJECT libraries with absolute paths
 
 **Warning signs:**
-- Benchmark times are suspiciously low (sub-millisecond for non-trivial kernels)
-- CPU and GPU utilization don't match expected patterns
-- Varying results between runs of identical code
-- First call to a kernel is much slower than subsequent calls (cold start vs async queuing)
+- `target_include_directories` uses `${CMAKE_SOURCE_DIR}` without BUILD_INTERFACE generator expression
+- No `cmake/novaConfig.cmake.in` or `cmake/novaTargets.cmake` files
+- No `install()` commands for the library targets
+- Custom FindXXX modules set `IMPORTED_LOCATION` to absolute paths
 
 **Phase to address:**
-Phase 1: Benchmark Infrastructure Foundation — synchronization patterns must be codified as a library feature, not left to individual benchmark authors.
+Phase 2: CMake Package Export — use modern CMake export patterns with generator expressions and install rules.
 
 ---
 
-### Pitfall 3: Input Size Coverage Gaps
+### Pitfall 3: compile_commands.json Missing for CUDA Source Files
 
 **What goes wrong:**
-Benchmarks pass at small input sizes but reveal severe performance regressions at production-scale inputs. Users make decisions based on benchmarks that don't reflect their actual workloads.
+clangd reports thousands of errors for `.cu` files, claims CUDA headers cannot be found, and provides no code completions for CUDA APIs. IDE features work for `.cpp` files but are completely broken for `.cu` files — the files that make up the majority of the codebase.
 
 **Why it happens:**
-GPU performance characteristics change dramatically with input size:
-- Small inputs don't saturate parallelism, leaving GPU resources underutilized
-- Memory access patterns that are efficient at small sizes become inefficient at scale (bank conflicts, cache behavior)
-- Warp occupancy thresholds create cliff behaviors at specific sizes
-- Algorithm complexity that appears O(n) at small scale becomes O(n log n) or worse at large scale due to shared memory limits
+CMake generates `compile_commands.json` entries for `.cu` files using nvcc's full command line, but clangd uses libclang which cannot parse nvcc-specific flags or CUDA syntax. The entries include flags like `--threads`, `--expt-relaxed-constexpr`, and CUDA architecture flags that confuse the C++ language server. Additionally, CMake's `CMAKE_EXPORT_COMPILE_COMMANDS=ON` creates the file in the build directory but clangd does not search parent directories of symlinked build directories.
+
+The project has no `.clangd` config file to tell clangd how to handle CUDA files, and no `compile_flags.txt` fallback.
 
 **How to avoid:**
-- Define production input size ranges based on real user data or stated requirements
-- Benchmark at minimum, typical, and maximum expected sizes
-- Include size ranges that cross significant thresholds (power-of-2 boundaries, shared memory limits, warp counts)
-- Use parameterized benchmarks that sweep sizes and plot scaling curves, not just single-point measurements
-- Document expected input size ranges for each benchmark
+- Create `.clangd/config.yaml` with `CompileFlags:` mapping that filters nvcc-specific flags and adds CUDA include paths:
+  ```yaml
+  CompileFlags:
+    Add:
+      - "-xcuda"
+      - "--cuda-gpu-arch=sm_80"
+      - "-I${CMAKE_SOURCE_DIR}/include"
+      - "-I${CUDAToolkit_INCLUDE_DIRS}"
+    Remove:
+      - "-*"
+      - "--threads*"
+      - "--expt*"
+  ```
+- Set `CompilationDatabase` in `.clangd/config.yaml` to the build directory path
+- Consider using `clangd-vscode` extension with CUDA LSP support, or configure VS Code's `C_Cpp.default.compilerPath` to nvcc with appropriate args
+- For VS Code: configure `.vscode/c_cpp_properties.json` with CUDA-specific `compilerPath` (path to nvcc) and `cppStandard`/`cudaPath`
+- Ensure `compile_commands.json` is symlinked or copied to project root so clangd finds it without extra configuration
 
 **Warning signs:**
-- Benchmarks use only "toy" input sizes (e.g., 1024 elements when production uses 10M)
-- No scaling curve analysis — only single-point measurements
-- Users report performance issues not visible in benchmarks
-- Memory allocator behavior changes dramatically across benchmark sizes
+- clangd shows red squiggles on every CUDA kernel definition
+- Code completion offers no CUDA runtime API suggestions
+- `#include <cuda_runtime.h>` shows "file not found" in IDE
+- `.clangd` config file does not exist in project root
 
 **Phase to address:**
-Phase 2: Realistic Workload Coverage — define production input ranges and implement parameterized benchmarks.
+Phase 3: IDE Configuration — establish clangd config, VS Code settings, and compile_commands.json root placement.
 
 ---
 
-### Pitfall 4: CI Environment Non-Determinism
+### Pitfall 4: ccache Misses nvcc Cache Keys Due to Architecture Flags
 
 **What goes wrong:**
-Benchmark CI jobs fail randomly with 20%+ variance between "identical" runs. CI results don't match local development runs. Engineers ignore benchmark failures because false positives are so frequent.
+`ccache` reports a near-0% cache hit rate for CUDA compilation. Every build recompiles all `.cu` files, even when only C++ headers change. The build takes just as long as without ccache, and disk cache grows without providing speedups.
 
 **Why it happens:**
-Cloud GPU instances (AWS p3/p4, GCP, Azure NC-series) share physical hardware:
-- Variable clock speeds based on other tenant workloads
-- Noisy neighbor effects from concurrent GPU kernels
-- Thermal state varies between instance lifetimes
-- Instance types may have different GPU silicon quality (silicon lottery)
-- GPU-boost clocks behave differently on cloud hardware vs. bare metal
-- Some cloud GPUs run in "turbo" mode that is inherently variable
+ccache computes the cache key from compiler command line arguments. With `CMAKE_CUDA_ARCHITECTURES` set to `60 70 80 90`, CMake generates four separate nvcc invocations for each `.cu` file (one per SM). The architecture list produces different compiler flags that ccache interprets as different compilations. When architecture list order changes, or when mixing Debug and Release builds, ccache treats them as entirely separate compilations.
+
+Additionally, `--threads ${NCPU}` in `CMAKE_CUDA_FLAGS` injects the host CPU core count into the compiler flags, making every machine produce different cache keys.
 
 **How to avoid:**
-- Use dedicated GPU instances or bare-metal GPU servers for benchmark CI when possible
-- Implement statistical validation: require N runs, compute mean/stddev, only fail if regression exceeds threshold with statistical significance (e.g., p < 0.01)
-- Normalize results against a stable reference run on the same hardware
-- Track relative performance (ratio to baseline) rather than absolute times
-- Implement outlier detection and discard runs with unusually high variance
-- Consider using the same CI hardware for all benchmark comparisons
+- Remove `--threads` from global `CMAKE_CUDA_FLAGS` — use `CMAKE_CUDA_FLAGS_<CONFIG>` or per-target `CUDA_NVCC_FLAGS` instead, with separate handling for build type
+- Normalize ccache key for architecture: avoid having multiple near-identical nvcc invocations by letting CMake handle per-architecture compilation rather than baking arch flags into CMAKE_CUDA_FLAGS
+- Configure ccache with `sloppiness = include_file_mtime` to ignore minor timestamp changes
+- Consider `sccache` instead of ccache — sccache supports distributed caching and has better handling for CUDA's multi-pass compilation, plus the `[cache.disk.preprocessor_cache_mode]` section can cache preprocessor output separately
+- Set `CCACHE_BASEDIR` to the source directory to produce relative paths in cache keys
 
 **Warning signs:**
-- Benchmark CI failures don't reproduce locally
-- Variance in CI exceeds variance on local hardware
-- Different CI runners show different absolute times but similar relative performance
-- Benchmark results don't correlate with code changes
+- `ccache -s` shows high cache miss rate (>90%)
+- `ccache -s` shows zero hits despite repeated builds of unchanged files
+- Build times don't improve on second build
+- Cache size grows without bound with no reuse
 
 **Phase to address:**
-Phase 3: CI Integration — establish statistical rigor and baseline normalization before CI benchmarking is production.
+Phase 4: Build Performance — fix ccache key computation, consider sccache, and optimize unity build configuration.
 
 ---
 
-### Pitfall 5: Stale or Missing Baseline Drift
+### Pitfall 5: Unity Builds Produce Binary Incompatibilities
 
 **What goes wrong:**
-Benchmark results are collected but there's no meaningful baseline to compare against. Or baselines are so old they reflect different hardware states, compiler versions, or driver versions, making comparisons meaningless.
+After enabling unity builds with large batch sizes, a previously working CUDA kernel starts producing wrong results or silent data corruption. The issue only manifests with `NOVA_ENABLE_UNITY_BUILD=ON`, and only when batch size exceeds a threshold. Debugging is extremely difficult because the failure is non-deterministic across batch sizes.
 
 **Why it happens:**
-- No process for capturing and storing baselines when code is merged
-- Baselines captured on different GPU hardware, driver versions, or CUDA versions
-- "Baseline" captures include warm-up variability rather than steady state
-- No mechanism to update baselines when hardware is refreshed
+Unity builds concatenate multiple `.cu` files into a single compilation unit before passing to nvcc. This causes:
+- **Symbol collisions**: if two `.cu` files define identically-named `__device__` functions or static variables, nvcc silently deduplicates or picks one arbitrarily, breaking kernels that expected the other
+- **Template bloat amplification**: when each source file includes templates, concatenating N files multiplies template instantiation work, causing nvcc to exceed memory limits
+- **Macro collision**: device-side macros with identical names but different definitions get the last definition applied to all concatenated files
+- The current `UNITY_BUILD_BATCH_SIZE` only applies to `CMAKE_CUDA_ARCHITECTURES` compilation but not to C++ host-code compilation, creating inconsistent behavior
 
 **How to avoid:**
-- Implement baseline capture as part of the release process, not manual operation
-- Store baselines alongside benchmark code with version metadata (CUDA version, driver, GPU model)
-- Use semantic versioning for baselines so incompatible baselines are detected
-- Automate baseline updates via PR workflow with explicit approval gates
-- Track baseline freshness — alert when baselines are older than N days
+- Audit all `.cu` files for non-namespaced device symbols before enabling unity builds
+- Use `__device__` and `__global__` functions only inside anonymous namespaces or with explicit `__forceinline__`
+- Start with `UNITY_BUILD_BATCH_SIZE=4` and verify correctness before increasing
+- Add a unity-build-specific test that runs the full test suite: all 444 tests must pass with unity builds before increasing batch size
+- Keep `.cu` files with complex device-side symbol interactions (like NCCL internals) excluded from unity builds using `target_sources(nova_impl PRIVATE ...)` with explicit exclusions
 
 **Warning signs:**
-- No automated baseline storage mechanism
-- Baselines from "when we first added benchmarks" still in use
-- Comparing results across different GPU generations
-- No visibility into baseline age or staleness
+- Test suite passes without unity builds but fails with them
+- Different results on different runs with same inputs when unity builds enabled
+- nvcc memory usage spikes during compilation (visible in `nvidia-smi` on build machine)
+- Linker warnings about duplicate symbols that were not present before
 
 **Phase to address:**
-Phase 3: CI Integration — baseline management and staleness tracking should be built into CI from the start.
+Phase 4: Build Performance — validate unity build correctness with full test suite before shipping.
 
 ---
 
-### Pitfall 6: NVTX Annotation Overhead Distortion
+### Pitfall 6: No CMake Configuration Validation for Optional Dependencies
 
 **What goes wrong:**
-NVTX annotations (used for profiling) introduce measurable overhead that distorts benchmark timing, especially for fine-grained kernels or high-frequency operations.
+The build succeeds but users discover at runtime that NCCL support was silently disabled because CMake's FindNCCL.cmake could not locate the library. Or MPI is enabled in CMake but the actual `mpirun` binary is missing. Features appear to be present based on CMake output but are non-functional.
 
 **Why it happens:**
-NVTX events (`nvtxRangePush`/`nvtxRangePop`, `nvtxMark`) have CPU-side overhead for event allocation and string hashing. When kernels are launched inside NVTX ranges, the annotation overhead can add microseconds that are significant relative to the kernel execution time.
+The current CMakeLists.txt uses `find_package(NCCL)` but `NCCL_FOUND` is checked only conditionally when creating the `NCCL::nccl` target. When NCCL is not found, `NOVA_NCCL_ENABLED=0` is set as a compile definition, but there is no fatal error for REQUIRED configurations and no user-visible warning that explains what is missing and how to install it.
+
+The `FindNCCL.cmake` custom module uses `find_package_handle_standard_args` with a helpful FAIL_MESSAGE, but the CMakeLists.txt does not call the FindXXX modules in the right order to surface these messages early.
 
 **How to avoid:**
-- Never wrap timing measurement code inside NVTX ranges — measure first, annotate separately
-- Disable NVTX collection during benchmark runs or make it optional with a compile-time flag
-- Use `nvtxMarkEx` with pre-registered string handles instead of string literals to reduce per-call overhead
-- Separate benchmark measurement code from profiling annotation code
-- If NVTX must be enabled for benchmarking, measure NVTX overhead separately and subtract it
+- After all `find_package` calls, print a clear feature matrix: `message(STATUS "NCCL support: ${NCCL_FOUND} (${NCCL_VERSION})")` and `message(STATUS "MPI support: ${MPI_FOUND} (${MPI_VERSION})")`
+- For optional features, emit `WARNING` (not FATAL_ERROR) when not found, explaining the trade-off
+- Add a CMake option `NOVA_WARN_ABOUT_MISSING_DEPS` that elevates optional-dependency warnings to errors in CI
+- Verify the exported CMake config files include dependency status for downstream consumers
 
 **Warning signs:**
-- Timing changes significantly when NVTX is enabled vs disabled
-- Small kernels show unexpected overhead in timing
-- Profilers show "annotation overhead" or similar non-kernel time
+- CMake configure step completes with no warnings about missing dependencies
+- `NOVA_NCCL_ENABLED` is used at runtime without checking if NCCL was actually found
+- No feature matrix in CMake output showing which optional components are available
 
 **Phase to address:**
-Phase 1: Benchmark Infrastructure Foundation — ensure timing code and profiling annotation code are cleanly separated.
+Phase 2: CMake Package Export — add dependency reporting and validate optional feature configuration.
 
 ---
 
-### Pitfall 7: Multi-GPU Synchronization Errors
+### Pitfall 7: IDE Configuration Files Not Version-Controlled or Tested
 
 **What goes wrong:**
-Timings for multi-GPU operations are incomplete or incorrect because GPU-to-GPU synchronization (NVLink, PCIe) is not properly measured or accounted for.
+VS Code settings are configured locally but never committed. clangd config is written once and never updated when CMake flags change. New developers get a broken IDE experience and spend hours debugging their setup instead of writing code.
 
 **Why it happens:**
-Multi-GPU operations involve:
-- Device-to-device memory transfers via NVLink or PCIe
-- Peer-to-peer access synchronization requirements
-- Possible implicit synchronization points that block one GPU waiting for another
-- Timing that only measures local GPU operations while ignoring cross-GPU coordination
+IDE configuration files (`.vscode/`, `.clangd/`, `compile_flags.txt`) are often treated as personal preferences rather than project artifacts. They are excluded via `.gitignore` or simply never created. When CMake flags change, the clangd config becomes stale and reports false errors. VS Code extensions are not specified, so different developers use different tooling with different behaviors.
 
 **How to avoid:**
-- Use `cudaEventRecord` and `cudaEventElapsedTime` on both source and destination GPUs
-- For cross-GPU timing, use host-side synchronization with timestamps from a stable clock
-- Verify peer access is actually enabled: `cudaDeviceCanAccessPeer()` and `cudaEnablePeerAccess()`
-- Measure the full multi-GPU operation, not just the individual GPU kernels
-- Consider using unified memory allocations and measure allocation behavior separately
+- Version-control all IDE configuration: `.clangd/config.yaml`, `.vscode/c_cpp_properties.json`, `.vscode/settings.json`, `.vscode/extensions.json`
+- Add a CI check that validates `compile_commands.json` is generated and contains entries for all `.cu` and `.cpp` files
+- Use `cmake --build build --target help` to verify all expected targets exist
+- Include a `DEVELOPERS.md` or `docs/ide-setup.md` that explains required VS Code extensions and clangd configuration for new contributors
+- Test IDE configuration by running clangd on the codebase in CI with `--check` mode
 
 **Warning signs:**
-- Multi-GPU benchmarks don't scale linearly with GPU count
-- Results vary wildly based on NVLink vs PCIe topology
-- Peer-to-peer memory access errors in benchmark runs
-- Cross-GPU timing shows inconsistent results
+- `.vscode/` and `.clangd/` directories are gitignored
+- No documentation for IDE setup in the project
+- New contributors report "clangd doesn't work" within the first day
+- compile_commands.json entries are missing for newly added source files
 
 **Phase to address:**
-Phase 2: Multi-GPU Support (if applicable) — multi-GPU benchmarks require explicit architecture to measure cross-device coordination.
+Phase 3: IDE Configuration — commit IDE files, document setup, and add CI validation.
 
 ---
 
-### Pitfall 8: Memory Pool State Contamination
+### Pitfall 8: Build Performance Improvements Negatively Impact CI Reproducibility
 
 **What goes wrong:**
-Initial benchmark runs are slow due to pool allocation, then artificially fast as memory is reused, creating misleading performance comparisons. Memory pool fragmentation causes variable performance over time.
+ccache and parallel builds are optimized for the developer's machine (128-core build server) but CI runs on 2-core containers with minimal cache. Build times in CI are unchanged from baseline, and the performance tuning provides zero benefit where it matters most. The `--threads ${NCPU}` flag causes nvcc to spawn 128 threads on a machine with 4 cores, degrading performance.
 
 **Why it happens:**
-- Custom memory allocators (common in CUDA libraries) may have lazy initialization
-- First allocations trigger actual GPU memory allocation (slow)
-- Subsequent allocations return from a pool (fast)
-- Pool fragmentation after many allocations causes allocation performance to degrade
-- Different code paths may use different memory allocators with different behaviors
+`ProcessorCount(NCPU)` in the current CMakeLists.txt detects CPU cores at configure time and sets `--threads` globally. On a high-core-count developer machine this helps; on a containerized CI runner with CPU limits, it either causes resource exhaustion or uses a stale NCPU value from the host. Unity build batch sizes of 64 and 32 assume abundant memory, which may not be available in CI.
 
 **How to avoid:**
-- Implement explicit warm-up: allocate and free test buffers before measurement begins
-- Use separate memory pools for benchmarking vs. production, or reset pool state between benchmarks
-- Measure allocation time separately and report it clearly
-- Implement pool statistics reporting to detect fragmentation
-- Consider using cudaMalloc/cudaFree directly for benchmark memory management to avoid pool effects
+- Remove the global `--threads` nvcc flag or make it conditional on available memory, not just CPU count
+- Use CMake's `CMAKE_BUILD_PARALLEL_LEVEL` instead of hardcoding `--parallel` in CMake flags
+- Make unity build batch size adaptive: `if(NCPU GREATER_EQUAL 64 AND CMAKE_SYSTEM_MEMORY GREATER 16GB)` — not just CPU count
+- Configure ccache size limits appropriate for CI: `CCACHE_MAXSIZE=500M` in CI vs. `CCACHE_MAXSIZE=10G` for developer machines
+- Add CI-specific CMake presets that prioritize cache hit rate over absolute build speed
 
 **Warning signs:**
-- First run of any benchmark is consistently slower than subsequent runs
-- Memory usage grows unbounded across many benchmark iterations
-- Benchmark performance degrades after running other benchmarks that stress memory
-- Different allocation patterns produce different benchmark results for the same kernel
+- CI build times don't improve despite ccache being enabled
+- CI jobs run out of memory during unity build compilation
+- Build outputs differ between developer machines and CI
+- `--threads` flag causes nvcc to crash or exceed container memory limits
 
 **Phase to address:**
-Phase 1: Benchmark Infrastructure Foundation — memory management patterns must be established before benchmarking begins.
+Phase 4: Build Performance — make performance settings environment-aware and validate CI behavior separately.
 
 ---
 
@@ -239,12 +246,14 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Skip warmup iterations | Faster benchmark execution | Unstable results, masked allocation costs | Only in exploratory profiling, never in CI |
-| Single benchmark run | Simpler code | Cannot detect variance, misses outliers | Never for CI results |
-| Hardcoded GPU clock settings | Consistent local results | Breaks on different hardware | Only acceptable with hardware detection |
-| Comparing raw times across machines | Simple comparison | Meaningless across GPU generations | Only when normalized to reference baseline |
-| Ignoring thermal state | Simpler setup | Variable results correlated with temperature | Never in production benchmarks |
-| Using system clock for GPU timing | Works without CUDA events | Inaccurate async timing | Never — always use CUDA events |
+| Hardcoded absolute paths in CMake | Simpler initial setup | Breaks on any other machine or directory move | Never |
+| Skip `install(EXPORT)` for internal projects | Less CMake code | Cannot be used as a proper dependency | Only for one-off internal tools |
+| Unity builds without testing | Faster local iteration | Silent correctness failures in CI | Only if full test suite runs after enabling |
+| ccache without config validation | "Build faster" marketing | Zero cache hits, wasted disk space | Only if cache hit rate is monitored |
+| Local-only IDE config | Developer freedom | Onboarding nightmare, inconsistent tooling | Only if docs and CI validation exist |
+| Generic error messages | Less code to maintain | Hours lost debugging production errors | Never in production library |
+| `CUBLAS_STATUS_SUCCESS` printed as integer | No work needed | Useless for debugging | Never |
+| Using `--threads` in global CUDA flags | Parallel host compilation | Cross-machine cache key divergence | Only with explicit per-machine configuration |
 
 ---
 
@@ -252,10 +261,14 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| Existing v1.6 CUDA events | Mixing new timing code with existing profiling events without proper scope separation | Use separate event pools for benchmarking vs. profiling |
-| Existing profiling infrastructure | Enabling full profiling during benchmarks (NVTX overhead) | Benchmark mode should disable profiling annotations |
-| CI runners | Running benchmarks on shared cloud GPUs without normalization | Use statistical comparison, normalize to reference, or use dedicated hardware |
-| Build system | Building benchmarks with different optimization flags than library | Benchmark builds must match production build configuration |
+| FindCUDAToolkit + custom FindXXX | Duplicate search paths, inconsistent CUDA_ROOT | Use `CUDAToolkit_*` variables from FindCUDAToolkit in custom FindXXX modules |
+| CMake export + interface libraries | Interface-only targets can't be installed as binaries | Use `install(TARGETS ... INCLUDES DESTINATION ...)` for INTERFACE targets |
+| clangd + nvcc | clangd cannot parse nvcc flags, reports false errors | Filter nvcc-specific flags in `.clangd/config.yaml`, use `-xcuda` flag |
+| ccache + nvcc | Cache key includes absolute paths, architecture flags | Set `CCACHE_BASEDIR`, normalize architecture flags, consider sccache |
+| sccache + distributed CI | sccache server not available in CI environment | Fall back to local ccache in CI, use sccache only for developer workflows |
+| VS Code + CUDA | Default C++ IntelliSense doesn't know CUDA paths | Configure `c_cpp_properties.json` with `compilerPath: nvcc` and CUDA include dirs |
+| compile_commands.json + symlinks | clangd doesn't follow symlinks to find compile_commands.json | Copy or symlink compile_commands.json to project root |
+| Unity builds + NCCL | NCCL internal symbols collide in concatenated compilation | Keep NCCL-related `.cu` files out of unity build batch |
 
 ---
 
@@ -263,10 +276,11 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Microbenchmark obsession | Tiny kernels benchmarked in isolation show "optimizations" that don't matter in real use | Benchmark realistic compositions, not individual primitives | When optimization cost exceeds benefit at application level |
-| Launch overhead masking | Small kernels show constant overhead-dominant times regardless of actual computation | Use large iteration counts, measure per-iteration time with statistical aggregation | When users benchmark latency-sensitive code paths |
-| Memory pool aliasing | Allocations return "free" memory with different performance characteristics | Explicit warmup, fresh allocations per benchmark, separate benchmark pools | When comparing allocation-heavy operations |
-| Persistent kernel warming | Kernels that stay "warm" in L2 cache show unrepresentative performance | Implement cache flush between iterations for memory-bound benchmarks | When measuring memory bandwidth-limited operations |
+| `--threads` on low-core machines | nvcc thread spawning overhead exceeds benefit, slower build | Make `--threads` conditional on NCPU >= 16 | On CI containers, laptops, constrained environments |
+| Large unity batch sizes | nvcc OOM during compilation, link-time bloat | Start with batch size 4, increase only after testing | On machines with <32GB RAM |
+| ccache with no max size | Disk fills up over time, cache becomes ineffective | Set `CCACHE_MAXSIZE` explicitly, prune regularly | In CI environments with limited disk |
+| Precompiled header misuse | CUDA headers not precompiled correctly, longer build | Test PCH with unity builds — they interact unexpectedly | When adding precompiled headers to `.cu` files |
+| Parallel test + GPU memory | Tests crash with out-of-memory on parallel run | Current `TEST_PARALLEL_LEVEL=16` cap is appropriate, but verify | With new GPU-intensive tests (v1.8+) |
 
 ---
 
@@ -274,12 +288,12 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Benchmark result injection | Malicious benchmark results stored without validation | Validate numeric ranges, reject NaN/Inf, use type-safe result storage |
-| Unbounded benchmark iteration | Infinite loop or resource exhaustion from benchmark parameter sweep | Implement maximum iteration bounds, timeout per benchmark |
-| Benchmark as attack surface | Custom benchmark kernels may expose CUDA API vulnerabilities | Run benchmarks in isolated contexts, don't allow user-supplied kernel code |
-| Resource exhaustion | Benchmarks allocate GPU memory without bounds, crash the driver | Implement memory budget checking, fail gracefully with clear error |
+| CMake exported paths from untrusted source tree | If CMakeLists.txt is modified by untrusted party, exported config could contain malicious paths | Validate all `find_package` paths with `file(DOWNLOAD)` or checksum verification for installed packages |
+| Exported CMake config leaks credentials | If custom FindXXX modules read from environment variables for credentials, these get baked into config | Never put credential-bearing env vars in exported CMake configs; use `find_package` discovery patterns |
+| VS Code settings download extensions from marketplace | Malicious extension could be substituted | Pin extension versions in `.vscode/extensions.json`, use verified publishers |
+| compile_commands.json in CI artifacts | Build artifacts with absolute paths leak internal directory structures | CI should sanitize or exclude compile_commands.json from artifacts if security-sensitive |
 
-*Note: CUDA/C++ benchmarking has limited security surface compared to web applications. Primary concerns are resource exhaustion and result integrity.*
+*Note: This library's DX surface is primarily local build tooling. Primary concerns are CMake package integrity and credential handling in FindXXX modules.*
 
 ---
 
@@ -287,23 +301,29 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| No clear pass/fail criteria | Engineers don't know if results are acceptable | Define explicit thresholds, show green/yellow/red status |
-| Cryptic timing output | Cannot interpret results without deep CUDA knowledge | Report relative performance ("2.3x faster than baseline"), provide context |
-| No scaling visualization | Cannot see how performance varies with input size | Generate scaling curves, allow easy visual comparison |
-| Missing hardware context | Cannot understand why results differ across machines | Include GPU model, driver version, clock settings in every report |
+| No error recovery guidance | Users hit an error and have no idea how to fix it | Every error includes: what went wrong, why it might have happened, concrete recovery steps |
+| cuBLAS errors as raw integers | `CublasException: cuBLAS error: -17` means nothing to users | Map status codes to human-readable names: `CUBLAS_STATUS_INVALID_VALUE (-17)` with meaning |
+| CMake feature matrix missing | Users don't know which optional features are enabled | Print feature status table at CMake configure time: `nova 0.1.0: NCCL 2.25 [ON], MPI [OFF], Unity Builds [ON]` |
+| No developer onboarding docs | New contributors waste time setting up IDE and build environment | `docs/DEVELOPERS.md` with step-by-step: clone, cmake, build, test, IDE setup |
+| clangd false errors on CUDA code | Developers ignore or disable clangd entirely | `.clangd/config.yaml` must be tested in CI against the full codebase |
+| Build errors without suggested fixes | A failed cmake configure leaves user stranded | CMake errors should suggest specific actions: `NCCL not found — set NCCL_DIR or install NCCL 2.25+` |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **CUDA synchronization:** Benchmarks must have `cudaEventSynchronize()` before reading timing — verify with mock kernel that reports expected timing
-- [ ] **Warmup iterations:** First N iterations should be discarded — verify first-run vs. steady-state times differ significantly
-- [ ] **Statistical significance:** CI must run multiple iterations and check variance — verify CI fails appropriately when variance is high
-- [ ] **Baseline tracking:** Every benchmark must have a stored baseline — verify by checking baseline existence before allowing comparison
-- [ ] **Input size coverage:** Must include production-scale inputs — verify benchmark sizes match documented production ranges
-- [ ] **Memory state:** Must warmup/reset allocator state — verify with fresh-alloc vs. reused-alloc comparison
-- [ ] **Thermal monitoring:** Must discard results during throttling — verify temperature limits are enforced
-- [ ] **NVTX separation:** Timing code must not include NVTX overhead — verify timing matches with NVTX disabled
+- [ ] **Error messages:** All CUDA_CHECK and CUBLAS_CHECK macro invocations produce contextual error messages — verify by grepping for non-contextual error sites
+- [ ] **Error recovery hints:** Every error type has at least one recovery suggestion — verify coverage for all `cudaError*` codes used in the codebase
+- [ ] **CMake export:** `cmake --install build --prefix /tmp/nova-install` produces a relocatable package — verify `find_package(nova)` works from the install prefix
+- [ ] **CMake package config:** `novaConfig.cmake` and `novaTargets.cmake` exist in install tree — verify paths are relative via generator expressions
+- [ ] **clangd config:** `.clangd/config.yaml` exists and clangd reports zero errors on a clean build — verify with `clangd --check` in CI
+- [ ] **clangd CUDA detection:** `#include <cuda_runtime.h>` resolves in clangd — verify include path in compile_commands.json entries
+- [ ] **VS Code settings:** `.vscode/c_cpp_properties.json` exists with correct CUDA paths — verify `IntelliSense` mode shows CUDA syntax highlighting
+- [ ] **ccache hit rate:** Second build with no changes achieves >80% cache hit rate — verify with `ccache -s` output
+- [ ] **sccache (if used):** sccache distributed cache is configured and functional for CUDA — verify cache hits across machines
+- [ ] **Unity build correctness:** All 444 tests pass with unity builds enabled — verify in CI with `NOVA_ENABLE_UNITY_BUILD=ON`
+- [ ] **compile_commands.json coverage:** All `.cu` and `.cpp` files appear in compile_commands.json — verify entry count matches file count
+- [ ] **Feature matrix:** CMake configure output shows NCCL/MPI/UnityBuild status — verify output includes each optional feature
 
 ---
 
@@ -311,12 +331,13 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Unstable baselines due to clock scaling | MEDIUM | Lock GPU clocks via `nvidia-smi -lgc`, re-run benchmarks, update baselines |
-| CI variance from shared hardware | HIGH | Migrate to dedicated hardware, implement statistical validation, accept higher baseline variance |
-| Stale baselines | LOW | Delete old baselines, run fresh benchmark suite, capture new baselines with version metadata |
-| Memory pool contamination | LOW | Implement explicit warmup, clear pool state between benchmarks, re-run affected benchmarks |
-| Missing synchronization | LOW | Add `cudaEventSynchronize()`, verify timing matches expected values for known kernel durations |
-| Input size gaps | MEDIUM | Audit production workloads, add parameterized benchmark sweeps, re-run with new sizes |
+| Generic error messages | MEDIUM | Refactor CUDA_CHECK macro, add OperationContext parameter, audit all call sites; ~2-3 days |
+| Non-relocatable CMake packages | HIGH | Rewrite target_include_directories with generator expressions, add install rules; ~1 week |
+| clangd not working for CUDA | LOW | Create `.clangd/config.yaml` with CUDA flags, symlink compile_commands.json; ~1 day |
+| ccache 0% hit rate | MEDIUM | Remove --threads from global flags, set CCACHE_BASEDIR, adjust sloppiness settings; ~2 hours |
+| Unity build correctness failures | MEDIUM | Reduce batch size to 4, run full test suite, identify conflicting symbols; ~2-3 days |
+| Missing IDE config files | LOW | Create version-controlled `.vscode/` and `.clangd/` directories with CI validation; ~1 day |
+| CI build performance unchanged | MEDIUM | Add CCACHE_MAXSIZE to CI, set environment-aware parallelism; ~1 day |
 
 ---
 
@@ -324,28 +345,30 @@ Phase 1: Benchmark Infrastructure Foundation — memory management patterns must
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| GPU frequency scaling instability | Phase 1: Infrastructure Foundation | Verify clock lock settings are applied, measure variance across runs |
-| CUDA synchronization errors | Phase 1: Infrastructure Foundation | Test with known-duration kernels, verify timing accuracy |
-| Input size coverage gaps | Phase 2: Realistic Workload Coverage | Review production input ranges, verify benchmark sizes match |
-| CI environment non-determinism | Phase 3: CI Integration | Run benchmarks on CI, verify variance is within acceptable bounds |
-| Baseline drift and staleness | Phase 3: CI Integration | Verify baselines are captured with version metadata, check staleness alerts |
-| NVTX annotation overhead | Phase 1: Infrastructure Foundation | Compare timing with/without NVTX, verify separation is implemented |
-| Multi-GPU synchronization | Phase 2: Multi-GPU Support | Verify cross-GPU timing matches expected values, test various topologies |
-| Memory pool state contamination | Phase 1: Infrastructure Foundation | Compare warm vs. cold allocation performance, verify warmup is implemented |
+| Generic error messages | Phase 1: Error Message Framework | Unit tests that verify error context is captured; grep all CUDA_CHECK calls for context |
+| Non-relocatable CMake packages | Phase 2: CMake Package Export | `find_package(nova)` from install prefix; verify all paths use generator expressions |
+| clangd fails on CUDA files | Phase 3: IDE Configuration | `clangd --check` in CI; VS Code extensions validated; `.clangd/config.yaml` committed |
+| ccache zero cache hits | Phase 4: Build Performance | `ccache -s` shows >80% hit rate on second build; `--threads` not in cache key |
+| Unity build correctness | Phase 4: Build Performance | All 444 tests pass with `NOVA_ENABLE_UNITY_BUILD=ON`; no symbol collision warnings |
+| Silent dependency failures | Phase 2: CMake Package Export | Feature matrix in CMake output; optional deps emit WARNING, not silence |
+| IDE config not version-controlled | Phase 3: IDE Configuration | `.vscode/` and `.clangd/` in git; CI validates compile_commands.json coverage |
+| CI build perf regressions | Phase 4: Build Performance | CI build times tracked; no regressions >10% vs. baseline; adaptive batch sizing |
 
 ---
 
 ## Sources
 
-- NVIDIA CUDA Best Practices Guide — synchronization and timing recommendations
-- Google Benchmarks (google/benchmark) — methodology for stable measurement
-- NVIDIA Nsight Compute documentation — profiling overhead considerations
-- CUDA Programming Guide — device synchronization semantics
-- NVIDIA Developer Blog — "How to Benchmark CUDA Kernels" series
-- Cloud GPU benchmarking challenges documented in AWS/GCP/Azure best practices
-- Community discussions on NVIDIA DevTalk forums regarding benchmark instability
+- CMake 4.3.2 Documentation — FindCUDAToolkit imported targets, generator expressions, install/export patterns
+- CMake 4.3.2 Documentation — cmake-buildsystem(7) for PUBLIC/PRIVATE/INTERFACE propagation rules
+- NVIDIA CUDA Documentation — cudaGetErrorString and error recovery recommendations
+- NVIDIA cuBLAS Documentation — cublasStatus_t error code meanings
+- clangd documentation (clangd.llvm.org) — compile_commands.json configuration and CUDA-specific flags
+- sccache (github.com/mozilla/sccache) — distributed CUDA compilation caching, preprocessor cache mode
+- NVIDIA Developer Blog — "CUDA Pro Tips" series on error handling and debugging
+- CMake Discourse — "Modern CMake and CUDA" patterns for exported packages
+- GitHub NVIDIA/CUDA-Samples — CMakeLists.txt patterns for clangd-compatible compile_commands.json
 
 ---
 
-*Pitfalls research for: CUDA/C++ Benchmarking Infrastructure*
+*Pitfalls research for: CUDA Library Developer Experience (Error Messages, CMake, IDE Support, Build Performance)*
 *Researched: 2026-04-26*
