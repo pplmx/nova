@@ -142,6 +142,9 @@ set(SRC_CUDA_MEMORY_ERROR ${CMAKE_SOURCE_DIR}/src/cuda/memory_error)
 set(CUDA_PREEMPTION_DIR ${CMAKE_SOURCE_DIR}/include/cuda/preemption)
 set(SRC_CUDA_PREEMPTION ${CMAKE_SOURCE_DIR}/src/cuda/preemption)
 
+set(CUDA_ERROR_DIR ${CMAKE_SOURCE_DIR}/include/cuda/error)
+set(SRC_CUDA_ERROR ${CMAKE_SOURCE_DIR}/src/cuda/error)
+
 add_library(cuda_memory INTERFACE)
 target_include_directories(cuda_memory INTERFACE
         $<BUILD_INTERFACE:${CUDA_MEMORY_DIR}>
@@ -312,6 +315,11 @@ set(PREEMPTION_SOURCES
         ${SRC_CUDA_PREEMPTION}/preemption_handler.cpp
 )
 
+set(ERROR_SOURCES
+        ${SRC_CUDA_ERROR}/cuda_error.cpp
+        ${SRC_CUDA_ERROR}/cublas_error.cpp
+)
+
 set(PERFORMANCE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/performance)
 set(SRC_CUDA_PERFORMANCE ${CMAKE_SOURCE_DIR}/src/cuda/performance)
 
@@ -353,6 +361,7 @@ set(ALL_CUDA_SOURCES
         ${PROFILING_SOURCES}
         ${FUSION_SOURCES}
         ${MEMORY_OPT_SOURCES}
+        ${ERROR_SOURCES}
 )
 
 add_library(cuda_nccl STATIC ${NCCL_SOURCES})
@@ -447,6 +456,7 @@ target_include_directories(cuda_impl PUBLIC
         ${CUDA_DEVICE_DIR}
         ${CUDA_ALGO_DIR}
         ${CUDA_MEMORY_DIR}
+        ${CUDA_ERROR_DIR}
 )
 target_link_libraries(cuda_impl PUBLIC
         cuda_device
