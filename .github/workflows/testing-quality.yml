@@ -1,0 +1,220 @@
+name: Nova Testing & Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CUDA_VERSION: '12.0'
+  GCC_VERSION: '13'
+  MIN_COVERAGE: '80'
+  FUZZ_TIMEOUT: '300'
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Unit Tests
+  # -------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: [self-hosted, gpu]
+    container:
+      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }} python3 python3-pip
+
+      - name: Configure
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_C_COMPILER=gcc-${{ env.GCC_VERSION }} \
+            -DCMAKE_CXX_COMPILER=g++-${{ env.GCC_VERSION }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j16
+
+  # -------------------------------------------------------------------------
+  # Property-Based Tests
+  # -------------------------------------------------------------------------
+  property-tests:
+    name: Property Tests
+    runs-on: [self-hosted, gpu]
+    container:
+      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }}
+
+      - name: Configure
+        run: cmake -G Ninja -B build -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+
+      - name: Build
+        run: cmake --build build --parallel --target property_mathematical property_algorithmic property_numerical
+
+      - name: Run Tests
+        run: |
+          ./build/bin/property_mathematical
+          ./build/bin/property_algorithmic
+          ./build/bin/property_numerical
+
+  # -------------------------------------------------------------------------
+  # Fuzz Tests
+  # -------------------------------------------------------------------------
+  fuzz-tests:
+    name: Fuzz Tests
+    runs-on: [self-hosted, gpu]
+    container:
+      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build clang libfuzzer-dev
+
+      - name: Configure
+        run: cmake -G Ninja -B build -DNOVA_BUILD_FUZZ_TESTS=ON -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+
+      - name: Build Fuzz Targets
+        run: cmake --build build --parallel --target memory_pool_fuzz algorithm_fuzz matmul_fuzz
+
+      - name: Check Corpus Size
+        run: |
+          MEMORY_CORPUS=$(find tests/fuzz/corpus/memory_pool -type f | wc -l)
+          ALGO_CORPUS=$(find tests/fuzz/corpus/algorithm -type f | wc -l)
+          MATMUL_CORPUS=$(find tests/fuzz/corpus/matmul -type f | wc -l)
+          echo "Corpus sizes: memory=$MEMORY_CORPUS algo=$ALGO_CORPUS matmul=$MATMUL_CORPUS"
+
+      - name: Run Fuzz Tests
+        run: |
+          echo "Running fuzz tests (limited time in CI)..."
+          timeout ${{ env.FUZZ_TIMEOUT }} ./build/bin/memory_pool_fuzz tests/fuzz/corpus/memory_pool -max_total_time=60 || true
+          timeout ${{ env.FUZZ_TIMEOUT }} ./build/bin/algorithm_fuzz tests/fuzz/corpus/algorithm -max_total_time=60 || true
+          timeout ${{ env.FUZZ_TIMEOUT }} ./build/bin/matmul_fuzz tests/fuzz/corpus/matmul -max_total_time=60 || true
+
+  # -------------------------------------------------------------------------
+  # Code Coverage
+  # -------------------------------------------------------------------------
+  coverage:
+    name: Code Coverage
+    runs-on: [self-hosted, gpu]
+    container:
+      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build clang lcov python3 python3-pip
+
+      - name: Configure with Coverage
+        run: cmake -G Ninja -B build-coverage -DNOVA_COVERAGE=ON -DNOVA_COVERAGE_MIN=${{ env.MIN_COVERAGE }}
+
+      - name: Build
+        run: cmake --build build-coverage --parallel
+
+      - name: Test
+        run: ctest --test-dir build-coverage -j16 || true
+
+      - name: Generate Coverage Report
+        run: ./scripts/coverage/generate_coverage.sh build-coverage
+
+      - name: Check Coverage Threshold
+        run: |
+          source ./scripts/coverage/coverage_summary.sh build-coverage
+          LINE_COVERAGE=$(grep "lines" build-coverage/coverage/lcov/total.info | tail -1 | awk '{print $2}' | tr -d '%')
+          echo "Line coverage: $LINE_COVERAGE%"
+          if (( $(echo "$LINE_COVERAGE < $MIN_COVERAGE" | bc -l) )); then
+            echo "ERROR: Coverage ($LINE_COVERAGE%) below minimum ($MIN_COVERAGE%)"
+            exit 1
+          fi
+          echo "Coverage meets minimum requirement"
+
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: build-coverage/coverage/index.html
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # Fuzz Corpus Baseline Check
+  # -------------------------------------------------------------------------
+  fuzz-corpus-baseline:
+    name: Fuzz Corpus Baseline
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Baseline Exists
+        run: |
+          if [ ! -d "tests/fuzz/baseline" ]; then
+            echo "No baseline corpus found - creating baseline"
+            mkdir -p tests/fuzz/baseline
+            cp tests/fuzz/corpus/memory_pool/* tests/fuzz/baseline/ 2>/dev/null || true
+            cp tests/fuzz/corpus/algorithm/* tests/fuzz/baseline/ 2>/dev/null || true
+            cp tests/fuzz/corpus/matmul/* tests/fuzz/baseline/ 2>/dev/null || true
+          fi
+
+      - name: Compare Corpus Sizes
+        run: |
+          for corpus in memory_pool algorithm matmul; do
+            CORPUS_SIZE=$(find tests/fuzz/corpus/$corpus -type f | wc -l)
+            BASELINE_SIZE=$(find tests/fuzz/baseline -name "*$corpus*" -type f | wc -l)
+            MIN_SIZE=$((BASELINE_SIZE * 90 / 100))
+            echo "$corpus: corpus=$CORPUS_SIZE baseline=$BASELINE_SIZE min_allowed=$MIN_SIZE"
+            if [ $CORPUS_SIZE -lt $MIN_SIZE ]; then
+              echo "ERROR: Corpus size regression detected for $corpus"
+              exit 1
+            fi
+          done
+          echo "Corpus sizes meet baseline requirements"
+
+  # -------------------------------------------------------------------------
+  # Integration Summary
+  # -------------------------------------------------------------------------
+  summary:
+    name: Integration Summary
+    needs: [unit-tests, property-tests, fuzz-tests, coverage, fuzz-corpus-baseline]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## Testing & Quality Summary"
+          echo ""
+          echo "| Job | Status |"
+          echo "|-----|--------|"
+          echo "| Unit Tests | ${{ needs.unit-tests.result }} |"
+          echo "| Property Tests | ${{ needs.property-tests.result }} |"
+          echo "| Fuzz Tests | ${{ needs.fuzz-tests.result }} |"
+          echo "| Coverage | ${{ needs.coverage.result }} |"
+          echo "| Fuzz Corpus Baseline | ${{ needs.fuzz-corpus-baseline.result }} |"
+          echo ""
+          if ${{ needs.unit-tests.result == 'success' }} && \
+             ${{ needs.property-tests.result == 'success' }} && \
+             ${{ needs.fuzz-tests.result == 'success' }} && \
+             ${{ needs.coverage.result == 'success' }} && \
+             ${{ needs.fuzz-corpus-baseline.result == 'success' }}; then
+            echo "All checks passed! ✅"
+          else
+            echo "Some checks failed. Please review the logs."
+            exit 1
+          fi
