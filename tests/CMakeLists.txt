@@ -50,6 +50,8 @@ add_executable(nova-tests
     neural/sync_batch_norm_test.cu
     neural/tensor_parallel_test.cpp
     neural/fusion/fused_matmul_bias_act_test.cpp
+    neural/transformer/attention_test.cpp
+    neural/loss/loss_functions_test.cpp
     mesh/device_mesh_test.cu
     cuda/nccl/test_nccl_collectives.cpp
     distributed/distributed_ops_test.cu
