@@ -8,7 +8,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 **Previous milestone:** v1.9 Documentation — SHIPPED 2026-04-26
 
-**Status:** Planning
+**Status:** ✅ COMPLETE
 
 **Goal:** Comprehensive testing and quality infrastructure with fuzz testing, property-based tests, and detailed coverage reports.
 
@@ -16,6 +16,8 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - Fuzz Testing: Property-based fuzzing to catch edge cases automatically
 - Property-Based Tests: QuickCheck-style tests that verify mathematical properties
 - Coverage Reports: HTML coverage reports, branch coverage, gap analysis
+
+**Completed:** 2026-04-26
 
 ## Core Value
 
@@ -52,6 +54,10 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ MPI-based NCCL initialization for inter-node communication — v1.4
 - ✓ Topology-aware collective selection across nodes — v1.4
 - ✓ Cross-node NCCL communicator management — v1.4
+- ✓ Fuzz testing infrastructure with libFuzzer — v2.0
+- ✓ Property-based testing with reproducible seeds — v2.0
+- ✓ Code coverage reports with lcov/genhtml — v2.0
+- ✓ CI integration with coverage gates — v2.0
 
 ### Completed (v1.6)
 

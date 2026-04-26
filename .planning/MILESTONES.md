@@ -215,4 +215,27 @@
 - 4 tutorial documents covering quick start through profiling
 - 4 runnable example programs with compilation instructions
 
+**Next:** v2.0 Testing & Quality
+
+---
+
+## v2.0 Testing & Quality (Shipped: 2026-04-26)
+
+**Phases completed:** 4 phases, 12 requirements
+
+**Key accomplishments:**
+
+- **Phase 40: Fuzz Testing Foundation** - libFuzzer-based fuzzing for memory pool, algorithms, matmul
+- **Phase 41: Property-Based Tests** - QuickCheck-style tests for mathematical invariants and algorithmic correctness
+- **Phase 42: Coverage Infrastructure** - lcov/genhtml reports with per-module breakdown and gap analysis
+- **Phase 43: CI Integration** - GitHub Actions workflow with coverage gates and corpus baseline
+
+**Requirements delivered:** 12 total (FUZZ-01 to FUZZ-04, PROP-01 to PROP-04, COVR-01 to COVR-04)
+
+**Core features implemented:**
+- Fuzz testing infrastructure with seed corpus
+- Property testing framework with reproducible seeds
+- Coverage report generation with gap analysis
+- CI workflow with 80% minimum coverage gate
+
 **Next:** TBD
