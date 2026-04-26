@@ -1,0 +1,13 @@
+CompileFlags:
+  Add:
+    - "-xcuda"
+    - "--cuda-gpu-arch=sm_80"
+    - "-I/usr/local/cuda/include"
+    - "-DNOVA_ENABLE_NCCL=0"
+    - "-DNOVA_ENABLE_MPI=0"
+  Remove:
+    - "-gencode*"
+    - "--threads*"
+Diagnostics:
+  Clang: Off
+  Unused: Off

@@ -1,0 +1,20 @@
+{
+  "configurations": [
+    {
+      "name": "Linux",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "${workspaceFolder}/include/**",
+        "${workspaceFolder}/src/**",
+        "/usr/local/cuda/include"
+      ],
+      "defines": [],
+      "compilerPath": "/usr/local/cuda/bin/nvcc",
+      "cStandard": "c17",
+      "cppStandard": "c++23",
+      "intelliSenseMode": "linux-gcc-x64",
+      "compileCommands": "${workspaceFolder}/compile_commands.json"
+    }
+  ],
+  "version": 4
+}

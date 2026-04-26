@@ -1,0 +1,19 @@
+{
+  "clangd.arguments": [
+    "--background-index",
+    "--compile-commands-dir=${workspaceFolder}",
+    "--header-insertion=never"
+  ],
+  "clangd.path": "clangd",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "files.associations": {
+    "*.cu": "cuda",
+    "*.cuh": "cuda"
+  },
+  "editor.formatOnSave": false,
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/build/**": true,
+    "**/build-ninja/**": true
+  }
+}
