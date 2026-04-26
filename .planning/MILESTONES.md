@@ -171,3 +171,26 @@
 - HTML performance dashboard with Plotly charts and color-coded status
 
 **Next:** TBD
+
+---
+
+## v1.8 Developer Experience (Shipped: 2026-04-26)
+
+**Phases completed:** 4 phases, 4 requirements each
+
+**Key accomplishments:**
+
+- **Phase 33: Error Message Framework** - CUDA error types with std::error_code, cuda_error_guard, recovery hints
+- **Phase 34: CMake Package Export** - find_package(nova) support, NovaTargets.cmake, feature matrix
+- **Phase 35: IDE Configuration** - .clangd/config.yaml, VS Code settings, c_cpp_properties.json
+- **Phase 36: Build Performance** - CMakePresets.json, NOVA_USE_CCACHE option, build documentation
+
+**Requirements delivered:** 16 total (ERR-01 to ERR-04, CMK-01 to CMK-04, IDE-01 to IDE-04, BLD-01 to BLD-04)
+
+**Core features implemented:**
+- Error framework with descriptive CUDA errors and recovery hints
+- CMake package export with find_package(nova REQUIRED) support
+- IDE configuration for clangd and VS Code with CUDA support
+- Build presets (dev/release/ci) with ccache integration
+
+**Next:** v1.9 Documentation

@@ -4,19 +4,18 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v1.8 Developer Experience
+## Current Milestone: v1.9 Documentation
 
-**Previous milestone:** v1.7 Benchmarking & Testing — SHIPPED 2026-04-26
+**Previous milestone:** v1.8 Developer Experience — SHIPPED 2026-04-26
 
 **Status:** Planning
 
-**Goal:** Comprehensive developer experience improvements including better error messages, CMake integration, IDE support, and build performance.
+**Goal:** Comprehensive documentation including API reference, tutorials, and examples.
 
 **Target features:**
-- Better error messages with descriptive CUDA errors and recovery hints
-- CMake integration with modern targets and exported packages
-- IDE support with compile_commands.json, clangd config, VS Code settings
-- Build performance improvements via ccache, unity builds, parallel compilation
+- API Reference: Doxygen/Sphinx auto-generated documentation
+- Tutorials: Step-by-step guides for common use cases
+- Examples: Sample code demonstrating key features
 
 ## Core Value
 
@@ -117,6 +116,12 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - NVTX profiling annotations and automated baseline comparison
 - HTML performance dashboards with Plotly charts and color-coded status
 
+**Added in v1.8:**
+- Error message framework with std::error_code integration
+- CMake package export with find_package(nova) support
+- IDE configuration for clangd and VS Code
+- CMakePresets.json with dev/release/ci build presets
+
 ## Constraints
 
 - **Tech stack:** C++23, CUDA 20, CMake 4.0+ — current versions
@@ -153,6 +158,9 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 | Dashboard approach | HTML reports with trend charts, JSON data export | ✓ v1.7 shipped |
 | Statistical testing | Welch's t-test for significance (scipy) | ✓ v1.7 shipped |
 | NVTX approach | Header-only with compile-time toggle | ✓ v1.7 shipped |
+| Error framework | std::error_code categories with recovery hints | ✓ v1.8 shipped |
+| CMake package | Config-file packages with exported targets | ✓ v1.8 shipped |
+| IDE support | .clangd, VS Code settings, compile_commands | ✓ v1.8 shipped |
 
 ## Evolution
 
@@ -172,5 +180,5 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-04-26 after v1.7 milestone complete*
-*Last updated: 2026-04-26 for v1.8 Developer Experience*
+*Last updated: 2026-04-26 after v1.8 milestone complete*
+*Last updated: 2026-04-26 for v1.9 Documentation*
