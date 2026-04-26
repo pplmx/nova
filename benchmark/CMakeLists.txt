@@ -33,6 +33,7 @@ target_include_directories(nova_benchmarks PRIVATE
 
 target_link_libraries(nova_benchmarks PRIVATE
     benchmark
+    cuda_impl
     CUDA::cudart
     CUDA::cublas
     CUDA::cufft
