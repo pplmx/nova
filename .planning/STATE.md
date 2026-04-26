@@ -1,57 +1,31 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.1
-milestone_name: New Algorithms
-status: complete
-last_updated: "2026-04-26"
+milestone: v2.2
+milestone_name: Comprehensive Enhancement
+status: planning
+last_updated: "2026-04-27"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-04-26 (v2.1 complete)
+**Last Updated:** 2026-04-27 (v2.2 started)
 
 ## Current Position
 
-Phase: All phases complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: ✅ MILESTONE COMPLETE
-Last activity: 2026-04-26 — v2.1 New Algorithms complete (12/12 requirements)
+Status: Defining requirements
+Last activity: 2026-04-27 — Milestone v2.2 started
 
 ## Phase List
 
-| Phase | Name | Requirements | Status |
-|-------|------|--------------|--------|
-| 44 | Sparse Matrix Support | SPARSE-01, SPARSE-02, SPARSE-03, SPARSE-04 | ✅ Complete |
-| 45 | Graph Neural Networks | GNN-01, GNN-02, GNN-03, GNN-04 | ✅ Complete |
-| 46 | Quantization Foundation | QUANT-01, QUANT-02 | ✅ Complete |
-| 47 | Quantized Operations | QUANT-03, QUANT-04 | ✅ Complete |
-
-## Phase Summaries
-
-### Phase 44: Sparse Matrix Support
-- `include/cuda/sparse/sparse_matrix.hpp` — CSR/CSC matrix classes
-- `include/cuda/sparse/sparse_ops.hpp` — SpMV, SpMM operations
-- `tests/sparse/sparse_matrix_test.cpp` — Unit tests
-
-### Phase 45: Graph Neural Networks
-- `include/cuda/gnn/message_passing.hpp` — GCN aggregation
-- `include/cuda/gnn/attention.hpp` — Graph attention
-- `include/cuda/gnn/sampling.hpp` — Neighbor sampling
-- `tests/gnn/gnn_test.cpp` — Unit tests
-
-### Phase 46: Quantization Foundation
-- `include/cuda/quantize/quantize_tensor.hpp` — QuantizedTensor classes
-- `tests/quantize/quantize_tensor_test.cpp` — Unit tests
-
-### Phase 47: Quantized Operations
-- `include/cuda/quantize/quantize_ops.hpp` — Quantized matmul
-- `tests/quantize/quantize_ops_test.cpp` — Unit tests
+*To be defined in ROADMAP.md*
 
 ## Milestone History
 
@@ -69,7 +43,8 @@ Last activity: 2026-04-26 — v2.1 New Algorithms complete (12/12 requirements)
 | v1.9 Documentation | ✅ Shipped | 2026-04-26 | 12 |
 | v2.0 Testing & Quality | ✅ Shipped | 2026-04-26 | 12 |
 | v2.1 New Algorithms | ✅ Shipped | 2026-04-26 | 12 |
+| v2.2 Comprehensive Enhancement | 🚧 In Progress | 2026-04-27 | TBD |
 
 ---
-*State updated: 2026-04-26 — v2.1 New Algorithms milestone complete*
-*v2.1: Sparse matrices, GNN, Quantization*
+*State updated: 2026-04-27 — v2.2 Comprehensive Enhancement started*
+*v2.2: Performance, Operators, Tooling, Documentation*
