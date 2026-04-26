@@ -13,7 +13,8 @@ namespace nova::preemption {
 
 static std::atomic<bool> g_shutdown_requested{false};
 static std::atomic<int> g_received_signal{0};
-static std::atomic<std::chrono::steady_clock::time_point> g_signal_time;
+static std::mutex g_signal_mutex;
+static std::chrono::steady_clock::time_point g_signal_time{};
 
 struct SignalHandler::Impl {
     bool installed = false;
@@ -28,7 +29,10 @@ SignalHandler& SignalHandler::instance() {
 void SignalHandler::signal_handler(int signal) {
     g_shutdown_requested.store(true);
     g_received_signal.store(signal);
-    g_signal_time.store(std::chrono::steady_clock::now());
+    {
+        std::lock_guard<std::mutex> lock(g_signal_mutex);
+        g_signal_time = std::chrono::steady_clock::now();
+    }
 
     auto& instance = SignalHandler::instance();
     auto& impl = *instance.impl_;
@@ -87,7 +91,10 @@ SignalHandler::HandlerState SignalHandler::get_state() const {
     state.handler_installed = impl_->installed;
     state.shutdown_requested = g_shutdown_requested.load();
     state.received_signal_number = g_received_signal.load();
-    state.signal_received_at = g_signal_time.load();
+    {
+        std::lock_guard<std::mutex> lock(g_signal_mutex);
+        state.signal_received_at = g_signal_time;
+    }
     return state;
 }
 
