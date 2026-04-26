@@ -8,13 +8,16 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 **Previous milestone:** v1.6 Performance & Training — SHIPPED 2026-04-26
 
+**Status:** ✅ SHIPPED 2026-04-26
+
 **Goal:** Comprehensive benchmarking infrastructure for performance regression detection, measurement, and CI-gated quality.
 
-**Target features:**
-- Comprehensive benchmark suite (Google Benchmark + Python harness)
-- Performance regression testing with automated detection
-- Continuous profiling hooks (NVTX annotations, CI baseline comparison)
-- Performance dashboards (HTML reports, trend charts, regression alerts)
+**Delivered features:**
+- NVTX annotation framework with compile-time toggle
+- Python benchmark harness with JSON output
+- Comprehensive benchmarks for memory, reduce, scan, sort, FFT, matmul
+- GitHub Actions CI workflow with statistical significance testing
+- HTML performance dashboards with Plotly charts
 
 ## Core Value
 
@@ -52,14 +55,19 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ Topology-aware collective selection across nodes — v1.4
 - ✓ Cross-node NCCL communicator management — v1.4
 
-### Active
+### Completed (v1.6)
 
-- [ ] Comprehensive benchmark suite (reduce, scan, sort, FFT, matmul, collectives) — Phase 29
-- [ ] Performance regression testing with automated detection — Phase 30
-- [ ] Continuous profiling hooks (NVTX, CI baseline comparison) — Phase 31
-- [ ] Performance dashboards (HTML reports, trend charts, regression alerts) — Phase 32
+- [x] Distributed batch normalization with cross-GPU sync — Phase 25
+- [x] Performance profiling infrastructure — Phase 26
+- [x] Kernel fusion for training efficiency — Phase 27
+- [x] Memory optimization (compression, accumulation) — Phase 28
 
-### Completed (v1.5)
+### Completed (v1.7)
+
+- [x] Comprehensive benchmark suite with Google Benchmark + Python harness — Phase 29
+- [x] Performance regression testing with automated detection — Phase 30
+- [x] Continuous profiling hooks (NVTX, CI baseline comparison) — Phase 31
+- [x] Performance dashboards (HTML reports, trend charts, regression alerts) — Phase 32
 
 - [x] GPU checkpoint/restart with full state serialization — Phase 21
 - [x] Communication error recovery for NCCL/TCP failures — Phase 22
@@ -104,11 +112,11 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - Matmul-bias-activation kernel fusion
 - ZSTD/LZ4 checkpoint compression and gradient buffering
 
-**Added in v1.7 (planned):**
+**Added in v1.7:**
 - Comprehensive benchmark suite with Google Benchmark + Python harness
-- Performance regression testing with CI-gated detection
+- Performance regression testing with CI-gated detection and statistical significance
 - NVTX profiling annotations and automated baseline comparison
-- HTML performance dashboards with trend charts and alerts
+- HTML performance dashboards with Plotly charts and color-coded status
 
 ## Constraints
 
@@ -141,9 +149,11 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 | Thread-safety | Mutex protection for signal state | ✓ v1.5 shipped |
 | BatchNorm strategy | SyncBatchNorm with NCCL all-reduce | ✓ v1.6 shipped |
 | Profiling approach | CUDA events for kernel timing | ✓ v1.6 shipped |
-| Benchmark framework | Google Benchmark + Python harness hybrid | v1.7 planning |
-| Regression strategy | CI-gated threshold comparison against baseline | v1.7 planning |
-| Dashboard approach | HTML reports with trend charts, JSON data export | v1.7 planning |
+| Benchmark framework | Google Benchmark + Python harness hybrid | ✓ v1.7 shipped |
+| Regression strategy | CI-gated threshold comparison against baseline | ✓ v1.7 shipped |
+| Dashboard approach | HTML reports with trend charts, JSON data export | ✓ v1.7 shipped |
+| Statistical testing | Welch's t-test for significance (scipy) | ✓ v1.7 shipped |
+| NVTX approach | Header-only with compile-time toggle | ✓ v1.7 shipped |
 
 ## Evolution
 
@@ -163,4 +173,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-04-26 after v1.7 milestone planning*
+*Last updated: 2026-04-26 after v1.7 milestone complete*
