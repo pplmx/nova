@@ -1,72 +1,82 @@
-# Requirements: Nova CUDA Library Enhancement
+# Requirements: Nova CUDA Library — v1.7 Benchmarking & Testing
 
 **Defined:** 2026-04-26
-**Milestone:** v1.6 Performance & Training
-**Core Value:** Enhance training performance with distributed batch normalization, profiling infrastructure, and kernel fusion opportunities.
+**Core Value:** A reliable, high-performance CUDA compute library that can be trusted in production environments, with comprehensive algorithms for scientific computing, image processing, and emerging workloads.
 
-## v1.6 Requirements
+## v1 Requirements
 
-Requirements for v1.6 milestone. Each maps to roadmap phases.
+Requirements for initial release. Each maps to roadmap phases.
 
-### Distributed Batch Normalization (Phase 25)
+### Benchmark Infrastructure Foundation (BENCH)
 
-- [ ] **DBN-01**: SyncBatchNorm with all-reduce for mean/variance
-- [ ] **DBN-02**: Cross-GPU batch statistics aggregation
-- [ ] **DBN-03**: Evaluation vs training mode handling
+- [ ] **BENCH-01**: Developer can run benchmark suite with `python scripts/benchmark/run_benchmarks.py --all`
+- [ ] **BENCH-02**: Benchmarks use CUDA events for accurate wall-clock timing with proper synchronization
+- [ ] **BENCH-03**: Benchmarks include warmup iterations before measurement to stabilize GPU clocks
+- [ ] **BENCH-04**: NVTX annotation framework provides scoped range guards with compile-time toggle
+- [ ] **BENCH-05**: NVTX annotations can be disabled without affecting benchmark timing accuracy
 
-### Performance Profiling (Phase 26)
+### Comprehensive Benchmark Suite (SUITE)
 
-- [ ] **PROF-01**: Kernel-level profiling with CUDA profiling tools integration
-- [ ] **PROF-02**: Memory bandwidth and compute throughput metrics
-- [ ] **PROF-03**: Collective operation latency tracking
+- [ ] **SUITE-01**: Developer can benchmark reduce operations (float, double) with configurable input sizes
+- [ ] **SUITE-02**: Developer can benchmark scan operations (inclusive, exclusive) with configurable input sizes
+- [ ] **SUITE-03**: Developer can benchmark sort operations with configurable input sizes
+- [ ] **SUITE-04**: Developer can benchmark FFT operations (forward, inverse) with configurable input sizes
+- [ ] **SUITE-05**: Developer can benchmark matmul operations with configurable input sizes and batch dimensions
+- [ ] **SUITE-06**: Benchmark results include throughput metrics (GB/s, items/sec) and latency (ms)
+- [ ] **SUITE-07**: Developer can benchmark memory operations (H2D, D2H, D2D) with throughput metrics
+- [ ] **SUITE-08**: Multi-GPU benchmarks measure NCCL collective operations (all-reduce, broadcast, all-gather)
+- [ ] **SUITE-09**: Benchmarks support parameterized input sizes across meaningful ranges (small to production-scale)
 
-### Kernel Fusion (Phase 27)
+### CI Regression Testing (CI)
 
-- [ ] **FUSN-01**: Fused matmul + bias + activation kernels
-- [ ] **FUSN-02**: Fused layernorm + softmax patterns
-- [ ] **FUSN-03**: Automatic kernel fusion discovery
+- [ ] **CI-01**: Benchmark results are exported as machine-readable JSON files
+- [ ] **CI-02**: Baseline JSON files are committed to `scripts/benchmark/baselines/` with version metadata
+- [ ] **CI-03**: Python harness compares results against baselines with configurable tolerance thresholds
+- [ ] **CI-04**: Regression detection uses statistical significance testing (Welch's t-test) to reduce false positives
+- [ ] **CI-05**: GitHub Actions workflow runs benchmarks on PR and fails if regression exceeds threshold
+- [ ] **CI-06**: CI workflow stores baseline freshness metadata and alerts when baselines are stale
+- [ ] **CI-07**: Regression check failures include clear output showing which benchmark regressed, by how much, and the baseline value
 
-### Memory Optimization (Phase 28)
+### Performance Dashboards (DASH)
 
-- [ ] **MOPT-01**: Checkpoint compression with LZ4
-- [ ] **MOPT-02**: Gradient accumulation buffering
-- [ ] **MOPT-03**: Memory defragmentation during training
+- [ ] **DASH-01**: Python script generates HTML dashboard from benchmark JSON results
+- [ ] **DASH-02**: Dashboard displays benchmark results in tabular format with time, throughput, and iterations
+- [ ] **DASH-03**: Dashboard shows trend charts comparing current results against baselines
+- [ ] **DASH-04**: Dashboard highlights regressions in red, improvements in green, and stable results in neutral color
+- [ ] **DASH-05**: Dashboard includes hardware context (GPU model, driver version, CUDA version)
+- [ ] **DASH-06**: Dashboard generates self-contained HTML that can be served statically or attached as CI artifact
 
-## v1.5 Requirements
+## v2 Requirements
 
-Previously completed.
+Deferred to future release. Tracked but not in current roadmap.
 
-### Checkpoint/Restart
+### Distributed Training Benchmarks
 
-- [x] **CKPT-01**: CheckpointManager with async writes and configurable interval
-- [x] **CKPT-02**: Full state serialization (weights, optimizer states, RNG state)
-- [x] **CKPT-03**: Storage backend abstraction (filesystem, object store paths)
-- [x] **CKPT-04**: Incremental checkpoint support for reduced I/O overhead
-- [x] **CKPT-05**: Automatic checkpoint on error detection before recovery
+- **DIST-01**: Developer can benchmark tensor parallelism operations with scaling curves across GPU counts
+- **DIST-02**: Developer can benchmark pipeline parallelism schedules (1F1B, interleaved) with throughput metrics
 
-### Communication Error Recovery
+### Advanced Profiling
 
-- [x] **COMM-01**: NCCL timeout detection with configurable thresholds
-- [x] **COMM-02**: Health monitoring for collective operations (watchdog thread)
-- [x] **COMM-03**: Automatic retry with exponential backoff for transient errors
-- [x] **COMM-04**: Cross-node connection repair and communicator recreation
-- [x] **COMM-05**: Error classification (transient vs permanent) for retry decisions
+- **PROF-01**: Developer can launch Nsight Systems from benchmark tooling for interactive GPU analysis
+- **PROF-02**: Benchmark reports include L2 cache hit rates and memory efficiency metrics
+- **PROF-03**: Developer can trigger automated alert routing (Slack/email) on regression detection
 
-### Memory Error Detection
+### Memory Profiling
 
-- [x] **MEM-01**: CUDA error detection and classification via cudaDeviceGetErrorString
-- [x] **MEM-02**: ECC error callback registration and handling infrastructure
-- [x] **MEM-03**: Device health monitoring with periodic checks during idle
-- [x] **MEM-04**: Graceful degradation strategies (reduce TP degree, fall back to CPU)
-- [x] **MEM-05**: Memory error telemetry and logging for diagnostics
+- **MEMP-01**: Developer can detect memory leaks by comparing allocation count before and after benchmark runs
+- **MEMP-02**: Developer can measure memory pool fragmentation metrics across benchmark iterations
 
-### Job Preemption Handling
+## Out of Scope
 
-- [x] **PEMP-01**: Signal handlers for SIGTERM/SIGUSR1 with graceful shutdown
-- [x] **PEMP-02**: Training state preservation sequence on preemption
-- [x] **PEMP-03**: Resume-from-checkpoint validation and recovery
-- [x] **PEMP-04**: Configurable shutdown timeout (default 30s, extendable)
-- [x] **PEMP-05**: Coordinated checkpoint across multi-node ranks
+Explicitly excluded. Documented to prevent scope creep.
+
+| Feature | Reason |
+|---------|--------|
+| Real-time dashboard streaming | Continuous GPU polling adds overhead; periodic JSON + static HTML is sufficient |
+| Automatic kernel tuning | Takes hours to run, changes kernel behavior unexpectedly |
+| Cross-vendor validation (AMD/Intel) | Different architectures yield different metrics; focus on NVIDIA |
+| ML-based anomaly detection | False positives in noisy GPU workloads; statistical tolerance bands are more reliable |
+| Per-instruction SASS profiling | Prohibitive overhead; offer as opt-in manual tool (Nsight Compute) |
 
 ## Traceability
 
@@ -74,24 +84,39 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DBN-01 | Phase 25 | Pending |
-| DBN-02 | Phase 25 | Pending |
-| DBN-03 | Phase 25 | Pending |
-| PROF-01 | Phase 26 | Pending |
-| PROF-02 | Phase 26 | Pending |
-| PROF-03 | Phase 26 | Pending |
-| FUSN-01 | Phase 27 | Pending |
-| FUSN-02 | Phase 27 | Pending |
-| FUSN-03 | Phase 27 | Pending |
-| MOPT-01 | Phase 28 | Pending |
-| MOPT-02 | Phase 28 | Pending |
-| MOPT-03 | Phase 28 | Pending |
+| BENCH-01 | Phase 29 | Pending |
+| BENCH-02 | Phase 29 | Pending |
+| BENCH-03 | Phase 29 | Pending |
+| BENCH-04 | Phase 29 | Pending |
+| BENCH-05 | Phase 29 | Pending |
+| SUITE-01 | Phase 30 | Pending |
+| SUITE-02 | Phase 30 | Pending |
+| SUITE-03 | Phase 30 | Pending |
+| SUITE-04 | Phase 30 | Pending |
+| SUITE-05 | Phase 30 | Pending |
+| SUITE-06 | Phase 30 | Pending |
+| SUITE-07 | Phase 30 | Pending |
+| SUITE-08 | Phase 30 | Pending |
+| SUITE-09 | Phase 30 | Pending |
+| CI-01 | Phase 31 | Pending |
+| CI-02 | Phase 31 | Pending |
+| CI-03 | Phase 31 | Pending |
+| CI-04 | Phase 31 | Pending |
+| CI-05 | Phase 31 | Pending |
+| CI-06 | Phase 31 | Pending |
+| CI-07 | Phase 31 | Pending |
+| DASH-01 | Phase 32 | Pending |
+| DASH-02 | Phase 32 | Pending |
+| DASH-03 | Phase 32 | Pending |
+| DASH-04 | Phase 32 | Pending |
+| DASH-05 | Phase 32 | Pending |
+| DASH-06 | Phase 32 | Pending |
 
 **Coverage:**
-- v1.6 requirements: 12 total
-- Mapped to phases: 12
-- Unmapped: 0
+- v1 requirements: 27 total
+- Mapped to phases: 27
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-26*
-*Last updated: 2026-04-26 after v1.6 requirements definition*
+*Last updated: 2026-04-26 after requirements definition*
