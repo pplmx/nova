@@ -1,0 +1,21 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/NovaTargets.cmake")
+
+check_required_components(nova)
+
+# Feature matrix output
+if(NOVA_NCCL_ENABLED)
+    message(STATUS "Nova @PROJECT_VERSION@: NCCL [ON]")
+else()
+    message(STATUS "Nova @PROJECT_VERSION@: NCCL [OFF]")
+endif()
+
+if(NOVA_MPI_ENABLED)
+    message(STATUS "Nova @PROJECT_VERSION@: MPI [ON]")
+else()
+    message(STATUS "Nova @PROJECT_VERSION@: MPI [OFF]")
+endif()
+
+message(STATUS "Nova @PROJECT_VERSION@: CUDA @CMAKE_CUDA_COMPILER_VERSION@")
+message(STATUS "Nova @PROJECT_VERSION@: Build type: @CMAKE_BUILD_TYPE@")
