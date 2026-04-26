@@ -146,4 +146,28 @@
 - ShutdownCoordinator with configurable timeout
 - ResumeValidator for checkpoint validation
 
-**Next:** v1.6
+---
+
+## v1.7 Benchmarking & Testing (Shipped: 2026-04-26)
+
+**Phases completed:** 4 phases, 27 requirements
+
+**Key accomplishments:**
+
+- **Phase 29: Benchmark Infrastructure Foundation** - NVTX annotation framework with compile-time toggle, Python benchmark harness, CUDA event timing with warmup
+- **Phase 30: Comprehensive Benchmark Suite** - Memory (H2D/D2H/D2D), Reduce (sum/max), Scan (inclusive/exclusive), Sort (odd-even/bitonic), FFT (forward/inverse), Matmul (single/batch) benchmarks
+- **Phase 31: CI Regression Testing** - GitHub Actions workflow, statistical significance testing (Welch's t-test), baseline management and freshness tracking
+- **Phase 32: Performance Dashboards** - HTML dashboard generator with Plotly charts, color-coded regression visualization, hardware context display
+
+**Requirements delivered:** 27 total (BENCH-01 to BENCH-05, SUITE-01 to SUITE-09, CI-01 to CI-07, DASH-01 to DASH-06)
+
+**Core features implemented:**
+- NVTX annotation framework with RAII scoped range guards and compile-time toggle
+- Python benchmark harness (`scripts/benchmark/run_benchmarks.py`) with JSON output and regression detection
+- Comprehensive C++ benchmark suite using Google Benchmark v1.9.1
+- GitHub Actions workflow for CI regression testing
+- Baseline management with versioned storage and metadata
+- Statistical significance testing using Welch's t-test (scipy)
+- HTML performance dashboard with Plotly charts and color-coded status
+
+**Next:** TBD
