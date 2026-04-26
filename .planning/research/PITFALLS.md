@@ -1,476 +1,351 @@
-# Pitfalls Research: NCCL Integration, Tensor Parallelism, and Pipeline Parallelism
+# Pitfalls Research
 
-**Domain:** Production-grade Multi-GPU CUDA with Collective Communication
-**Researched:** 2026-04-24
-**Confidence:** HIGH (primarily NVIDIA NCCL official documentation)
-
-## Executive Summary
-
-This document extends the base PITFALLS.md with deep-dives into NCCL integration pitfalls, tensor parallelism memory management, and pipeline parallelism bubble overhead. These are advanced multi-GPU patterns that introduce failure modes beyond basic peer memory access.
-
-The critical finding: **NCCL operations are asynchronous by nature, and asynchronous errors can cause permanent communicator corruption.** Unlike CUDA API calls that fail immediately, NCCL collective errors may not surface until `ncclGroupEnd()` or `cudaStreamSynchronize()`. This requires a fundamentally defensive programming approach.
+**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Researched:** 2026-04-26
+**Confidence:** HIGH
 
 ## Critical Pitfalls
 
-### Pitfall 1: NCCL Initialization Failures — Silent or Cryptic
+### Pitfall 1: Unstable Baselines Due to GPU Frequency Scaling
 
 **What goes wrong:**
-- `ncclInit` succeeds but communicator creation fails with `ncclUnhandledCudaError` or `ncclSystemError`
-- Version mismatch between NCCL library and CUDA driver causes silent failures
-- Shared memory (`/dev/shm`) exhaustion causes cryptic init failures
+Benchmark results vary by 15-40% between runs on the same hardware performing the same computation, making it impossible to detect meaningful performance regressions or improvements.
 
 **Why it happens:**
-1. NCCL requires specific NCCL library versions compatible with the CUDA driver
-2. Docker containers default to limited `/dev/shm` size (64MB) — insufficient for NCCL internals
-3. NCCL creates shared memory segments for inter-process/intra-process communication
-4. cuMem host allocations (NCCL 2.23+) may fail silently on systems without NUMA support
+Modern GPUs use dynamic frequency scaling (boost clocks) that adjust based on temperature, power budget, and workload characteristics. CUDA kernels that don't fully utilize the GPU's execution resources trigger lower clock speeds. Additionally, thermal throttling during extended benchmark runs drops frequencies unpredictably.
 
 **How to avoid:**
-1. Always check NCCL version compatibility:
-   ```cpp
-   int nccl_version;
-   ncclGetVersion(&nccl_version);
-   if (nccl_version < NCCL_MIN_VERSION) {
-       throw std::runtime_error("NCCL version too old: " + 
-           std::to_string(nccl_version));
-   }
-   ```
-
-2. Validate shared memory size at startup:
-   ```cpp
-   struct statfs shm_stats;
-   statfs("/dev/shm", &shm_stats);
-   size_t shm_avail = shm_stats.f_bavail * shm_stats.f_bsize;
-   if (shm_avail < 512 * 1024 * 1024) {  // Require 512MB minimum
-       std::cerr << "WARNING: /dev/shm too small for NCCL, expect failures\n";
-   }
-   ```
-
-3. Docker users must explicitly set `--shm-size=1g --ulimit memlock=-1`
-
-4. For VM/container NUMA issues, set `NCCL_CUMEM_HOST_ENABLE=0` (pre-2.26) or NCCL auto-detects and falls back
+- Force a fixed GPU clock frequency using `nvidia-smi -lgc <min>,<max>` before benchmarking
+- Implement GPU temperature monitoring and discard results when thermal throttling is active (check `nvidia-smi` for temperatures >85C)
+- Use `cudaSetDeviceFlags(cudaSetDeviceFlags::cudaDeviceScheduleYield)` to allow better clock stability
+- Run benchmarks in a warm-up-then-measure pattern: discard first N iterations to reach steady-state thermal state
+- Consider using persistence mode: `nvidia-smi -pm 1`
 
 **Warning signs:**
-- `NCCL WARN Error: failed to extend /dev/shm/nccl-*` in logs
-- `ncclUnhandledCudaError` with no further context
-- Initialization succeeds but first collective hangs
+- Standard deviation >5% across repeated benchmark runs
+- First run of a benchmark suite always slower than subsequent runs
+- Benchmark times correlate with GPU temperature
+- Results improve after running a "warm-up" kernel first
 
-**Phase to address:** Phase 2 (NCCL Integration) — before any collective operations
-
-**Sources:**
-- NVIDIA NCCL Troubleshooting: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting.html
+**Phase to address:**
+Phase 1: Benchmark Infrastructure Foundation — establish stable measurement methodology before any benchmark code is written.
 
 ---
 
-### Pitfall 2: Tensor Parallelism Memory Explosions — Replicated States
+### Pitfall 2: Missing or Incorrect CUDA Synchronization
 
 **What goes wrong:**
-Memory usage multiplies with tensor parallelism degree (T_d). A 7B parameter model that needs 14GB for weights needs 28GB with T_d=2, and 56GB with T_d=4 — not from weights alone but from **replicated optimizer states and gradient buffers**.
+Benchmark reports 0.001ms for kernels that actually take 10ms, or times include only kernel launch overhead without kernel execution time. Results are fundamentally misleading.
 
 **Why it happens:**
-In tensor parallelism (e.g., Megatron-LM style), each GPU holds a **partition** of model weights:
-- Weights: 1/T_d of original size (good)
-- Gradients: 1/T_d of original size (good)
-- Optimizer states (Adam momentums/variances): **FULL size on each GPU** (bad)
-
-For Adam optimizer: 2x model size in optimizer states per GPU. With T_d=8 on a 70B model, optimizer states alone = 140GB per GPU.
+CUDA kernels execute asynchronously. `cudaEventRecord()` captures the time of launch, not completion. Without explicit synchronization (`cudaDeviceSynchronize()`, `cudaEventSynchronize()`, or `cudaStreamSynchronize()`), timing stops immediately after queuing the kernel, not after it completes.
 
 **How to avoid:**
-1. **Profile memory at each TP degree** before claiming support:
-   ```cpp
-   size_t get_tensor_parallel_memory(int tp_degree) {
-       size_t weight_size = model_params_bytes / tp_degree;
-       size_t gradient_size = model_params_bytes / tp_degree;
-       size_t optimizer_size = model_params_bytes * 2;  // Adam: 2x model
-       return weight_size + gradient_size + optimizer_size;
-   }
-   ```
-
-2. **Implement memory-aware TP degree selection**:
-   ```cpp
-   int select_max_tp_degree(size_t gpu_memory_bytes) {
-       for (int tp = max_tp; tp >= 1; tp /= 2) {
-           if (get_tensor_parallel_memory(tp) < gpu_memory_bytes * 0.85) {
-               return tp;
-           }
-       }
-       return 1;  // Fall back to data parallelism
-   }
-   ```
-
-3. **Use communication-compute overlap** to hide latency:
-   - Overlap all-reduce with backward pass computation
-   - Use CUDA streams to pipeline gradient communication
-   - Consider gradient checkpointing to trade compute for memory
-
-4. **Consider alternative optimizers**: 8-bit Adam, or optimizer state partitioning (ZeRO Stage 2/3)
+- Always synchronize before stopping timing: `cudaEventRecord(stop); cudaEventSynchronize(stop); cudaEventElapsedTime(&ms, start, stop);`
+- Use CUDA events (already in v1.6 of this codebase) consistently for all measurements
+- Be explicit about which stream is being timed — time measurements are stream-specific
+- When benchmarking multiple sequential kernels, synchronize between each one if measuring individually
+- Use `cudaStreamQuery()` to detect if a stream has work pending before assuming it's complete
 
 **Warning signs:**
-- OOM errors when tp_degree > 1, even though single-GPU works
-- Memory usage increases non-linearly with tp_degree
-- First microbatch succeeds, second fails (buffer accumulation)
+- Benchmark times are suspiciously low (sub-millisecond for non-trivial kernels)
+- CPU and GPU utilization don't match expected patterns
+- Varying results between runs of identical code
+- First call to a kernel is much slower than subsequent calls (cold start vs async queuing)
 
-**Phase to address:** Phase 4 (Tensor Parallelism) — requires memory profiling infrastructure
-
-**Sources:**
-- NVIDIA Megatron-LM memory analysis
-- ZeRO: Memory Optimizations for Deep Learning (Microsoft)
+**Phase to address:**
+Phase 1: Benchmark Infrastructure Foundation — synchronization patterns must be codified as a library feature, not left to individual benchmark authors.
 
 ---
 
-### Pitfall 3: Pipeline Parallelism Bubble Overhead — Unbalanced Stages
+### Pitfall 3: Input Size Coverage Gaps
 
 **What goes wrong:**
-Pipeline bubbles waste 10-40% of GPU compute. A 4-stage pipeline with 8 microbatches might spend 25% of time in bubbles. Worse: the bubble percentage increases with number of stages.
+Benchmarks pass at small input sizes but reveal severe performance regressions at production-scale inputs. Users make decisions based on benchmarks that don't reflect their actual workloads.
 
 **Why it happens:**
-1. **Pipeline flush**: At the start, only stage 0 is active; at the end, only stage 3 is active
-2. **Microbatch imbalance**: If stages have unequal compute time, some stages stall waiting
-3. **Large microbatches**: Fewer, larger microbatches = fewer pipeline stages = more bubbles
-
-For K stages and M microbatches, minimum bubbles = (K-1)/M fraction of total time.
+GPU performance characteristics change dramatically with input size:
+- Small inputs don't saturate parallelism, leaving GPU resources underutilized
+- Memory access patterns that are efficient at small sizes become inefficient at scale (bank conflicts, cache behavior)
+- Warp occupancy thresholds create cliff behaviors at specific sizes
+- Algorithm complexity that appears O(n) at small scale becomes O(n log n) or worse at large scale due to shared memory limits
 
 **How to avoid:**
-1. **Balance stage compute time** within 10%:
-   ```cpp
-   struct PipelineStage {
-       std::vector<Layer> layers;
-       size_t estimated_forward_us;
-   };
-   
-   // Balance by assigning layers greedily to minimize max stage time
-   void balance_stages(std::vector<Layer>& layers, int num_stages) {
-       // Sort layers by compute cost
-       // Distribute to minimize max cumulative cost
-   }
-   ```
-
-2. **Tune microbatch count** relative to stages:
-   - Rule of thumb: M >= 4 * K for < 10% bubble overhead
-   - But too many microbatches increases调度 overhead
-
-3. **Use interleaved schedule** to reduce bubbles:
-   ```cpp
-   // Instead of 1F1B (one forward, one backward):
-   // Use interleaved 1F1B with multiple sub-stages per device
-   // This trades communication for better GPU utilization
-   ```
-
-4. **Profile and visualize pipeline efficiency**:
-   ```cpp
-   struct PipelineProfile {
-       double bubble_fraction;
-       double compute_utilization;
-       size_t total_microbatches;
-       size_t total_forward_time_us;
-       size_t total_backward_time_us;
-   };
-   ```
+- Define production input size ranges based on real user data or stated requirements
+- Benchmark at minimum, typical, and maximum expected sizes
+- Include size ranges that cross significant thresholds (power-of-2 boundaries, shared memory limits, warp counts)
+- Use parameterized benchmarks that sweep sizes and plot scaling curves, not just single-point measurements
+- Document expected input size ranges for each benchmark
 
 **Warning signs:**
-- GPU utilization drops periodically (visible in nvidia-smi)
-- Throughput doesn't scale linearly with pipeline stages
-- Different GPUs show different utilization levels
+- Benchmarks use only "toy" input sizes (e.g., 1024 elements when production uses 10M)
+- No scaling curve analysis — only single-point measurements
+- Users report performance issues not visible in benchmarks
+- Memory allocator behavior changes dramatically across benchmark sizes
 
-**Phase to address:** Phase 5 (Pipeline Parallelism) — requires profiling infrastructure
+**Phase to address:**
+Phase 2: Realistic Workload Coverage — define production input ranges and implement parameterized benchmarks.
 
 ---
 
-### Pitfall 4: Cross-Collective Synchronization Deadlocks — Multiple Communicators
+### Pitfall 4: CI Environment Non-Determinism
 
 **What goes wrong:**
-Program hangs indefinitely when using multiple NCCL communicators concurrently. This is the most insidious deadlock because the code "works" with 2 GPUs but hangs with 8.
+Benchmark CI jobs fail randomly with 20%+ variance between "identical" runs. CI results don't match local development runs. Engineers ignore benchmark failures because false positives are so frequent.
 
 **Why it happens:**
-1. **NCCL < 2.26**: Multiple communicators require explicit ordering — all ranks must call communicators in the same global order
-2. **Stream dependencies insufficient**: CUDA stream ordering doesn't enforce NCCL inter-communicator ordering
-3. **Non-deterministic launch order**: If NCCL calls are issued from different threads or at different times, order may differ across ranks
+Cloud GPU instances (AWS p3/p4, GCP, Azure NC-series) share physical hardware:
+- Variable clock speeds based on other tenant workloads
+- Noisy neighbor effects from concurrent GPU kernels
+- Thermal state varies between instance lifetimes
+- Instance types may have different GPU silicon quality (silicon lottery)
+- GPU-boost clocks behave differently on cloud hardware vs. bare metal
+- Some cloud GPUs run in "turbo" mode that is inherently variable
 
-**How to avoid (NCCL < 2.26):**
-```cpp
-// All ranks MUST call in identical order
-ncclAllReduce(..., comm_model, stream_model);  // First: all ranks
-ncclAllReduce(..., comm_data, stream_data);    // Second: all ranks
-cudaGraphLaunch(graph1, stream1);               // Third: all ranks
-cudaGraphLaunch(graph2, stream2);               // Fourth: all ranks
-```
-
-**How to avoid (NCCL >= 2.26):**
-Enable `NCCL_LAUNCH_ORDER_IMPLICIT=1` which dynamically orders operations by host launch order:
-```cpp
-// With NCCL 2.26+, the order of host-side launches creates implicit ordering
-// Still must be consistent across ranks, but NCCL handles intra-communicator ordering
-ncclAllReduce(..., comm1, stream1);  // All ranks do this first
-ncclAllReduce(..., comm2, stream2);  // All ranks do this second
-```
-
-**Best practice — deterministic single-threaded dispatch:**
-```cpp
-class CollectiveScheduler {
-    std::vector<cudaStream_t> streams_;
-    
-    void dispatch_allreduce(const void* send, void* recv, size_t count,
-                           ncclDataType_t dtype, ncclRedOp_t op,
-                           ncclComm_t comm, int stream_idx) {
-        // Single-threaded dispatch ensures consistent ordering
-        cudaSetDevice(get_device_for_comm(comm));
-        NCCL_CHECK(ncclAllReduce(send, recv, count, dtype, op, comm, 
-                                  streams_[stream_idx]));
-    }
-};
-```
+**How to avoid:**
+- Use dedicated GPU instances or bare-metal GPU servers for benchmark CI when possible
+- Implement statistical validation: require N runs, compute mean/stddev, only fail if regression exceeds threshold with statistical significance (e.g., p < 0.01)
+- Normalize results against a stable reference run on the same hardware
+- Track relative performance (ratio to baseline) rather than absolute times
+- Implement outlier detection and discard runs with unusually high variance
+- Consider using the same CI hardware for all benchmark comparisons
 
 **Warning signs:**
-- Program hangs with no error message
-- Hang only occurs with >2 GPUs or >1 communicators
-- Adding `NCCL_DEBUG=WARN` makes it work (timing change)
+- Benchmark CI failures don't reproduce locally
+- Variance in CI exceeds variance on local hardware
+- Different CI runners show different absolute times but similar relative performance
+- Benchmark results don't correlate with code changes
 
-**Phase to address:** Phase 2 (NCCL Integration) — fundamental to multi-communicator design
-
-**Sources:**
-- NVIDIA NCCL: Using Multiple NCCL Communicators Concurrently
+**Phase to address:**
+Phase 3: CI Integration — establish statistical rigor and baseline normalization before CI benchmarking is production.
 
 ---
 
-### Pitfall 5: NCCL Timeout with CPU-GPU Desync — Silent Hangs
+### Pitfall 5: Stale or Missing Baseline Drift
 
 **What goes wrong:**
-NCCL operations hang indefinitely. `cudaStreamSynchronize()` never returns. No error is reported. The host thread is stuck.
+Benchmark results are collected but there's no meaningful baseline to compare against. Or baselines are so old they reflect different hardware states, compiler versions, or driver versions, making comparisons meaningless.
 
 **Why it happens:**
-1. **Host-side stall**: CPU thread is blocked waiting for GPU that will never complete
-2. **GPU error propagation**: CUDA errors on GPU are not immediately propagated to host
-3. **Asynchronous NCCL errors**: Network or P2P errors are reported asynchronously via `ncclCommGetAsyncError()`, not by return codes
-4. **Missing error polling**: Code calls `cudaStreamSynchronize()` without checking `ncclCommGetAsyncError()`
+- No process for capturing and storing baselines when code is merged
+- Baselines captured on different GPU hardware, driver versions, or CUDA versions
+- "Baseline" captures include warm-up variability rather than steady state
+- No mechanism to update baselines when hardware is refreshed
 
-**How to avoid — never use bare cudaStreamSynchronize with NCCL:**
-```cpp
-// BAD: Will hang forever if NCCL error occurs
-cudaStreamSynchronize(stream);
-ncclGroupEnd();
-
-// GOOD: Poll for async errors
-int safe_stream_synchronize(cudaStream_t stream, ncclComm_t comm) {
-    while (true) {
-        cudaError_t cuda_err = cudaStreamQuery(stream);
-        if (cuda_err == cudaSuccess) return 0;
-        if (cuda_err != cudaErrorNotReady) return 1;  // Actual error
-        
-        ncclResult_t nccl_err, async_err;
-        if (ncclCommGetAsyncError(comm, &async_err) != ncclSuccess) return 2;
-        if (async_err != ncclSuccess) {
-            // Async error occurred — abort communicator
-            ncclCommAbort(comm);
-            return 3;
-        }
-        sched_yield();  // Let other threads run
-    }
-}
-```
-
-**Health check wrapper for all collective calls:**
-```cpp
-template<typename Fn>
-ncclResult_t safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000) {
-    ncclResult_t result = fn();
-    if (result != ncclSuccess && result != ncclInProgress) {
-        return result;
-    }
-    
-    auto deadline = std::chrono::steady_clock::now() + 
-                    std::chrono::milliseconds(timeout_ms);
-    
-    while (std::chrono::steady_clock::now() < deadline) {
-        ncclResult_t async_err;
-        if (ncclCommGetAsyncError(comm, &async_err) != ncclSuccess) {
-            return async_err;
-        }
-        if (async_err != ncclInProgress) {
-            return async_err;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    
-    return ncclTimeout;
-}
-```
+**How to avoid:**
+- Implement baseline capture as part of the release process, not manual operation
+- Store baselines alongside benchmark code with version metadata (CUDA version, driver, GPU model)
+- Use semantic versioning for baselines so incompatible baselines are detected
+- Automate baseline updates via PR workflow with explicit approval gates
+- Track baseline freshness — alert when baselines are older than N days
 
 **Warning signs:**
-- `nvidia-smi` shows GPU at 100% but no progress
-- Process using 100% CPU but no forward progress
-- Log shows no NCCL operations completing
+- No automated baseline storage mechanism
+- Baselines from "when we first added benchmarks" still in use
+- Comparing results across different GPU generations
+- No visibility into baseline age or staleness
 
-**Phase to address:** Phase 2 (NCCL Integration) — health check infrastructure required
+**Phase to address:**
+Phase 3: CI Integration — baseline management and staleness tracking should be built into CI from the start.
+
+---
+
+### Pitfall 6: NVTX Annotation Overhead Distortion
+
+**What goes wrong:**
+NVTX annotations (used for profiling) introduce measurable overhead that distorts benchmark timing, especially for fine-grained kernels or high-frequency operations.
+
+**Why it happens:**
+NVTX events (`nvtxRangePush`/`nvtxRangePop`, `nvtxMark`) have CPU-side overhead for event allocation and string hashing. When kernels are launched inside NVTX ranges, the annotation overhead can add microseconds that are significant relative to the kernel execution time.
+
+**How to avoid:**
+- Never wrap timing measurement code inside NVTX ranges — measure first, annotate separately
+- Disable NVTX collection during benchmark runs or make it optional with a compile-time flag
+- Use `nvtxMarkEx` with pre-registered string handles instead of string literals to reduce per-call overhead
+- Separate benchmark measurement code from profiling annotation code
+- If NVTX must be enabled for benchmarking, measure NVTX overhead separately and subtract it
+
+**Warning signs:**
+- Timing changes significantly when NVTX is enabled vs disabled
+- Small kernels show unexpected overhead in timing
+- Profilers show "annotation overhead" or similar non-kernel time
+
+**Phase to address:**
+Phase 1: Benchmark Infrastructure Foundation — ensure timing code and profiling annotation code are cleanly separated.
+
+---
+
+### Pitfall 7: Multi-GPU Synchronization Errors
+
+**What goes wrong:**
+Timings for multi-GPU operations are incomplete or incorrect because GPU-to-GPU synchronization (NVLink, PCIe) is not properly measured or accounted for.
+
+**Why it happens:**
+Multi-GPU operations involve:
+- Device-to-device memory transfers via NVLink or PCIe
+- Peer-to-peer access synchronization requirements
+- Possible implicit synchronization points that block one GPU waiting for another
+- Timing that only measures local GPU operations while ignoring cross-GPU coordination
+
+**How to avoid:**
+- Use `cudaEventRecord` and `cudaEventElapsedTime` on both source and destination GPUs
+- For cross-GPU timing, use host-side synchronization with timestamps from a stable clock
+- Verify peer access is actually enabled: `cudaDeviceCanAccessPeer()` and `cudaEnablePeerAccess()`
+- Measure the full multi-GPU operation, not just the individual GPU kernels
+- Consider using unified memory allocations and measure allocation behavior separately
+
+**Warning signs:**
+- Multi-GPU benchmarks don't scale linearly with GPU count
+- Results vary wildly based on NVLink vs PCIe topology
+- Peer-to-peer memory access errors in benchmark runs
+- Cross-GPU timing shows inconsistent results
+
+**Phase to address:**
+Phase 2: Multi-GPU Support (if applicable) — multi-GPU benchmarks require explicit architecture to measure cross-device coordination.
+
+---
+
+### Pitfall 8: Memory Pool State Contamination
+
+**What goes wrong:**
+Initial benchmark runs are slow due to pool allocation, then artificially fast as memory is reused, creating misleading performance comparisons. Memory pool fragmentation causes variable performance over time.
+
+**Why it happens:**
+- Custom memory allocators (common in CUDA libraries) may have lazy initialization
+- First allocations trigger actual GPU memory allocation (slow)
+- Subsequent allocations return from a pool (fast)
+- Pool fragmentation after many allocations causes allocation performance to degrade
+- Different code paths may use different memory allocators with different behaviors
+
+**How to avoid:**
+- Implement explicit warm-up: allocate and free test buffers before measurement begins
+- Use separate memory pools for benchmarking vs. production, or reset pool state between benchmarks
+- Measure allocation time separately and report it clearly
+- Implement pool statistics reporting to detect fragmentation
+- Consider using cudaMalloc/cudaFree directly for benchmark memory management to avoid pool effects
+
+**Warning signs:**
+- First run of any benchmark is consistently slower than subsequent runs
+- Memory usage grows unbounded across many benchmark iterations
+- Benchmark performance degrades after running other benchmarks that stress memory
+- Different allocation patterns produce different benchmark results for the same kernel
+
+**Phase to address:**
+Phase 1: Benchmark Infrastructure Foundation — memory management patterns must be established before benchmarking begins.
 
 ---
 
 ## Technical Debt Patterns
 
-### Pattern 1: Hard-coding NCCL Communicator Per Device
-
-**Immediate benefit:** Simpler code, no communicator management
-
-**Long-term cost:** Cannot support multiple parallelism strategies simultaneously (e.g., tensor + data parallelism)
-
-**Acceptable for:** v1.1 P2P fallback, single-communicator data parallelism
-
-**Never acceptable for:** Production tensor/pipe parallelism with multiple parallelism dimensions
-
-**Correct approach:**
-```cpp
-class CommunicatorManager {
-    std::unordered_map<std::string, ncclComm_t> communicators_;
-    // Key by parallelism strategy: "data_parallel", "tensor_parallel_0", etc.
-    
-public:
-    ncclComm_t get_communicator(const std::string& strategy);
-    void create_communicator(const std::string& strategy, 
-                            const std::vector<int>& devices);
-};
-```
-
-### Pattern 2: Blocking Waits Instead of Stream-based Callbacks
-
-**Immediate benefit:** Simpler synchronization, easier debugging
-
-**Long-term cost:** Cannot overlap communication with computation, ~30-50% throughput loss
-
-**Acceptable for:** Debugging, initial implementation, small tensors
-
-**Never acceptable for:** Production training/inference
-
-**Correct approach:**
-```cpp
-// Non-blocking collective with completion event
-cudaEvent_t coll_done;
-cudaEventCreate(&coll_done);
-
-ncclAllReduce(send, recv, count, dtype, op, comm, stream);
-
-// Signal completion
-ncclGroupStart();
-ncclGroupEnd();  // After this, event will be recorded
-
-// Caller waits on event, not blocking the stream
-cudaEventRecord(coll_done, stream);
-```
-
-### Pattern 3: Missing Collective Operation Error Codes
-
-**Immediate benefit:** Simpler error handling, no boilerplate
-
-**Long-term cost:** Silent corruption, impossible debugging, customer data loss
-
-**Acceptable for:** Never in production
-
-**Correct approach:**
-```cpp
-#define NCCL_CHECK(call)                                              \
-    do {                                                              \
-        ncclResult_t _err = call;                                     \
-        if (_err != ncclSuccess) {                                    \
-            const char* _err_str = ncclGetErrorString(_err);          \
-            std::fprintf(stderr,                                      \
-                "NCCL error at %s:%d: %s\n",                          \
-                __FILE__, __LINE__, _err_str);                        \
-            std::abort();                                             \
-        }                                                             \
-    } while (0)
-```
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Skip warmup iterations | Faster benchmark execution | Unstable results, masked allocation costs | Only in exploratory profiling, never in CI |
+| Single benchmark run | Simpler code | Cannot detect variance, misses outliers | Never for CI results |
+| Hardcoded GPU clock settings | Consistent local results | Breaks on different hardware | Only acceptable with hardware detection |
+| Comparing raw times across machines | Simple comparison | Meaningless across GPU generations | Only when normalized to reference baseline |
+| Ignoring thermal state | Simpler setup | Variable results correlated with temperature | Never in production benchmarks |
+| Using system clock for GPU timing | Works without CUDA events | Inaccurate async timing | Never — always use CUDA events |
 
 ---
 
 ## Integration Gotchas
 
-### Gotcha 1: cuFFT/cuBLAS Version Compatibility
-
-NCCL uses cuFFT and cuBLAS internally for some operations. Version mismatches cause silent corruption or crashes.
-
-**Prevention:**
-- Verify `ncclGetVersion()` and ensure it's built against the same CUDA version as your application
-- Check `NCCL_DEBUG=INFO` output for version mismatch warnings
-- Use NCCL bundled with CUDA (not standalone) for guaranteed compatibility
-
-### Gotcha 2: CUDA Streams Must Be NCCL-Compatible
-
-Not all CUDA streams work with NCCL. Specifically:
-- **Default stream** (`cudaStreamLegacy`) may serialize incorrectly with NCCL
-- **Per-thread default stream** (`cudaStreamPerThread`) works correctly
-- **User-created streams** work, but ensure proper device is current
-
-**Prevention:**
-```cpp
-// Always create explicit streams for NCCL
-cudaStream_t stream;
-CUDA_CHECK(cudaStreamCreate(&stream));
-// Set device BEFORE NCCL call
-CUDA_CHECK(cudaSetDevice(device_id));
-NCCL_CHECK(ncclAllReduce(..., comm, stream));
-```
-
-### Gotcha 3: P2P and NCCL Cannot Coexist on Same Peer Pair
-
-Using CUDA P2P (`cudaMemcpyPeer`, `cudaEnablePeerAccess`) and NCCL P2P simultaneously on the same GPU pair causes conflicts.
-
-**Prevention:**
-- Let NCCL manage P2P transparently — don't call `cudaEnablePeerAccess()` when using NCCL
-- If manual P2P is needed, disable NCCL P2P with `NCCL_P2P_DISABLE=1`
-- Use `NCCL_P2P_LEVEL` to control when NCCL uses P2P
-
-### Gotcha 4: CUDA Graphs + Multiple Communicators Deadlock
-
-From NCCL docs: *"Having multiple outstanding NCCL operations captured in CUDA Graphs can cause CUDA to deadlock when the graphs of multiple communicators are cudaGraphLaunch()'d from the same thread."*
-
-**Prevention:**
-- Set `NCCL_GRAPH_MIXING_SUPPORT=0` if using multiple communicators with CUDA Graphs
-- Or ensure all ranks launch graphs in identical order
-
-### Gotcha 5: cuMem Host Allocations in VMs/Containers
-
-NCCL 2.23+ uses cuMem host allocations by default for IPC (faster than `/dev/shm`). This fails on:
-- Docker without `--cap-add SYS_NICE`
-- VMs without NUMA virtualization
-- CUDA drivers < 13.0 without P2P connectivity
-
-**Prevention:**
-```cpp
-// Auto-detection with fallback
-if (!is_cumem_available()) {
-    setenv("NCCL_CUMEM_HOST_ENABLE", "0", 1);
-}
-```
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| Existing v1.6 CUDA events | Mixing new timing code with existing profiling events without proper scope separation | Use separate event pools for benchmarking vs. profiling |
+| Existing profiling infrastructure | Enabling full profiling during benchmarks (NVTX overhead) | Benchmark mode should disable profiling annotations |
+| CI runners | Running benchmarks on shared cloud GPUs without normalization | Use statistical comparison, normalize to reference, or use dedicated hardware |
+| Build system | Building benchmarks with different optimization flags than library | Benchmark builds must match production build configuration |
 
 ---
 
-## Phase-Specific Warnings
+## Performance Traps
 
-| Phase | Topic | Likely Pitfall | Mitigation |
-|-------|-------|----------------|------------|
-| Phase 2 | NCCL Init | Shared memory exhaustion | Check `/dev/shm` size, require 512MB minimum |
-| Phase 2 | Multi-communicator | Deadlock with NCCL < 2.26 | Use `NCCL_LAUNCH_ORDER_IMPLICIT=1` or single-threaded dispatch |
-| Phase 3 | TP Memory | Replicated optimizer states | Profile memory per TP degree, implement memory-aware selection |
-| Phase 4 | TP Communication | Missing all-reduce after column-parallel matmul | Verify with single-GPU baseline |
-| Phase 5 | Pipeline Bubbles | Unbalanced stage compute | Profile stage times, rebalance if > 10% variance |
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Microbenchmark obsession | Tiny kernels benchmarked in isolation show "optimizations" that don't matter in real use | Benchmark realistic compositions, not individual primitives | When optimization cost exceeds benefit at application level |
+| Launch overhead masking | Small kernels show constant overhead-dominant times regardless of actual computation | Use large iteration counts, measure per-iteration time with statistical aggregation | When users benchmark latency-sensitive code paths |
+| Memory pool aliasing | Allocations return "free" memory with different performance characteristics | Explicit warmup, fresh allocations per benchmark, separate benchmark pools | When comparing allocation-heavy operations |
+| Persistent kernel warming | Kernels that stay "warm" in L2 cache show unrepresentative performance | Implement cache flush between iterations for memory-bound benchmarks | When measuring memory bandwidth-limited operations |
+
+---
+
+## Security Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Benchmark result injection | Malicious benchmark results stored without validation | Validate numeric ranges, reject NaN/Inf, use type-safe result storage |
+| Unbounded benchmark iteration | Infinite loop or resource exhaustion from benchmark parameter sweep | Implement maximum iteration bounds, timeout per benchmark |
+| Benchmark as attack surface | Custom benchmark kernels may expose CUDA API vulnerabilities | Run benchmarks in isolated contexts, don't allow user-supplied kernel code |
+| Resource exhaustion | Benchmarks allocate GPU memory without bounds, crash the driver | Implement memory budget checking, fail gracefully with clear error |
+
+*Note: CUDA/C++ benchmarking has limited security surface compared to web applications. Primary concerns are resource exhaustion and result integrity.*
+
+---
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| No clear pass/fail criteria | Engineers don't know if results are acceptable | Define explicit thresholds, show green/yellow/red status |
+| Cryptic timing output | Cannot interpret results without deep CUDA knowledge | Report relative performance ("2.3x faster than baseline"), provide context |
+| No scaling visualization | Cannot see how performance varies with input size | Generate scaling curves, allow easy visual comparison |
+| Missing hardware context | Cannot understand why results differ across machines | Include GPU model, driver version, clock settings in every report |
+
+---
+
+## "Looks Done But Isn't" Checklist
+
+- [ ] **CUDA synchronization:** Benchmarks must have `cudaEventSynchronize()` before reading timing — verify with mock kernel that reports expected timing
+- [ ] **Warmup iterations:** First N iterations should be discarded — verify first-run vs. steady-state times differ significantly
+- [ ] **Statistical significance:** CI must run multiple iterations and check variance — verify CI fails appropriately when variance is high
+- [ ] **Baseline tracking:** Every benchmark must have a stored baseline — verify by checking baseline existence before allowing comparison
+- [ ] **Input size coverage:** Must include production-scale inputs — verify benchmark sizes match documented production ranges
+- [ ] **Memory state:** Must warmup/reset allocator state — verify with fresh-alloc vs. reused-alloc comparison
+- [ ] **Thermal monitoring:** Must discard results during throttling — verify temperature limits are enforced
+- [ ] **NVTX separation:** Timing code must not include NVTX overhead — verify timing matches with NVTX disabled
+
+---
+
+## Recovery Strategies
+
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Unstable baselines due to clock scaling | MEDIUM | Lock GPU clocks via `nvidia-smi -lgc`, re-run benchmarks, update baselines |
+| CI variance from shared hardware | HIGH | Migrate to dedicated hardware, implement statistical validation, accept higher baseline variance |
+| Stale baselines | LOW | Delete old baselines, run fresh benchmark suite, capture new baselines with version metadata |
+| Memory pool contamination | LOW | Implement explicit warmup, clear pool state between benchmarks, re-run affected benchmarks |
+| Missing synchronization | LOW | Add `cudaEventSynchronize()`, verify timing matches expected values for known kernel durations |
+| Input size gaps | MEDIUM | Audit production workloads, add parameterized benchmark sweeps, re-run with new sizes |
+
+---
+
+## Pitfall-to-Phase Mapping
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| GPU frequency scaling instability | Phase 1: Infrastructure Foundation | Verify clock lock settings are applied, measure variance across runs |
+| CUDA synchronization errors | Phase 1: Infrastructure Foundation | Test with known-duration kernels, verify timing accuracy |
+| Input size coverage gaps | Phase 2: Realistic Workload Coverage | Review production input ranges, verify benchmark sizes match |
+| CI environment non-determinism | Phase 3: CI Integration | Run benchmarks on CI, verify variance is within acceptable bounds |
+| Baseline drift and staleness | Phase 3: CI Integration | Verify baselines are captured with version metadata, check staleness alerts |
+| NVTX annotation overhead | Phase 1: Infrastructure Foundation | Compare timing with/without NVTX, verify separation is implemented |
+| Multi-GPU synchronization | Phase 2: Multi-GPU Support | Verify cross-GPU timing matches expected values, test various topologies |
+| Memory pool state contamination | Phase 1: Infrastructure Foundation | Compare warm vs. cold allocation performance, verify warmup is implemented |
 
 ---
 
 ## Sources
 
-### Primary Sources (HIGH confidence)
-- NVIDIA NCCL 2.30.3 Documentation: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/index.html
-  - Troubleshooting: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting.html
-  - Communicators: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/communicators.html
-  - CUDA Stream Semantics: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/streams.html
-  - CUDA Graphs: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/cudagraph.html
-  - RAS: https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting/ras.html
-
-### Secondary Sources (MEDIUM confidence)
-- NVIDIA/nccl GitHub Issues: https://github.com/NVIDIA/nccl/issues
-  - Issue #2117: ncclNvlsDeregBuffer silently swallows cuMulticastUnbind failures
-  - Issue #2119: putSignal bug causing request loss
-  - Issue #2106: segfault at cuMemCreate
+- NVIDIA CUDA Best Practices Guide — synchronization and timing recommendations
+- Google Benchmarks (google/benchmark) — methodology for stable measurement
+- NVIDIA Nsight Compute documentation — profiling overhead considerations
+- CUDA Programming Guide — device synchronization semantics
+- NVIDIA Developer Blog — "How to Benchmark CUDA Kernels" series
+- Cloud GPU benchmarking challenges documented in AWS/GCP/Azure best practices
+- Community discussions on NVIDIA DevTalk forums regarding benchmark instability
 
 ---
 
-*Pitfalls research for: Nova CUDA Library — NCCL Integration, Tensor Parallelism, and Pipeline Parallelism*
-*Researched: 2026-04-24*
+*Pitfalls research for: CUDA/C++ Benchmarking Infrastructure*
+*Researched: 2026-04-26*

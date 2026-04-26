@@ -1,239 +1,168 @@
-# Feature Landscape: NCCL Integration with Tensor and Pipeline Parallelism
+# Feature Research
 
-**Domain:** CUDA distributed communication library
-**Researched:** 2026-04-24
-**Overall confidence:** HIGH (based on NVIDIA NCCL 2.30 documentation and established ML training patterns)
+**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Researched:** 2026-04-26
+**Confidence:** HIGH
 
-## Executive Summary
+## Feature Landscape
 
-NCCL integration transforms the nova library's multi-GPU collectives from P2P-based fallbacks to production-grade collective operations with optimal hardware utilization. The key insight is that NCCL provides a strict superset of existing functionality (all-reduce, broadcast, all-gather, reduce-scatter, barrier) but with hardware-aware communication algorithms (ring, tree, collnet) that automatically adapt to topology.
+### Table Stakes (Users Expect These)
 
-For tensor parallelism, the critical patterns are: (1) column-parallel linear layers requiring all-reduce after local computation, (2) row-parallel layers requiring all-gather before computation, and (3) embedding tables requiring all-to-all or reduce-scatter for vocabulary parallelism.
+Features users assume exist. Missing these = product feels incomplete.
 
-Pipeline parallelism requires point-to-point send/recv primitives with careful microbatch scheduling to hide communication latency.
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **Basic throughput measurement** | Core benchmark requirement | LOW | Already implemented in `cuda::benchmark::Benchmark` |
+| **Latency measurement** | Kernel timing is fundamental | LOW | Already implemented via cudaEvent timing |
+| **Statistical aggregation** | Single runs are noisy | LOW | Mean, stddev, min, max already implemented |
+| **Regression detection** | Catch performance degradation | MEDIUM | Tolerance-based comparison exists; needs baseline storage |
+| **Warm-up iterations** | GPU clocks need stabilization | LOW | Already implemented |
+| **CI integration** | Automated performance validation | MEDIUM | Requires JSON baseline storage and CI workflow |
+| **Memory throughput metrics** | GPU memory bandwidth is critical | LOW | `compute_throughput_gbps` helper exists |
 
-## Feature Categories
+### Differentiators (Competitive Advantage)
 
-### 1. Table Stakes Features
+Features that set the product apart. Not required, but valuable.
 
-Features users expect from any production NCCL library. Missing these = incomplete.
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **Multi-GPU scaling curves** | Validate distributed training scalability | HIGH | Requires NCCL integration, node coordination |
+| **Automated regression alerting** | Proactive performance monitoring | MEDIUM | GitHub Actions with threshold-based gates |
+| **NVTX-instrumented kernels** | Timeline visualization of kernel execution | MEDIUM | NVIDIA Nsight Systems integration |
+| **Memory leak detection** | Catch allocation bugs in benchmarks | MEDIUM | Track allocations per benchmark run |
+| **Pool fragmentation metrics** | Understand memory allocator behavior | MEDIUM | Requires memory pool instrumentation |
+| **HTML trend reports** | Visual performance history | MEDIUM | Chart.js or similar for browser-based dashboards |
+| **Weak/strong scaling benchmarks** | Validate parallel efficiency | HIGH | Algorithmic scalability measurement |
 
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|--------------|------------|--------------|-------|
-| NCCL communicator initialization | Required for any collective operation | LOW | DeviceMesh reuse | Use ncclCommInitAll for intra-node, expose rank-based init for multi-node |
-| All-reduce | Gradient synchronization in data/tensor parallelism | LOW | Communicator, streams | Core collective; replace ring-allreduce fallback |
-| Broadcast | Weight synchronization in model parallelism | LOW | Communicator | Broadcast from root rank to all others |
-| All-gather | Activation gathering in tensor parallelism | MEDIUM | Communicator | Row-parallel layer output gathering |
-| Reduce-scatter | Gradient partitioning in tensor/data parallelism | MEDIUM | Communicator | Alternative to all-reduce for partitioned gradients |
-| Barrier | Phase synchronization in pipeline parallelism | LOW | Communicator | Synchronization points between pipeline stages |
-| Stream integration | Async operation overlap | MEDIUM | MeshStreams reuse | NCCL ops are stream-ordered like CUDA ops |
-| Error handling | Robust failure recovery | MEDIUM | Communicator lifecycle | Async error polling via ncclCommGetAsyncError |
+### Anti-Features (Commonly Requested, Often Problematic)
 
-### 2. Differentiator Features
+Features that seem good but create problems.
 
-Features that set nova apart from basic NCCL wrappers. Not expected, but valued.
-
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|-------------------|------------|--------------|-------|
-| Unified NCCL/CUDA fallback | Work when NCCL unavailable | MEDIUM | Ring-allreduce reuse | Essential for deployment flexibility |
-| Automatic device mesh config | Simplify multi-GPU setup | LOW | DeviceMesh, PeerCapabilityMap | Derive NCCL config from existing topology |
-| Communicator caching | Avoid repeated initialization | MEDIUM | Communicator lifecycle | Cache per-(device_count, rank_offset) |
-| Profiling integration | Performance debugging | LOW | NVTX markers | Wrap collectives with profiling scopes |
-| Multi-communicator support | Concurrent parallelism strategies | HIGH | Communicator splitting | TP and DP comms require separate communicators |
-| Non-blocking collectives | Overlap communication with compute | MEDIUM | Group operations | Use ncclGroupStart/End for batching |
-| Memory registration hints | Improve P2P performance | MEDIUM | Buffer management | ncclCommRegister for frequently-used buffers |
-
-### 3. Anti-Features
-
-Features to explicitly NOT build or support.
-
-| Anti-Feature | Why Avoid | What to Do Instead |
-|--------------|-----------|-------------------|
-| Hard NCCL dependency | Limits deployment environments | Always provide fallback paths |
-| Blocking operations without streams | Destroys GPU utilization | Require stream parameter |
-| Device ordinal assumptions | Incompatible with multi-process | Use explicit rank mapping |
-| Single-rank collective calls | Deadlock risk | Document all-ranks-required semantics |
-| Blocking error handling | Poor fault tolerance | Async polling with configurable timeout |
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **Real-time dashboard streaming** | "Would be cool" appeal | Continuous GPU state polling adds overhead; complexity explosion | Periodic JSON exports + static HTML |
+| **Automatic kernel tuning** | Optimize launch parameters | Takes hours to run; changes kernel behavior | Document optimal configs separately |
+| **Cross-vendor validation** | AMD/Intel compatibility | Different architectures, different metrics, massive scope | Focus on NVIDIA, document limitations |
+| **Machine learning-based anomaly detection** | "AI will find everything" | False positives in noisy GPU workloads | Statistical tolerance bands are sufficient |
+| **Per-instruction profiling** | SASS-level granularity | Prohibitive overhead; requires NSight Compute | Offer as opt-in manual tool |
 
 ## Feature Dependencies
 
 ```
-NCCL Communicator Init
-    |
-    +-- AllReduce --> Gradient Synchronization --> Backward Pass
-    |
-    +-- Broadcast --> Weight Synchronization --> Optimizer Step
-    |
-    +-- AllGather --> Row-Parallel Activation Gather --> Forward Pass
-    |       |
-    |       +-- ReduceScatter --> Column-Parallel Gradient Partition --> AllReduce
-    |
-    +-- Barrier --> Pipeline Stage Synchronization --> Microbatch Scheduling
-    |
-    +-- Send/Recv --> Pipeline Activation Transfer --> Inter-Stage Communication
+Comprehensive Benchmark Suite
+    ├──requires──> Statistical Aggregation (exists)
+    ├──requires──> Throughput Calculation (exists)
+    └──requires──> CI Integration Pipeline
+
+Performance Regression Testing
+    ├──requires──> Baseline Storage (JSON files)
+    ├──requires──> Regression Detection (exists)
+    └──requires──> CI Integration Pipeline
+
+Memory Profiling & Validation
+    ├──requires──> Memory Metrics (exists)
+    ├──requires──> Allocation Tracking
+    └──requires──> Fragmentation Analysis
+
+Distributed Training Benchmarks
+    ├──requires──> NCCL Integration (exists in codebase)
+    ├──requires──> Multi-GPU Context Management
+    └──requires──> Scaling Curve Framework
+
+Continuous Profiling Hooks
+    ├──requires──> NVTX Integration
+    ├──requires──> Profiler Infrastructure (exists)
+    └──requires──> NSight CLI Integration
+
+Performance Dashboards
+    ├──requires──> JSON Export (partial - exists)
+    ├──requires──> Baseline Comparison
+    └──requires──> HTML Generation Framework
 ```
 
-### Tensor Parallelism Dependencies
+### Dependency Notes
 
-```
-TensorParallelAllReduce (column-parallel output)
-    |
-    +-- Requires: ncclAllReduce
-    +-- Enables: ColumnParallelLinear
+- **Baseline Storage requires CI Integration:** Without automated CI runs, baselines become stale and useless.
+- **Distributed Benchmarks enhance Comprehensive Suite:** Multi-GPU tests are a superset of single-GPU benchmarking.
+- **NVTX hooks conflict with pure throughput measurement:** NVTX adds overhead; separate measurement modes needed.
+- **Memory leak detection conflicts with pool fragmentation:** Different memory tracking strategies; don't combine in same run.
 
-TensorParallelAllGather (row-parallel input)
-    |
-    +-- Requires: ncclAllGather
-    +-- Enables: RowParallelLinear
+## MVP Definition
 
-TensorParallelReduceScatter (embedding table partitioning)
-    |
-    +-- Requires: ncclReduceScatter
-    +-- Enables: TableParallelEmbedding
-```
+### Launch With (v1)
 
-### Pipeline Parallelism Dependencies
+Minimum viable product — what's needed to validate the concept.
 
-```
-PipelineBarrier (stage synchronization)
-    |
-    +-- Requires: ncclGroupEnd + cudaStreamSynchronize
-    +-- Enables: PipelineSchedule
+- [ ] **Baseline storage system** — JSON files for persisting benchmark results across commits. Essential for regression testing. Storage format: `{ "commit": "...", "results": [...] }`.
+- [ ] **CI integration with regression gates** — GitHub Actions workflow that runs benchmarks, compares to stored baselines, and fails PR if tolerance exceeded. Threshold: 10% default, configurable per-benchmark.
+- [ ] **Algorithmic benchmarks (reduce, scan, sort)** — These expose scaling behavior clearly. Throughput + latency per problem size.
+- [ ] **JSON export for all benchmark results** — Machine-readable output enabling trend analysis and dashboard generation.
 
-PipelineSendRecv (activation passing)
-    |
-    +-- Requires: ncclSend/ncclRecv or P2P memory copy
-    +-- Enables: InterStageCommunication
-```
+### Add After Validation (v1.x)
 
-## Feature Complexity Breakdown
+Features to add once core is working.
 
-### LOW Complexity (Implement First)
+- [ ] **Memory profiling suite** — Leak detection (allocation count mismatch), pool utilization metrics, fragmentation analysis. Trigger: Memory bugs appearing in CI.
+- [ ] **Multi-GPU benchmark harness** — NCCL-based collective benchmarks (all-reduce, broadcast, all-gather) with scaling curves. Trigger: Distributed training needs.
+- [ ] **HTML report generator** — Static pages with Chart.js trend charts, baseline comparison, regression annotations. Trigger: Team grows beyond 3 people.
+- [ ] **NVTX annotation framework** — Lightweight range markers for kernel-level timeline in Nsight Systems. Trigger: Profiling sessions needed.
 
-| Feature | Rationale |
-|---------|-----------|
-| NCCL communicator initialization | Well-defined API; existing DeviceMesh infrastructure |
-| All-reduce wrapper | Direct NCCL call; replace existing ring-allreduce |
-| Broadcast wrapper | Direct NCCL call; similar to all-reduce |
-| Barrier wrapper | Direct NCCL call; replace existing implementation |
-| Error enum mapping | Simple translation layer |
+### Future Consideration (v2+)
 
-### MEDIUM Complexity (Implement Second)
+Features to defer until product-market fit is established.
 
-| Feature | Rationale |
-|---------|-----------|
-| Stream-based async collectives | Requires stream management integration |
-| All-gather wrapper | Direct NCCL call; existing distributed implementation |
-| Reduce-scatter wrapper | Direct NCCL call |
-| Group operations (batched collectives) | Requires ncclGroupStart/End pattern |
-| Profiling integration | NVTX marker wrapping |
-| Fallback orchestration | Decision logic for NCCL vs legacy path |
+- [ ] **Pipeline parallelism benchmarks** — Micro-benchmarks for 1F1B schedule, interleaved schedules. Defer: Requires full distributed context.
+- [ ] **Tensor parallelism benchmarks** — All-reduce + all-gather patterns at scale. Defer: Hardware-dependent validation.
+- [ ] **Automatic alert routing** — Slack/Teams notifications on regressions. Defer: After baseline storage validated.
+- [ ] **Interactive Nsight integration** — Launch Nsight Systems from benchmark tooling. Defer: UI complexity.
 
-### HIGH Complexity (Implement Third)
+## Feature Prioritization Matrix
 
-| Feature | Rationale |
-|---------|-----------|
-| Multi-communicator management | Communicator splitting for TP+DP |
-| Non-blocking collective completion | Async error handling state machine |
-| Memory registration caching | Buffer lifecycle management |
-| Dynamic communicator grow/shrink | Advanced fault tolerance |
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| Baseline storage system | HIGH | LOW | P1 |
+| CI regression gates | HIGH | MEDIUM | P1 |
+| Algorithmic benchmarks (reduce/scan/sort) | HIGH | LOW | P1 |
+| JSON export for results | HIGH | LOW | P1 |
+| Memory leak detection | MEDIUM | MEDIUM | P2 |
+| Memory pool metrics | MEDIUM | MEDIUM | P2 |
+| Multi-GPU NCCL benchmarks | MEDIUM | HIGH | P2 |
+| HTML trend reports | MEDIUM | MEDIUM | P2 |
+| NVTX annotation framework | MEDIUM | MEDIUM | P2 |
+| FFT benchmarks | MEDIUM | LOW | P2 |
+| Matmul benchmarks | MEDIUM | LOW | P2 |
+| Collective scaling curves | LOW | HIGH | P3 |
+| Pipeline parallelism suite | LOW | HIGH | P3 |
+| Tensor parallelism suite | LOW | HIGH | P3 |
+| Alert routing integration | LOW | MEDIUM | P3 |
 
-## MVP Recommendation
+**Priority key:**
+- P1: Must have for launch
+- P2: Should have, add when possible
+- P3: Nice to have, future consideration
 
-### Phase 1: Core NCCL Integration
+## Competitor Feature Analysis
 
-**Priority features (implement in order):**
-
-1. **NCCL library detection and wrapper** - Runtime check if NCCL available; interface abstraction
-2. **Communicator initialization** - ncclCommInitAll via DeviceMesh; expose to users
-3. **All-reduce** - Replace ring-allreduce fallback; stream-based async
-4. **Broadcast** - Implement for weight synchronization
-5. **Barrier** - Replace existing implementation
-
-**Defer:** Fallback path (can use existing ring-allreduce)
-
-**Rationale:** All-reduce is the most common collective in ML training (gradient synchronization). Getting it right first establishes patterns for other collectives.
-
-### Phase 2: Extended Collectives
-
-**Priority features:**
-
-1. **All-gather** - Row-parallel tensor parallelism requirement
-2. **Reduce-scatter** - Alternative gradient aggregation
-3. **Group operations** - Batched collective optimization
-4. **Fallback integration** - Unified NCCL/legacy path
-
-**Rationale:** All-gather enables tensor parallelism; group operations improve throughput by overlapping kernel launches.
-
-### Phase 3: Advanced Patterns
-
-**Priority features:**
-
-1. **Stream-based profiling** - NVTX integration
-2. **Multi-communicator** - TP+DP parallelism
-3. **Error recovery** - Async error handling
-4. **Memory registration hints** - Performance optimization
-
-**Rationale:** Advanced features build on solid foundation; add when use cases demand.
-
-## Implementation Strategy Notes
-
-### Communicator Initialization Pattern
-
-Based on NCCL docs, for single-process multi-GPU:
-```cpp
-// From NCCL docs - ncclCommInitAll pattern
-ncclUniqueId id;
-ncclGetUniqueId(&id);
-ncclGroupStart();
-for (int i = 0; i < ndev; i++) {
-    cudaSetDevice(devlist[i]);
-    ncclCommInitRank(&comm[i], ndev, id, i);
-}
-ncclGroupEnd();
-```
-
-This integrates cleanly with existing DeviceMesh::initialize() pattern.
-
-### Stream Integration
-
-NCCL operations are stream-ordered:
-- Pass cudaStream_t as final argument to all collective calls
-- Use existing MeshStreams::get_stream(device) for per-device streams
-- Collective completes before stream operation after it
-
-### Error Handling Pattern
-
-From NCCL docs - avoid blocking cudaStreamSynchronize:
-```cpp
-// Poll-based pattern for async errors
-while (cudaStreamQuery(stream) != cudaSuccess) {
-    ncclCommGetAsyncError(comm, &asyncErr);
-    if (asyncErr != ncclSuccess) {
-        ncclCommAbort(comm);
-        // Handle recovery
-    }
-}
-```
-
-### Unified Memory Considerations
-
-NCCL has special handling for unified memory (UVM) that can cause issues. Document limitations around:
-- Managed memory with tensor parallelism
-- Peer access through managed pointers
-
-## Confidence Assessment
-
-| Feature Category | Confidence | Notes |
-|-----------------|------------|-------|
-| Table stakes features | HIGH | Direct NCCL API mapping; well-documented |
-| Tensor parallelism patterns | HIGH | Megatron-LM patterns are stable and documented |
-| Pipeline parallelism patterns | MEDIUM | Send/recv patterns less standardized |
-| Fallback behavior | HIGH | Existing ring-allreduce can serve as template |
-| Error recovery | MEDIUM | Patterns documented but complex to implement |
+| Feature | Google Benchmark | NVIDIA Nsight Compute | cuBLAS/cuFFT Benchmarks | Our Approach |
+|---------|------------------|----------------------|-------------------------|--------------|
+| **Basic microbenchmarking** | Yes - CPU only | CLI profiling | Reference implementations | Extend existing `cuda::benchmark::Benchmark` |
+| **Kernel throughput** | Via manual timing | Metrics collection | Throughput in docs | First-class citizen with GB/s metrics |
+| **Statistical aggregation** | Built-in with reporters | Via ncu-rep parsing | Manual | Mean/stddev/min/max built-in |
+| **Baseline comparison** | Custom reporters needed | Via `ncu --diff` | None | JSON-based with tolerance thresholds |
+| **CI integration** | CMake/CTest | GitHub Actions samples | None | Native GitHub Actions workflow |
+| **Multi-GPU support** | No | Via mpirun/NCCL | No | NCCL-aware benchmark harness |
+| **HTML reports** | Via custom reporters | Nsight Systems GUI | None | Static site generator |
+| **Memory leak detection** | AddressSanitizer | Via replay | None | Integration with existing memory pool |
 
 ## Sources
 
-- **NCCL API:** [NVIDIA NCCL 2.30 Documentation](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/)
-- **Tensor Parallelism:** Megatron-LM distributed training patterns
-- **Pipeline Parallelism:** PyTorch DDP/FSDP scheduling patterns
+- [Google Benchmark Library](https://github.com/google/benchmark) - CPU microbenchmarking standard
+- [NVIDIA Nsight Compute Documentation](https://docs.nvidia.com/nsight-compute/) - GPU profiling guide
+- [NVIDIA NVTX Documentation](https://docs.nvidia.com/nsight-compute/) - Timeline annotation
+- [CUTLASS Benchmarks](https://github.com/NVIDIA/cutlass) - GEMM benchmarking patterns
+- [cuBLAS Benchmarks](https://docs.nvidia.com/cuda/cublas/) - BLAS performance reference
+- [NCCL Tests](https://github.com/NVIDIA/nccl-tests) - Collective communication benchmarks
+
+---
+*Feature research for: CUDA/C++ Benchmarking and Performance Testing Infrastructure*
+*Researched: 2026-04-26*

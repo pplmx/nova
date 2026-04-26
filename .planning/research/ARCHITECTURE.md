@@ -1,984 +1,519 @@
-# Architecture Research: NCCL, Tensor & Pipeline Parallelism
+# Architecture Research
 
-**Domain:** C++ CUDA library multi-GPU training infrastructure
-**Project:** Nova v1.3 - NCCL Integration, Tensor Parallelism, Pipeline Parallelism
-**Researched:** 2026-04-24
-**Confidence:** HIGH (NCCL, TP) / MEDIUM (Pipeline scheduling nuances)
+**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Researched:** 2026-04-26
+**Confidence:** HIGH
 
 ## Executive Summary
 
-This architecture research covers three major enhancements to the Nova CUDA library's multi-GPU capabilities:
+This document defines the architecture for adding benchmarking infrastructure to an existing CUDA library with a five-layer architecture (device → memory → algo → api → distributed). The infrastructure will integrate Google Benchmark for C++ kernels, provide a Python harness for orchestration and regression detection, add NVTX profiling annotations to existing code, and generate HTML dashboards for trend visualization.
 
-1. **NCCL Integration** — Replace P2P ring-allreduce fallback with optimized NCCL collectives
-2. **Tensor Parallelism** — Column-wise and row-wise matrix splits for large layer support
-3. **Pipeline Parallelism** — Micro-batch scheduling for deep model parallelism
-
-Key architectural decisions:
-- **NCCL as optional backend** — P2P fallback remains for systems without NCCL
-- **Tensor parallelism in distributed layer** — Extends `DistributedMatmul` with TP strategy
-- **Pipeline parallelism as scheduling layer** — Separates scheduling logic from computation
-- **Backward compatibility preserved** — All existing single-GPU and data-parallel code unchanged
-
----
-
-## 1. NCCL Integration Architecture
-
-### 1.1 Where NCCL Fits in the Five-Layer Architecture
+## System Overview
 
 ```
-Layer 4: Distributed Operations (EXTENDED)
-├── NcclCommContext (NEW) — NCCL communicator management
-├── DistributedReduce (EXTENDED) — Add NCCL backend
-├── DistributedBroadcast (EXTENDED) — Add NCCL backend
-└── DistributedAllGather (EXTENDED) — Add NCCL backend
-
-Layer 2.5: Peer Transport (UNCHANGED)
-├── PeerCopy — Still used for non-collective P2P
-└── MeshBarrier — Event-based synchronization
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          BENCHMARKING INFRASTRUCTURE                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    Python Harness Layer                              │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │   │
+│  │  │   Runner    │  │   Reporter  │  │   Baselines │  │  Dashboard  │ │   │
+│  │  │  (invoke)   │  │  (JSON)     │  │  (storage)  │  │  (HTML)     │ │   │
+│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘ │   │
+│  └─────────┼────────────────┼────────────────┼────────────────┼────────┘   │
+│            │                │                │                │             │
+│  ┌─────────┴────────────────┴────────────────┴────────────────┴────────┐   │
+│  │                    C++ Google Benchmark Layer                        │   │
+│  │  ┌──────────────────────────────────────────────────────────────────┐ │   │
+│  │  │  benchmark/                                                     │ │   │
+│  │  │  ├── benchmark_reduce.cpp       # algo layer kernels            │ │   │
+│  │  │  ├── benchmark_scan.cpp         # algo layer kernels            │ │   │
+│  │  │  ├── benchmark_matmul.cpp       # neural layer kernels          │ │   │
+│  │  │  ├── benchmark_distributed.cpp  # distributed layer kernels     │ │   │
+│  │  │  └── benchmark_memory.cpp       # memory layer kernels          │ │   │
+│  │  └──────────────────────────────────────────────────────────────────┘ │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│            │                                                                 │
+│  ┌─────────┴─────────────────────────────────────────────────────────────┐   │
+│  │                    Source Code with NVTX Annotations                   │   │
+│  ├────────────────────────────────────────────────────────────────────────┤
+│  │  nova/algo/      → NVTX ranges for reduce, scan, sort, FFT, matmul     │   │
+│  │  nova/distributed/ → NVTX ranges for NCCL/MPI collectives              │   │
+│  │  nova/memory/    → NVTX ranges for pool alloc, buffer ops              │   │
+│  └────────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Decision:** NCCL integrates at Layer 4 as a backend for collective operations. It does NOT replace the peer transport layer (Layer 2.5) because:
-- NCCL handles collectives internally via its own transport (NVLink, PCIe)
-- Non-collective P2P operations (e.g., tensor movement in pipeline parallelism) still use `PeerCopy`
-- Keeping Layer 2.5 allows P2P fallback when NCCL is unavailable
+## Recommended Project Structure
 
-### 1.2 Singleton vs Dependency-Injected NCCL Context
+```
+nova/
+├── benchmark/                          # C++ Google Benchmark kernels (NEW)
+│   ├── CMakeLists.txt                  # Build config for benchmarks
+│   ├── benchmark_kernels.cu            # Kernel benchmark definitions
+│   ├── benchmark_utils.cu              # Shared benchmark utilities
+│   ├── benchmark_harness.cpp           # Main entry point
+│   └── configs/                        # Benchmark configurations
+│       ├── standard.json               # Standard workload configs
+│       └── regression.json             # Regression test configs
+│
+├── scripts/benchmark/                  # Python harness (NEW)
+│   ├── run_benchmarks.py               # Main orchestration script
+│   ├── collect_results.py              # JSON result collection
+│   ├── check_regression.py             # Baseline comparison logic
+│   ├── generate_dashboard.py           # HTML dashboard generation
+│   ├── baselines/                      # Stored baselines (committed)
+│   │   └── v0.1.0/
+│   │       ├── reduce.json
+│   │       ├── scan.json
+│   │       └── matmul.json
+│   └── templates/                      # Dashboard templates
+│       └── dashboard.html
+│
+├── results/                            # Current run results (gitignore)
+│   ├── 2026-04-26/
+│   │   ├── reduce.json
+│   │   └── matmul.json
+│   └── baselines/
+│
+├── reports/                            # Generated dashboards
+│   ├── index.html                      # Main dashboard
+│   ├── trends/
+│   │   ├── reduce_trend.html
+│   │   └── matmul_trend.html
+│   └── regression/
+│       └── latest.html
+│
+├── include/cuda/benchmark/             # Existing (keep)
+│   ├── benchmark.h                     # Custom harness (consider migrating to Google Benchmark)
+│   └── nvtx.h                          # NVTX wrapper utilities (NEW)
+│
+├── src/benchmark/                      # Existing but empty (populate)
+│   └── nvtx.cu                         # NVTX implementation (NEW)
+│
+├── include/cuda/algo/                  # Add NVTX annotations
+│   ├── reduce.h                        # + NVTX_RANGE in functions
+│   ├── scan.h
+│   ├── sort.h
+│   └── ...
+│
+├── tests/benchmark/                    # Existing benchmark tests
+│   ├── benchmark_test.cpp              # Keep for regression checks
+│   ├── throughput_test.cpp
+│   └── regression_test.cpp
+│
+└── CMakeLists.txt                      # Update with benchmark targets
+```
 
-**Recommendation: Dependency injection via `NcclContext` parameter**
+## Component Responsibilities
 
+| Component | Responsibility | Implementation |
+|-----------|----------------|----------------|
+| `benchmark/` directory | C++ Google Benchmark kernels | Compile as separate executable, link against `cuda_impl` |
+| `scripts/benchmark/` | Python orchestration | argparse CLI, subprocess calls to benchmark executable |
+| `scripts/benchmark/run_benchmarks.py` | Invoke benchmarks with configurable workloads | Python subprocess with JSON config parsing |
+| `scripts/benchmark/check_regression.py` | Compare results against baselines | JSON diff with configurable tolerance |
+| `scripts/benchmark/generate_dashboard.py` | Create HTML reports | Jinja2 templates, Chart.js for visualization |
+| `include/cuda/benchmark/nvtx.h` | NVTX helper macros | C++ header with RAII range guards |
+| `results/` | Transient result storage | JSON files, gitignored |
+| `scripts/benchmark/baselines/` | Versioned baselines | Committed to repo for regression tracking |
+
+## Architectural Patterns
+
+### Pattern 1: Google Benchmark Kernel Registration
+
+**What:** Standard Google Benchmark pattern where each kernel registers itself via `BENCHMARK` macro.
+
+**When to use:** All C++ benchmark kernels should follow this pattern for consistency with Google's conventions.
+
+**Trade-offs:**
+- Pro: Built-in parameterization, statistical analysis, and JSON output
+- Pro: Integration with existing Google infrastructure (gbench_install.cmake)
+- Con: Additional dependency (but already using Google Test)
+
+**Example:**
 ```cpp
-// include/cuda/distributed/nccl_context.h
-namespace cuda::distributed {
+// benchmark/benchmark_reduce.cu
+#include <benchmark/benchmark.h>
+#include "cuda/algo/reduce.h"
 
-/**
- * @class NcclContext
- * @brief NCCL communicator pool with lazy initialization
- *
- * Manages per-device NCCL communicators and provides thread-safe access.
- * Uses dependency injection pattern — pass NcclContext to operations.
- *
- * @example
- * @code
- * NcclContext ctx;
- * ctx.initialize();  // Creates communicators for all mesh devices
- *
- * NcclReduce reduce(ctx);
- * reduce.all_reduce(data, count, ReductionOp::Sum, dtype);
- * @endcode
- */
-class NcclContext {
-public:
-    struct Config {
-        int device_count = 0;
-        bool nccl_unique_id_from_env = false;
-        std::string nccl_debug_file = "";
-    };
-
-    NcclContext() = default;
-    explicit NcclContext(const Config& config);
-    ~NcclContext();
-
-    // Non-copyable, movable
-    NcclContext(const NcclContext&) = delete;
-    NcclContext& operator=(const NcclContext&) = delete;
-    NcclContext(NcclContext&&) noexcept;
-    NcclContext& operator=(NcclContext&&) noexcept;
-
-    /**
-     * @brief Initialize NCCL communicators for all devices
-     * @param config Configuration options
-     */
-    void initialize(const Config& config);
-
-    /**
-     * @brief Get NCCL communicator for a specific device
-     * @param device Device index
-     * @return NCCL communicator handle
-     */
-    ncclComm_t get_comm(int device) const;
-
-    /**
-     * @brief Get CUDA stream for a specific device
-     * @param device Device index
-     * @return CUDA stream
-     */
-    cudaStream_t get_stream(int device) const;
-
-    /**
-     * @brief Check if NCCL is initialized
-     * @return true if initialized
-     */
-    bool initialized() const { return initialized_; }
-
-    /**
-     * @brief Get device count
-     * @return Number of devices in NCCL group
-     */
-    int device_count() const { return device_count_; }
-
-    /**
-     * @brief Generate NCCL unique ID for multi-process launch
-     * @return NCCL unique ID
-     */
-    static ncclUniqueId generate_unique_id();
-
-private:
-    void cleanup();
-
-    int device_count_ = 0;
-    std::vector<ncclComm_t> communicators_;
-    std::vector<cudaStream_t> streams_;
-    bool initialized_ = false;
-};
-
-/**
- * @class NcclReduce
- * @brief NCCL-based all-reduce with P2P fallback
- */
-class NcclReduce {
-public:
-    explicit NcclReduce(NcclContext& ctx);
-    ~NcclReduce();
-
-    void all_reduce(
-        const void* send_data,
-        void* recv_data,
-        size_t count,
-        ReductionOp op,
-        ncclDataType_t dtype);
-
-    void all_reduce_async(
-        const void* send_data,
-        void* recv_data,
-        size_t count,
-        ReductionOp op,
-        cudaStream_t stream,
-        ncclDataType_t dtype);
-
-private:
-    NcclContext& ctx_;
-};
-
-}  // namespace cuda::distributed
-```
-
-**Why dependency injection over singleton:**
-
-| Pattern | Pros | Cons |
-|---------|------|------|
-| Singleton | Simple access, global state | Hard to test, cannot mock, lifetime issues |
-| Dependency Injection | Testable, explicit dependencies, composable | More boilerplate |
-
-**Best compromise:** Provide a `NcclContext::instance()` for convenience that returns a static global context, but allow injection for testing.
-
-```cpp
-// Convenience global context
-NcclContext& global_nccl_context() {
-    static NcclContext ctx;
-    static bool initialized = false;
-    if (!initialized) {
-        ctx.initialize({});
-        initialized = true;
+static void BM_ReduceFloat(benchmark::State& state) {
+    const size_t n = state.range(0);
+    // ... setup, warmup, benchmark loop
+    for (auto _ : state) {
+        cuda::algo::reduce(d_data.get(), result, n);
     }
-    return ctx;
+    state.SetBytesProcessed(n * sizeof(float));
+    state.SetItemsProcessed(n * state.iterations());
+}
+BENCHMARK(BM_ReduceFloat)->RangeMultiplier(2)->Ranges({{1024, 1<<24}});
+BENCHMARK(BM_ReduceFloat)->Unit(benchmark::kMillisecond);
+
+BENCHMARK_MAIN();
+```
+
+### Pattern 2: RAII NVTX Range Guard
+
+**What:** Scoped NVTX annotation using RAII destructor semantics.
+
+**When to use:** Annotating existing functions without changing their signature.
+
+**Trade-offs:**
+- Pro: Zero-cost abstraction, automatic end on scope exit
+- Pro: Exception-safe (destructor runs even on exceptions)
+- Con: Requires include of nvtx.h in all annotated files
+
+**Example:**
+```cpp
+// include/cuda/benchmark/nvtx.h
+#pragma once
+#include <nvtx3/nvtx3.hpp>
+
+class NVTXRange {
+public:
+    explicit NVTXRange(const char* name, nvtx3::color color = nvtx3::color::blue) 
+        : marker_(name) {
+        marker_.start();
+    }
+    ~NVTXRange() { marker_.end(); }
+    
+    // Prevent copying, allow moving
+    NVTXRange(const NVTXRange&) = delete;
+    NVTXRange& operator=(const NVTXRange&) = delete;
+    NVTXRange(NVTXRange&&) = default;
+    NVTXRange& operator=(NVTXRange&&) = default;
+
+private:
+    nvtx3::scoped_marker marker_;
+};
+
+// Macro for convenience
+#define NVTX_SCOPED_RANGE(name) NVTXRange _nvtx_range_(name)
+```
+
+### Pattern 3: Configuration-Driven Benchmark Execution
+
+**What:** JSON configuration files that control which benchmarks run with what parameters.
+
+**When to use:** Standardizing benchmark execution across different environments (local, CI, release).
+
+**Trade-offs:**
+- Pro: Easy to add new configurations without code changes
+- Pro: Reproducible benchmarks across runs
+- Con: Additional parsing layer
+
+**Example:**
+```json
+// benchmark/configs/standard.json
+{
+    "name": "standard",
+    "description": "Standard workload for CI regression",
+    "filters": ["*/Reduce/*", "*/Scan/*"],
+    "workloads": [
+        {"name": "small", "size": 1024},
+        {"name": "medium", "size": 1024*1024},
+        {"name": "large", "size": 1024*1024*64}
+    ],
+    "iterations": 10,
+    "warmup": 3,
+    "tolerance_percent": 10.0
 }
 ```
 
-### 1.3 Stream-Based vs Blocking Collective Calls
+### Pattern 4: Baseline Versioning
 
-**Recommendation: Async collectives with explicit streams**
+**What:** Store baselines with version tags for regression comparison.
 
-NCCL supports two modes:
+**When to use:** Tracking performance across releases and identifying when regressions occurred.
 
-1. **Blocking (implicit stream):** `ncclAllReduce(send, recv, count, dtype, op, comm, nullptr)`
-2. **Async (explicit stream):** `ncclAllReduce(send, recv, count, dtype, op, comm, stream)`
+**Trade-offs:**
+- Pro: Clear history of performance expectations
+- Pro: Easy to rollback baselines if needed
+- Con: Requires discipline to update baselines on intentional changes
 
+**Directory structure:**
+```
+scripts/benchmark/baselines/
+├── v0.1.0/           # Initial baseline
+│   └── reduce.json
+├── v0.2.0/           # After optimization
+│   └── reduce.json
+└── main/             # Current main branch baseline (symlink or copy)
+    └── reduce.json
+```
+
+### Pattern 5: Dashboard Generation with Trend Analysis
+
+**What:** HTML dashboards with embedded Chart.js visualizations showing performance over time.
+
+**When to use:** Visualizing benchmark trends and communicating performance to stakeholders.
+
+**Trade-offs:**
+- Pro: Self-contained HTML that can be served statically
+- Pro: Interactive charts for exploration
+- Con: Static generation means no real-time updates
+
+**Data flow:**
+```
+Benchmark Run → JSON Results → Python Parser → Jinja2 Template → HTML Dashboard
+                     ↓
+              Baseline Comparison
+                     ↓
+              Regression Alerts
+```
+
+## Data Flow
+
+### Benchmark Execution Flow
+
+```
+User runs: python scripts/benchmark/run_benchmarks.py --config standard --gpu 0
+
+1. Python harness parses config
+         ↓
+2. Invokes ./build/bin/benchmark_kernels --benchmark_filter="*/Reduce/*" --benchmark_format=json
+         ↓
+3. C++ kernels execute with NVTX annotations (visible in Nsight Graphics/Compute)
+         ↓
+4. Google Benchmark outputs JSON to stdout or file
+         ↓
+5. Python harness parses JSON, stores in results/YYYY-MM-DD/
+         ↓
+6. Regression check compares against baselines/
+         ↓
+7. Dashboard generation creates HTML reports in reports/
+```
+
+### NVTX Integration Flow
+
+```
+Source Code (nova/algo/reduce.h)
+    │
+    ├─ #include "cuda/benchmark/nvtx.h"
+    │
+    └─ NVTX_SCOPED_RANGE("reduce_float")
+           │
+           ├─ nvtx3::scoped_marker created
+           │
+           ├─ marker.start() called (NVTX event pushed)
+           │
+           ├─ Actual reduce operation executes
+           │
+           └─ ~NVTXRange() destructor calls marker.end()
+                   │
+                   └─ NVTX event popped
+```
+
+### Multi-GPU/Multi-Node Benchmark Flow
+
+```
+# Single GPU benchmark
+python scripts/benchmark/run_benchmarks.py --gpu 0 --config single_gpu
+
+# Multi-GPU benchmark
+python scripts/benchmark/run_benchmarks.py --gpu all --config multi_gpu --nnodes 2
+
+# For multi-node, SSH to each node and invoke via MPI
+mpirun -n 4 python scripts/benchmark/run_benchmarks.py --gpu 0 --config multi_node
+```
+
+## Integration Points
+
+### External Services
+
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| NVIDIA Nsight Compute | nvcc --generate-line-info + NVTX ranges | Profile kernel-level performance |
+| NVIDIA Nsight Systems | NVTX annotations visible in timeline | System-wide timeline view |
+| CUDA Profiler | NVTX domains categorize ranges | Use nvtx.* options for profiling |
+| GitHub Actions | Python harness exit codes | Non-zero on regression detection |
+
+### Internal Boundaries
+
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| benchmark/ → cuda_impl | Link-time dependency | Benchmarks link against cuda_impl library |
+| Python harness → benchmark binary | stdin/stdout JSON | Subprocess invocation |
+| scripts/benchmark/ → results/ | File system | JSON files written/read |
+| Dashboard generator → results/ | File system | Reads and transforms data |
+
+### Layer Integration (Existing Codebase)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    algo layer (nova/algo/)                   │
+├──────────────────────────────────────────────────────────────┤
+│  reduce.h     → benchmark_reduce.cpp invokes cuda::algo::reduce│
+│  scan.h       → benchmark_scan.cpp invokes cuda::algo::scan    │
+│  sort.h       → benchmark_sort.cpp invokes cuda::algo::sort    │
+│                                                              │
+│  + NVTX_SCOPED_RANGE("reduce") annotations added to headers   │
+└──────────────────────────────────────────────────────────────┘
+                              ↓
+┌──────────────────────────────────────────────────────────────┐
+│               distributed layer (nova/distributed/)          │
+├──────────────────────────────────────────────────────────────┤
+│  all_reduce.h → benchmark_distributed.cpp tests NCCL ops     │
+│                                                              │
+│  + NVTX_SCOPED_RANGE("all_reduce") for collective ops        │
+└──────────────────────────────────────────────────────────────┘
+                              ↓
+┌──────────────────────────────────────────────────────────────┐
+│                memory layer (nova/memory/)                   │
+├──────────────────────────────────────────────────────────────┤
+│  memory_pool.h → benchmark_memory.cpp tests pool alloc       │
+│                                                              │
+│  + NVTX_SCOPED_RANGE("pool_alloc") for memory ops            │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Anti-Patterns
+
+### Anti-Pattern 1: Benchmarking Without Warm-up
+
+**What people do:** Run benchmarks immediately without GPU warm-up, leading to inflated first-run times.
+
+**Why it's wrong:** CUDA kernels experience initialization overhead on first launch (kernel compilation, cache warming).
+
+**Do this instead:**
 ```cpp
-// Async with CUDA stream (RECOMMENDED)
-ncclAllReduce(send_data, recv_data, count, dtype, op, comm, cuda_stream);
-
-// Blocking variant — blocks GPU
-ncclAllReduce(send_data, recv_data, count, dtype, op, comm, cudaStreamNull);
+// Google Benchmark handles warmup automatically
+// For custom harness, ensure warmup iterations before measurement:
+for (int i = 0; i < options.warmup_iterations; ++i) {
+    kernel();
+}
+cudaDeviceSynchronize();
 ```
 
-**Integration with existing StreamManager:**
+### Anti-Pattern 2: Ignoring Variance
 
+**What people do:** Reporting only mean execution time without standard deviation.
+
+**Why it's wrong:** GPU performance varies due to dynamic frequency scaling, memory timing, and kernel launch overhead.
+
+**Do this instead:**
 ```cpp
-// extend distributed/common.h
-namespace cuda::distributed {
-
-class MeshStreams {
-public:
-    // ... existing methods ...
-
-    /**
-     * @brief Get NCCL communicator for a device
-     * @param device Device index
-     * @return NCCL communicator (from NcclContext if initialized)
-     */
-    ncclComm_t get_nccl_comm(int device);
-
-    /**
-     * @brief Check if NCCL is available
-     * @return true if NCCL context is initialized
-     */
-    bool has_nccl() const { return nccl_ctx_ != nullptr; }
-
-private:
-    // ... existing members ...
-    NcclContext* nccl_ctx_ = nullptr;
-};
-
-}  // namespace cuda::distributed
+// Use Google Benchmark's built-in statistics
+// Or custom implementation:
+BenchmarkResult result = compute_statistics(measurements);
+std::cout << result.mean_ms << " +/- " << result.stddev_ms << " ms\n";
 ```
 
-### 1.4 NCCL Memory Allocation
+### Anti-Pattern 3: Benchmarking Small Data Sizes
 
-NCCL buffers must be:
-- **GPU-accessible** — All buffers must be on GPU memory
-- **Pinned (optional)** — Improves performance but not required
-- **Aligned** — NCCL performs better with aligned buffers
+**What people do:** Testing with sizes too small to saturate GPU resources.
 
-**Integration with MemoryPool:**
+**Why it's wrong:** GPU benefits only manifest at sufficient parallelism; small workloads hide algorithmic inefficiencies.
 
+**Do this instead:**
 ```cpp
-// Allocate GPU memory via pool, then use with NCCL
-auto* buffer = static_cast<float*>(
-    distributed_pool.allocate(size * sizeof(float), device_id));
-
-// Use with NCCL (device pointers are valid)
-ncclAllReduce(buffer, buffer, size, ncclFloat32, ncclSum, comm, stream);
+// Test across meaningful sizes
+BENCHMARK(BM_Kernel)->Range(1<<10, 1<<28);  // 1KB to 256MB
+// Include throughput metric (GB/s) not just latency
+state.SetBytesProcessed(data_size * state.iterations());
 ```
 
----
+### Anti-Pattern 4: Not Isolating Benchmark Code
 
-## 2. Tensor Parallelism Architecture
+**What people do:** Mixing benchmark logic with production code in the same translation unit.
 
-### 2.1 Column-Wise and Row-Wise Matrix Splits
+**Why it's wrong:** Benchmark instrumentation (timing, NVTX) adds overhead to production builds.
 
-Tensor parallelism splits a weight matrix across GPUs. For a matrix multiplication Y = XA:
-
-**Column Parallel (A split along columns):**
-```
-A = [A_1 | A_2 | ... | A_tp]  // Split columns across TP GPUs
-Y_i = X @ A_i                 // Each GPU computes partial result
-Y = AllGather(Y_1, Y_2, ...)  // Gather to get full Y
-```
-
-**Row Parallel (A split along rows):**
-```
-X = [X_1 | X_2 | ... | X_tp]  // Split X across GPUs
-Y_i = X_i @ A_i               // Each GPU computes partial
-Y = AllReduce(Y_1, Y_2, ...)  // Sum partial results
-```
-
-### 2.2 Communication Patterns
-
-| Strategy | Input Split | Weight Split | Output Communication |
-|----------|-------------|--------------|---------------------|
-| Column Parallel | Replicated | Column-wise | All-Gather after matmul |
-| Row Parallel | Row-wise | Replicated | All-Reduce after matmul |
-| Column + Row (2D) | Row-wise | Column-wise | All-Reduce + All-Gather |
-
-**For transformer layers:**
-- **Attention QKV projection:** Column parallel (splits weight, gathers output)
-- **Output projection:** Row parallel (scatters input, reduces output)
-- **FFN first layer:** Column parallel
-- **FFN second layer:** Row parallel
-
-### 2.3 Integration with Existing Matmul
-
-**Extend DistributedMatmul to support tensor parallelism:**
-
+**Do this instead:**
 ```cpp
-// include/cuda/distributed/matmul.h (EXTENDED)
-namespace cuda::distributed {
+// Production: include headers only
+#include "cuda/algo/reduce.h"
+auto result = cuda::algo::reduce(...);
 
-/**
- * @enum ParallelismStrategy
- * @brief Strategy for distributing computation across GPUs
- */
-enum class ParallelismStrategy {
-    DataParallel,     // Row-partition input (existing v1.1)
-    TensorParallelCol, // Column-partition weights (NEW)
-    TensorParallelRow  // Row-partition weights (NEW)
-};
-
-/**
- * @struct TensorParallelConfig
- * @brief Configuration for tensor parallelism
- */
-struct TensorParallelConfig {
-    /** Tensor parallelism degree (number of GPUs) */
-    int tp_size = 1;
-
-    /** My rank within the TP group */
-    int tp_rank = 0;
-
-    /** Total number of TP groups */
-    int num_tp_groups = 1;
-
-    /** Enable sequence parallelism (for TP in attention) */
-    bool sequence_parallel = false;
-};
-
-/**
- * @class TensorParallelMatmul
- * @brief Tensor-parallel matrix multiply operations
- *
- * Implements column-parallel and row-parallel matmul with
- * integrated NCCL collectives for gradient synchronization.
- *
- * @example
- * @code
- * TensorParallelConfig config;
- * config.tp_size = 4;
- * config.tp_rank = local_rank;
- * config.num_tp_groups = num_gpus / 4;
- *
- * TensorParallelMatmul tp_matmul(ctx, config);
- * tp_matmul.column_parallel(
- *     input, weight_part, output_part, m, n, k);
- * // After call: output_part contains portion of full result
- * @endcode
- */
-class TensorParallelMatmul {
-public:
-    TensorParallelMatmul(
-        NcclContext& ctx,
-        const TensorParallelConfig& config);
-
-    /**
-     * @brief Column-parallel matmul: Y = X @ A_split
-     *
-     * Weight matrix A is split column-wise across TP GPUs.
-     * Each GPU computes Y_i = X @ A_i
-     * Outputs must be gathered for full result.
-     *
-     * @param X Input matrix [m x k] (replicated across GPUs)
-     * @param A_partial Weight partition [k x (n/tp_size)] on local GPU
-     * @param Y_partial Output partition [m x (n/tp_size)]
-     * @param m Rows in X and Y
-     * @param n Columns in A (global), n/tp_size local
-     * @param k Columns in X, rows in A
-     */
-    void column_parallel(
-        const float* X,
-        const float* A_partial,
-        float* Y_partial,
-        int m, int n, int k);
-
-    /**
-     * @brief Row-parallel matmul: Y_split = X_split @ A
-     *
-     * Input X is split row-wise across TP GPUs.
-     * Each GPU computes Y_i = X_i @ A
-     * Results must be reduced for full result.
-     *
-     * @param X_partial Input partition [(m/tp_size) x k]
-     * @param A Weight matrix [k x n] (replicated across GPUs)
-     * @param Y_partial Output partition [(m/tp_size) x n]
-     * @param m Rows in X (global), m/tp_size local
-     * @param n Columns in A and Y
-     * @param k Columns in X, rows in A
-     */
-    void row_parallel(
-        const float* X_partial,
-        const float* A,
-        float* Y_partial,
-        int m, int n, int k);
-
-    /**
-     * @brief All-gather for column-parallel output
-     *
-     * Gathers Y_partial from all TP GPUs to form full Y.
-     *
-     * @param Y_partial Local output partition
-     * @param Y_full Full output buffer (size m * n)
-     * @param m Rows
-     * @param n Columns
-     */
-    void gather_output(
-        const float* Y_partial,
-        float* Y_full,
-        int m, int n);
-
-    /**
-     * @brief All-reduce for row-parallel output
-     *
-     * Reduces Y_partial from all TP GPUs.
-     *
-     * @param Y_partial Local output partition (modified in-place)
-     * @param m Rows
-     * @param n Columns
-     */
-    void reduce_output(float* Y_partial, int m, int n);
-
-private:
-    NcclContext& ctx_;
-    TensorParallelConfig config_;
-    std::unique_ptr<NcclAllGather> all_gather_;
-    std::unique_ptr<NcclAllReduce> all_reduce_;
-};
-
-}  // namespace cuda::distributed
+// Benchmark: separate executable
+// benchmark/benchmark_reduce.cpp
+// - Includes same headers
+// - Adds BENCHMARK macros
+// - Compiled as separate target
 ```
 
-### 2.4 Data Flow: Transformer Layer with Tensor Parallelism
+### Anti-Pattern 5: Hardcoding Regression Thresholds
 
-```
-Transformer Layer with TP=4:
+**What people do:** Using tight tolerances (e.g., 1%) that trigger false positives.
 
-Input X (replicated)
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ QKV Projection (Column Parallel)                           │
-│   Q = X @ W_q_split  ┐                                     │
-│   K = X @ W_k_split  ├─► [AllGather Q, K, V]               │
-│   V = X @ W_v_split  │   (each GPU gets full Q, K, V)      │
-└─────────────────────────────────────────────────────────────┘
-    │
-    ▼
-Attention Score (local)
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Output Projection (Row Parallel)                           │
-│   Y_partial = AttnScore @ W_o_split                        │
-│   Y = [AllReduce Y_partial]                                │
-└─────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ FFN (Column Parallel → Row Parallel)                       │
-│   Hidden1 = X @ W1_split  ┌ (Column parallel, no comm)    │
-│   Hidden2 = GELU(Hidden1) │                               │
-│   Output = Hidden2 @ W2   │ (Row parallel)                │
-│   Output = [AllReduce Output]                              │
-└─────────────────────────────────────────────────────────────┘
-```
+**Why it's wrong:** GPU performance has inherent variance; tight thresholds cause flaky CI failures.
 
----
-
-## 3. Pipeline Parallelism Architecture
-
-### 3.1 Micro-Batching Strategies
-
-Pipeline parallelism splits model layers across GPUs (vertical split). Micro-batching enables overlapping forward and backward passes.
-
-**Key concepts:**
-- **Micro-batch:** A small portion of the global batch, processed independently
-- **Pipeline stage:** A group of layers assigned to one GPU
-- **Pipeline schedule:** Order of forward/backward passes across microbatches
-
-### 3.2 Forward/Backward Pass Overlapping
-
-**1F1B Schedule (One Forward, One Backward):**
-
-```
-Time →
-GPU0: [F0][F1][F2][F3][B3][B2][B1][B0]
-GPU1:     [F0][F1][F2][F3][B3][B2][B1][B0]
-GPU2:         [F0][F1][F2][F3][B3][B2][B1][B0]
-GPU3:             [F0][F1][F2][F3][B3][B2][B1][B0]
-```
-
-**Interleaved 1F1B (better load balancing):**
-
-```
-Time →
-GPU0: [F0][F1][B1][F0][F1][B1][F0][F1][B1]...
-GPU1:     [F2][F3][B3][F2][F3][B3][F2][F3][B3]...
-```
-
-### 3.3 Communication Scheduling
-
-Pipeline parallelism requires P2P communication between stages:
-- **Forward:** Send activation to next stage
-- **Backward:** Send gradients to previous stage
-
+**Do this instead:**
 ```cpp
-// include/cuda/pipeline/pipeline_scheduler.h
-namespace cuda::pipeline {
-
-/**
- * @struct PipelineConfig
- * @brief Configuration for pipeline parallelism
- */
-struct PipelineConfig {
-    /** Number of pipeline stages (GPUs) */
-    int num_stages = 1;
-
-    /** My stage rank (0 = first stage, num_stages-1 = last) */
-    int stage_rank = 0;
-
-    /** Number of microbatches in global batch */
-    int num_microbatches = 1;
-
-    /** Enable interleaved schedule */
-    bool interleaved = false;
-
-    /** Number of micro-batches per stage per iteration */
-    int num_microbatches_per_stage = 1;
-};
-
-/**
- * @class PipelineScheduler
- * @brief Schedules forward/backward passes for pipeline parallelism
- *
- * Manages micro-batch execution, P2P communication, and gradient
- * synchronization across pipeline stages.
- *
- * @example
- * @code
- * PipelineConfig config;
- * config.num_stages = 4;
- * config.stage_rank = my_rank;
- * config.num_microbatches = 16;
- *
- * PipelineScheduler scheduler(ctx, config);
- *
- * for (int iter = 0; iter < num_iterations; ++iter) {
- *     scheduler.run_pipeline(
- *         forward_fn, backward_fn,
- *         input, labels);
- * }
- * @endcode
- */
-class PipelineScheduler {
-public:
-    using ForwardFn = std::function<void(const Tensor&, Tensor*)>;
-    using BackwardFn = std::function<void(const Tensor&, const Tensor&, Tensor*)>;
-
-    PipelineScheduler(
-        NcclContext& ctx,
-        const PipelineConfig& config);
-
-    ~PipelineScheduler();
-
-    /**
-     * @brief Run one pipeline iteration
-     *
-     * Executes forward and backward passes for all microbatches
-     * according to the configured schedule.
-     *
-     * @param forward_fn Function to compute forward pass
-     * @param backward_fn Function to compute backward pass
-     * @param input Input tensor for first stage
-     * @param labels Labels for loss computation (last stage only)
-     */
-    void run_pipeline(
-        ForwardFn forward_fn,
-        BackwardFn backward_fn,
-        Tensor& input,
-        const Tensor& labels);
-
-    /**
-     * @brief Run 1F1B schedule
-     */
-    void run_1f1b(
-        ForwardFn forward_fn,
-        BackwardFn backward_fn);
-
-    /**
-     * @brief Run interleaved 1F1B schedule
-     */
-    void run_interleaved_1f1b(
-        ForwardFn forward_fn,
-        BackwardFn backward_fn);
-
-    /**
-     * @brief Receive activation from previous stage
-     * @param target Buffer to receive into
-     */
-    void recv_forward(Tensor* target);
-
-    /**
-     * @brief Send activation to next stage
-     * @param source Activation to send
-     */
-    void send_forward(const Tensor& source);
-
-    /**
-     * @brief Receive gradient from next stage
-     * @param target Buffer to receive into
-     */
-    void recv_backward(Tensor* target);
-
-    /**
-     * @brief Send gradient to previous stage
-     * @param source Gradient to send
-     */
-    void send_backward(const Tensor& source);
-
-private:
-    NcclContext& ctx_;
-    PipelineConfig config_;
-
-    // P2P communication
-    std::vector<cuda::mesh::PeerCopy> peer_copies_;
-    std::vector<cudaEvent_t> events_;
-
-    // Pipeline buffers (ping-pong for overlap)
-    std::vector<Tensor> forward_buffers_;
-    std::vector<Tensor> backward_buffers_;
-    int buffer_idx_ = 0;
-};
-
-}  // namespace cuda::pipeline
+// Use reasonable tolerances based on operation type
+constexpr double TOLERANCE_MEMORY_OPS = 5.0;    // Memory ops are stable
+constexpr double TOLERANCE_COMPUTE = 10.0;       // Compute varies more
+constexpr double TOLERANCE_DISTRIBUTED = 15.0;   // Network-bound ops vary most
 ```
 
-### 3.4 Integration with Existing Components
+## Scaling Considerations
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ cuda::pipeline::PipelineScheduler                          │
-│ - Manages micro-batch scheduling                           │
-│ - Calls forward_fn/backward_fn                             │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│ cuda::distributed::TensorParallelMatmul                    │
-│ - Computes layer operations within each stage              │
-│ - Uses NCCL for gradient synchronization                   │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│ cuda::distributed::NcclContext                             │
-│ - Provides NCCL communicators and streams                  │
-│ - Handles P2P communication for pipeline stages            │
-└─────────────────────────────────────────────────────────────┘
-```
+| Scale | Architecture Adjustments |
+|-------|--------------------------|
+| Single GPU, single benchmark | Simple: single binary, direct JSON output |
+| Multi-GPU benchmarks | Add `--gpu` flag, aggregate results from each GPU |
+| Multi-node benchmarks | Use MPI wrapper, results aggregated via rank 0 |
+| Large test matrix | Parallelize benchmark runs via `xargs -P` or Python `concurrent.futures` |
 
----
+### Scaling Priorities
 
-## 4. Integration Points
+1. **First bottleneck: CI time** — Use selective filtering to run only changed benchmarks in PRs
+2. **Second bottleneck: Result storage** — Prune old results, keep only baseline-tagged versions
 
-### 4.1 Extend Existing DeviceMesh for NCCL Topology
+## CMake Integration
 
-```cpp
-// Extend device_mesh.h
-namespace cuda::mesh {
-
-class DeviceMesh {
-public:
-    // ... existing methods ...
-
-    /**
-     * @brief Get NCCL unique ID for multi-process initialization
-     * @return NCCL unique ID
-     */
-    ncclUniqueId get_nccl_unique_id();
-
-    /**
-     * @brief Get local rank within node
-     * @return Local rank (0 for single-node)
-     */
-    int local_rank() const;
-
-    /**
-     * @brief Get world size (total GPUs in training)
-     * @return Total number of GPUs
-     */
-    int world_size() const { return device_count_; }
-
-    /**
-     * @brief Check if NCCL is available
-     * @return true if NCCL can be initialized
-     */
-    bool has_nccl_support() const;
-};
-
-}  // namespace cuda::mesh
-```
-
-### 4.2 Hook into Existing Memory Pool for Tensor-Allocated Buffers
-
-```cpp
-// extend distributed_pool.h
-namespace cuda::memory {
-
-class DistributedMemoryPool {
-public:
-    // ... existing methods ...
-
-    /**
-     * @brief Allocate tensor-aligned buffer for NCCL
-     *
-     * Allocates GPU memory with alignment suitable for NCCL operations.
-     *
-     * @param bytes Size in bytes
-     * @param device Device to allocate on
-     * @param alignment Alignment requirement (default: 4096)
-     * @return Pointer to allocated memory
-     */
-    void* allocate_tensor(size_t bytes, int device, size_t alignment = 4096);
-
-    /**
-     * @brief Allocate buffer for tensor parallelism
-     *
-     * Allocates buffer sized for tensor-parallel portion.
-     *
-     * @param bytes_per_gpu Bytes needed on each GPU
-     * @param device Device to allocate on
-     * @return Pointer to allocated memory
-     */
-    void* allocate_tensor_parallel(size_t bytes_per_gpu, int device);
-};
-
-}  // namespace cuda::memory
-```
-
-### 4.3 Leverage Existing Multi-GPU Matmul Infrastructure
-
-```cpp
-// New file: include/cuda/distributed/tensor_parallel_matmul.h
-
-// DistributedMatmul already uses neural::matmul per device
-// TensorParallelMatmul extends this pattern:
-
-class TensorParallelMatmul {
-private:
-    // Reuse existing per-device cublas handles
-    std::vector<cublasHandle_t> cublas_handles_;
-
-    // Reuse neural matmul implementation
-    void local_matmul(
-        const float* A,
-        const float* B,
-        float* C,
-        int m, int n, int k);
-};
-```
-
----
-
-## 5. Project Structure for v1.3
-
-```
-include/cuda/
-    nccl/                              # NEW: NCCL integration
-    │   ├── nccl_context.h            # NcclContext, communicator pool
-    │   ├── nccl_collective.h         # Base class for NCCL collectives
-    │   ├── nccl_reduce.h             # NCCL all-reduce
-    │   ├── nccl_all_gather.h         # NCCL all-gather
-    │   ├── nccl_broadcast.h          # NCCL broadcast
-    │   └── nccl_reduce_scatter.h     # NCCL reduce-scatter
-    │
-    tensor_parallel/                   # NEW: Tensor parallelism
-    │   ├── tensor_parallel_matmul.h  # Column/row parallel matmul
-    │   ├── column_parallel_layer.h   # Column-parallel linear layer
-    │   ├── row_parallel_layer.h      # Row-parallel linear layer
-    │   └── tensor_parallel_config.h  # Configuration
-    │
-    pipeline/                          # NEW: Pipeline parallelism
-    │   ├── pipeline_scheduler.h      # 1F1B, interleaved schedules
-    │   ├── p2p_communication.h       # Send/recv primitives
-    │   └── pipeline_config.h         # Configuration
-    │
-    distributed/                       # EXISTING: Extended
-    │   ├── matmul.h                  # EXTENDED: Add TP strategies
-    │   ├── reduce.h                  # EXTENDED: Add NCCL backend
-    │   ├── all_gather.h              # EXTENDED: Add NCCL backend
-    │   ├── broadcast.h               # EXTENDED: Add NCCL backend
-    │   └── barrier.h                 # EXTENDED: Add NCCL backend
-
-src/cuda/
-    nccl/                              # NEW: NCCL implementation
-    │   ├── nccl_context.cpp
-    │   ├── nccl_reduce.cpp
-    │   ├── nccl_all_gather.cpp
-    │   └── ...
-    │
-    tensor_parallel/                   # NEW: TP implementation
-    │   ├── tensor_parallel_matmul.cpp
-    │   ├── column_parallel_layer.cpp
-    │   └── row_parallel_layer.cpp
-    │
-    pipeline/                          # NEW: Pipeline implementation
-    │   ├── pipeline_scheduler.cpp
-    │   └── p2p_communication.cpp
-```
-
----
-
-## 6. Build System Changes
+The benchmark targets should integrate with the existing CMake setup:
 
 ```cmake
-# NCCL support (optional)
-option(NOVA_ENABLE_NCCL "Enable NCCL for optimized multi-GPU collectives" ON)
+# benchmark/CMakeLists.txt
+find_package(benchmark REQUIRED)
 
-if(NOVA_ENABLE_NCCL)
-    find_package(NCCL 2.18 REQUIRED)
-    set(NCCL_INCLUDE_DIRS ${NCCL_INCLUDE_DIR})
-    set(NCCL_LIBRARIES nccl)
-endif()
+add_executable(nova_benchmarks
+    benchmark_kernels.cu
+    benchmark_utils.cu
+    benchmark_harness.cpp
+)
 
-# New directory: NCCL
-add_library(cuda_nccl STATIC
-    ${CMAKE_SOURCE_DIR}/src/cuda/nccl/nccl_context.cpp
-    ${CMAKE_SOURCE_DIR}/src/cuda/nccl/nccl_reduce.cpp
-    ${CMAKE_SOURCE_DIR}/src/cuda/nccl/nccl_all_gather.cpp
-    ${CMAKE_SOURCE_DIR}/src/cuda/nccl/nccl_broadcast.cpp
-)
-target_include_directories(cuda_nccl PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/cuda/nccl>
-)
-target_link_libraries(cuda_nccl PUBLIC
+target_link_libraries(nova_benchmarks PRIVATE
     cuda_impl
+    benchmark::benchmark
     CUDA::cudart
 )
-if(NCCL_FOUND)
-    target_link_libraries(cuda_nccl PUBLIC NCCL::nccl)
-    target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=1)
-else()
-    target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=0)
-endif()
 
-# New directory: Tensor Parallelism
-add_library(cuda_tensor_parallel STATIC
-    ${CMAKE_SOURCE_DIR}/src/cuda/tensor_parallel/tensor_parallel_matmul.cpp
-    ${CMAKE_SOURCE_DIR}/src/cuda/tensor_parallel/column_parallel_layer.cpp
-    ${CMAKE_SOURCE_DIR}/src/cuda/tensor_parallel/row_parallel_layer.cpp
-)
-target_include_directories(cuda_tensor_parallel PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/cuda/tensor_parallel>
-)
-target_link_libraries(cuda_tensor_parallel PUBLIC
-    cuda_nccl
-    cuda_neural
+target_include_directories(nova_benchmarks PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
 )
 
-# New directory: Pipeline Parallelism
-add_library(cuda_pipeline STATIC
-    ${CMAKE_SOURCE_DIR}/src/cuda/pipeline/pipeline_scheduler.cpp
-    ${CMAKE_SOURCE_DIR}/src/cuda/pipeline/p2p_communication.cpp
-)
-target_include_directories(cuda_pipeline PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/cuda/pipeline>
-)
-target_link_libraries(cuda_pipeline PUBLIC
-    cuda_tensor_parallel
-    cuda_mesh
-)
-
-# Update cuda_multigpu to include new components
-set_target_properties(cuda_multigpu PROPERTIES
-    INTERFACE_LINK_LIBRARIES
-        "cuda_nccl;cuda_tensor_parallel;cuda_pipeline"
-)
+# Install benchmark binary for Python harness to invoke
+install(TARGETS nova_benchmarks DESTINATION bin)
 ```
+
+## Recommended Execution Flow
+
+```bash
+# Full benchmark suite
+python scripts/benchmark/run_benchmarks.py --all --output results/latest
+
+# Regression check against baselines
+python scripts/benchmark/run_benchmarks.py --config regression --check
+
+# Generate dashboard
+python scripts/benchmark/generate_dashboard.py --results results/latest --output reports/
+
+# Update baselines (after intentional changes)
+python scripts/benchmark/update_baselines.py --results results/latest --version v0.2.0
+```
+
+## Sources
+
+- [Google Benchmark Documentation](https://google.github.io/benchmark/)
+- [NVTX Documentation](https://docs.nvidia.com/gameworks/content/gameworkslibrary/cudart/nvtx3.html)
+- [NVIDIA Nsight Systems profiling](https://developer.nvidia.com/nsight-systems)
+- [CMU 15-418 GPU benchmarking best practices](https://www.cs.cmu.edu/~gahan/15418/)
+- [Google Benchmark GitHub](https://github.com/google/benchmark)
 
 ---
 
-## 7. Anti-Patterns
-
-### Anti-Pattern 1: NCCL Blocking Operations in Hot Loops
-
-**Wrong:**
-```cpp
-// BAD: Blocking on every iteration
-while (training) {
-    ncclAllReduce(gpu_data, result, size, ncclFloat32, ncclSum, comm, nullptr);
-    cudaStreamSynchronize(stream);  // Blocks GPU!
-}
-```
-
-**Right:**
-```cpp
-// GOOD: Async operations with proper synchronization
-while (training) {
-    // Schedule async collective
-    CUDA_CHECK(cudaEventRecord(collective_done, stream));
-    // Schedule dependent work
-    launch_gradient_update(stream);
-    // Only sync when needed
-    CUDA_CHECK(cudaStreamWaitEvent(weight_update_stream, collective_done));
-}
-```
-
-### Anti-Pattern 2: Mismatched NCCL/Model Parallelism Degrees
-
-**Wrong:**
-```cpp
-// Configured for TP=4 but only have 2 GPUs
-NcclContext ctx;
-ctx.initialize({{.device_count = 2}});
-TensorParallelConfig tp_config;
-tp_config.tp_size = 4;  // WRONG: Only 2 GPUs!
-```
-
-**Right:**
-```cpp
-// Validate configuration
-int num_gpus = DeviceMesh::instance().device_count();
-int tp_size = std::min(num_gpus, max_tp_size);
-int num_tp_groups = num_gpus / tp_size;
-```
-
-### Anti-Pattern 3: Pipeline Imbalance
-
-**Wrong:**
-```cpp
-// Unequal layer distribution causes bubbles
-Stage 0: 50 layers → Stage 1: 2 layers  // Unbalanced!
-```
-
-**Right:**
-```cpp
-// Balanced distribution
-int layers_per_stage = total_layers / num_stages;
-// Or use Megatron-style virtual pipeline stages
-```
-
-### Anti-Pattern 4: Memory Explosions in Pipeline
-
-**Wrong:**
-```cpp
-// Store all activations for all microbatches
-std::vector<Tensor> all_activations;  // Memory explosion!
-```
-
-**Right:**
-```cpp
-// Store only activations for in-flight microbatches
-// Use activation checkpointing for memory reduction
-int max_inflight = num_microbatches_per_stage;
-std::vector<Tensor> activations(max_inflight);
-```
-
----
-
-## 8. Sources
-
-### NCCL
-- **NVIDIA NCCL GitHub:** https://github.com/NVIDIA/nccl
-- **NCCL Documentation:** https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/index.html
-- **NCCL Collective Operations:** all-reduce, all-gather, reduce, broadcast, reduce-scatter
-
-### Tensor Parallelism
-- **NVIDIA Megatron-LM:** https://github.com/NVIDIA/Megatron-LM
-- **Megatron Core Documentation:** https://docs.nvidia.com/megatron-core/developer-guide/latest/index.html
-- **Tensor Parallelism Guide:** https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/parallelism-guide.html
-- **ColumnParallelLinear, RowParallelLinear:** `megatron/core/tensor_parallel/layers.py`
-- **Tensor Mappings:** `megatron/core/tensor_parallel/mappings.py`
-
-### Pipeline Parallelism
-- **Megatron Pipeline Parallelism:** https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/core/pipeline_parallel.html
-- **Pipeline Schedules:** `megatron/core/pipeline_parallel/schedules.py`
-- **P2P Communication:** `megatron/core/pipeline_parallel/p2p_communication.py`
-- **1F1B Schedule:** One Forward, One Backward per micro-batch
-- **Interleaved 1F1B:** Better load balancing with virtual pipeline stages
-
-### DeepSpeed
-- **DeepSpeed GitHub:** https://github.com/deepspeedai/DeepSpeed
-- **3D Parallelism:** Combines Data + Tensor + Pipeline parallelism
-- **Pipeline Schedules:** Similar 1F1B patterns with micro-batching
-
----
-
-*Architecture research for: Nova CUDA Library v1.3 NCCL/Tensor/Pipeline Parallelism*
-*Researched: 2026-04-24*
+*Architecture research for: CUDA/C++ Benchmarking Infrastructure*
+*Researched: 2026-04-26*

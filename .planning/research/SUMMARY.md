@@ -1,159 +1,138 @@
-# Research Summary: Nova CUDA Library v1.3
+# Project Research Summary
 
-**Project:** NCCL Integration, Tensor Parallelism, Pipeline Parallelism
-**Date:** 2026-04-24
-**Overall Confidence:** HIGH (NCCL docs), MEDIUM (TP/Pipeline patterns)
-
----
+**Project:** Nova CUDA Library — v1.7 Benchmarking & Testing
+**Domain:** CUDA/C++ Benchmarking and Performance Testing Infrastructure
+**Researched:** 2026-04-26
+**Confidence:** HIGH
 
 ## Executive Summary
 
-Nova v1.3 adds production-grade NCCL collective operations and distributed parallelism strategies for large model support. The core insight: NCCL provides hardware-aware communication (ring, tree, collnet) that automatically adapts to topology—a strict superset of existing P2P fallbacks. Key decisions: (1) NCCL 2.25+ with optional fallback, (2) custom tensor parallelism (avoid Megatron-LM/DeepSpeed complexity), (3) GPipe-style pipeline scheduling with 1F1B overlap.
+v1.7 adds comprehensive benchmarking infrastructure to a production CUDA library. The existing codebase (C++23, CUDA 20, five-layer architecture, 444 tests) has strong foundations — a custom `cuda::benchmark::Benchmark` class already provides warmup, statistical aggregation, and throughput metrics. The gap is CI integration, baseline storage, NVTX profiling hooks, and a Python harness for orchestration and regression detection.
 
-The most critical engineering challenge is async error handling. Unlike CUDA API calls that fail immediately, NCCL collective errors surface asynchronously via `ncclCommGetAsyncError()` and can corrupt communicators permanently if not handled defensively. This requires polling-based health checks instead of blocking waits on every collective operation.
-
----
+The recommended approach: Google Benchmark for C++ kernels (extend existing patterns), a Python pytest harness for orchestration/regression checking, NVTX annotations as optional instrumentation, and HTML dashboards for trend visualization. Key risks are GPU frequency scaling (unstable baselines) and NVTX overhead distorting measurements — both addressable with correct architecture in Phase 1.
 
 ## Key Findings
 
-### From STACK.md
+### Recommended Stack
 
-| Component | Recommendation | Rationale |
-|-----------|---------------|-----------|
-| **NCCL** | 2.25+ | CUDA 20 support, `ncclCommInitRankConfig`, `ncclCommSplit`, async error handling |
-| **Tensor Parallelism** | Custom implementation | Megatron-LM too opinionated; single-node scope simplifies communication |
-| **Pipeline Parallelism** | GPipe-style with async micro-batching | Simpler than PipeDream, effective throughput via micro-batching |
-| **Avoid** | DeepSpeed, Megatron-LM integration | Over-engineered for single-node, large dependencies |
+**Core technologies:**
+- **Google Benchmark v1.9.x** — Industry standard for C++ microbenchmarks with CMake integration, statistical analysis, JSON output. Extend the existing `cuda::benchmark::Benchmark` patterns rather than replacing them.
+- **NVTX nvtx3 (CUDA bundled)** — Header-only C++ library for GPU profiling annotations. No linking required. Integrates with Nsight Systems/Compute automatically.
+- **Python harness (pytest 8.x)** — Subprocess orchestration of C++ benchmark binaries, JSON result collection, statistical regression testing with `scipy.stats`.
+- **HTML dashboards (plotly + chevron/Jinja2)** — Static HTML generation with interactive trend charts. No real-time complexity.
 
-**Key APIs:** `ncclCommInitRank`, `ncclCommSplit`, `ncclGroupStart/End`, `ncclCommGetAsyncError`
+**Supporting stack:**
+- `pandas` for JSON data processing
+- `scipy.stats` for statistical significance testing (Welch's t-test)
+- `plotly` for interactive HTML charts
+- `pytest-xdist` for parallel benchmark execution
+- `requests` for CI artifact storage
 
-### From FEATURES.md
+### Expected Features
 
-**Table Stakes (implement first):**
-- NCCL communicator initialization via DeviceMesh
-- All-reduce, broadcast, barrier wrappers
-- Stream-based async collectives
-- Error handling with async error polling
+**Must have (table stakes):**
+- Baseline storage system (JSON files committed to repo)
+- CI regression gates (GitHub Actions with threshold-based failure)
+- Algorithmic benchmarks (reduce, scan, sort, FFT, matmul) with throughput + latency
+- JSON export for all benchmark results
 
-**Differentiators (implement second):**
-- Unified NCCL/CUDA fallback path
-- Automatic device mesh configuration derivation
-- Communicator caching
-- NVTX profiling integration
-- Multi-communicator support for TP+DP parallelism
+**Should have (competitive):**
+- Memory profiling suite (leak detection, pool metrics, fragmentation analysis)
+- Multi-GPU NCCL benchmark harness (all-reduce, broadcast, all-gather scaling curves)
+- HTML report generator with trend charts and baseline comparison
+- NVTX annotation framework for kernel timeline visualization in Nsight Systems
 
-**Anti-features to never add:**
-- Hard NCCL dependency (always provide fallback)
-- Blocking operations without streams
-- Single-rank collective calls
+**Defer (v2+):**
+- Pipeline parallelism benchmark suite
+- Tensor parallelism benchmark suite
+- Automated alert routing (Slack/Teams)
+- Interactive Nsight CLI integration
 
-### From ARCHITECTURE.md
+### Architecture Approach
 
-**Critical architectural decisions:**
+Four-layer integration into existing five-layer architecture:
 
-1. **Dependency injection over singleton for NcclContext** — Enables testing and explicit dependencies; provide `NcclContext::instance()` for convenience
-2. **Async collectives with explicit streams** — Pass `cudaStream_t` to all collective calls; never use `cudaStreamNull` in production
-3. **Extend DistributedMatmul with TP strategy** — Column-parallel for QKV projection, row-parallel for output projection
-4. **PipelineScheduler separates scheduling from computation** — Scheduling logic decoupled from layer execution
+1. **C++ Google Benchmark kernels** in `benchmark/` directory — compile as separate executable, link against `cuda_impl`, invoke from Python harness via subprocess
+2. **Python harness** in `scripts/benchmark/` — orchestrates benchmark runs, parses JSON results, checks regression against baselines, generates dashboards
+3. **NVTX annotations** in `include/cuda/benchmark/nvtx.h` — RAII scoped range guards, optional (compile-time toggle to avoid overhead in pure throughput mode)
+4. **HTML dashboards** in `reports/` — generated from benchmark results and baselines using Jinja2 + plotly
 
-**New directory structure:**
-```
-include/cuda/
-    nccl/                    # NEW: NCCL integration
-    tensor_parallel/         # NEW: TP implementation  
-    pipeline/                # NEW: Pipeline parallelism
-    distributed/             # EXTENDED: Add NCCL backend
-```
+Data flow: `benchmark binary → JSON → Python parser → regression check → HTML dashboard`
 
-### From PITFALLS.md
+### Critical Pitfalls
 
-**Top 5 pitfalls with prevention:**
-
-| # | Pitfall | Prevention |
-|---|---------|------------|
-| 1 | **NCCL initialization failures** | Check `/dev/shm` size (require 512MB+), validate NCCL version, Docker: `--shm-size=1g` |
-| 2 | **TP memory explosions** | Profile memory per TP degree; replicated optimizer states = 2x model per GPU |
-| 3 | **Pipeline bubble overhead** | Balance stage compute within 10%; M >= 4*K microbatches for <10% bubbles |
-| 4 | **Cross-collective deadlocks** | Single-threaded dispatch or `NCCL_LAUNCH_ORDER_IMPLICIT=1` |
-| 5 | **NCCL timeout hangs** | Never use bare `cudaStreamSynchronize`; poll `ncclCommGetAsyncError()` |
-
-**Integration gotchas:**
-- cuFFT/cuBLAS version must match NCCL build
-- Default stream (`cudaStreamLegacy`) serializes incorrectly with NCCL
-- P2P and NCCL cannot coexist on same peer pair
-- CUDA Graphs + multiple communicators deadlock
-
----
+1. **GPU frequency scaling** — Results vary 15-40% without clock locking. Fix: Phase 1 must establish fixed clock methodology and warmup patterns.
+2. **Missing CUDA synchronization** — Async kernels report misleading times. Fix: Always `cudaEventSynchronize()` before reading timing.
+3. **NVTX overhead distortion** — Annotations add microseconds to fine-grained kernels. Fix: Never wrap timing code inside NVTX ranges; separate measurement from annotation.
+4. **CI non-determinism** — Cloud GPU variance causes false regressions. Fix: Statistical significance testing (Welch's t-test), multiple iterations, normalized comparison.
+5. **Memory pool state contamination** — Pool effects cause first runs to be slower. Fix: Explicit warmup and allocator state reset.
 
 ## Implications for Roadmap
 
-### Recommended Phase Structure
+Based on research, suggested phase structure:
 
-**Phase 1: Foundation (NCCL Integration Basics)**
-- NCCL library detection and CMake integration
-- `NcclContext` with dependency injection pattern
-- Basic communicator initialization via DeviceMesh
-- **Pitfalls to avoid:** Shared memory exhaustion, version mismatch
+### Phase 1: Benchmark Infrastructure Foundation
+**Rationale:** Establishes measurement methodology, CUDA event patterns, NVTX separation, and warmup protocols. All downstream phases depend on these being correct.
+**Delivers:** Stable measurement infrastructure, NVTX annotation framework, CUDA event timing patterns, warmup protocol, Google Benchmark kernel template
+**Avoids:** Pitfalls 1 (frequency scaling), 2 (synchronization), 6 (NVTX overhead), 8 (pool contamination)
 
-**Phase 2: Core Collectives (AllReduce, Broadcast, Barrier)**
-- Stream-based all-reduce replacing ring-allreduce
-- Broadcast wrapper for weight synchronization
-- Barrier implementation
-- Async error polling infrastructure (`safe_nccl_call`)
-- **Pitfalls to avoid:** Cross-collective deadlocks, timeout hangs
+### Phase 2: Comprehensive Benchmark Suite
+**Rationale:** Core algorithmic benchmarks provide the measurement data for all downstream features. Input size coverage and realistic workloads prevent "looks done but isn't."
+**Delivers:** Algorithmic benchmarks (reduce, scan, sort, FFT, matmul, memory ops), multi-GPU NCCL harness, scaling curve framework, baseline capture infrastructure
+**Avoids:** Pitfall 3 (input size gaps)
 
-**Phase 3: Extended Collectives (AllGather, ReduceScatter, Group Ops)**
-- All-gather for row-parallel activation gathering
-- Reduce-scatter for alternative gradient aggregation
-- Group operations (`ncclGroupStart/End`) for batching
-- Unified NCCL/legacy fallback path
-- **Pitfalls to avoid:** Single-rank collective calls, blocking operations
+### Phase 3: CI Regression Testing
+**Rationale:** CI integration without statistical rigor causes false positives that erode trust. Builds on Phases 1-2 measurement stability.
+**Delivers:** GitHub Actions workflow, baseline comparison with configurable tolerances, statistical significance gates, baseline management and staleness tracking
+**Avoids:** Pitfalls 4 (CI non-determinism), 5 (baseline drift)
 
-**Phase 4: Tensor Parallelism**
-- `TensorParallelMatmul` with column/row parallel strategies
-- `ColumnParallelLayer` (QKV projection pattern)
-- `RowParallelLayer` (output projection pattern)
-- Integration with existing `DistributedMatmul`
-- **Pitfalls to avoid:** Memory explosions from replicated optimizer states
+### Phase 4: Performance Dashboards
+**Rationale:** Visual trend analysis and regression reporting completes the benchmarking story. Depends on all prior phases producing reliable data.
+**Delivers:** HTML dashboard generator with trend charts, baseline comparison visualization, regression annotation, CI artifact integration
+**Avoids:** Pitfall 7 (multi-GPU sync errors manifest in dashboard data)
 
-**Phase 5: Pipeline Parallelism**
-- `PipelineScheduler` with 1F1B and interleaved schedules
-- P2P send/recv primitives for inter-stage communication
-- Activation buffer management with ping-pong overlap
-- Communicator splitting via `ncclCommSplit`
-- **Pitfalls to avoid:** Unbalanced stage compute, bubble overhead
+### Phase Ordering Rationale
+
+- Phase 1 must come first — measurement methodology underpins everything else
+- Phase 2 before Phase 3 — CI gates need benchmarks to run and baselines to compare against
+- Phase 4 last — dashboards consume data from Phases 2-3
 
 ### Research Flags
 
-| Phase | Needs Deeper Research | Notes |
-|-------|----------------------|-------|
-| Phase 1 | NO | NCCL docs provide definitive patterns |
-| Phase 2 | NO | Error handling patterns well-documented |
-| Phase 3 | NO | Collective patterns standardized |
-| Phase 4 | MEDIUM | Memory profiling tooling needed |
-| Phase 5 | YES | Interleaved scheduling has implementation nuances |
-
----
+- **Phase 2:** Multi-GPU NCCL benchmarks need hardware topology detection (existing DeviceMesh may help)
+- **Phase 3:** CI GPU runner selection (dedicated vs. cloud) affects statistical thresholds
+- **Phase 4:** Dashboard hosting strategy (GitHub Pages, internal server, artifact attachment)
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | **HIGH** | Based on NVIDIA NCCL 2.30 documentation |
-| Features | **HIGH** | Direct API mapping, established ML patterns |
-| Architecture | **HIGH** | Megatron-LM patterns stable, well-documented |
-| Pitfalls | **HIGH** | Primary source is NVIDIA NCCL docs |
+| Stack | HIGH | Context7-verified for Google Benchmark, NVTX, pytest, plotly |
+| Features | HIGH | CUDA benchmarking domain well-understood, existing codebase patterns extend cleanly |
+| Architecture | HIGH | Layer integration patterns clear, dependency order confirmed by pitfall analysis |
+| Pitfalls | HIGH | All 8 pitfalls verified against NVIDIA best practices and CUDA profiling guides |
 
-**Gaps to Address:**
-- Memory profiling infrastructure not yet built (needed for Phase 4)
-- P2P communication patterns for pipeline less standardized than collectives
-- Multi-communicator management edge cases with CUDA Graphs
+**Overall confidence:** HIGH — research aligns with existing codebase patterns.
 
----
+### Gaps to Address
+
+- **Baseline storage location:** git-committed `scripts/benchmark/baselines/` vs. GitHub artifact storage — decide based on team preferences
+- **Regression thresholds per algorithm type:** Memory-bound vs. compute-bound may need different tolerances (suggest 5-10% default, configurable)
 
 ## Sources
 
-- **NCCL 2.30 API:** NVIDIA NCCL Documentation (docs.nvidia.com/deeplearning/nccl)
-- **Tensor Parallelism:** Megatron-LM column/row parallel patterns, Transformer Engine
-- **Pipeline Parallelism:** GPipe, PipeDream papers; Megatron Core schedules
-- **Pitfalls:** NCCL Troubleshooting, GitHub issues #2117, #2119, #2106
+### Primary (HIGH confidence)
+- Google Benchmark official docs — Custom timers, JSON output, CMake integration
+- NVIDIA NVTX documentation — nvtx3 header-only C++ API, scoped_marker patterns
+- NVIDIA Nsight Systems profiling guide — NVTX timeline visualization
+
+### Secondary (MEDIUM confidence)
+- NCCL Tests repository (NVIDIA/nccl-tests) — Collective communication benchmark patterns
+- CUTLASS benchmarks — GEMM benchmarking patterns and scaling curves
+
+### Tertiary (LOW confidence)
+- Cloud GPU benchmarking variance studies — general patterns only, need validation against specific CI hardware
+
+---
+*Research completed: 2026-04-26*
+*Ready for roadmap: yes*
