@@ -1,0 +1,63 @@
+# Property-Based Testing CMake Configuration
+# Built alongside main tests
+
+set(PROPERTY_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/property)
+
+# Mathematical Invariants Test
+add_executable(property_mathematical
+    ${PROPERTY_TESTS_DIR}/mathematical_tests.cpp
+)
+target_link_libraries(property_mathematical PRIVATE cuda_impl CUDA::cudart)
+target_include_directories(property_mathematical PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${PROPERTY_TESTS_DIR}
+)
+target_compile_options(property_mathematical PRIVATE -std=c++23)
+
+add_test(NAME property.mathematical COMMAND property_mathematical)
+
+# Algorithmic Correctness Test
+add_executable(property_algorithmic
+    ${PROPERTY_TESTS_DIR}/algorithmic_tests.cpp
+)
+target_link_libraries(property_algorithmic PRIVATE cuda_impl CUDA::cudart)
+target_include_directories(property_algorithmic PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${PROPERTY_TESTS_DIR}
+)
+target_compile_options(property_algorithmic PRIVATE -std=c++23)
+
+add_test(NAME property.algorithmic COMMAND property_algorithmic)
+
+# Numerical Stability Test
+add_executable(property_numerical
+    ${PROPERTY_TESTS_DIR}/numerical_tests.cpp
+)
+target_link_libraries(property_numerical PRIVATE cuda_impl CUDA::cudart)
+target_include_directories(property_numerical PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${PROPERTY_TESTS_DIR}
+)
+target_compile_options(property_numerical PRIVATE -std=c++23)
+
+add_test(NAME property.numerical COMMAND property_numerical)
+
+# Combined property test target
+add_custom_target(property_all
+    COMMAND property_mathematical
+    COMMAND property_algorithmic
+    COMMAND property_numerical
+    DEPENDS property_mathematical property_algorithmic property_numerical
+    COMMENT "Running all property-based tests"
+)
+
+# Run property tests with seed for reproducibility
+add_custom_target(run_property_tests
+    COMMAND property_mathematical $<TARGET_FILE:property_mathematical> ${SEED}
+    COMMAND property_algorithmic $<TARGET_FILE:property_algorithmic> ${SEED}
+    COMMAND property_numerical $<TARGET_FILE:property_numerical> ${SEED}
+    DEPENDS property_mathematical property_algorithmic property_numerical
+    COMMENT "Running property tests with seed ${SEED}"
+)
+
+message(STATUS "Property-based test targets configured")

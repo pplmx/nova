@@ -125,3 +125,6 @@ gtest_discover_tests(nova-tests)
 
 # Fuzz Testing
 include(CMakeFuzz.txt)
+
+# Property-Based Testing
+include(CMakeProperty.txt)
