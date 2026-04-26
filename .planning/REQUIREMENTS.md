@@ -64,10 +64,22 @@ This milestone adds four developer experience layers to Nova:
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ERR-01 to ERR-04 | Phase 33 | — |
-| CMK-01 to CMK-04 | Phase 34 | — |
-| IDE-01 to IDE-04 | Phase 35 | — |
-| BLD-01 to BLD-04 | Phase 36 | — |
+| ERR-01 | Phase 33 | Pending |
+| ERR-02 | Phase 33 | Pending |
+| ERR-03 | Phase 33 | Pending |
+| ERR-04 | Phase 33 | Pending |
+| CMK-01 | Phase 34 | Pending |
+| CMK-02 | Phase 34 | Pending |
+| CMK-03 | Phase 34 | Pending |
+| CMK-04 | Phase 34 | Pending |
+| IDE-01 | Phase 35 | Pending |
+| IDE-02 | Phase 35 | Pending |
+| IDE-03 | Phase 35 | Pending |
+| IDE-04 | Phase 35 | Pending |
+| BLD-01 | Phase 36 | Pending |
+| BLD-02 | Phase 36 | Pending |
+| BLD-03 | Phase 36 | Pending |
+| BLD-04 | Phase 36 | Pending |
 
 ---
 
