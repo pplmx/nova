@@ -508,3 +508,4 @@ message(STATUS "For faster builds, use: cmake -G Ninja -B build-ninja && cmake -
 
 enable_testing()
 add_subdirectory(tests)
+add_subdirectory(benchmark)
