@@ -1,95 +1,76 @@
-# Nova v1.8 Developer Experience — Roadmap
+# Nova v1.9 Documentation — Roadmap
 
-**Milestone:** v1.8 Developer Experience
+**Milestone:** v1.9 Documentation
 **Created:** 2026-04-26
-**Status:** ✅ COMPLETE
-**Granularity:** Standard (4 phases)
+**Status:** Planning
+**Granularity:** Standard (3 phases)
 
 ## Overview
 
-This milestone adds four developer experience layers to Nova:
+This milestone adds comprehensive documentation to Nova:
 
-1. **Error Message Framework** — Descriptive CUDA errors with device context and recovery hints
-2. **CMake Package Export** — Relocatable `find_package(nova)` support via config-file packages
-3. **IDE Configuration** — clangd and VS Code settings for CUDA support
-4. **Build Performance** — ccache, Ninja, and CMakePresets.json for fast builds
+1. **API Reference** — Doxygen/Sphinx auto-generated documentation
+2. **Tutorials** — Step-by-step guides for common use cases
+3. **Examples** — Sample code demonstrating key features
 
 ## Phases
 
-- [x] **Phase 33: Error Message Framework** — Descriptive CUDA errors with device context and recovery hints
-- [x] **Phase 34: CMake Package Export** — Relocatable find_package support with exported targets
-- [x] **Phase 35: IDE Configuration** — clangd and VS Code settings for CUDA support
-- [x] **Phase 36: Build Performance** — ccache, unity builds, and CMakePresets.json
+- [ ] **Phase 37: API Reference** — Doxygen configuration and documentation generation
+- [ ] **Phase 38: Tutorials** — Quick start, multi-GPU, checkpoint, profiling guides
+- [ ] **Phase 39: Examples** — Image processing, graph, neural net, distributed examples
 
 ---
 
 ## Phase Details
 
-### Phase 33: Error Message Framework
+### Phase 37: API Reference
 
-**Goal:** Developers can understand and recover from CUDA errors quickly
+**Goal:** Generate comprehensive API documentation from source code
 
 **Depends on:** Nothing (first phase)
 
-**Requirements:** ERR-01, ERR-02, ERR-03, ERR-04
+**Requirements:** API-01, API-02, API-03, API-04
 
 **Success Criteria** (what must be TRUE):
 
-1. Developer sees CUDA error message that includes the CUDA function name, file:line location, and device context (e.g., "Reduce kernel failed at device 0, stream 1, file:line /path/to/kernel.cu:42")
-2. Developer sees error-category-specific recovery hints in error output (e.g., "Try reducing block size" for shared memory errors, "Check memory allocation" for OOM errors)
-3. Developer sees cuBLAS status codes translated to human-readable names (e.g., `CUBLAS_STATUS_NOT_SUPPORTED` instead of numeric code `7`)
-4. Developer can catch and handle Nova errors using `std::error_code` and `std::error_category` idioms in C++
+1. Developer can run `doxygen` and generate HTML documentation
+2. All public functions in headers have Doxygen comments
+3. Documentation is grouped by module (memory, device, algo, api)
+4. Cross-references link related functions and types
 
 **Plans:** TBD
 
-### Phase 34: CMake Package Export
+### Phase 38: Tutorials
 
-**Goal:** Downstream projects can discover and link Nova via CMake
+**Goal:** Provide step-by-step guides for common use cases
 
-**Depends on:** Phase 33 (error framework provides consistent errors in exported targets)
+**Depends on:** Phase 37 (API reference provides context)
 
-**Requirements:** CMK-01, CMK-02, CMK-03, CMK-04
+**Requirements:** TUT-01, TUT-02, TUT-03, TUT-04
 
 **Success Criteria** (what must be TRUE):
 
-1. Developer can run `find_package(nova REQUIRED)` successfully after running `cmake --install`
-2. Developer can link `Nova::nova` and `Nova::cuda` imported targets in their CMake project
-3. Developer sees feature matrix output during CMake configure showing NCCL, MPI status (e.g., "Nova 1.8.0: NCCL [ON], MPI [ON], CUDA 20")
-4. Developer can relocate installed package to different directory without breaking `find_package` resolution
+1. Developer can complete quick start in 5 minutes and run first CUDA program
+2. Developer can implement multi-GPU data parallelism following tutorial
+3. Developer can save and restore checkpoint following tutorial
+4. Developer can profile application using benchmarks following guide
 
 **Plans:** TBD
 
-### Phase 35: IDE Configuration
+### Phase 39: Examples
 
-**Goal:** Developers can use clangd or VS Code with full CUDA support
+**Goal:** Provide runnable examples demonstrating key features
 
-**Depends on:** Phase 34 (IDE include paths come from CMake exports)
+**Depends on:** Phase 37 (API reference for implementation details)
 
-**Requirements:** IDE-01, IDE-02, IDE-03, IDE-04
-
-**Success Criteria** (what must be TRUE):
-
-1. Developer can open Nova in any editor with clangd and see zero spurious errors for `.cu` files (correct CUDA parsing with `--cuda-gpu-arch` flags)
-2. Developer using VS Code sees clangd integration working with real-time diagnostics and code completion for CUDA code
-3. Developer finds `compile_commands.json` symlinked at project root without manual setup
-4. Developer can follow `docs/ide-setup.md` to configure their IDE in under 5 minutes
-
-**Plans:** TBD
-
-### Phase 36: Build Performance
-
-**Goal:** Developers can build Nova quickly using CMake presets and ccache
-
-**Depends on:** Phase 35 (presets reference IDE flags from Phase 35)
-
-**Requirements:** BLD-01, BLD-02, BLD-03, BLD-04
+**Requirements:** EX-01, EX-02, EX-03, EX-04
 
 **Success Criteria** (what must be TRUE):
 
-1. Developer can configure and build using `cmake --preset dev` / `cmake --build --preset dev` with sensible defaults (Ninja, parallel jobs)
-2. Developer can enable ccache with `-DCMAKE_CUDA_COMPILER_LAUNCHER=ccache` and see >50% cache hit rate on rebuilds
-3. Developer can enable unity builds with `-DNOVA_ENABLE_UNITY_BUILD=ON` and all 444 tests pass
-4. Developer can follow build performance documentation to set up ccache and understand preset usage
+1. Developer can run image processing example with blur/sobel/morphology
+2. Developer can run graph algorithm example (BFS or PageRank)
+3. Developer can run neural net primitives example (matmul, softmax)
+4. Developer can run distributed training example with NCCL
 
 **Plans:** TBD
 
@@ -99,46 +80,41 @@ This milestone adds four developer experience layers to Nova:
 
 | Requirement | Phase | Description |
 |-------------|-------|-------------|
-| ERR-01 | Phase 33 | Descriptive error messages with CUDA function name, file:line, device context |
-| ERR-02 | Phase 33 | Error-category-specific recovery hints |
-| ERR-03 | Phase 33 | cuBLAS status code translation to readable names |
-| ERR-04 | Phase 33 | std::error_code integration for idiomatic error handling |
-| CMK-01 | Phase 34 | find_package(nova REQUIRED) support |
-| CMK-02 | Phase 34 | Relocatable exported targets with generator expressions |
-| CMK-03 | Phase 34 | Feature matrix display during CMake configure |
-| CMK-04 | Phase 34 | Version file matching installed version |
-| IDE-01 | Phase 35 | .clangd/config.yaml for clangd CUDA parsing |
-| IDE-02 | Phase 35 | .vscode/settings.json for VS Code clangd integration |
-| IDE-03 | Phase 35 | compile_commands.json symlink at project root |
-| IDE-04 | Phase 35 | docs/ide-setup.md documentation |
-| BLD-01 | Phase 36 | CMakePresets.json with dev/release/ci presets |
-| BLD-02 | Phase 36 | NOVA_USE_CCACHE CMake option for ccache |
-| BLD-03 | Phase 36 | NOVA_ENABLE_UNITY_BUILD CMake option |
-| BLD-04 | Phase 36 | Build performance documentation |
+| API-01 | Phase 37 | Doxygen configuration generates HTML documentation |
+| API-02 | Phase 37 | All public headers have documented function signatures |
+| API-03 | Phase 37 | Grouped documentation by module |
+| API-04 | Phase 37 | Cross-references link related functions and types |
+| TUT-01 | Phase 38 | Quick start guide (5-minute to first CUDA program) |
+| TUT-02 | Phase 38 | Multi-GPU tutorial with device mesh example |
+| TUT-03 | Phase 38 | Checkpoint and restore tutorial |
+| TUT-04 | Phase 38 | Performance profiling guide using benchmarks |
+| EX-01 | Phase 39 | Image processing example with blur/sobel/morphology |
+| EX-02 | Phase 39 | Graph algorithm example (BFS/PageRank) |
+| EX-03 | Phase 39 | Neural net primitives example (matmul, softmax) |
+| EX-04 | Phase 39 | Distributed training example with NCCL |
 
-**Coverage:** 16/16 requirements mapped
+**Coverage:** 12/12 requirements mapped
 
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 33. Error Message Framework | 1/1 | ✅ Complete | 2026-04-26 |
-| 34. CMake Package Export | 1/1 | ✅ Complete | 2026-04-26 |
-| 35. IDE Configuration | 1/1 | ✅ Complete | 2026-04-26 |
-| 36. Build Performance | 1/1 | ✅ Complete | 2026-04-26 | |
+| 37. API Reference | 0/4 | Not started | — |
+| 38. Tutorials | 0/4 | Not started | — |
+| 39. Examples | 0/4 | Not started | — |
 
 ---
 
 ## Previous Milestone
 
-**v1.7 Benchmarking & Testing** — SHIPPED 2026-04-26
+**v1.8 Developer Experience** — SHIPPED 2026-04-26
 
-- Phase 29: Benchmark Infrastructure Foundation
-- Phase 30: Comprehensive Benchmark Suite
-- Phase 31: CI Regression Testing
-- Phase 32: Performance Dashboards
+- Phase 33: Error Message Framework
+- Phase 34: CMake Package Export
+- Phase 35: IDE Configuration
+- Phase 36: Build Performance
 
 ---
 
 *Roadmap created: 2026-04-26*
-*Next: /gsd-plan-phase 33*
+*Next: /gsd-plan-phase 37*
