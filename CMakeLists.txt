@@ -217,6 +217,7 @@ set(DEVICE_SOURCES
 
 set(ALGO_SOURCES
         ${CUDA_SRC_ALGO}/reduce.cu
+        ${CUDA_SRC_ALGO}/sort.cu
 )
 
 set(IMAGE_SOURCES

@@ -69,6 +69,7 @@ add_executable(nova-tests
     performance/autotuner_edge_test.cpp
     memory_opt/memory_optimizer_test.cpp
     memory_opt/memory_optimizer_edge_test.cpp
+    algo_sort_test.cu
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
