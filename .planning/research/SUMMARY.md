@@ -1,200 +1,223 @@
 # Project Research Summary
 
-**Project:** Nova v1.8 Developer Experience
-**Domain:** CUDA C++ Library Developer Experience Tooling
-**Researched:** 2026-04-26
+**Project:** Nova v2.3 Extended CUDA Algorithms
+**Domain:** GPU Parallel Algorithm Library
+**Researched:** 2026-04-28
 **Confidence:** HIGH
 
 ## Executive Summary
 
-Nova v1.8 adds four developer experience layers on top of an already-solid CUDA/C++23/CMake 4.0+ foundation. The core additions are: (1) a descriptive CUDA error wrapper with device context and recovery hints, (2) proper CMake install/export infrastructure using config-file packages, (3) clangd and VS Code configuration for IDE support, and (4) ccache + Ninja integration for build performance. No framework changes are needed—only tooling additions and CMake infrastructure wiring.
+Nova v2.3 extends the existing CUDA library with production-quality parallel algorithms across sorting/searching, linear algebra extras (SVD, eigenvalue decomposition), numerical methods (Monte Carlo, integration, root finding), and signal processing (wavelets, filtering). Research confirms NVIDIA provides production-grade implementations for most linear algebra and FFT operations via cuSOLVER, CUB, and cuFFT—custom implementations are needed only for wavelet transforms, Monte Carlo methods, and numerical methods. The recommended approach is thin wrapper/proxy patterns around NVIDIA libraries with Nova-idiomatic APIs, leveraging the existing five-layer architecture with minimal modifications.
 
-The recommended approach prioritizes build correctness over speed: error handling first (Phase 1), then CMake packaging (Phase 2), IDE configuration (Phase 3), and build performance (Phase 4). Each phase builds on the previous without dependencies on future phases. Key risks are unity build correctness (can cause silent data corruption), ccache cache key divergence (architecture flags produce near-zero hit rates), and non-relocatable CMake packages (hardcoded absolute paths). All risks have documented prevention strategies in PITFALLS.md.
+Key risks include numerical stability in SVD for ill-conditioned matrices, warp divergence in variable-length sorting, and convergence monitoring failures in iterative numerical methods. Mitigation strategies are well-documented in NVIDIA best practices and should be implemented from the start. The implementation should prioritize algorithm domains with the best library support (sorting, linear algebra) before tackling custom implementations (numerical methods, signal processing).
+
+---
 
 ## Key Findings
 
 ### Recommended Stack
 
-**Summary from STACK.md:** The project already has CMake 4.0+, CUDA 20, and C++23. Four new tooling layers need addition, all with well-documented integration patterns.
+**Core technologies:**
 
-**Core technologies (no change needed):**
-- CMake 4.0+ — Already in use; CMake 4.3.2 available
-- CUDA Toolkit 20 — FindCUDAToolkit provides all `CUDA::*` imported targets
-- C++23/CUDA 20 — Already set via `CMAKE_CXX_STANDARD` and `CMAKE_CUDA_STANDARD`
-- `CMAKE_EXPORT_COMPILE_COMMANDS=ON` — Already enabled (line 53 of CMakeLists.txt)
-- Ninja generator — Already documented in CMakeLists.txt
+| Technology | Version | Purpose | Integration |
+|------------|---------|---------|-------------|
+| **cuSOLVER** | 13.2 | SVD, eigenvalue decomposition, factorization | New wrappers in `cuda::linalg` |
+| **CUB** | Latest | Radix sort, reduce, scan, warp primitives | Extend `cuda::algo` |
+| **cuFFT** | 13.2 | FFT, convolution | Extend multi-GPU support |
+| **cuRAND** | 13.2 | Random number generation | New `cuda::numeric::random` |
+| **cuBLAS** | 13.2 | Matrix operations | Already used, extend batched ops |
 
-**New additions:**
-- Custom `nova_error.hpp` — Header-only error wrapper with `std::error_code` categories, device context, and recovery hints. No external library needed.
-- CMake config-file packages — Use `write_basic_package_version_file()` + `install(EXPORT)` via CMakePackageConfigHelpers (CMake 3.15+)
-- `.clangd` configuration — YAML file telling clangd to treat `.cu` files as CUDA with `--cuda-gpu-arch=sm_80` and `-xcuda` flags
-- CMakePresets.json — Shareable build configurations (dev, release, ci variants) with ccache and unity build options
-- ccache — Set via `CMAKE_CUDA_COMPILER_LAUNCHER=ccache` in presets; version 4.10 recommended
-- Ninja — Use `-G Ninja` generator for parallel builds (already recommended in CMakeLists.txt)
+**Custom implementations required:**
+- Top-K selection (CUB segmented sort)
+- Binary search (warp shuffle)
+- Monte Carlo simulation (cuRAND + reduction)
+- Numerical integration (trapezoidal, Simpson)
+- Root finding (bisection, Newton-Raphson)
+- Interpolation (linear, cubic spline)
+- Wavelet transforms (Haar, Daubechies)
 
 ### Expected Features
 
-**Summary from FEATURES.md:** Table stakes are CMake integration, compile_commands.json, and rich error messages. Differentiators are IDE zero-config and CMake presets.
-
 **Must have (table stakes):**
-- CMake integration with `find_package(nova)` support — Required for library adoption; export targets to `lib/cmake/nova/`
-- `compile_commands.json` generation — Required for any IDE to function
-- Rich CUDA error messages with file:line context and device info — Immediately useful debugging
-- ccache detection and integration — Quick win for build time
-- `.clangd` configuration file — Zero-config clangd support
+- CUB-based radix sort (key-value pairs) — GPU sorting workhorse
+- SVD via cuSOLVER (`gesvdj` with tunable parameters)
+- Symmetric eigenvalue decomposition (`syevd`)
+- QR decomposition wrapper (`geqrf` + `ormqr`)
+- Cholesky factorization (`potrf`) with batched variants
+- 1D/2D FFT via cuFFT with batch transforms
+- FFT-based convolution
 
 **Should have (competitive differentiators):**
-- Error recovery suggestions — "Try reducing block size" based on error type (P2)
-- CMake presets (`dev`, `release`, `ci`) — Sensible defaults for common workflows (P2)
-- Kernel-level error attribution — "Reduce kernel failed at thread (42,0)" (P2, HIGH complexity)
+- Top-K selection — finding k largest without full sort
+- Truncated/randomized SVD — faster approximate decomposition
+- Monte Carlo with variance reduction (antithetic variates)
+- Haar wavelet transform (simple, then extend to Daubechies)
+- FIR filters with FFT optimization
 
 **Defer to v2+:**
-- Interactive debugger helpers — Advanced users use ncu/nsight directly
-- CI build matrix — Valuable but not blocking; depends on resource availability
-- pkg-config support — Only needed for non-CMake build systems
-- Python/Rust bindings — Separate repo scope
+- Multi-GPU sorting (NCCL integration)
+- Sparse eigensolver (cuSolverSP deprecated, use cuDSS)
+- Continuous wavelet transform
+- Real-time audio processing pipeline
+- Generalized SVD for rectangular matrices
 
 ### Architecture Approach
 
-**Summary from ARCHITECTURE.md:** The DX improvements integrate as a cross-cutting layer above the five-layer CUDA stack (memory → device → algo → api). These are infrastructure additions, not feature additions, so they touch the build system, library layer boundaries, and developer tooling.
+The existing five-layer architecture (Memory → Device → Algorithm → API → Application) is well-suited for extension. New domain-specific namespaces map cleanly:
 
-**Major components:**
-1. **Error Layer (`include/cuda/error/`)** — Structured `std::error_code` with CUDA error categories, device context capture, and recovery hints. RAII `cuda_error_guard` pattern.
-2. **CMake Package Exports** — Modern CMake `export()` + `install(EXPORT)` generating `novaTargets.cmake` and `novaConfig.cmake` for relocatable `find_package()` support.
-3. **IDE Configuration (`.clangd`, `.vscode/`)** — YAML and JSON configs that tell clangd how to parse CUDA files and configure VS Code with CUDA IntelliSense.
-4. **Build Performance Layer** — ccache + Ninja + unity builds, controlled via CMakePresets.json with environment-aware settings.
+| Domain | Namespace | External Dependencies | Integration |
+|--------|-----------|----------------------|-------------|
+| Sorting | `cuda::sort` | CUB | Integrate into `cuda::algo` |
+| Linear Algebra | `cuda::linalg` | cuSOLVER, cuBLAS | **Standalone layer** |
+| Numerical Methods | `cuda::numeric` | cuRAND | Integrate into `cuda::algo` |
+| Signal Processing | `cuda::signal` | cuFFT | **Standalone layer** (FFT specialization) |
+
+Memory layer (`Buffer<T>`, `MemoryPool`) and stream management are fully reusable across all domains. Device layer requires extensions for comparison primitives and PRNG utilities.
 
 ### Critical Pitfalls
 
-1. **Generic Error Messages Mask the Root Cause** — `cudaGetErrorString()` returns the same text NVIDIA's driver returns. Prevention: Extend `CUDA_CHECK` with operation context, add error-category-specific recovery hints, map cuBLAS status codes to readable names.
+1. **Shared memory bank conflicts in sorting kernels** — Use bank-conflict-free padding (+5 words) or warp shuffle instructions instead of shared memory for comparison exchanges. Detected via NVIDIA profiler "shared memory efficiency" < 80%.
 
-2. **CMake Exports Produce Non-Relocatable Packages** — Hard-coded `${CMAKE_SOURCE_DIR}` paths break when the package is installed to a different location. Prevention: Use `$<BUILD_INTERFACE:>` and `$<INSTALL_INTERFACE:>` generator expressions in all `target_include_directories` calls.
+2. **Numerical instability in SVD** — Implement condition number estimation and adaptive precision switching. Small singular values accumulate relative error >> machine epsilon for ill-conditioned matrices.
 
-3. **clangd Reports Thousands of Errors for CUDA Files** — clangd uses libclang which cannot parse nvcc-specific flags. Prevention: Create `.clangd/config.yaml` with `CompileFlags:` mapping that filters nvcc flags and adds `-xcuda`, `--cuda-gpu-arch=sm_80`.
+3. **Warp divergence in variable-length sorting** — Pre-classify data by length, then sort homogeneous groups. Divergent branching causes up to 32x slowdown.
 
-4. **ccache Has Near-Zero Cache Hit Rate for CUDA** — Architecture flags (`-gencode`) and `--threads` in global `CMAKE_CUDA_FLAGS` produce different cache keys per compilation. Prevention: Remove `--threads` from global flags, set `CCACHE_BASEDIR`, configure `sloppiness = include_file_mtime`.
+4. **Convergence monitoring failures in iterative methods** — Implement multi-criteria convergence (absolute + relative tolerance) with stalling and oscillation detection. Never terminate purely on iteration count.
 
-5. **Unity Builds Produce Silent Data Corruption** — Symbol collisions and macro collisions in concatenated `.cu` files cause non-deterministic behavior. Prevention: Audit for non-namespaced device symbols, start with `UNITY_BUILD_BATCH_SIZE=4`, run full test suite with unity builds enabled.
+5. **FFT size constraints** — Auto-pad to optimal sizes (2^a × 3^b × 5^c × 7^d). Prime-length FFTs degrade 10-100x or fail entirely.
+
+---
 
 ## Implications for Roadmap
 
-Based on research, the recommended phase structure follows build order from ARCHITECTURE.md and maps to pitfall prevention from PITFALLS.md:
+Based on research, suggested phase structure:
 
-### Phase 1: Error Message Framework
-
-**Rationale:** Error handling is foundational—all other DX features benefit from users being able to understand failures. The existing `CUDA_CHECK` macro is minimal and must be extended before CMake packaging (which may surface new error paths).
-
-**Delivers:**
-- `include/cuda/error/cuda_error.hpp` — Structured error types with categories
-- `cuda_error_guard` RAII wrapper — Translates `cudaError_t` → `nova::error`
-- Recovery hint mapping per error type
-- cuBLAS status code → readable name mapping
-- Tests for error translation
-
-**Addresses:** Rich error messages with context (FEATURES.md P1)
-
-**Avoids:** Pitfall 1 — Generic error messages mask root cause
-
-### Phase 2: CMake Package Export
-
-**Rationale:** CMake packaging is needed for library adoption. Must be validated with real downstream projects. Depends on error layer (Phase 1) for consistent error translation in exported targets.
+### Phase 1: Foundation & Sorting
+**Rationale:** Sorting has the best library support (CUB), establishes device primitive patterns, and validates memory layer reuse. Low implementation risk builds team confidence.
 
 **Delivers:**
-- `cmake/novaConfig.cmake.in` — Config-file template
-- `install(EXPORT novaTargets ...)` rules in CMakeLists.txt
-- Generator expressions for relocatable paths
-- Feature matrix in CMake configure output (NCCL, MPI status)
-- Documentation: `find_package(nova)` usage
+- Extended device utilities (`device_utils.h`) with comparison primitives, warp shuffle
+- New namespace `cuda::sort` with radix sort, top-K selection
+- Binary search on sorted arrays
+- Memory-efficient buffer patterns for working storage
 
-**Addresses:** CMake integration with exported targets (FEATURES.md P1)
+**Addresses:** FEATURES.md — CUB radix sort, top-K, block-level sort
+**Avoids:** PITFALLS.md — Bank conflicts (use shuffle), memory coalescing (pack records)
 
-**Avoids:** Pitfall 2 — Non-relocatable CMake packages; Pitfall 6 — Silent dependency failures
-
-### Phase 3: IDE Configuration
-
-**Rationale:** IDE support requires `compile_commands.json` (already generated) and clangd configuration. Once `.clangd` exists, VS Code settings can reference the same flags. Phase 4 (build performance) can use the same IDE infrastructure.
+### Phase 2: Linear Algebra Extras
+**Rationale:** cuSOLVER provides production-optimized LAPACK equivalents. This is the highest-value differentiator for scientific computing users.
 
 **Delivers:**
-- `.clangd/config.yaml` — clangd configuration with CUDA flags
-- `.vscode/settings.json` — VS Code clangd integration
-- `.vscode/c_cpp_properties.json` — CUDA IntelliSense paths
-- `.vscode/extensions.json` — Recommended extensions
-- `compile_commands.json` symlink to project root
-- `docs/ide-setup.md` — Developer onboarding guide
+- New standalone namespace `cuda::linalg`
+- SVD wrapper (`gesvd`, `gesvdj`, `gesvdr` for randomized)
+- Symmetric eigenvalue decomposition (`syevd`)
+- QR, Cholesky, LDL factorization wrappers
+- Accuracy tier selection (Fast/Standard/High)
 
-**Addresses:** `.clangd` configuration (FEATURES.md P1), compile_commands.json generation (FEATURES.md P1)
+**Uses:** cuSOLVER, cuBLAS handles
+**Implements:** Plan classes with workspace allocation pattern
+**Avoids:** PITFALLS.md — Condition number estimation before SVD, stability verification for eigenvalues
 
-**Avoids:** Pitfall 3 — clangd fails on CUDA files; Pitfall 7 — IDE config not version-controlled
-
-### Phase 4: Build Performance
-
-**Rationale:** ccache and unity builds are the highest-impact performance optimizations, but must be validated with full test suite before shipping. CI configuration depends on developer presets being stable.
+### Phase 3: Numerical Methods
+**Rationale:** Custom implementations require more validation. Build Monte Carlo and integration before root finding to establish convergence monitoring patterns.
 
 **Delivers:**
-- `CMakePresets.json` — `dev`, `release`, `ci` presets with ccache and unity build
-- `NOVA_USE_CCACHE` CMake option — ccache detection and configuration
-- `CMAKE_UNITY_BUILD` wired to `NOVA_ENABLE_UNITY_BUILD`
-- Unity build batch size adaptive to CPU/memory
-- CI-specific presets with cache limits and no ccache
-- Full test suite validation with `NOVA_ENABLE_UNITY_BUILD=ON`
+- `cuda::numeric` namespace with PRNG utilities
+- Monte Carlo integration with antithetic variates
+- Trapezoidal and Simpson integration
+- Newton-Raphson and bisection root finding
+- Cubic spline interpolation
 
-**Addresses:** ccache integration (FEATURES.md P1), CMake presets (FEATURES.md P2)
+**Uses:** cuRAND, existing reduction primitives
+**Avoids:** PITFALLS.md — Proper PRNG seeding (per-thread independent), variance tracking, convergence monitoring infrastructure
 
-**Avoids:** Pitfall 4 — ccache zero cache hits; Pitfall 5 — Unity build correctness failures; Pitfall 8 — CI build performance unchanged
+### Phase 4: Signal Processing
+**Rationale:** FFT-based convolution reuses existing infrastructure. Wavelet transforms are custom but have well-documented algorithms.
+
+**Delivers:**
+- `cuda::signal` namespace
+- FFT-based convolution with automatic size optimization
+- Haar wavelet transform (forward/inverse)
+- FIR filter implementation (direct and FFT-based)
+- Basic spectral analysis (PSD via FFT)
+- Explicit boundary handling modes
+
+**Uses:** cuFFT, existing FFT plan pattern
+**Avoids:** PITFALLS.md — FFT size auto-padding, boundary mode selection per application, numerical precision in wavelets
+
+### Phase 5: Integration & Polish
+**Rationale:** Performance optimization, memory tuning, and API documentation after all domains implemented.
+
+**Delivers:**
+- CUDA library dependency management (CMake integration)
+- Performance benchmarks per domain
+- Memory scratch space optimization
+- API documentation
+- Integration tests
+
+---
 
 ### Phase Ordering Rationale
 
-- **Phase 1 before 2:** Error handling is foundational; CMake exports may surface new error paths that need proper translation
-- **Phase 2 before 3:** IDE include paths come from CMake; once CMake exports are correct, IDE configs can reference them
-- **Phase 3 before 4:** IDE configuration is independent of build speed; validate correctness first, then optimize
-- **Phase 4 last:** Build performance is additive—it enhances all previous phases but doesn't change their correctness guarantees
+- **Foundation first:** Sorting validates architecture patterns with lowest-risk implementation
+- **Library-backed before custom:** Linear algebra (cuSOLVER) before numerical methods (all custom)
+- **Custom complexity gradient:** Monte Carlo (MEDIUM) → Integration (MEDIUM-HIGH) → Root finding (MEDIUM)
+- **FFT leverage:** Signal processing builds on existing FFT infrastructure
+
+---
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 4 (Build Performance):** Unity build + CUDA interaction has edge cases; may need `/gsd-research-phase` for NCCL symbol collision patterns
-- **Phase 1 (Error Framework):** cuBLAS error code mapping may need NVIDIA documentation validation for all status codes
+- **Phase 3 (Numerical Methods):** Custom algorithms lack official NVIDIA patterns; validate against ViennaCL/ArrayFire before implementation
+- **Phase 4 (Signal Processing):** Wavelet lifting scheme vs convolution precision tradeoffs need empirical validation
 
 Phases with standard patterns (skip research-phase):
-- **Phase 2 (CMake Export):** Modern CMake `export()` + `install(EXPORT)` is well-documented with official CMake docs
-- **Phase 3 (IDE Configuration):** `.clangd` YAML configuration is standard with clangd official docs
+- **Phase 1 (Sorting):** CUB patterns well-documented, header-only usage
+- **Phase 2 (Linear Algebra):** cuSOLVER API stable, NVIDIA examples comprehensive
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All technology versions verified against official CMake 4.3.2 and clangd documentation; ccache native CMake module confirmed |
-| Features | HIGH | Feature landscape verified against CMake integration patterns and competitor analysis (cuBLAS, Thrust) |
-| Architecture | MEDIUM | Phase ordering and component responsibilities are well-reasoned from research but represent inference from patterns rather than a single authoritative source |
-| Pitfalls | HIGH | 8 pitfalls documented with specific warning signs, prevention strategies, and recovery steps; all verified against CMake and clangd documentation |
+| Stack | **HIGH** | NVIDIA official documentation (cuBLAS 13.2, cuSOLVER 13.2, cuFFT 13.2, CUB) |
+| Features | **HIGH** | Based on NVIDIA libraries and established GPU algorithm taxonomy |
+| Architecture | **MEDIUM-HIGH** | Five-layer extension patterns clear; standalone vs integrated decisions need validation |
+| Pitfalls | **HIGH** | NVIDIA Best Practices Guide, verified CUDA programming patterns |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **cuBLAS status code exhaustiveness:** Research identified common cuBLAS errors but did not enumerate all status codes. Validate coverage during Phase 1 implementation.
-- **NCCL symbol collision patterns:** Unity builds + NCCL interaction may have specific patterns not documented. Test with `NOVA_ENABLE_UNITY_BUILD=ON` in Phase 4.
-- **clangd CUDA parsing coverage:** clangd CUDA support has known limitations. May need to document unsupported patterns or fallback to nvim-lspconfig for some files.
+- **Multi-GPU sorting:** NCCL integration patterns not researched; defer to v2 or research when single-GPU validated
+- **Sparse eigensolver:** cuSolverSP deprecated, cuDSS is successor but not fully researched; only needed for sparse matrix users
+- **IIR filter stability:** Transposed direct form II implemented but GPU-specific precision issues need validation
+- **Quasi-Monte Carlo:** Sobol sequence implementation complexity; standard pseudo-Monte Carlo sufficient for v2.3
+
+---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [CMake cmake-packages(7)](https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html) — Config-file package layout and `install(EXPORT)`
-- [CMake FindCUDAToolkit](https://cmake.org/cmake/help/latest/module/FindCUDAToolkit.html) — All `CUDA::*` imported targets
-- [CMake cmake-presets(7)](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html) — Version 10 schema, environment, vendor fields
-- [clangd Installation and Configuration](https://clangd.llvm.org/installation.html) — .clangd YAML configuration reference
-- [CCache CMake integration](https://ccache.dev/manual/latest.html#_cmake) — Compiler cache configuration
+- NVIDIA cuSOLVER 13.2 Documentation — SVD, eigenvalue decomposition, factorization APIs
+- NVIDIA cuFFT 13.2 Documentation — FFT planning, multi-GPU, precision variants
+- NVIDIA CUB (CCCL) — Device-wide primitives, radix sort, warp primitives
+- NVIDIA CUDA C++ Best Practices Guide — Memory access, warp divergence, shared memory
+- NVIDIA cuRAND Documentation — Random number generation patterns
 
 ### Secondary (MEDIUM confidence)
-- [ARCHITECTURE.md Phase Dependencies](./ARCHITECTURE.md) — Build order rationale from architectural patterns
-- [PITFALLS.md Recovery Strategies](./PITFALLS.md) — Recovery cost estimates from integration experience
+- ViennaCL library patterns — Numerical methods implementation reference
+- ArrayFire documentation — GPU numerical methods patterns
+- Daubechies "Ten Lectures on Wavelets" — Wavelet algorithm reference
+- Oppenheim & Schafer "Discrete-Time Signal Processing" — Filter design theory
 
-### Research Files
-- [STACK.md](./STACK.md) — Complete tooling inventory and integration patterns
-- [FEATURES.md](./FEATURES.md) — Feature prioritization matrix and MVP definition
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — Component responsibilities and data flows
-- [PITFALLS.md](./PITFALLS.md) — 8 critical pitfalls with prevention and recovery
+### Tertiary (LOW confidence)
+- Academic papers on GPU quadrature — Implementation details need verification
+- Monte Carlo variance reduction techniques — Empirical validation needed
 
 ---
-*Research completed: 2026-04-26*
+
+*Research completed: 2026-04-28*
 *Ready for roadmap: yes*

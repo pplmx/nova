@@ -4,21 +4,21 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.2 Comprehensive Enhancement
+## Current Milestone: v2.3 Extended Algorithms
 
-**Previous milestone:** v2.1 New Algorithms — SHIPPED 2026-04-26
+**Previous milestone:** v2.2 Comprehensive Enhancement — SHIPPED 2026-04-27
 
 **Status:** 🚧 IN PROGRESS
 
-**Goal:** Comprehensive enhancement across performance, operators, tooling, and documentation.
+**Goal:** Expand the CUDA library with production-quality parallel algorithms across sorting, linear algebra, numerical methods, and signal processing domains.
 
 **Target features:**
-- Performance: Kernel fusion, memory optimization, autotuning infrastructure
-- Operators: Transformer components (attention, positional encoding), loss functions (cross-entropy, focal, contrastive), optimizers (AdamW, LAMB, gradient clipping)
-- Tooling: CUDA debugging (memory sanitizer, race detection), profiling (timeline, bandwidth analysis), developer utilities (code generation, benchmark automation)
-- Documentation: User guides, API improvements, architecture documentation
+- **Sorting & searching:** GPU-accelerated sorting, binary search, top-k operations
+- **Linear algebra extras:** Eigenvalue decomposition, SVD, matrix factorization
+- **Numerical methods:** Monte Carlo, numerical integration, root finding, interpolation
+- **Signal processing:** Wavelets, filters, advanced convolution operations
 
-**Started:** 2026-04-27
+**Started:** 2026-04-28
 
 ## Core Value
 

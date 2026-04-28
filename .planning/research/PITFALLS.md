@@ -1,374 +1,1095 @@
-# Pitfalls Research
+# GPU Algorithm Pitfalls Research
 
-**Domain:** CUDA Library Developer Experience — Error Messages, CMake Integration, IDE Support, Build Performance
-**Researched:** 2026-04-26
-**Confidence:** HIGH
+**Domain:** CUDA GPU Parallel Algorithms
+**Researched:** 2026-04-28
+**Confidence:** HIGH (based on NVIDIA official documentation and established GPU programming patterns)
 
-## Critical Pitfalls
+## Executive Summary
 
-### Pitfall 1: Generic Error Messages Mask the Root Cause
+This document catalogs common pitfalls across four GPU algorithm domains: sorting/searching, linear algebra extras, numerical methods, and signal processing. Each pitfall includes root cause analysis, consequences, and mitigation strategies mapped to implementation phases.
 
-**What goes wrong:**
-CUDA errors surface as opaque codes like `CUDA error: cudaErrorLaunchFailure` with only a file and line number. Users cannot determine which kernel failed, what inputs caused the failure, or how to recover. The error message provides no actionable guidance.
+Key cross-cutting themes:
+- **Shared memory bank conflicts** affect sorting, linear algebra, and signal processing
+- **Warp divergence** impacts all irregular algorithms
+- **Numerical stability** is critical for linear algebra, numerical methods, and signal processing
+- **Memory coalescing** requirements vary by data access patterns
+
+---
+
+## 1. Sorting & Searching Pitfalls
+
+### 1.1 Bank Conflicts in Shared Memory Sorting
+
+**What goes wrong:** Parallel sorting algorithms (bitonic, radix, odd-even mergesort) heavily use shared memory for comparison exchanges. When threads in a warp access shared memory addresses that map to the same bank, throughput drops by a factor equal to the conflict degree.
+
+**Why it happens:** NVIDIA shared memory is divided into banks (32 banks on most architectures). Sequential access patterns with stride equal to a power of 2 cause all threads to hit the same bank. Classic example:
+
+```cpp
+// DANGEROUS: stride of 32 causes bank conflict
+__shared__ float shared[256];
+value = shared[threadIdx.x * 32];  // All threads access same bank!
+```
+
+**Consequences:**
+- 32x throughput reduction in worst case
+- Sorting slower than a simpler algorithm with better memory access
+- Non-obvious: appears correct but underperforms by 10-50x
+
+**Prevention:**
+```cpp
+// SAFE: Use 5-word padding to avoid bank conflicts
+__shared__ float shared[256 + 5];  // +5 avoids power-of-2 strides
+value = shared[threadIdx.x * 33];  // Now accesses different banks
+
+// Alternative: Use shuffle instructions instead of shared memory
+value = __shfl_down(value, 16);  // No shared memory needed
+```
+
+**Detection:** NVIDIA profiler shows "shared memory efficiency" below 80% or high "shared_load_transaction" counts.
+
+**Phase Recommendation:** Phase 1 (Shared Memory Access Patterns) - Define bank-conflict-free access patterns before implementing sort kernels.
+
+---
+
+### 1.2 Warp Divergence in Variable-Length Sorting
+
+**What goes wrong:** Sorting variable-length records (strings, structs) requires conditional logic that varies by thread, causing warp divergence where threads take different execution paths.
+
+**Why it happens:** The SIMT execution model executes all threads in a warp on the same instruction. When threads branch based on data-dependent lengths, inactive threads still consume execution cycles.
+
+```cpp
+// DIVERGENT: Different threads take different paths
+if (keyLengths[threadIdx] < 8) {
+    // Thread 0, 4, 8, 12... execute here
+    sortSmallKey(key, threadIdx);
+} else if (keyLengths[threadIdx] < 16) {
+    // Thread 1, 5, 9, 13... execute here
+    sortMediumKey(key, threadIdx);
+} else {
+    // Thread 2, 6, 10, 14... execute here
+    sortLargeKey(key, threadIdx);
+}
+```
+
+**Consequences:**
+- Up to 32x slowdown in worst divergence case
+- Performance varies non-deterministically with input distribution
+- Compiler cannot auto-vectorize around divergence
+
+**Prevention:**
+1. **Sort by type first, then by key** - All keys of same length together
+2. **Warp-uniform control flow** - Use predicates that vary within warps only for memory operations, not compute
+3. **Multi-pass approach** - One pass to classify, second pass to sort homogeneous groups
+
+```cpp
+// PREFER: Classify first, sort homogeneous groups
+int bucket = classifyLength(keyLengths[threadIdx]);  // 0, 1, or 2
+__shared__ int bucketCount[3];
+// Count bucket sizes...
+// Launch homogeneous sort kernels per bucket
+```
+
+**Phase Recommendation:** Phase 2 (Warp-Synchronous Design) - Model divergence patterns before kernel implementation.
+
+---
+
+### 1.3 Memory Coalescing for Variable-Length Data
+
+**What goes wrong:** Variable-length sorting (string sort, record sort) cannot guarantee contiguous memory access, leading to severe memory bandwidth underutilization.
+
+**Why it happens:** Fixed-length sort assumes all elements are contiguous in memory. Variable-length elements with pointers/offsets break this assumption:
+
+```cpp
+// BAD: Non-contiguous access pattern
+StringRecord* records = getRecords();
+for (int i = threadIdx.x; i < n; i += blockDim.x) {
+    StringRecord& r = records[i];  // May point anywhere
+    sortKey(r.key, r.keyLength);   // Scatter-gather pattern
+}
+```
+
+**Consequences:**
+- Memory bandwidth drops to 10-20% of peak
+- Latency hiding fails because threads wait for scattered memory
+- Sorting throughput inversely proportional to string variance
+
+**Prevention:**
+1. **Pack records contiguously** with fixed-size headers
+2. **Use indirection** - Sort indices/keys first, then reorder
+3. **Radix sort friendly encoding** - Pre-compute fixed-length sortable keys
+
+```cpp
+// BETTER: Pack with fixed-size headers
+struct PackedRecord {
+    uint32_t length;
+    uint32_t sortKey;        // Precomputed for variable data
+    char data[];             // Variable payload
+};
+
+// Now sorting accesses contiguous memory
+PackedRecord* records = packRecords(original);
+radixSort(records, n);       // Coalesced access guaranteed
+```
+
+**Phase Recommendation:** Phase 1 (Memory Layout) - Define data layout before algorithm implementation.
+
+---
+
+### 1.4 Numerical Stability in Key Comparisons
+
+**What goes wrong:** Floating-point key sorting produces inconsistent results across runs, architectures, and optimization levels due to non-associativity of floating-point operations.
+
+**Why it happens:** `(a < b)` may differ from `(b > a)` in floating-point due to rounding. Parallel sort evaluates comparisons in different orders than serial sort.
+
+**Consequences:**
+- Results vary across GPU generations (different instruction scheduling)
+- Debug vs. release builds produce different orderings
+- Numerical reproducibility impossible without deterministic reduction
+
+**Prevention:**
+1. **Use integer keys** for sortable floating-point values (encode via `float_as_int`)
+2. **Define stable comparison** - Use bitwise operations on integer representations
+3. **Accept non-determinism** - Document as acceptable for numerical sorts
+
+```cpp
+// STABLE: Integer comparison for floating-point keys
+__device__ bool compareKeys(float a, float b) {
+    uint32_t ia = float_as_uint(a);
+    uint32_t ib = float_as_uint(b);
+    // Handle sign bit for correct ordering
+    return (ia ^ (1u << 31)) < (ib ^ (1u << 31));
+}
+```
+
+**Phase Recommendation:** Phase 3 (Correctness Verification) - Define numerical stability requirements and comparison semantics.
+
+---
+
+## 2. Linear Algebra Extras Pitfalls
+
+### 2.1 Convergence Issues in Iterative Eigensolvers
+
+**What goes wrong:** Power iteration, Rayleigh quotient iteration, and Krylov subspace methods fail to converge or converge to wrong eigenvalues due to numerical issues.
 
 **Why it happens:**
-The existing `CUDA_CHECK` macro in `include/cuda/device/error.h` only captures `cudaGetErrorString(err)`, which is the same text NVIDIA's driver returns. It does not capture:
-- The kernel or operation that was being performed
-- Input dimensions, device count, or memory state at the time of failure
-- Recovery suggestions specific to the error type
-- The call stack leading to the failure
+1. **Clustered eigenvalues** - Nearly equal eigenvalues cause slow separation
+2. **Poor initial guesses** - Starting vectors orthogonal to dominant eigenspace
+3. **Loss of orthogonality** - Gram-Schmidt orthonormalization accumulates errors
 
-The `OperationContext` struct exists but is not used by `CUDA_CHECK` — only by the `CUDA_VALIDATE_SIZE` macro. cuBLAS errors print only the integer status code, not the meaningful name.
+**Consequences:**
+- Algorithm never terminates (no convergence check catches this)
+- Returns eigenvalues with wrong multiplicity
+- Eigenvectors span wrong subspace
 
-**How to avoid:**
-- Extend `CUDA_CHECK` to accept optional operation context and capture it in the exception
-- Add error-category-specific recovery hints: `cudaErrorMemoryAllocation` → suggest reducing batch size, checking for memory leaks; `cudaErrorLaunchFailure` → suggest checking kernel parameters and device compatibility
-- Map cuBLAS status codes to readable names and recovery actions (e.g., `CUBLAS_STATUS_NOT_INITIALIZED` → "cuBLAS handle not created. Call cublasCreate() before this operation.")
-- Include device ID, stream ID, and operation name in every error
-- Use structured error output: `[nova] ERROR in <kernel_name> on device <N>: <error> — suggest: <recovery>`
+**Prevention:**
+```cpp
+// MUST HAVE: Convergence monitoring with fault tolerance
+float monitorConvergence(const Matrix& A, const Vector& v, float lambda, int iter) {
+    float residual = norm(A * v - lambda * v) / norm(v);
+    
+    // Detect pathological cases
+    if (iter > maxIterations * 0.9 && residual > tolerance * 10) {
+        // Likely in clustered eigenvalue regime
+        // Trigger subspace expansion or restart
+        return -1.0f;  // Signal to restart with new vector
+    }
+    
+    return residual;
+}
 
-**Warning signs:**
-- Errors say "CUDA error" without naming the operation
-- Users report errors without knowing which kernel triggered them
-- Error messages are identical for different failure modes
-- No recovery guidance in any error message
+// Rayleigh quotient iteration with safeguards
+Vector rayleighQuotientIter(const Matrix& A, Vector v0, float lambda0) {
+    Vector v = normalize(v0);
+    float lambda = lambda0;
+    
+    for (int iter = 0; iter < maxIter; iter++) {
+        if (iter > 0) {
+            // Compute shift directly from current estimate
+            lambda = dot(v, A * v);  // Rayleigh quotient
+        }
+        
+        Vector w = solve(A - lambda * I);  // May be ill-conditioned
+        v = normalize(w);
+        
+        float conv = monitorConvergence(A, v, lambda, iter);
+        if (conv >= 0 && conv < tolerance) break;
+        if (conv < 0) {
+            // Restart with new random vector
+            v = randomOrthogonalVector(v);
+        }
+    }
+    return v;
+}
+```
 
-**Phase to address:**
-Phase 1: Error Message Framework — establish structured error taxonomy and context propagation before adding new error types.
+**Phase Recommendation:** Phase 4 (Eigensolver Implementation) - Include convergence monitoring and restart logic from the start.
 
 ---
 
-### Pitfall 2: CMake Exports Produce Non-Relocatable Packages
+### 2.2 Numerical Stability in SVD
 
-**What goes wrong:**
-Downstream projects that `find_package(nova)` get hard-coded include paths like `/home/user/repos/nova/include` and library paths like `/home/user/repos/nova/build/libnova.a`. The package works on the original machine but breaks when the build directory moves or the project is installed to a system path.
+**What goes wrong:** Singular Value Decomposition produces inaccurate small singular values and wrong singular vectors due to catastrophic cancellation in certain decomposition stages.
 
 **Why it happens:**
-The current `CMakeLists.txt` uses raw paths in `target_include_directories` and does not use generator expressions like `$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>`. When targets are exported, the absolute paths from the build tree are embedded. Additionally, there is no `install(EXPORT)` declaration — the library has no install rules beyond `add_subdirectory` usage.
+1. **One-sided Jacobi/Golub-Kahan** - Cancellation in bi-diagonalization
+2. **Divide-by-zero in QR iteration** - Near-zero off-diagonal elements
+3. **Orthogonality loss** - Householder reflectors degrade over many steps
 
-The existing custom `FindNCCL.cmake` and `FindMPI.cmake` modules create imported targets but do not set `IMPORTED_LOCATION` with generator expressions for relocatable packaging.
+**Consequences:**
+- Small singular values have relative error >> machine epsilon
+- Rank determination fails (small values should be zero)
+- U and V matrices no longer orthogonal
 
-**How to avoid:**
-- Use `$<BUILD_INTERFACE:>` and `$<INSTALL_INTERFACE:>` generator expressions in all `target_include_directories` and `target_link_directories` calls
-- Add `install(TARGETS ... EXPORT novaTargets)` with `install(EXPORT novaTargets FILE novaTargets.cmake NAMESPACE nova:: DESTINATION lib/cmake/nova)`
-- Add `include(CMakePackageConfigHelpers)` with `configure_package_config_file()` for a versioned package config
-- Replace custom FindXXX modules with CMake's built-in FindNCCL/FindMPI where available, or ensure custom FindXXX modules produce truly relocatable imported targets
-- Export only interface libraries and properly-configured static/shared libraries, not OBJECT libraries with absolute paths
+**Prevention:**
+```cpp
+// USE: Batched condition-number aware SVD
+struct SVDResult {
+    Matrix U, S, Vt;
+    int rank;
+    float condition;  // sigma_max / sigma_min
+};
 
-**Warning signs:**
-- `target_include_directories` uses `${CMAKE_SOURCE_DIR}` without BUILD_INTERFACE generator expression
-- No `cmake/novaConfig.cmake.in` or `cmake/novaTargets.cmake` files
-- No `install()` commands for the library targets
-- Custom FindXXX modules set `IMPORTED_LOCATION` to absolute paths
+SVDResult stableSVD(const Matrix& A) {
+    // First pass: estimate condition number
+    float normEst = estimateOneNorm(A);  // Used for pivoting decisions
+    
+    // Condition-dependent algorithm selection
+    if (normEst > 1e10 || normEst < 1e-10) {
+        // Use double precision or extended precision
+        return doubleSVD(A);  // Convert to double, compute, convert back
+    }
+    
+    // Standard path with monitoring
+    Matrix B = bidiagonalize(A);  // Golub-Kahan with column pivoting
+    
+    for (int iter = 0; iter < maxQRIter; iter++) {
+        // Safe QR step with threshold
+        float threshold = max(abs(B.offDiag)) * machineEpsilon;
+        if (abs(B.offDiag[k]) < threshold) {
+            B.offDiag[k] = 0;  // Deflate early
+        }
+        // Continue with implicit shifts...
+    }
+    
+    // Final rank determination with tolerance scaled by condition
+    float tol = max(A.rows, A.cols) * machineEpsilon * normEst;
+    int rank = countSingularValuesGreaterThan(tol, S);
+    
+    return {U, S, Vt, rank, normEst / S[rank]};
+}
+```
 
-**Phase to address:**
-Phase 2: CMake Package Export — use modern CMake export patterns with generator expressions and install rules.
+**Phase Recommendation:** Phase 5 (SVD Implementation) - Implement condition number estimation and adaptive precision switching.
 
 ---
 
-### Pitfall 3: compile_commands.json Missing for CUDA Source Files
+### 2.3 Memory Usage for Large Matrices
 
-**What goes wrong:**
-clangd reports thousands of errors for `.cu` files, claims CUDA headers cannot be found, and provides no code completions for CUDA APIs. IDE features work for `.cpp` files but are completely broken for `.cu` files — the files that make up the majority of the codebase.
+**What goes wrong:** Eigenvalue decomposition and SVD of large matrices cause out-of-memory errors or severe memory pressure due to intermediate allocations.
 
 **Why it happens:**
-CMake generates `compile_commands.json` entries for `.cu` files using nvcc's full command line, but clangd uses libclang which cannot parse nvcc-specific flags or CUDA syntax. The entries include flags like `--threads`, `--expt-relaxed-constexpr`, and CUDA architecture flags that confuse the C++ language server. Additionally, CMake's `CMAKE_EXPORT_COMPILE_COMMANDS=ON` creates the file in the build directory but clangd does not search parent directories of symlinked build directories.
+- Full Householder reflections stored (n^2 per step)
+- Implicitly shifted QR creates temporary matrices
+- Eigensolver requires tridiagonal + eigenvector storage
+- SVD U, S, Vt each require n^2 storage
 
-The project has no `.clangd` config file to tell clangd how to handle CUDA files, and no `compile_flags.txt` fallback.
+**Consequences:**
+- OOM errors on matrices that "should" fit
+- Memory thrashing reduces effective bandwidth
+- Cannot process matrices that fit in GPU memory
 
-**How to avoid:**
-- Create `.clangd/config.yaml` with `CompileFlags:` mapping that filters nvcc-specific flags and adds CUDA include paths:
-  ```yaml
-  CompileFlags:
-    Add:
-      - "-xcuda"
-      - "--cuda-gpu-arch=sm_80"
-      - "-I${CMAKE_SOURCE_DIR}/include"
-      - "-I${CUDAToolkit_INCLUDE_DIRS}"
-    Remove:
-      - "-*"
-      - "--threads*"
-      - "--expt*"
-  ```
-- Set `CompilationDatabase` in `.clangd/config.yaml` to the build directory path
-- Consider using `clangd-vscode` extension with CUDA LSP support, or configure VS Code's `C_Cpp.default.compilerPath` to nvcc with appropriate args
-- For VS Code: configure `.vscode/c_cpp_properties.json` with CUDA-specific `compilerPath` (path to nvcc) and `cppStandard`/`cudaPath`
-- Ensure `compile_commands.json` is symlinked or copied to project root so clangd finds it without extra configuration
+**Prevention:**
+```cpp
+// MEMORY-EFFICIENT: In-place tridiagonalization
+void memoryEfficientEigenSolve(Matrix& A) {
+    // In-place Householder reduces memory by 2/3
+    for (int k = 0; k < A.n - 2; k++) {
+        // Compute Householder vector in-place
+        Vector& x = A.col(k).segment(k+1);
+        Vector u = householderInPlace(x);  // Overwrites x
+        
+        // Apply to trailing submatrix in-place
+        applyHouseholderInPlace(A, k, u);  // No temp allocations
+    }
+    
+    // Now A contains tridiagonal T (upper part) and Householder data
+    // Memory used: n^2 instead of 3*n^2 for naive implementation
+}
 
-**Warning signs:**
-- clangd shows red squiggles on every CUDA kernel definition
-- Code completion offers no CUDA runtime API suggestions
-- `#include <cuda_runtime.h>` shows "file not found" in IDE
-- `.clangd` config file does not exist in project root
+// STREAMING: Process large matrices in tiles
+void tiledSVD(const LargeMatrix& A, int tileSize = 4096) {
+    // Estimate memory requirements
+    size_t available = getAvailableMemory();
+    size_t perTile = 3 * tileSize * tileSize * sizeof(double);
+    int tilesAcross = (A.n + tileSize - 1) / tileSize;
+    
+    // Use iterative refinement instead of full decomposition
+    // Compute only the singular vectors needed
+    Matrix Ur, Sr, Vr;
+    for (int i = 0; i < tilesAcross; i++) {
+        for (int j = 0; j < tilesAcross; j++) {
+            // Load, process, discard tile
+            Tile tile = loadTile(A, i, j);
+            processTile(tile, Ur, Sr, Vr);
+            // tile automatically freed when out of scope
+        }
+    }
+}
+```
 
-**Phase to address:**
-Phase 3: IDE Configuration — establish clangd config, VS Code settings, and compile_commands.json root placement.
+**Phase Recommendation:** Phase 1 (Memory Planning) - Estimate memory requirements and define streaming strategies before implementation.
 
 ---
 
-### Pitfall 4: ccache Misses nvcc Cache Keys Due to Architecture Flags
+### 2.4 Accuracy vs. Performance Tradeoffs
 
-**What goes wrong:**
-`ccache` reports a near-0% cache hit rate for CUDA compilation. Every build recompiles all `.cu` files, even when only C++ headers change. The build takes just as long as without ccache, and disk cache grows without providing speedups.
+**What goes wrong:** Faster algorithms (iterative refinement, randomized SVD) trade accuracy without exposing this tradeoff to users.
 
 **Why it happens:**
-ccache computes the cache key from compiler command line arguments. With `CMAKE_CUDA_ARCHITECTURES` set to `60 70 80 90`, CMake generates four separate nvcc invocations for each `.cu` file (one per SM). The architecture list produces different compiler flags that ccache interprets as different compilations. When architecture list order changes, or when mixing Debug and Release builds, ccache treats them as entirely separate compilations.
+- Power iteration with early termination
+- Randomized SVD with insufficient power iterations
+- Single-precision instead of double for "speed"
+- Implicit type conversions lose precision
 
-Additionally, `--threads ${NCPU}` in `CMAKE_CUDA_FLAGS` injects the host CPU core count into the compiler flags, making every machine produce different cache keys.
+**Consequences:**
+- Silent accuracy degradation
+- Users unaware their results are approximate
+- Different inputs produce different accuracy levels
 
-**How to avoid:**
-- Remove `--threads` from global `CMAKE_CUDA_FLAGS` — use `CMAKE_CUDA_FLAGS_<CONFIG>` or per-target `CUDA_NVCC_FLAGS` instead, with separate handling for build type
-- Normalize ccache key for architecture: avoid having multiple near-identical nvcc invocations by letting CMake handle per-architecture compilation rather than baking arch flags into CMAKE_CUDA_FLAGS
-- Configure ccache with `sloppiness = include_file_mtime` to ignore minor timestamp changes
-- Consider `sccache` instead of ccache — sccache supports distributed caching and has better handling for CUDA's multi-pass compilation, plus the `[cache.disk.preprocessor_cache_mode]` section can cache preprocessor output separately
-- Set `CCACHE_BASEDIR` to the source directory to produce relative paths in cache keys
+**Prevention:**
+```cpp
+// PROVIDE: Accuracy tier selection
+enum class SVDPrecision { Fast, Standard, High };
 
-**Warning signs:**
-- `ccache -s` shows high cache miss rate (>90%)
-- `ccache -s` shows zero hits despite repeated builds of unchanged files
-- Build times don't improve on second build
-- Cache size grows without bound with no reuse
+struct SVDConfig {
+    SVDPrecision precision = SVDPrecision::Standard;
+    int maxIterations = 100;
+    float convergenceTol = 1e-6f;
+};
 
-**Phase to address:**
-Phase 4: Build Performance — fix ccache key computation, consider sccache, and optimize unity build configuration.
+SVDResult svd(const Matrix& A, const SVDConfig& config = {}) {
+    switch (config.precision) {
+        case SVDPrecision::Fast:
+            // Randomized SVD with 2 power iterations
+            return randomizedSVD(A, 2, config.maxIterations);
+        case SVDPrecision::Standard:
+            // Standard Jacobi with 10 iterations
+            return jacobiSVD(A, 10, config.convergenceTol);
+        case SVDPrecision::High:
+            // Extra-precise Jacobi with refinement
+            return extraPreciseSVD(A, config.convergenceTol);
+    }
+}
+
+// DOCUMENT: Provide expected accuracy bounds
+float expectedRelativeError(SVDPrecision p, float conditionNumber) {
+    switch (p) {
+        case Fast:        return 1e-3 * conditionNumber * machineEpsilon;
+        case Standard:    return 1e-6 * conditionNumber * machineEpsilon;
+        case High:        return 1e-10 * conditionNumber * machineEpsilon;
+    }
+}
+```
+
+**Phase Recommendation:** Phase 3 (API Design) - Expose accuracy/performance tradeoff in public API with clear documentation.
 
 ---
 
-### Pitfall 5: Unity Builds Produce Binary Incompatibilities
+## 3. Numerical Methods Pitfalls
 
-**What goes wrong:**
-After enabling unity builds with large batch sizes, a previously working CUDA kernel starts producing wrong results or silent data corruption. The issue only manifests with `NOVA_ENABLE_UNITY_BUILD=ON`, and only when batch size exceeds a threshold. Debugging is extremely difficult because the failure is non-deterministic across batch sizes.
+### 3.1 Monte Carlo Variance Issues
+
+**What goes wrong:** Monte Carlo simulations produce high-variance results or fail to reduce variance at expected rate due to sampling inefficiencies.
 
 **Why it happens:**
-Unity builds concatenate multiple `.cu` files into a single compilation unit before passing to nvcc. This causes:
-- **Symbol collisions**: if two `.cu` files define identically-named `__device__` functions or static variables, nvcc silently deduplicates or picks one arbitrarily, breaking kernels that expected the other
-- **Template bloat amplification**: when each source file includes templates, concatenating N files multiplies template instantiation work, causing nvcc to exceed memory limits
-- **Macro collision**: device-side macros with identical names but different definitions get the last definition applied to all concatenated files
-- The current `UNITY_BUILD_BATCH_SIZE` only applies to `CMAKE_CUDA_ARCHITECTURES` compilation but not to C++ host-code compilation, creating inconsistent behavior
+1. **Correlated samples** - Using same random seed across iterations
+2. **Wrong random walk** - Antithetic variates not properly paired
+3. **Systematic bias** - Quasi-random sequences misconfigured
+4. **Variance accumulates** - Multiplicative processes amplify noise
 
-**How to avoid:**
-- Audit all `.cu` files for non-namespaced device symbols before enabling unity builds
-- Use `__device__` and `__global__` functions only inside anonymous namespaces or with explicit `__forceinline__`
-- Start with `UNITY_BUILD_BATCH_SIZE=4` and verify correctness before increasing
-- Add a unity-build-specific test that runs the full test suite: all 444 tests must pass with unity builds before increasing batch size
-- Keep `.cu` files with complex device-side symbol interactions (like NCCL internals) excluded from unity builds using `target_sources(nova_impl PRIVATE ...)` with explicit exclusions
+**Consequences:**
+- Requires 100x more samples than theory predicts
+- Results unstable across runs
+- Confidence intervals don't contain true value
 
-**Warning signs:**
-- Test suite passes without unity builds but fails with them
-- Different results on different runs with same inputs when unity builds enabled
-- nvcc memory usage spikes during compilation (visible in `nvidia-smi` on build machine)
-- Linker warnings about duplicate symbols that were not present before
+**Prevention:**
+```cpp
+// CORRECT: Parallel Monte Carlo with proper variance tracking
+struct MonteCarloResult {
+    double mean;
+    double variance;
+    double stdError;
+    int samples;
+    bool converged;
+};
 
-**Phase to address:**
-Phase 4: Build Performance — validate unity build correctness with full test suite before shipping.
+MonteCarloResult parallelMonteCarlo(
+    const MonteCarloConfig& config,
+    curandState* states,  // One state per thread
+    int samplesPerThread
+) {
+    double localSum = 0.0;
+    double localSumSq = 0.0;
+    
+    for (int i = 0; i < samplesPerThread; i++) {
+        double u1 = curand_uniform(&states[threadIdx.x]);
+        double u2 = curand_uniform(&states[threadIdx.x]);
+        
+        // Use Box-Muller for Gaussian (or Philox for speed)
+        double z = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
+        
+        // Compute sample
+        double sample = evaluatePath(z);
+        
+        localSum += sample;
+        localSumSq += sample * sample;
+    }
+    
+    // Reduce across all threads
+    double totalSum = blockReduceSum(localSum);
+    double totalSumSq = blockReduceSum(localSumSq);
+    
+    if (threadIdx.x == 0) {
+        int totalSamples = gridDim.x * blockDim.x * samplesPerThread;
+        double mean = totalSum / totalSamples;
+        // Welford's online algorithm for numerical stability
+        double variance = (totalSumSq - totalSum*totalSum/totalSamples) / (totalSamples-1);
+        double stdError = sqrt(variance / totalSamples);
+        
+        return {
+            mean,
+            variance,
+            stdError,
+            totalSamples,
+            stdError < config.targetError
+        };
+    }
+}
+
+// USE: Quasi-Monte Carlo for low-discrepancy sequences
+void quasiMonteCarlo(int n, float* samples) {
+    // Sobol sequences provide better distribution than pseudorandom
+    // for integration-type problems
+    for (int i = 0; i < n; i++) {
+        samples[i] = sobolSample(i, dimension);  // Well-distributed
+    }
+}
+```
+
+**Phase Recommendation:** Phase 6 (Random Number Generation Infrastructure) - Establish PRNG quality standards before Monte Carlo implementation.
 
 ---
 
-### Pitfall 6: No CMake Configuration Validation for Optional Dependencies
+### 3.2 Convergence Monitoring Failures
 
-**What goes wrong:**
-The build succeeds but users discover at runtime that NCCL support was silently disabled because CMake's FindNCCL.cmake could not locate the library. Or MPI is enabled in CMake but the actual `mpirun` binary is missing. Features appear to be present based on CMake output but are non-functional.
+**What goes wrong:** Iterative numerical methods (root finding, integration, optimization) terminate prematurely or never terminate due to poor convergence monitoring.
 
 **Why it happens:**
-The current CMakeLists.txt uses `find_package(NCCL)` but `NCCL_FOUND` is checked only conditionally when creating the `NCCL::nccl` target. When NCCL is not found, `NOVA_NCCL_ENABLED=0` is set as a compile definition, but there is no fatal error for REQUIRED configurations and no user-visible warning that explains what is missing and how to install it.
+1. **Relative vs. absolute tolerance** - Not distinguishing between them
+2. **Stalling detection** - Not detecting when progress stops
+3. **Oscillation detection** - Missing periodic behavior
+4. **Numerical cancellation** - Computing differences of similar values
 
-The `FindNCCL.cmake` custom module uses `find_package_handle_standard_args` with a helpful FAIL_MESSAGE, but the CMakeLists.txt does not call the FindXXX modules in the right order to surface these messages early.
+**Consequences:**
+- "Converged" solution far from actual root
+- Infinite loop or very slow convergence
+- Different results on different architectures
 
-**How to avoid:**
-- After all `find_package` calls, print a clear feature matrix: `message(STATUS "NCCL support: ${NCCL_FOUND} (${NCCL_VERSION})")` and `message(STATUS "MPI support: ${MPI_FOUND} (${MPI_VERSION})")`
-- For optional features, emit `WARNING` (not FATAL_ERROR) when not found, explaining the trade-off
-- Add a CMake option `NOVA_WARN_ABOUT_MISSING_DEPS` that elevates optional-dependency warnings to errors in CI
-- Verify the exported CMake config files include dependency status for downstream consumers
+**Prevention:**
+```cpp
+// ROBUST: Comprehensive convergence monitoring
+struct ConvergenceStatus {
+    bool converged;
+    bool stalled;
+    bool oscillating;
+    int iterations;
+    float rate;  // Convergence rate estimate
+};
 
-**Warning signs:**
-- CMake configure step completes with no warnings about missing dependencies
-- `NOVA_NCCL_ENABLED` is used at runtime without checking if NCCL was actually found
-- No feature matrix in CMake output showing which optional components are available
+ConvergenceStatus monitorConvergence(
+    const std::vector<float>& errors,
+    const ConvergenceConfig& config
+) {
+    if (errors.size() < 3) return {false, false, false, 0, 0.0f};
+    
+    float absTol = config.absoluteTolerance;
+    float relTol = config.relativeTolerance;
+    float prev = errors[errors.size() - 1];
+    float prevPrev = errors[errors.size() - 2];
+    
+    // Check absolute and relative tolerance
+    bool meetsAbsTol = prev < absTol;
+    bool meetsRelTol = prev < relTol * errors[0];
+    bool converged = meetsAbsTol && meetsRelTol;
+    
+    // Detect stalling: no progress for N iterations
+    bool stalled = false;
+    if (errors.size() >= config.stallWindow) {
+        float maxRecent = *std::max_element(
+            errors.end() - config.stallWindow, errors.end()
+        );
+        float minRecent = *std::min_element(
+            errors.end() - config.stallWindow, errors.end()
+        );
+        stalled = (maxRecent - minRecent) < absTol * 0.1f;
+    }
+    
+    // Detect oscillation
+    bool oscillating = false;
+    if (errors.size() >= 6) {
+        // Check if error keeps increasing then decreasing
+        float changes = 0;
+        for (size_t i = errors.size() - 4; i < errors.size() - 1; i++) {
+            if ((errors[i+1] > errors[i]) != (errors[i] > errors[i-1])) {
+                changes++;
+            }
+        }
+        oscillating = changes >= 3;
+    }
+    
+    // Estimate convergence rate
+    float rate = 0.0f;
+    if (prevPrev > 0 && prev > 0) {
+        rate = log(prev / prevPrev) / log(prevPrev / errors[errors.size()-3]);
+    }
+    
+    return {converged, stalled, oscillating, (int)errors.size(), rate};
+}
 
-**Phase to address:**
-Phase 2: CMake Package Export — add dependency reporting and validate optional feature configuration.
+// SAFE: Newton-Raphson with monitoring
+float safeNewtonRoot(float x0, const RootConfig& config) {
+    float x = x0;
+    std::vector<float> errors;
+    
+    for (int iter = 0; iter < config.maxIterations; iter++) {
+        float fx = f(x);
+        float dfx = df(x);
+        
+        float dx = fx / dfx;
+        x -= dx;
+        
+        float error = abs(dx);
+        errors.push_back(error);
+        
+        auto status = monitorConvergence(errors, config.convergence);
+        
+        if (status.converged) break;
+        if (status.stalled) {
+            // Try smaller step or different method
+            x += dx * 0.5f;  // Bisection step
+        }
+        if (status.oscillating) {
+            // Switch to bisection
+            return bisectionRoot(x - dx*2, x, config);
+        }
+        if (iter == config.maxIterations - 1) {
+            throw ConvergenceError(status);
+        }
+    }
+    return x;
+}
+```
+
+**Phase Recommendation:** Phase 3 (Convergence Monitoring Infrastructure) - Implement monitoring before any iterative method.
 
 ---
 
-### Pitfall 7: IDE Configuration Files Not Version-Controlled or Tested
+### 3.3 Pseudo-Random Number Generation Quality
 
-**What goes wrong:**
-VS Code settings are configured locally but never committed. clangd config is written once and never updated when CMake flags change. New developers get a broken IDE experience and spend hours debugging their setup instead of writing code.
+**What goes wrong:** Using inappropriate PRNGs for Monte Carlo or stochastic simulation produces statistically biased results.
 
 **Why it happens:**
-IDE configuration files (`.vscode/`, `.clangd/`, `compile_flags.txt`) are often treated as personal preferences rather than project artifacts. They are excluded via `.gitignore` or simply never created. When CMake flags change, the clangd config becomes stale and reports false errors. VS Code extensions are not specified, so different developers use different tooling with different behaviors.
+1. **Linear congruential generators** - Poor distribution in high dimensions
+2. **Same seed everywhere** - All threads produce identical sequences
+3. **Period too short** - Sequences repeat before simulation completes
+4. **State collision** - Multiple threads use same state
 
-**How to avoid:**
-- Version-control all IDE configuration: `.clangd/config.yaml`, `.vscode/c_cpp_properties.json`, `.vscode/settings.json`, `.vscode/extensions.json`
-- Add a CI check that validates `compile_commands.json` is generated and contains entries for all `.cu` and `.cpp` files
-- Use `cmake --build build --target help` to verify all expected targets exist
-- Include a `DEVELOPERS.md` or `docs/ide-setup.md` that explains required VS Code extensions and clangd configuration for new contributors
-- Test IDE configuration by running clangd on the codebase in CI with `--check` mode
+**Consequences:**
+- Monte Carlo integrals systematically wrong
+- Stochastic differential equations biased
+- Gambling simulations fail statistical tests
+- Different GPUs produce different results
 
-**Warning signs:**
-- `.vscode/` and `.clangd/` directories are gitignored
-- No documentation for IDE setup in the project
-- New contributors report "clangd doesn't work" within the first day
-- compile_commands.json entries are missing for newly added source files
+**Prevention:**
+```cpp
+// GPU-APPROPRIATE: Use cuRAND or similar
+#include <curand.h>
 
-**Phase to address:**
-Phase 3: IDE Configuration — commit IDE files, document setup, and add CI validation.
+// SETUP: One RNG state per thread, properly initialized
+__global__ void setupRNG(curandState* states, unsigned long long seed) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    // Different seed per thread using sequence number
+    curand_init(seed, id, 0, &states[id]);
+}
+
+__global__ void simulation(curandState* states) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    curandState localState = states[id];
+    
+    // Now each thread has independent, high-quality sequence
+    float u1 = curand_uniform(&localState);
+    float u2 = curand_uniform(&localState);
+    float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
+    
+    // Use in simulation...
+    
+    // Save state for next call
+    states[id] = localState;
+}
+
+// QUALITY: Use Philox for Monte Carlo (counter-based, predictable)
+curandGenerator_t gen;
+curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_PHILOX4_32_10);
+curandSetPseudoRandomGeneratorSeed(gen, 1234ULL);
+curandGenerateUniform(gen, d_output, N);
+
+// For cryptographically secure: CURAND_RNG_PSEUDO_XORWOW
+// For maximum speed: CURAND_RNG_PSEUDO_MRG32K3A
+```
+
+**Phase Recommendation:** Phase 6 (PRNG Infrastructure) - Choose and implement PRNG strategy early; changing later breaks reproducibility.
 
 ---
 
-### Pitfall 8: Build Performance Improvements Negatively Impact CI Reproducibility
+### 3.4 Numerical Stability in Numerical Integration
 
-**What goes wrong:**
-ccache and parallel builds are optimized for the developer's machine (128-core build server) but CI runs on 2-core containers with minimal cache. Build times in CI are unchanged from baseline, and the performance tuning provides zero benefit where it matters most. The `--threads ${NCPU}` flag causes nvcc to spawn 128 threads on a machine with 4 cores, degrading performance.
+**What goes wrong:** Quadrature and integration routines produce inaccurate results due to cancellation, poor node selection, or adaptive step size issues.
 
 **Why it happens:**
-`ProcessorCount(NCPU)` in the current CMakeLists.txt detects CPU cores at configure time and sets `--threads` globally. On a high-core-count developer machine this helps; on a containerized CI runner with CPU limits, it either causes resource exhaustion or uses a stale NCPU value from the host. Unity build batch sizes of 64 and 32 assume abundant memory, which may not be available in CI.
+1. **Gauss quadrature** - Nodes/weights computed incorrectly
+2. **Adaptive Simpson** - Step size oscillates
+3. **Infinite bounds** - Transformation introduces instability
+4. **Singular endpoints** - Improper handling of integrable singularities
 
-**How to avoid:**
-- Remove the global `--threads` nvcc flag or make it conditional on available memory, not just CPU count
-- Use CMake's `CMAKE_BUILD_PARALLEL_LEVEL` instead of hardcoding `--parallel` in CMake flags
-- Make unity build batch size adaptive: `if(NCPU GREATER_EQUAL 64 AND CMAKE_SYSTEM_MEMORY GREATER 16GB)` — not just CPU count
-- Configure ccache size limits appropriate for CI: `CCACHE_MAXSIZE=500M` in CI vs. `CCACHE_MAXSIZE=10G` for developer machines
-- Add CI-specific CMake presets that prioritize cache hit rate over absolute build speed
+**Consequences:**
+- Integration error >> requested tolerance
+- Adaptive algorithm infinite loops
+- NaN/Inf from overflow in transformation
 
-**Warning signs:**
-- CI build times don't improve despite ccache being enabled
-- CI jobs run out of memory during unity build compilation
-- Build outputs differ between developer machines and CI
-- `--threads` flag causes nvcc to crash or exceed container memory limits
+**Prevention:**
+```cpp
+// STABLE: Adaptive quadrature with reliable error estimation
+struct QuadResult {
+    double value;
+    double error;
+    int functionEvaluations;
+    bool converged;
+};
 
-**Phase to address:**
-Phase 4: Build Performance — make performance settings environment-aware and validate CI behavior separately.
+QuadResult adaptiveQuad(
+    double a, double b,
+    double (*f)(double),
+    double tol,
+    int maxDepth = 50
+) {
+    // Initial Simpson's rule estimate
+    double c = (a + b) / 2;
+    double fa = f(a), fb = f(b), fc = f(c);
+    double S = (b - a) / 6 * (fa + 4*fc + fb);
+    
+    // Recursive adaptive refinement
+    return adaptiveQuadRec(a, c, fa, fc, S, tol, 0, maxDepth, f);
+}
 
----
+QuadResult adaptiveQuadRec(
+    double a, double b, double fa, double fb,
+    double S, double tol, int depth, int maxDepth,
+    double (*f)(double)
+) {
+    double c = (a + b) / 2;
+    double fc = f(c);
+    
+    // Two Simpson estimates
+    double Sleft = (c - a) / 6 * (fa + 4*f((a+c)/2) + fc);
+    double Sright = (b - c) / 6 * (fc + 4*f((c+b)/2) + fb);
+    double S2 = Sleft + Sright;
+    
+    // Error estimation
+    double E = (S2 - S) / 15.0;  // Richardson extrapolation
+    
+    if (depth >= maxDepth) {
+        return {S2, abs(E), -1, false};
+    }
+    
+    if (abs(E) < tol) {
+        // Extrapolated estimate
+        double S_extrap = S2 + E;
+        return {S_extrap, abs(E), -1, true};
+    }
+    
+    // Recurse
+    auto left = adaptiveQuadRec(a, c, fa, fc, Sleft, tol/2, depth+1, maxDepth, f);
+    auto right = adaptiveQuadRec(c, b, fc, fb, Sright, tol/2, depth+1, maxDepth, f);
+    
+    return {
+        left.value + right.value,
+        sqrt(left.error*left.error + right.error*right.error),
+        -1,
+        left.converged && right.converged
+    };
+}
 
-## Technical Debt Patterns
+// TRANSFORMATION: Stable infinite integral
+double integrateInfinite(double (*f)(double), double tol) {
+    // Use tanh-sinh quadrature for infinite intervals
+    // It's more stable than rational transformations
+    
+    // Or use Monte Carlo with importance sampling:
+    // Integral(f(x), x=0..inf) = Integral(f(t/(1-t))/t^2, t=0..1)
+    // with t = exp(-u) substitution
+}
+```
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Hardcoded absolute paths in CMake | Simpler initial setup | Breaks on any other machine or directory move | Never |
-| Skip `install(EXPORT)` for internal projects | Less CMake code | Cannot be used as a proper dependency | Only for one-off internal tools |
-| Unity builds without testing | Faster local iteration | Silent correctness failures in CI | Only if full test suite runs after enabling |
-| ccache without config validation | "Build faster" marketing | Zero cache hits, wasted disk space | Only if cache hit rate is monitored |
-| Local-only IDE config | Developer freedom | Onboarding nightmare, inconsistent tooling | Only if docs and CI validation exist |
-| Generic error messages | Less code to maintain | Hours lost debugging production errors | Never in production library |
-| `CUBLAS_STATUS_SUCCESS` printed as integer | No work needed | Useless for debugging | Never |
-| Using `--threads` in global CUDA flags | Parallel host compilation | Cross-machine cache key divergence | Only with explicit per-machine configuration |
-
----
-
-## Integration Gotchas
-
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| FindCUDAToolkit + custom FindXXX | Duplicate search paths, inconsistent CUDA_ROOT | Use `CUDAToolkit_*` variables from FindCUDAToolkit in custom FindXXX modules |
-| CMake export + interface libraries | Interface-only targets can't be installed as binaries | Use `install(TARGETS ... INCLUDES DESTINATION ...)` for INTERFACE targets |
-| clangd + nvcc | clangd cannot parse nvcc flags, reports false errors | Filter nvcc-specific flags in `.clangd/config.yaml`, use `-xcuda` flag |
-| ccache + nvcc | Cache key includes absolute paths, architecture flags | Set `CCACHE_BASEDIR`, normalize architecture flags, consider sccache |
-| sccache + distributed CI | sccache server not available in CI environment | Fall back to local ccache in CI, use sccache only for developer workflows |
-| VS Code + CUDA | Default C++ IntelliSense doesn't know CUDA paths | Configure `c_cpp_properties.json` with `compilerPath: nvcc` and CUDA include dirs |
-| compile_commands.json + symlinks | clangd doesn't follow symlinks to find compile_commands.json | Copy or symlink compile_commands.json to project root |
-| Unity builds + NCCL | NCCL internal symbols collide in concatenated compilation | Keep NCCL-related `.cu` files out of unity build batch |
-
----
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| `--threads` on low-core machines | nvcc thread spawning overhead exceeds benefit, slower build | Make `--threads` conditional on NCPU >= 16 | On CI containers, laptops, constrained environments |
-| Large unity batch sizes | nvcc OOM during compilation, link-time bloat | Start with batch size 4, increase only after testing | On machines with <32GB RAM |
-| ccache with no max size | Disk fills up over time, cache becomes ineffective | Set `CCACHE_MAXSIZE` explicitly, prune regularly | In CI environments with limited disk |
-| Precompiled header misuse | CUDA headers not precompiled correctly, longer build | Test PCH with unity builds — they interact unexpectedly | When adding precompiled headers to `.cu` files |
-| Parallel test + GPU memory | Tests crash with out-of-memory on parallel run | Current `TEST_PARALLEL_LEVEL=16` cap is appropriate, but verify | With new GPU-intensive tests (v1.8+) |
-
----
-
-## Security Mistakes
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| CMake exported paths from untrusted source tree | If CMakeLists.txt is modified by untrusted party, exported config could contain malicious paths | Validate all `find_package` paths with `file(DOWNLOAD)` or checksum verification for installed packages |
-| Exported CMake config leaks credentials | If custom FindXXX modules read from environment variables for credentials, these get baked into config | Never put credential-bearing env vars in exported CMake configs; use `find_package` discovery patterns |
-| VS Code settings download extensions from marketplace | Malicious extension could be substituted | Pin extension versions in `.vscode/extensions.json`, use verified publishers |
-| compile_commands.json in CI artifacts | Build artifacts with absolute paths leak internal directory structures | CI should sanitize or exclude compile_commands.json from artifacts if security-sensitive |
-
-*Note: This library's DX surface is primarily local build tooling. Primary concerns are CMake package integrity and credential handling in FindXXX modules.*
-
----
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| No error recovery guidance | Users hit an error and have no idea how to fix it | Every error includes: what went wrong, why it might have happened, concrete recovery steps |
-| cuBLAS errors as raw integers | `CublasException: cuBLAS error: -17` means nothing to users | Map status codes to human-readable names: `CUBLAS_STATUS_INVALID_VALUE (-17)` with meaning |
-| CMake feature matrix missing | Users don't know which optional features are enabled | Print feature status table at CMake configure time: `nova 0.1.0: NCCL 2.25 [ON], MPI [OFF], Unity Builds [ON]` |
-| No developer onboarding docs | New contributors waste time setting up IDE and build environment | `docs/DEVELOPERS.md` with step-by-step: clone, cmake, build, test, IDE setup |
-| clangd false errors on CUDA code | Developers ignore or disable clangd entirely | `.clangd/config.yaml` must be tested in CI against the full codebase |
-| Build errors without suggested fixes | A failed cmake configure leaves user stranded | CMake errors should suggest specific actions: `NCCL not found — set NCCL_DIR or install NCCL 2.25+` |
-
----
-
-## "Looks Done But Isn't" Checklist
-
-- [ ] **Error messages:** All CUDA_CHECK and CUBLAS_CHECK macro invocations produce contextual error messages — verify by grepping for non-contextual error sites
-- [ ] **Error recovery hints:** Every error type has at least one recovery suggestion — verify coverage for all `cudaError*` codes used in the codebase
-- [ ] **CMake export:** `cmake --install build --prefix /tmp/nova-install` produces a relocatable package — verify `find_package(nova)` works from the install prefix
-- [ ] **CMake package config:** `novaConfig.cmake` and `novaTargets.cmake` exist in install tree — verify paths are relative via generator expressions
-- [ ] **clangd config:** `.clangd/config.yaml` exists and clangd reports zero errors on a clean build — verify with `clangd --check` in CI
-- [ ] **clangd CUDA detection:** `#include <cuda_runtime.h>` resolves in clangd — verify include path in compile_commands.json entries
-- [ ] **VS Code settings:** `.vscode/c_cpp_properties.json` exists with correct CUDA paths — verify `IntelliSense` mode shows CUDA syntax highlighting
-- [ ] **ccache hit rate:** Second build with no changes achieves >80% cache hit rate — verify with `ccache -s` output
-- [ ] **sccache (if used):** sccache distributed cache is configured and functional for CUDA — verify cache hits across machines
-- [ ] **Unity build correctness:** All 444 tests pass with unity builds enabled — verify in CI with `NOVA_ENABLE_UNITY_BUILD=ON`
-- [ ] **compile_commands.json coverage:** All `.cu` and `.cpp` files appear in compile_commands.json — verify entry count matches file count
-- [ ] **Feature matrix:** CMake configure output shows NCCL/MPI/UnityBuild status — verify output includes each optional feature
+**Phase Recommendation:** Phase 4 (Integration Implementation) - Implement multiple integration methods and error estimation before adaptive routines.
 
 ---
 
-## Recovery Strategies
+## 4. Signal Processing Pitfalls
 
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| Generic error messages | MEDIUM | Refactor CUDA_CHECK macro, add OperationContext parameter, audit all call sites; ~2-3 days |
-| Non-relocatable CMake packages | HIGH | Rewrite target_include_directories with generator expressions, add install rules; ~1 week |
-| clangd not working for CUDA | LOW | Create `.clangd/config.yaml` with CUDA flags, symlink compile_commands.json; ~1 day |
-| ccache 0% hit rate | MEDIUM | Remove --threads from global flags, set CCACHE_BASEDIR, adjust sloppiness settings; ~2 hours |
-| Unity build correctness failures | MEDIUM | Reduce batch size to 4, run full test suite, identify conflicting symbols; ~2-3 days |
-| Missing IDE config files | LOW | Create version-controlled `.vscode/` and `.clangd/` directories with CI validation; ~1 day |
-| CI build performance unchanged | MEDIUM | Add CCACHE_MAXSIZE to CI, set environment-aware parallelism; ~1 day |
+### 4.1 Boundary Condition Handling
+
+**What goes wrong:** Convolution, filtering, and wavelet transforms produce incorrect results near boundaries due to improper padding or boundary handling.
+
+**Why it happens:**
+1. **Zero padding** - Creates discontinuities at edges
+2. **Circular padding** - Wrong assumption of periodicity
+3. **Replication padding** - Introduces spurious high frequencies
+4. **Symmetric padding** - Misapplied to non-symmetric signals
+
+**Consequences:**
+- Edge artifacts in filtered images/signals
+- Gibbs phenomenon near boundaries
+- Wavelet coefficients wrong at coarse scales
+
+**Prevention:**
+```cpp
+// PROPER: Boundary handling modes
+enum class BoundaryMode {
+    Zero,       // Extend with zeros
+    Replicate,  // Repeat edge values
+    Symmetric,  // Mirror at boundary
+    Periodic,   // Assume periodic
+    Reflect     // Reflect without edge duplication
+};
+
+__device__ float applyBoundaryMode(
+    float* data, int idx, int size,
+    BoundaryMode mode
+) {
+    if (idx >= 0 && idx < size) {
+        return data[idx];
+    }
+    
+    switch (mode) {
+        case BoundaryMode::Zero:
+            return 0.0f;
+        case BoundaryMode::Replicate:
+            return data[clamp(idx, 0, size - 1)];
+        case BoundaryMode::Symmetric:
+            idx = abs(idx) % (2 * size);
+            return data[idx < size ? idx : 2 * size - 1 - idx];
+        case BoundaryMode::Periodic:
+            return data[((idx % size) + size) % size];
+        case BoundaryMode::Reflect:
+            if (idx < 0) idx = -idx - 1;
+            if (idx >= size) idx = 2 * size - idx - 1;
+            return data[idx];
+    }
+}
+
+// SELECT: Appropriate mode per application
+// - Symmetric: DCT, image processing (preserves edge statistics)
+// - Reflect: Wavelet transforms (coefficients less biased)
+// - Periodic: FFT convolution (must be periodic)
+// - Replicate: Audio (natural continuation)
+void chooseBoundaryMode(const SignalProperties& props) {
+    if (props.isImage && props.hasSharpEdges) {
+        return BoundaryMode::Reflect;  // Best for edge preservation
+    }
+    if (props.needsPeriodic) {
+        return BoundaryMode::Periodic;  // For FFT
+    }
+    return BoundaryMode::Symmetric;  // Safe default
+}
+```
+
+**Phase Recommendation:** Phase 5 (Signal Processing Framework) - Define boundary handling strategy in convolution framework design.
 
 ---
 
-## Pitfall-to-Phase Mapping
+### 4.2 FFT Size Constraints
 
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Generic error messages | Phase 1: Error Message Framework | Unit tests that verify error context is captured; grep all CUDA_CHECK calls for context |
-| Non-relocatable CMake packages | Phase 2: CMake Package Export | `find_package(nova)` from install prefix; verify all paths use generator expressions |
-| clangd fails on CUDA files | Phase 3: IDE Configuration | `clangd --check` in CI; VS Code extensions validated; `.clangd/config.yaml` committed |
-| ccache zero cache hits | Phase 4: Build Performance | `ccache -s` shows >80% hit rate on second build; `--threads` not in cache key |
-| Unity build correctness | Phase 4: Build Performance | All 444 tests pass with `NOVA_ENABLE_UNITY_BUILD=ON`; no symbol collision warnings |
-| Silent dependency failures | Phase 2: CMake Package Export | Feature matrix in CMake output; optional deps emit WARNING, not silence |
-| IDE config not version-controlled | Phase 3: IDE Configuration | `.vscode/` and `.clangd/` in git; CI validates compile_commands.json coverage |
-| CI build perf regressions | Phase 4: Build Performance | CI build times tracked; no regressions >10% vs. baseline; adaptive batch sizing |
+**What goes wrong:** Using FFT sizes that aren't power of 2, 3, 5, or 7 (radices supported by cuFFT) causes severe performance degradation.
+
+**Why it happens:** cuFFT uses radix-based Cooley-Tukey decomposition. Sizes with prime factors outside {2, 3, 5, 7} require Bluestein's algorithm (O(n^2) in intermediate storage) or fail entirely.
+
+**Consequences:**
+- Performance drops by 10-100x for prime-length FFTs
+- Memory allocation failures for Bluestein
+- Unexpected results due to implicit resizing
+
+**Prevention:**
+```cpp
+// FIND: Optimal FFT size
+int findOptimalFFTSize(int n) {
+    if (n <= 0) return 1;
+    
+    // Check if already optimal (power of 2, 3, 5, 7 only)
+    while (n % 2 == 0) n /= 2;
+    while (n % 3 == 0) n /= 3;
+    while (n % 5 == 0) n /= 5;
+    while (n % 7 == 0) n /= 7;
+    
+    if (n == 1) return true;  // Optimal!
+    
+    // Find nearest larger optimal size
+    int base = n;
+    n = ((n + 15) / 16) * 16;  // Round up to power of 16
+    
+    // Binary search for closest optimal size
+    while (!isOptimalSize(n)) {
+        n++;
+    }
+    return n;
+}
+
+bool isOptimalSize(int n) {
+    while (n % 2 == 0) n /= 2;
+    while (n % 3 == 0) n /= 3;
+    while (n % 5 == 0) n /= 5;
+    while (n % 7 == 0) n /= 7;
+    return n == 1;
+}
+
+// PAD: Automatically pad to optimal size
+void fftConvolve(
+    const float* signal, int signalLen,
+    const float* kernel, int kernelLen,
+    float* output
+) {
+    int optimalSize = findOptimalFFTSize(signalLen + kernelLen - 1);
+    
+    // Zero-pad both inputs
+    float* paddedSignal = padToSize(signal, signalLen, optimalSize);
+    float* paddedKernel = padToSize(kernel, kernelLen, optimalSize);
+    
+    // Now FFT size is guaranteed optimal
+    cufftHandle plan;
+    cufftPlan1d(&plan, optimalSize, CUFFT_R2C, 1);
+    cufftExecR2C(plan, paddedSignal, ...);
+    cufftExecR2C(plan, paddedKernel, ...);
+    // ... convolution ...
+}
+```
+
+**Phase Recommendation:** Phase 2 (FFT Infrastructure) - Wrap cuFFT with automatic size optimization from the start.
+
+---
+
+### 4.3 IIR Filter Stability
+
+**What goes wrong:** IIR (Infinite Impulse Response) filters become unstable when implemented on GPU due to coefficient quantization or state accumulation errors.
+
+**Why it happens:**
+1. **Pole migration** - Quantized coefficients move poles outside unit circle
+2. **State precision** - Accumulated state values lose precision
+3. **Overflow** - Large inputs cause state overflow
+4. **Parallel form issues** - Direct form parallelization introduces coupling
+
+**Consequences:**
+- Filter output grows without bound (unstable)
+- Filter outputs NaN/Inf
+- Different stability on GPU vs CPU (different floating-point)
+
+**Prevention:**
+```cpp
+// STABLE: State-space IIR with overflow protection
+struct StableIIRState {
+    float b0, b1, b2;  // Feedforward coefficients
+    float a1, a2;      // Feedback coefficients
+    float s1, s2;      // State (delay elements)
+};
+
+__device__ float stableIIRStep(StableIIRState& state, float x) {
+    // Direct Form II (fewer multiplications, less state exposure)
+    // w[n] = x[n] - a1*w[n-1] - a2*w[n-2]
+    
+    float w = x - state.a1 * state.s1 - state.a2 * state.s2;
+    
+    // Saturation to prevent overflow
+    w = fmaxf(fminf(w, 1e10f), -1e10f);
+    
+    // y[n] = b0*w[n] + b1*w[n-1] + b2*w[n-2]
+    float y = state.b0 * w + state.b1 * state.s1 + state.b2 * state.s2;
+    
+    // Update state
+    state.s2 = state.s1;
+    state.s1 = w;
+    
+    return y;
+}
+
+// VERIFY: Filter stability before use
+bool verifyFilterStability(float a1, float a2) {
+    // Characteristic equation: z^2 + a1*z + a2 = 0
+    // Roots must be inside unit circle
+    
+    float disc = a1*a1 - 4*a2;
+    if (disc >= 0) {
+        // Real roots
+        float r1 = (-a1 - sqrt(disc)) / 2;
+        float r2 = (-a1 + sqrt(disc)) / 2;
+        return fabsf(r1) < 1.0f && fabsf(r2) < 1.0f;
+    } else {
+        // Complex conjugate roots
+        float magnitude = sqrt(a2);  // |r| = sqrt(a2) for conjugate pair
+        return magnitude < 1.0f - 1e-6f;  // Small margin for numerical
+    }
+}
+
+// QUANTIZE: Safe coefficient quantization
+float quantizeCoefficient(float coeff, int bits) {
+    float scale = (1 << (bits - 1)) - 1.0f;
+    float quantized = round(coeff * scale) / scale;
+    
+    // Check stability after quantization
+    float a1 = quantized;  // Your actual coefficient
+    float a2 = 0.5f;       // Second feedback coefficient
+    
+    if (!verifyFilterStability(a1, a2)) {
+        // Fall back to lower order or different structure
+        return coeff;  // Let it fail gracefully
+    }
+    return quantized;
+}
+```
+
+**Phase Recommendation:** Phase 5 (IIR Filter Implementation) - Implement stability verification in filter design, not just runtime.
+
+---
+
+### 4.4 Numerical Precision in Wavelet Transforms
+
+**What goes wrong:** Discrete Wavelet Transform (DWT) accumulates numerical errors over multiple decomposition levels, producing inaccurate coefficients at coarser scales.
+
+**Why it happens:**
+1. **Repeated filtering** - Error accumulates with each level
+2. **Downsampling** - Aliasing amplifies quantization errors
+3. **High-pass filter** - Amplifies numerical noise
+4. **Floating-point rounding** - Error grows with transform length
+
+**Consequences:**
+- Energy not conserved across decomposition levels
+- Small wavelet coefficients swamped by numerical noise
+- Reconstruction error exceeds theoretical minimum
+
+**Prevention:**
+```cpp
+// PRECISE: Wavelet transform with error monitoring
+struct WaveletResult {
+    std::vector<float> coefficients;  // [cA_n, cD_n, cD_{n-1}, ..., cD_1]
+    std::vector<float> reconstructionError;
+    int levels;
+};
+
+WaveletResult stableWaveletDecomp(
+    const float* signal, int length,
+    const Wavelet& wavelet,
+    int maxLevels
+) {
+    WaveletResult result;
+    result.levels = min(maxLevels, (int)log2(length));
+    
+    // Current signal level
+    std::vector<float> current(signal, signal + length);
+    std::vector<float> prevSignal(length);
+    
+    // Low-pass (approximation) and high-pass (detail) outputs
+    std::vector<float> approx, detail;
+    
+    for (int level = 0; level < result.levels; level++) {
+        int n = current.size();
+        prevSignal = current;  // Save for error analysis
+        
+        // Convolve with downsampling
+        approx = convolveDownsample(current, wavelet.lo, n/2);  // Low
+        detail = convolveDownsample(current, wavelet.hi, n/2);  // High
+        
+        // Check for energy conservation
+        float inputEnergy = energy(current);
+        float outputEnergy = energy(approx) + energy(detail);
+        float energyError = abs(outputEnergy - inputEnergy) / inputEnergy;
+        
+        result.reconstructionError.push_back(energyError);
+        
+        // Warn if energy error exceeds threshold
+        if (energyError > 1e-6f) {
+            // Consider switching to integer wavelet or lifting scheme
+            printf("Warning: Level %d energy error %e exceeds threshold\n",
+                   level, energyError);
+        }
+        
+        // Continue with approximation for next level
+        current = approx;
+    }
+    
+    // Assemble result
+    result.coefficients = current;  // Final approximation
+    for (int i = result.levels - 1; i >= 0; i--) {
+        result.coefficients.insert(result.coefficients.end(),
+                                   detail.begin(), detail.end());
+    }
+    
+    return result;
+}
+
+// LIFTING SCHEME: More numerically stable than convolution
+// Use Cohen-Daubechies-Feauveau (CDF) wavelets via lifting
+struct LiftingWavelet {
+    float p, u;  // Lifting coefficients
+};
+
+float liftStep(float even, float float odd, float p) {
+    return odd - p * (even + evenNext);  // Predict
+}
+
+float liftUpdate(float even, float odd, float u) {
+    return even + u * (odd + oddPrev);   // Update
+}
+
+// Lifting is exact for perfect reconstruction
+// (floating-point errors notwithstanding, but much smaller)
+```
+
+**Phase Recommendation:** Phase 6 (Wavelet Implementation) - Compare convolution-based vs lifting scheme and document precision guarantees.
+
+---
+
+## Summary: Phase Recommendations
+
+| Phase Topic | Likely Pitfall | Mitigation Strategy |
+|-------------|----------------|---------------------|
+| 1. Shared Memory Access | Bank conflicts | Bank-conflict-free padding, use shuffle |
+| 1. Memory Layout | Non-coalesced variable access | Pack records, sort indices first |
+| 2. Warp-Synchronous Design | Divergence patterns | Pre-classify data, warp-uniform control flow |
+| 2. FFT Infrastructure | Non-power-of-2/3/5/7 sizes | Auto-pad to optimal size |
+| 3. Correctness Verification | Floating-point comparison stability | Integer-encoded keys for stable sort |
+| 3. Convergence Monitoring | Premature/late termination | Multi-criteria convergence with stalling detection |
+| 4. Eigensolver Implementation | Non-convergence in clustered eigenvalues | Monitor convergence, restart with orthogonal vectors |
+| 4. Integration Routines | Adaptive step size oscillation | Richardson extrapolation error estimation |
+| 5. SVD Implementation | Accuracy degradation with condition | Condition estimation, adaptive precision |
+| 5. IIR Filters | Pole migration to instability | Pre-verify stability, saturation arithmetic |
+| 5. Signal Processing Framework | Boundary artifacts | Explicit boundary modes, select per application |
+| 6. PRNG Infrastructure | Statistical bias, state collision | Per-thread independent seeds, quality PRNG |
+| 6. Monte Carlo | High variance, non-convergence | Proper variance tracking, quasi-Monte Carlo |
+| 6. Wavelet Transform | Energy loss over levels | Lifting scheme, energy conservation checks |
 
 ---
 
 ## Sources
 
-- CMake 4.3.2 Documentation — FindCUDAToolkit imported targets, generator expressions, install/export patterns
-- CMake 4.3.2 Documentation — cmake-buildsystem(7) for PUBLIC/PRIVATE/INTERFACE propagation rules
-- NVIDIA CUDA Documentation — cudaGetErrorString and error recovery recommendations
-- NVIDIA cuBLAS Documentation — cublasStatus_t error code meanings
-- clangd documentation (clangd.llvm.org) — compile_commands.json configuration and CUDA-specific flags
-- sccache (github.com/mozilla/sccache) — distributed CUDA compilation caching, preprocessor cache mode
-- NVIDIA Developer Blog — "CUDA Pro Tips" series on error handling and debugging
-- CMake Discourse — "Modern CMake and CUDA" patterns for exported packages
-- GitHub NVIDIA/CUDA-Samples — CMakeLists.txt patterns for clangd-compatible compile_commands.json
-
----
-
-*Pitfalls research for: CUDA Library Developer Experience (Error Messages, CMake, IDE Support, Build Performance)*
-*Researched: 2026-04-26*
+- [NVIDIA CUDA C++ Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/) - **HIGH confidence** (official NVIDIA documentation)
+- [NVIDIA CUDA C++ Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/) - **HIGH confidence** (official NVIDIA documentation)
+- [Faster Parallel Reductions on Kepler (NVIDIA Blog)](https://developer.nvidia.com/blog/faster-parallel-reductions-kepler/) - **HIGH confidence** (NVIDIA developer blog)
+- [Precision and Performance: Floating-Point and IEEE 754 Compliance](https://developer.nvidia.com/content/precision-performance-floating-point-and-ieee-754-compliance-nvidia-gpus) - **HIGH confidence** (NVIDIA technical documentation)
+- cuFFT documentation and cuRAND documentation - **HIGH confidence** (NVIDIA CUDA libraries)

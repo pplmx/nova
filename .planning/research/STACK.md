@@ -1,234 +1,388 @@
-# Stack Research: Nova v1.8 Developer Experience
+# Stack Research: CUDA Algorithm Libraries for Nova v2.3
 
-**Domain:** CUDA C++ library developer experience tooling
-**Researched:** 2026-04-26
-**Confidence:** HIGH — CMake 4.3.2 docs verified, clangd official docs verified, ccache native CMake module confirmed
+**Domain:** Production CUDA parallel algorithms library
+**Researched:** 2026-04-28
+**Confidence:** HIGH — NVIDIA official documentation (cuBLAS 13.2, cuSOLVER 13.2, cuFFT 13.2) verified
 
 ## Executive Summary
 
-Nova v1.8 adds four DX layers on top of the existing CUDA/C++23/CMake 4.0+ stack. No framework changes are needed — only tooling additions. The core technology additions are: (1) a descriptive CUDA error wrapper header, (2) proper CMake install/export infrastructure using config-file packages, (3) CMakePresets.json and .clangd configuration for IDE support, and (4) ccache + Ninja integration for build performance. The project already exports `compile_commands.json` and has a unity build option — these need to be wired up properly rather than replaced.
+Nova v2.3 extends the CUDA library with production-quality parallel algorithms across sorting, linear algebra decomposition, numerical methods, and signal processing domains. This research identifies that NVIDIA provides production-grade implementations for most target algorithms via cuSOLVER, CUB, and cuFFT. Custom implementations are needed only for wavelet transforms, Monte Carlo methods, and root-finding/interpolation. The recommended approach is thin wrapper/proxy patterns around NVIDIA libraries with Nova-idiomatic APIs, leveraging existing five-layer architecture.
 
-## Recommended Stack
+## Standard Algorithms in NVIDIA Libraries
 
-### Core Technologies (Already Present — No Change Needed)
+### cuBLAS (v13.2) — Linear Algebra Foundation
 
-| Technology | Version | Status | Notes |
-|------------|---------|--------|-------|
-| CMake | 4.0+ | Already in use | CMake 4.3.2 available in environment |
-| CUDA Toolkit | 20 | Already in use | FindCUDAToolkit provides `CUDA::cudart`, `CUDA::cublas`, etc. |
-| C++ standard | C++23 | Already in use | CMAKE_CXX_STANDARD 23 |
-| CUDA standard | CUDA 20 | Already in use | CMAKE_CUDA_STANDARD 20 |
-| CMAKE_EXPORT_COMPILE_COMMANDS | ON | Already enabled | Line 53 of CMakeLists.txt |
-| Ninja generator | latest | Already supported | Documented in CMakeLists.txt header |
+**What it provides:**
+- **Level-1:** Vector ops (dot, nrm2, axpy, scal, rot, amax/amin, asum, copy, swap)
+- **Level-2:** Matrix-vector ops (gemv, symv, trmv, ger, syr)
+- **Level-3:** Matrix-matrix ops (gemm, symm, trmm, syrk, herk, trsm)
+- **Extensions:** GEAM (general matrix-matrix addition), DGMM (diagonal scaling), batched gemm variants
 
-### New Additions: Error Messages
+**Key capabilities:**
+- Tensor core support for FP16/BF16/FP8 mixed-precision GEMM
+- Batched operations for multiple small matrices
+- Strided batched for large batch sizes
+- 64-bit integer interface for large matrices
+- Floating-point emulation (BF16x9 for FP32, fixed-point for FP64) for performance on older hardware
 
-| Technology | Purpose | Why |
-|------------|---------|-----|
-| Custom `nova_error.hpp` | Descriptive CUDA errors with device context, API call, and recovery hints | `cudaGetErrorString()` is generic; Nova needs actionable guidance per error category |
+**Integration point:** Nova already uses cuBLAS for matrix operations. Extended wrappers needed for batched operations and precision variants.
 
-**No external library needed.** The error wrapper is a single header file that:
-- Maps `cudaError_t` codes to human-readable categories (memory, synchronization, launch, API usage)
-- Appends device ordinal, stream, and memory usage at error site
-- Provides recovery-action strings per error type (retry, reduce grid size, check memory, etc.)
+### cuSOLVER (v13.2) — Decompositions and Eigenvalue Problems
 
-### New Additions: CMake Integration
+**What it provides (Dense — cuSolverDN):**
 
-| Technology | Version | Purpose | Integration |
-|------------|---------|---------|-------------|
-| CMakePackageConfigHelpers | Built-in (CMake 3.15+) | Generate `*Config.cmake` and `*ConfigVersion.cmake` during install | Use `write_basic_package_version_file()` + `install(EXPORT)` |
-| NovaTargets.cmake | Generated | IMPORTED targets for downstream `find_package(Nova)` | `install(EXPORT NovaTargets NAMESPACE Nova:: DESTINATION lib/cmake/Nova)` |
-| CMakePresets.json | Schema version 10 | Shareable, versioned build configurations for developers and CI | Place in project root, version-controlled |
-| CMakeUserPresets.json | Same schema | Developer-local build overrides (ignored by git) | Created by developers, .gitignore'd |
+| Routine | Function | Notes |
+|---------|----------|-------|
+| `potrf` | Cholesky factorization | Symmetric/Hermitian positive definite |
+| `getrf` | LU factorization | General matrix with partial pivoting |
+| `geqrf` | QR factorization | General matrix |
+| `sytrf` | LDL factorization | Symmetric indefinite (Bunch-Kaufman) |
+| `gesvd` / `gesvdj` | SVD | Jacobi algorithm for faster convergence |
+| `syevd` / `syevj` | Symmetric eigenvalue | Divide-and-conquer / Jacobi |
+| `geev` | Non-symmetric eigenvalue | Schur decomposition |
+| `orgqr` / `ormqr` | QR reconstruction | Build Q from reflectors |
 
-**Why config-file packages over find-modules:** CMake 4.0 ships with `FindCUDAToolkit` providing all `CUDA::*` imported targets natively. A config-file package exposes Nova's own library targets the same way, with proper `INTERFACE_INCLUDE_DIRECTORIES` propagation. This is the modern standard (used by fmt, spdlog, Eigen, GoogleBenchmark).
+**Key features:**
+- **64-bit API** (`cusolverDnX*`): Supports matrices > 2^31 elements
+- **Iterative Refinement Solver (IRS)**: GMRES-based refinement for higher accuracy with lower precision
+- **Jacobian solvers** (`*j` variants): Configurable tolerance, max sweeps, eigenvalue sorting
+- **Deterministic mode**: Bit-exact results (disabled by default for performance)
+- **Workspace pattern**: `*_bufferSize` returns required workspace, user allocates
 
-### New Additions: IDE Support
+**cuSolverSP (DEPRECATED):** Sparse solvers moved to cuDSS
+**cuSolverRF (DEPRECATED):** Refactorization moved to cuDSS
+**cuSolverMG (DEPRECATED):** Multi-GPU moved to cuSOLVERMp
 
-| Technology | Purpose | Integration |
-|------------|---------|-------------|
-| `.clangd` config file | Language server configuration for clangd | YAML file in project root, configures compile flags, includes, clang-tidy |
-| `compile_commands.json` symlink | Make compilation database discoverable by clangd | Symlink `build/compile_commands.json` → project root (clangd searches parent dirs) |
-| `.vscode/` settings | VS Code clangd integration | `settings.json` disabling built-in C++ extension, enabling clangd |
-| CMakePresets.json `vendor` field | IDE-specific metadata | VS Code clangd extension reads `"vendor": {"llvm-vs-code-extensions.vscode-clangd": {...}}` |
+**Integration point:** Use cuSolverDN for SVD (`gesvdj`) and eigenvalue decomposition (`syevd`). Nova already has matrix operations — wrappers needed for factorization and decomposition.
 
-**clangd CUDA support:** clangd does not natively understand CUDA `.cu` files as GPU code. Configuration via `.clangd` `CompileFlags` with `Add: ["-x", "cuda", "-std=c++23", "--cuda-gpu-arch=sm_80"]` tells clangd to treat files as CUDA and apply correct target architecture. This is the standard approach — no fork or patched clangd required.
+### cuFFT (v13.2) — Fast Fourier Transform
 
-**Fallback flags approach:** For headers and files clangd cannot fully parse as CUDA, use `CompileFlags: FallbackFlags: ["-std=c++23"]` so partial completions still work. See [clangd installation docs](https://clangd.llvm.org/installation).
+**What it provides:**
+- 1D, 2D, 3D transforms
+- Complex-to-complex (C2C), real-to-complex (R2C), complex-to-real (C2R)
+- Batched transforms (multiple independent FFTs)
+- Strided layouts for non-contiguous data
+- Multi-GPU transforms (up to 16 GPUs)
+- Callback routines for custom load/store operations
+- Half-precision (FP16) and BFloat16 transforms (SM 7.5+)
+- Link-time optimized kernels (CUDA 12.6+)
 
-### New Additions: Build Performance
+**Key features:**
+- Plan-based API (FFTW-style): Create plan once, reuse for multiple transforms
+- Just-in-time kernel compilation for optimal performance on target architecture
+- CUDA Graphs support for recording and replaying FFT sequences
+- Multi-GPU with automatic data decomposition and communication
 
-| Technology | Purpose | Integration |
-|------------|---------|-------------|
-| ccache | Compiler cache for incremental builds | CMakeFindPackage support via `find_package(CCache)` or environment variable `CMAKE_C_COMPILER_LAUNCHER=ccache` |
-| Ninja generator | Parallel build execution | `cmake -G Ninja -B build` (already documented in CMakeLists.txt) |
-| CMAKE_UNITY_BUILD | Unity/Jumbo builds | Already partially implemented; needs `CMAKE_UNITY_BUILD ON` global variable + preset control |
-| CMAKE_UNITY_BUILD_BATCH_SIZE | Files per unity source | Already has adaptive logic (32 for 32+ cores, 64 for 64+ cores) |
+**Integration point:** Nova already has FFT via existing image processing. Multi-GPU FFT and precision variants are extensions.
 
-**ccache integration:**
-```cmake
-# Via CMake module (CMake 3.4+)
-find_package(CCache)
-if(CCache_FOUND)
-    ccache_add_project()
-endif()
+### CUB (CUDA Unbound) — Low-Level Primitives
 
-# Or via environment / preset (no CMake change needed)
-# cmake --preset dev  → CMakePresets.json sets CMAKE_CUDA_COMPILER_LAUNCHER:FILEPATH=ccache
+**What it provides:**
+- **Warp-level primitives**: Shuffle, reduction, scan, prefix sum
+- **Block-level collectives**: Cooperative I/O, sort, scan, reduction, histogram
+- **Device-level algorithms**: Parallel sort, prefix scan, reduction, histogram, radix sort
+- **Utilities**: PTX intrinsics, iterators, device/thread block management
+
+**Key capabilities:**
+- Architecture-specific specializations (5.0 through 9.0)
+- Compatible with CUDA dynamic parallelism
+- Header-only library (include `cub/cub.cuh`)
+
+**Integration point:** CUB powers Nova's existing sort, reduce, scan. New algorithms (top-k, binary search) should use CUB device primitives.
+
+### Thrust — STL-like GPU Algorithms
+
+**What it provides (via CUB backend):**
+- `thrust::sort`, `thrust::stable_sort`
+- `thrust::reduce`, `thrust::transform_reduce`
+- `thrust::scan`, `thrust::exclusive_scan`
+- `thrust::copy_if`, `thrust::remove`
+- `thrust::device_vector`, memory allocators
+
+**Notes:**
+- Thrust is header-only
+- Nova does NOT use Thrust (CUB directly instead)
+- Thrust's CUDA backend uses CUB; could provide Thrust host API wrappers for users familiar with STL
+
+## State-of-the-Art Approaches by Domain
+
+### Sorting & Searching
+
+**CUB Radix Sort (PRODUCTION)**
+```
+cub::DeviceRadixSort::SortKeys(...)
+cub::DeviceRadixSort::SortPairs(...)
+```
+- O(n log n) for arbitrary keys
+- Stable sort variants available
+- Key-value sorting (sort keys, reorder values in parallel)
+
+**CUB Block Sort (WARP/BLOCK LEVEL)**
+```
+cub::BlockSort<BlockTile, BlockSize, T, BlockedThreadArrive>
+```
+- In-register sorting for small arrays
+- Memory-efficient for block-local data
+
+**Top-K Operations**
+- **NOT in CUB directly**: Implement using reduce-by-key + segmented sort
+- Pattern: Segmented sort, take first K elements
+- Alternative: Use CUB's `DeviceReduce::ArgMax` for max-K queries
+
+**Binary Search**
+- **NOT in CUB**: Implement using warp-level binary search
+- Pattern: Each thread searches segment, warp cooperative binary search
+- Use `__shfl_*` for warp-level value exchange
+
+**Recommendation:** Wrap CUB sort, implement top-K via segmented sort, implement binary search with warp shuffle.
+
+### Linear Algebra Operations (SVD, Eigendecomposition)
+
+**SVD via cuSOLVER**
+```
+cusolverDnXgesvd(handle, ...)
+// or Jacobi (faster convergence):
+cusolverDnXgesvdp(handle, ...)
+// or randomized for approximate SVD:
+cusolverDnXgesvdr(handle, ...)
+```
+- **gesvd**: One-sided bidiagonalization, U/S/V^T returned
+- **gesvdj**: Jacobi-based, faster for small matrices, configurable tolerance
+- **gesvdjBatched**: Batched SVD for multiple small matrices
+- **gesvdaStridedBatched**: Strided batched with absolute error tolerance
+- **gesvdr**: Randomized SVD for low-rank approximation (much faster for tall matrices)
+
+**Eigenvalue Decomposition via cuSOLVER**
+```
+cusolverDnXsyevd(handle, ...)     // Divide-and-conquer
+cusolverDnXsyevdx(handle, ...)    // Eigenvalue range
+cusolverDnXgeev(handle, ...)      // Non-symmetric (left/right eigenvectors)
+cusolverDnXstedc(handle, ...)     // Divide-and-conquer for tridiagonal
+```
+- **syevd**: All eigenvalues/vectors of symmetric matrix
+- **syevdx**: Subset by index range or value range
+- **syevj**: Jacobi variant with configurable tolerance
+- **geev**: Non-symmetric (real Schur form, left/right eigenvectors)
+
+**Recommendation:** Use cuSOLVERDN wrappers. For randomized SVD (gesvdr), use for approximate PCA/compression use cases.
+
+### Numerical Methods
+
+**Monte Carlo Integration**
+- **NOT in NVIDIA libraries**: Custom implementation required
+- Approach: Parallel pseudo-random number generation with cuRAND
+- Pattern: Each thread generates samples, reduce to mean/variance
+- cuRAND: `curandState` per thread, skip ahead for independence
+- Variance reduction: Antithetic variates, control variates (implement manually)
+
+**Numerical Integration**
+- **NOT in NVIDIA libraries**: Custom implementation required
+- Approaches:
+  1. Trapezoidal/Simpson: Parallel prefix with reduction
+  2. Gaussian quadrature: Lookup weights, vectorized evaluation
+  3. Monte Carlo: See above
+
+**Root Finding**
+- **NOT in NVIDIA libraries**: Custom implementation required
+- Approaches:
+  1. Bisection: Binary search with convergence check
+  2. Newton-Raphson: Requires gradient computation
+  3. Brent's method: Requires function evaluations on host
+- **Recommendation**: Bisection for simple cases, limited Newton iterations for speed
+
+**Interpolation**
+- **NOT in NVIDIA libraries**: Custom implementation required
+- Approaches:
+  1. Linear: Vectorized lookup + weighted average
+  2. Cubic spline: Pre-compute coefficients on host, evaluate on device
+  3. Lagrange: Parallel evaluation of basis polynomials
+- **Recommendation**: Linear interpolation first, cubic spline as extension
+
+### Signal Processing (Wavelets, Convolution)
+
+**Wavelet Transform**
+- **NOT in NVIDIA libraries**: Custom implementation required
+- Approaches:
+  1. Haar wavelets: Simple high/low pass filter, subsample
+  2. Daubechies: Convolution with pre-computed filters
+  3. Biorthogonal: Separable 2D via row/column transforms
+- **Pattern**: Use cuFFT for convolution-based wavelet (e.g., Morlet)
+- **Recommendation**: Implement Haar (trivial), add Daubechies via convolution
+
+**Convolution**
+- **cuFFT for large kernels**: FFT(x) * FFT(kernel), IFFT
+- **Direct convolution**: For small kernels, shared-memory tiled convolution
+- **cuDNN (if available)**: For standard neural network convolutions
+- Pattern: Use FFT for kernel > 16 elements, direct otherwise
+
+**Filtering**
+- **cuFFT-based**: Frequency-domain multiplication
+- **Direct**: IIR (recursive) or FIR (finite impulse response)
+- FIR filter: `convolution` of signal with filter kernel
+- IIR filter: Recurrence relation per output element (sequential per row)
+
+**Recommendation:** Use cuFFT for FFT-based wavelet and filtering. Direct convolution for small kernels.
+
+## CUDA Capabilities Required
+
+### Warp-Level Primitives
+
+**Available via CUB or PTX intrinsics:**
+
+| Operation | CUB API | PTX Intrinsic |
+|-----------|---------|---------------|
+| Shuffle | `WarpShuffle` | `__shfl_*` |
+| Reduction | `WarpReduce` | `__reduce_*` |
+| Scan | `WarpScan` | Manual with `__shfl_up` |
+| Broadcast | `WarpScan` | `__shfl_sync` |
+
+**Key patterns:**
+```cpp
+// Warp shuffle broadcast
+auto value = __shfl_sync(mask, val, root_lane);
+
+// Warp reduction
+auto sum = WarpReduce(temp_storage).Sum(value);
+
+// Warp scan (prefix sum)
+WarpScan(temp_storage).InclusiveSum(value, result);
 ```
 
-**ccache version:** Latest stable is 4.10 (released 2025). Verify via `ccache --version`. Use `apt install ccache` or `brew install ccache`.
+**Required for:** Binary search, parallel reduction patterns, warp-cooperative algorithms.
 
-## Installation
+### Shared Memory Patterns
 
-```bash
-# Developer tooling (Ubuntu/Debian)
-sudo apt install ccache clangd ninja-build
+**Tiled convolution pattern:**
+```cpp
+__shared__ float tile[TILE_SIZE + KERNEL_SIZE - 1][TILE_SIZE + KERNEL_SIZE - 1];
 
-# Verify versions
-ccache --version    # Should be 4.10+
-clangd --version    # Should be 18+ for best CUDA support
-cmake --version     # 4.0+ (already satisfied)
-nvcc --version      # CUDA 20 (already satisfied)
+// Cooperative load into shared memory
+if (isValid) tile[ty][tx] = input[row][col];
+__syncthreads();
 
-# macOS
-brew install ccache llvm ninja
-
-# After building with ccache-enabled preset
-cmake --preset dev  # CMAKE_CUDA_COMPILER_LAUNCHER=ccache set by preset
+// Compute with shared memory accesses
+float sum = 0;
+for (int i = 0; i < KERNEL_SIZE; i++)
+    for (int j = 0; j < KERNEL_SIZE; j++)
+        sum += tile[ty + i][tx + j] * kernel[i][j];
 ```
 
-## Alternatives Considered
+**Required for:** Direct convolution, stencil operations, wavelet decomposition.
 
-| Category | Recommended | Alternative | When to Use Alternative |
-|----------|-------------|-------------|-------------------------|
-| Package type | Config-file packages | Find-modules | Only if Nova is not CMake-native (it is CMake-native, so config-file is correct) |
-| Package discovery | CMAKE_PREFIX_PATH | User Package Registry | Package Registry is IDE-specific; CMAKE_PREFIX_PATH works everywhere |
-| clangd integration | .clangd YAML | Bear + compile_flags.txt | Bear is build-system-specific; .clangd works for all clangd clients |
-| Unity build control | CMake preset toggle | Hard-coded in CMakeLists.txt | Preset control lets developers opt-in/out without editing CMakeLists.txt |
-| Build generator | Ninja (default preset) | Makefiles | Makefiles work but Ninja is faster for CUDA compilation parallelism |
-| ccache invocation | CMake preset CMAKE_CUDA_COMPILER_LAUNCHER | find_package(CCache) + ccache_add_project | Both work; preset is more visible and portable |
-| Error format | Custom header-only wrapper | CUDA error string only | Wrapper adds device context and recovery hints — actionable beyond raw error |
+### Memory Access Patterns
 
-## What NOT to Use
+**Coalesced memory access:** Threads in a warp access consecutive memory addresses.
+```
+Thread 0 -> addr + 0
+Thread 1 -> addr + 1
+...
+Thread 31 -> addr + 31
+```
+
+**Bank conflict avoidance:** Shared memory access patterns that avoid same-bank collisions.
+- Padding shared memory dimensions
+- Using `__ldg` for read-only data (texture cache)
+
+**L2 cache persistence:** For iterative algorithms, use `cudaMallocAsync` with persisting access policy.
+
+**Required for:** All bulk memory operations (sorting, FFT, matrix operations).
+
+## Recommended Implementation Stack
+
+### Libraries to Use (NVIDIA)
+
+| Library | Version | Purpose | Nova Integration |
+|---------|---------|---------|------------------|
+| cuBLAS | 13.2 | Matrix operations (already used) | Extend with batched ops |
+| cuSOLVER | 13.2 | SVD, eigenvalue decomposition | New wrappers |
+| cuFFT | 13.2 | FFT, convolution | Already used, extend multi-GPU |
+| CUB | Latest (bundled with CUDA) | Sort, reduce, scan, warp primitives | Use for new algorithms |
+| cuRAND | 13.2 | Random number generation | Monte Carlo |
+
+### Libraries to NOT Use (Already Covered or Deprecated)
+
+| Library | Why Not | Use Instead |
+|---------|---------|-------------|
+| cuSolverSP | Deprecated | cuDSS |
+| cuSolverRF | Deprecated | cuDSS |
+| cuSolverMG | Deprecated | cuSOLVERMp |
+| Thrust | Nova uses CUB directly | CUB device primitives |
+| cuDNN | Not needed for these algorithms | N/A |
+| MAGMA | CPU-GPU hybrid, not pure GPU | cuSOLVERDN |
+
+### New Custom Implementations Needed
+
+| Algorithm | Approach | Complexity |
+|-----------|----------|------------|
+| Top-K selection | CUB segmented sort or argmax | Medium |
+| Binary search | Warp shuffle binary search | Medium |
+| Monte Carlo | cuRAND + parallel reduction | Low |
+| Numerical integration | Parallel prefix/trapezoidal | Low |
+| Root finding | Bisection (simple) or Newton | Low |
+| Interpolation | Linear (trivial), cubic (medium) | Low-Medium |
+| Wavelet transforms | Direct convolution or FFT | Medium |
+
+## Integration Points with Nova Architecture
+
+### Five-Layer Architecture Alignment
+
+| Layer | Existing | Extension for v2.3 |
+|-------|----------|-------------------|
+| Memory (L1) | Buffer, unique_ptr, MemoryPool | No changes needed |
+| Device (L2) | Device management | No changes needed |
+| Algorithm (L3) | reduce, scan, sort, histogram | Add: top-k, binary search, numerical methods |
+| API (L4) | Public algorithms | Add: SVD, eigenvalues, wavelets, Monte Carlo |
+| Application (L5) | Domain-specific | No changes |
+
+### Code Patterns
+
+**cuSOLVER wrapper pattern:**
+```cpp
+// Header: include/nova/algo/svd.hpp
+namespace nova {
+class SVD {
+public:
+    struct Result { /* U, S, V^T */ };
+    static Expected<Result> compute(const Buffer& A, int m, int n, cudaStream_t stream = 0);
+};
+}
+```
+
+**Custom algorithm pattern (Monte Carlo):**
+```cpp
+// Header: include/nova/algo/monte_carlo.hpp
+namespace nova {
+Expected<double> pi_estimation(int samples, cudaStream_t stream = 0);
+}
+```
+
+**Integration with existing algorithms:**
+- Sort: `cub::DeviceRadixSort` wrapped in Nova's Buffer API
+- FFT: Use existing cuFFT integration for wavelet transforms
+- Random: `curand` wrapped for Monte Carlo
+
+## What NOT to Add
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| Find-modules for Nova itself | Outdated pattern for CMake-native projects; does not expose imported targets properly | `install(EXPORT)` + Config.cmake files |
-| Bear for compile_commands | Requires running full clean build to generate; fragile for incremental use | CMake's built-in `CMAKE_EXPORT_COMPILE_COMMANDS=ON` (already enabled) + symlink |
-| Clang-based nvcc wrapper (icx) | NVIDIA recommends nvcc for CUDA; clang as CUDA frontend is separate project | Keep nvcc, use clangd only for host-code analysis with CUDA flags |
-| Global `CMAKE_UNITY_BUILD` ON in CMakeLists.txt | Can cause ODR issues with templates and anonymous namespaces in CUDA code | Make it a preset-controlled option (developers choose) or set per-target |
-| Pre-built clangd CUDA patches | Fragmented, unmaintained forks; breaks with LLVM upgrades | Use upstream clangd 18+ with `.clangd` `CompileFlags` configuration |
-| bear for compile_commands.json | Requires clean rebuild; not compatible with CMake configure step | `CMAKE_EXPORT_COMPILE_COMMANDS=ON` already generates it at configure time |
-
-## Stack Patterns by Variant
-
-**If developer uses `cmake --preset dev`:**
-- Generator: Ninja
-- ccache enabled via `CMAKE_CUDA_COMPILER_LAUNCHER`
-- Unity build ON (fast iterative development)
-- clangd index built via background-index
-
-**If developer uses `cmake --preset release`:**
-- Generator: Ninja Multi-Config
-- ccache disabled (clean build, no cache pollution)
-- Unity build ON
-- Full opt+vectorize flags
-
-**If CI runs `cmake --preset ci`:**
-- Generator: Ninja
-- No ccache (clean environment)
-- Unity build ON
-- Strict warnings as errors
-- clang-tidy enabled
-
-**If developer uses `cmake -G "Unix Makefiles"`:**
-- ccache via `CC`/`CXX` wrappers in PATH
-- Unity build optional (controlled by cache variable)
-- No CMakePresets.json dependency
-
-## Version Compatibility
-
-| Component | Version | Compatible With | Notes |
-|-----------|---------|-----------------|-------|
-| CMake | 4.0+ | CUDA 20, C++23, Ninja | CMake 4.3.2 is latest; project already requires 4.0 |
-| FindCUDAToolkit | CMake 3.17+ | CUDA 11+ | Provides all `CUDA::*` imported targets; no manual FindCUDA.cmake needed |
-| CMAKE_UNITY_BUILD | CMake 3.16+ | C++, CUDA (added CMake 3.31) | Project already has CMake 4.0, so CUDA unity builds fully supported |
-| CMakePackageConfigHelpers | CMake 3.15+ | All modern packages | Used for Nova's own package export |
-| CMakePresets.json schema | Version 10 | CMake 3.23+ | Project already has CMake 4.0, schema v10 fully supported |
-| clangd | 15+ | C++23, CUDA via flags | Use latest (18+) for best C++23 support |
-| ccache | 4.0+ | All compilers including nvcc | ccache 4.10 recommended; verify with `ccache --version` |
-| Ninja | 1.10+ | CMake all versions | Already recommended in CMakeLists.txt |
-
-## Integration Points
-
-### Existing CMake Points (Wire Up, Don't Replace)
-
-| Existing Feature | Current State | What to Add |
-|-----------------|---------------|-------------|
-| `CMAKE_EXPORT_COMPILE_COMMANDS ON` | Line 53, always ON | Add symlink in CMakeLists.txt post-build or as a custom target |
-| `NOVA_ENABLE_UNITY_BUILD` option | Line 75, default ON | Wire to `CMAKE_UNITY_BUILD ${NOVA_ENABLE_UNITY_BUILD}` |
-| ProcessorCount + `--threads` | Lines 84-93, nvcc flags | Already good; add ccache launcher alongside |
-| FindCUDAToolkit | Line 59, REQUIRED | Already optimal; use `CUDA::*` targets in exported package |
-| Google Test FetchContent | Lines 481-487 | Already good; keep as-is |
-
-### New CMake Targets to Add
-
-```cmake
-# In CMakeLists.txt additions:
-# 1. Wire unity build option to CMAKE_UNITY_BUILD
-set(CMAKE_UNITY_BUILD ${NOVA_ENABLE_UNITY_BUILD})
-
-# 2. Export targets for find_package(Nova)
-include(CMakePackageConfigHelpers)
-export(EXPORT NovaTargets
-  FILE "${CMAKE_CURRENT_BINARY_DIR}/Nova/NovaTargets.cmake"
-  NAMESPACE Nova::
-)
-write_basic_package_version_file(
-  "${CMAKE_CURRENT_BINARY_DIR}/Nova/NovaConfigVersion.cmake"
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion
-)
-configure_file(cmake/NovaConfig.cmake.in
-  "${CMAKE_CURRENT_BINARY_DIR}/Nova/NovaConfig.cmake"
-  COPYONLY
-)
-install(EXPORT NovaTargets
-  FILE NovaTargets.cmake
-  NAMESPACE Nova::
-  DESTINATION lib/cmake/Nova
-)
-install(FILES
-  "${CMAKE_CURRENT_BINARY_DIR}/Nova/NovaConfig.cmake"
-  "${CMAKE_CURRENT_BINARY_DIR}/Nova/NovaConfigVersion.cmake"
-  DESTINATION lib/cmake/Nova
-)
-```
-
-### New Files to Create
-
-| File | Purpose |
-|------|---------|
-| `cmake/NovaConfig.cmake.in` | Config-file template for `find_package(Nova)` |
-| `.clangd` | clangd configuration (CUDA flags, include paths) |
-| `CMakePresets.json` | Developer build presets (dev, release, ci) |
-| `CMakeUserPresets.json` | Developer-local overrides (gitignored) |
-| `.vscode/settings.json` | VS Code clangd integration |
-| `include/nova/error.hpp` | Descriptive CUDA error wrapper |
-| `src/nova/error.cpp` | Error detail implementation |
+| Reimplementing cuSOLVER algorithms | NVIDIA provides production-optimized versions | Wrap cuSOLVERDN |
+| Reimplementing CUB sort | Already in Nova | Extend if needed |
+| GPU random without cuRAND | Quality matters for Monte Carlo | cuRAND |
+| General matrix multiplication | Already in Nova via cuBLAS | Extend with batched |
+| Generic FFT | Already in Nova via cuFFT | Extend with multi-GPU |
+| Sparse solvers | cuSolverSP deprecated, use cuDSS separately | Separate dependency |
+| cuDNN for signal processing | Not needed for target algorithms | N/A |
 
 ## Sources
 
-- [CMake cmake-packages(7) — Config-file package layout and `install(EXPORT)`](https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html) — HIGH
-- [CMake CMAKE_EXPORT_COMPILE_COMMANDS variable](https://cmake.org/cmake/help/latest/variable/CMAKE_EXPORT_COMPILE_COMMANDS.html) — HIGH
-- [CMake UNITY_BUILD property (CUDA support added CMake 3.31)](https://cmake.org/cmake/help/latest/prop_tgt/UNITY_BUILD.html) — HIGH
-- [CMake FindCUDAToolkit — all CUDA::* imported targets](https://cmake.org/cmake/help/latest/module/FindCUDAToolkit.html) — HIGH
-- [CMake cmake-presets(7) — version 10 schema, environment, vendor fields](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html) — HIGH
-- [clangd Installation and Project Setup](https://clangd.llvm.org/installation.html) — HIGH
-- [clangd Configuration Reference](https://clangd.llvm.org/config.html) — HIGH
-- [CCache CMake integration](https://ccache.dev/manual/latest.html#_cmake) — MEDIUM (verified via CMake modules, FindCCache moved/deprecated)
+- [cuBLAS 13.2 Documentation](https://docs.nvidia.com/cuda/cublas/) — HIGH
+- [cuSOLVER 13.2 Documentation](https://docs.nvidia.com/cuda/cusolver/) — HIGH
+- [cuFFT 13.2 Documentation](https://docs.nvidia.com/cuda/cufft/) — HIGH
+- [CUB GitHub / Documentation](https://nvlabs.github.io/cub/) — HIGH
+- [NVIDIA cuRAND Documentation](https://docs.nvidia.com/cuda/curand/) — HIGH
+- [CUDA C++ Programming Guide — Warp Shuffle](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#warp-shuffle-functions) — HIGH
+- [cuDSS (successor to cuSolverSP)](https://developer.nvidia.com/cudss) — MEDIUM
 
 ---
-*Stack research for: Nova v1.8 Developer Experience*
-*Researched: 2026-04-26*
+*Stack research for: Nova v2.3 Extended Algorithms*
+*Researched: 2026-04-28*
