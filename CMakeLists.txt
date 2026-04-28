@@ -245,6 +245,9 @@ set(PRODUCTION_SOURCES
         ${SRC_CUDA_PRODUCTION}/algo_wrapper.cu
         ${SRC_CUDA_PRODUCTION}/l2_persistence.cu
         ${SRC_CUDA_PRODUCTION}/priority_stream.cu
+        ${SRC_CUDA_PRODUCTION}/async_error_tracker.cu
+        ${SRC_CUDA_PRODUCTION}/health_metrics.cu
+        ${SRC_CUDA_PRODUCTION}/error_injection.cu
 )
 
 set(IMAGE_SOURCES
