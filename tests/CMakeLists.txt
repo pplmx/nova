@@ -28,6 +28,11 @@ add_executable(nova-tests
     device_info_test.cpp
     memory_metrics_test.cpp
     error_context_test.cpp
+    timeout_test.cpp
+    timeout_propagation_test.cpp
+    retry_test.cpp
+    degrade_test.cpp
+    error_handling_integration_test.cpp
     benchmark/benchmark_test.cpp
     benchmark/throughput_test.cpp
     benchmark/regression_test.cpp
@@ -97,6 +102,8 @@ set(CUDA_MULTINODE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/multinode)
 set(CUDA_PRODUCTION_DIR ${CMAKE_SOURCE_DIR}/include/cuda/production)
 set(CUDA_BENCHMARK_DIR ${CMAKE_SOURCE_DIR}/include/cuda/benchmark)
 set(CUDA_OBSERVABILITY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/observability)
+set(CUDA_ERROR_DIR ${CMAKE_SOURCE_DIR}/include/cuda/error)
+set(CUDA_TIMEOUT_DIR ${CMAKE_SOURCE_DIR}/include/cuda/timeout)
 set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
 target_link_libraries(nova-tests
@@ -131,6 +138,7 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_PRODUCTION_DIR}
     ${CUDA_BENCHMARK_DIR}
     ${CUDA_OBSERVABILITY_DIR}
+    ${CUDA_ERROR_DIR}
     ${DISTRIBUTED_TESTS_DIR}
 )
 

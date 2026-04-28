@@ -1,233 +1,175 @@
 # Production Hardening Guide
 
-**Version:** v2.4
-**CUDA Requirements:** 20+
-
 ## Overview
 
-This guide covers production hardening features added in v2.4: CUDA Graphs, L2 cache persistence, priority streams, observability, and stress testing.
+The Nova CUDA library provides production-ready error handling, timeout management, retry mechanisms, and graceful degradation capabilities.
 
-## CUDA Graphs
+## Timeout Management
 
-CUDA Graphs reduce kernel launch overhead by 10-50x for batch workloads by capturing compute graphs and replaying them.
-
-### Basic Usage
+### Per-Operation Timeouts
 
 ```cpp
-#include "cuda/production/graph_executor.h"
+#include "cuda/error/timeout.hpp"
 
-cuda::production::GraphExecutor executor;
-cuda::stream::Stream stream;
+using namespace nova::error;
 
-// Capture operations
-executor.begin_capture(stream);
-
-// Your CUDA operations here
-cudaMemset(d_data, 0, size);
-
-// Finalize graph
-executor.end_capture();
-executor.instantiate();
-
-// Replay graph (fast!)
-executor.launch(stream);
-```
-
-### Scoped Capture
-
-```cpp
+// RAII guard for automatic timeout tracking
 {
-    cuda::production::ScopedCapture capture(executor, stream);
-    // Operations automatically captured
-}
-// Graph instantiated on scope exit
-```
-
-### Memory Nodes
-
-```cpp
-cuda::production::GraphMemoryManager manager;
-manager.add_device_allocation(executor, graph, size);
-manager.add_host_allocation(executor, graph, size);
-manager.add_managed_allocation(executor, graph, size);
-```
-
-## L2 Cache Persistence
-
-Control L2 cache behavior for iterative algorithms working within a working set.
-
-```cpp
-#include "cuda/production/l2_persistence.h"
-
-// RAII scoped persistence
-{
-    cuda::production::ScopedL2Persistence persist(bytes);
-
-    // Your iterative kernel here
-    for (int i = 0; i < iterations; ++i) {
-        kernel<<<blocks, threads>>>(d_data, size);
+    timeout_guard guard("matrix_multiply", std::chrono::seconds{30});
+    
+    // Your CUDA operation here
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToDevice);
+    
+    if (guard.is_expired()) {
+        // Handle timeout
     }
-}  // L2 defaults restored
-
-// Manual control
-cuda::production::L2PersistenceManager manager;
-manager.set_persistence_size(max_size / 4);
+} // Guard automatically ends operation
 ```
 
-## Priority Streams
+### Watchdog Timer
 
-Priority-based stream scheduling for latency-sensitive operations.
+The timeout manager includes a background watchdog thread that automatically detects expired operations:
 
 ```cpp
-#include "cuda/production/priority_stream.h"
+timeout_config config;
+config.default_timeout = std::chrono::seconds{30};
+config.watchdog_interval = std::chrono::milliseconds{100};
+config.watchdog_enabled = true;
 
-cuda::production::PriorityStreamPool pool(4);
-
-// Acquire high-priority stream
-auto high = pool.acquire(cuda::production::StreamPriority::High);
-auto normal = pool.acquire(cuda::production::StreamPriority::Normal);
-auto low = pool.acquire(cuda::production::StreamPriority::Low);
-
-// Use streams...
-kernel<<<..., high.get()>>>(args);
-
-// Return to pool
-pool.release(std::move(high));
+timeout_manager::instance().set_config(config);
 ```
 
-## Observability
+### Timeout Callbacks
 
-### NVTX Extensions
+Register callbacks to be notified when operations time out:
 
 ```cpp
-#include "cuda/observability/nvtx_extensions.h"
-
-// Scoped range
-NOVA_NVTX_SCOPED_RANGE("my_operation");
-
-// Or explicit push/pop
-NOVA_NVTX_PUSH_RANGE(cuda::observability::NVTXDomains::Memory, "alloc");
-NOVA_NVTX_POP_RANGE();
+timeout_manager::instance().set_callback([](operation_id id, std::error_code ec) {
+    if (ec.category() == timeout_category()) {
+        std::cerr << "Operation " << id << " timed out: " << ec.message() << "\n";
+    }
+});
 ```
 
-### Async Error Tracking
+## Retry Mechanisms
+
+### Exponential Backoff
 
 ```cpp
-#include "cuda/production/async_error_tracker.h"
+#include "cuda/error/retry.hpp"
 
-cuda::production::AsyncErrorTracker tracker;
+retry_config config;
+config.base_delay = std::chrono::milliseconds{100};
+config.multiplier = 2.0;
+config.max_delay = std::chrono::seconds{30};
+config.max_attempts = 5;
+config.jitter_enabled = true;
 
-// After kernel launches
-tracker.check();
+retry_executor executor(config);
 
-// Access errors
-if (auto err = tracker.get_last_error()) {
-    log_error(err->message);
+auto result = executor.execute([&]() {
+    auto status = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToDevice, stream);
+    if (status != cudaSuccess) {
+        throw std::runtime_error(cudaGetErrorString(status));
+    }
+    return result;
+});
+```
+
+### Circuit Breaker
+
+```cpp
+circuit_breaker_config cb_cfg;
+cb_cfg.failure_threshold = 5;
+cb_cfg.reset_timeout = std::chrono::seconds{30};
+cb_cfg.half_open_success_threshold = 3;
+
+circuit_breaker cb(cb_cfg);
+
+if (!cb.allow_request()) {
+    // Circuit is open - skip the operation
+    return fallback_result();
 }
-```
 
-### Health Metrics
-
-```cpp
-#include "cuda/production/health_metrics.h"
-
-cuda::production::HealthMonitor monitor;
-
-auto json = monitor.to_json();
-auto csv = monitor.to_csv();
-
-// Record errors
-monitor.record_error();
-```
-
-## Error Injection (Testing)
-
-Fault tolerance validation without real failures.
-
-```cpp
-#include "cuda/production/error_injection.h"
-
-cuda::production::ErrorInjector injector;
-injector.inject_always(cuda::production::ErrorTarget::Allocation, cudaErrorMemoryAllocation);
-
-// Test recovery paths
 try {
-    // Operation that might fail
-} catch (const cuda::device::CudaException& e) {
-    // Handle gracefully
+    auto result = perform_operation();
+    cb.record_success();
+    return result;
+} catch (...) {
+    cb.record_failure();
+    throw;
 }
 ```
 
-## Memory Pressure Testing
+## Graceful Degradation
+
+### Precision Levels
 
 ```cpp
-cuda::production::StressTestConfig config;
-config.max_allocations = 1024;
-config.allocation_size = 10 * 1024 * 1024;  // 10MB
+#include "cuda/error/degrade.hpp"
 
-bool success = cuda::production::run_memory_pressure_test(config);
+using namespace nova::error;
+
+// Available precision levels
+enum class precision_level { high, medium, low };
+
+// Automatically degrade precision
+auto degraded = degrade(current_precision);
+degradation_manager::instance().trigger_degradation(
+    "matrix_multiply", degraded, "Memory pressure detected"
+);
 ```
 
-## API Reference
+### Quality Thresholds
 
-### GraphExecutor
+```cpp
+quality_threshold threshold;
+threshold.min_quality_score = 0.8;
+threshold.max_retry_before_degrade = 3;
+threshold.min_acceptable_precision = precision_level::medium;
 
-| Method | Description |
-|--------|-------------|
-| `begin_capture(stream)` | Start capturing to graph |
-| `end_capture()` | Finalize graph, return `cudaGraph_t` |
-| `instantiate()` | Create executable graph |
-| `launch(stream)` | Replay graph |
-| `update_param(i, ptr, size)` | Update parameter without rebuild |
-
-### L2PersistenceManager
-
-| Method | Description |
-|--------|-------------|
-| `set_persistence_size(bytes)` | Set L2 cache budget |
-| `restore_defaults()` | Reset to system defaults |
-| `max_persistence_size()` | Get device L2 cache size |
-
-### PriorityStreamPool
-
-| Method | Description |
-|--------|-------------|
-| `acquire(priority)` | Get stream from pool |
-| `release(stream)` | Return stream to pool |
-| `available_count(priority)` | Count of available streams |
-
-### AsyncErrorTracker
-
-| Method | Description |
-|--------|-------------|
-| `check()` | Check for deferred errors |
-| `record(error, context)` | Record an error |
-| `get_errors()` | Get all recorded errors |
-| `clear()` | Clear error history |
-
-### HealthMonitor
-
-| Method | Description |
-|--------|-------------|
-| `get_health_snapshot()` | Get current health metrics |
-| `get_memory_snapshot()` | Get memory usage |
-| `to_json()` | Export as JSON |
-| `to_csv()` | Export as CSV |
-
-## Performance Notes
-
-1. **CUDA Graphs**: Best for static workloads with many kernel launches
-2. **L2 Persistence**: Benefits iterative algorithms on small working sets
-3. **Priority Streams**: Use sparingly; GPU work is not preemptible
-4. **Observability**: `NOVA_NVTX_ENABLED=0` disables NVTX for production
-
-## Migration from v2.3
-
-No breaking changes. All v2.3 APIs remain compatible.
-
-```diff
-- #include "cuda/stream/stream.h"
-+ #include "cuda/production/l2_persistence.h"
+degradation_manager::instance().set_threshold(threshold);
 ```
 
-New features are additive and optional.
+## Error Categories
+
+### Timeout Errors
+
+```cpp
+std::error_code make_timeout_error(timeout_error_code code);
+```
+
+### Error Code Integration
+
+All Nova error types integrate with `std::error_code`:
+
+```cpp
+try {
+    timeout_guard guard("operation", std::chrono::seconds{10});
+    // Operation
+} catch (const std::system_error& e) {
+    if (e.code().category() == timeout_category()) {
+        // Handle timeout specifically
+    }
+}
+```
+
+## Best Practices
+
+1. **Always use RAII guards** for timeout tracking
+2. **Set appropriate timeouts** based on operation type and hardware
+3. **Enable jitter** to prevent thundering herd on retries
+4. **Configure circuit breakers** per operation type
+5. **Monitor degradation events** for system health
+
+## Configuration Defaults
+
+| Parameter | Default Value |
+|-----------|--------------|
+| Default Timeout | 30 seconds |
+| Watchdog Interval | 100 ms |
+| Retry Base Delay | 100 ms |
+| Retry Multiplier | 2.0 |
+| Max Retry Attempts | 5 |
+| Circuit Breaker Threshold | 5 failures |
+| Reset Timeout | 30 seconds |

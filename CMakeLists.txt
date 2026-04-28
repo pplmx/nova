@@ -381,6 +381,10 @@ set(PREEMPTION_SOURCES
 set(ERROR_SOURCES
         ${SRC_CUDA_ERROR}/cuda_error.cpp
         ${SRC_CUDA_ERROR}/cublas_error.cpp
+        ${SRC_CUDA_ERROR}/timeout.cpp
+        ${SRC_CUDA_ERROR}/timeout_context.cpp
+        ${SRC_CUDA_ERROR}/retry.cpp
+        ${SRC_CUDA_ERROR}/degrade.cpp
 )
 
 set(PERFORMANCE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/performance)
