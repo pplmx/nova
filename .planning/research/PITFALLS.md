@@ -1,1067 +1,1249 @@
-# GPU Algorithm Pitfalls Research
+# CUDA Library Production Hardening Pitfalls
 
-**Domain:** CUDA GPU Parallel Algorithms
+**Project:** Nova CUDA Library v2.4 Production Hardening
+**Domain:** CUDA Production Readiness
 **Researched:** 2026-04-28
-**Confidence:** HIGH (based on NVIDIA official documentation and established GPU programming patterns)
+**Confidence:** HIGH (based on NVIDIA official documentation, established production patterns, and codebase analysis)
 
 ## Executive Summary
 
-This document catalogs common pitfalls across four GPU algorithm domains: sorting/searching, linear algebra extras, numerical methods, and signal processing. Each pitfall includes root cause analysis, consequences, and mitigation strategies mapped to implementation phases.
+This document catalogs common pitfalls when adding production hardening to CUDA libraries, organized into four categories: error handling, performance optimization, stress testing, and reliability. Each pitfall includes root cause analysis, production consequences, and actionable mitigation strategies.
 
 Key cross-cutting themes:
-- **Shared memory bank conflicts** affect sorting, linear algebra, and signal processing
-- **Warp divergence** impacts all irregular algorithms
-- **Numerical stability** is critical for linear algebra, numerical methods, and signal processing
-- **Memory coalescing** requirements vary by data access patterns
+- **Asynchronous operation errors** are frequently mishandled (cudaGetLastError semantics)
+- **Profiling on synthetic data** leads to wrong optimization priorities
+- **Flaky GPU tests** often indicate timing dependencies, not actual failures
+- **False confidence from passing tests** is the most dangerous pitfall
 
 ---
 
-## 1. Sorting & Searching Pitfalls
+## 1. CUDA Error Handling Pitfalls
 
-### 1.1 Bank Conflicts in Shared Memory Sorting
+### 1.1 Missing cudaGetLastError() After Kernel Launch
 
-**What goes wrong:** Parallel sorting algorithms (bitonic, radix, odd-even mergesort) heavily use shared memory for comparison exchanges. When threads in a warp access shared memory addresses that map to the same bank, throughput drops by a factor equal to the conflict degree.
+**What goes wrong:** CUDA API calls return `cudaSuccess` even when the kernel fails, masking errors that appear asynchronously.
 
-**Why it happens:** NVIDIA shared memory is divided into banks (32 banks on most architectures). Sequential access patterns with stride equal to a power of 2 cause all threads to hit the same bank. Classic example:
+**Why it happens:** Kernel launches are asynchronous. The CUDA runtime queues the launch but returns immediately. The actual error (out-of-resources, invalid configuration, illegal address) is recorded separately and must be retrieved via `cudaGetLastError()`.
 
 ```cpp
-// DANGEROUS: stride of 32 causes bank conflict
-__shared__ float shared[256];
-value = shared[threadIdx.x * 32];  // All threads access same bank!
+// WRONG: Assumes kernel succeeded if cudaLaunchKernel returns success
+cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0);
+// ... other code ...
+// cudaSuccess here doesn't mean kernel succeeded!
+
+// WRONG: Only checking API call, not kernel execution
+cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
+if (err != cudaSuccess) { /* handles memcpy error only */ }
 ```
 
 **Consequences:**
-- 32x throughput reduction in worst case
-- Sorting slower than a simpler algorithm with better memory access
-- Non-obvious: appears correct but underperforms by 10-50x
+- Program continues with undefined behavior after kernel failure
+- `cudaErrorLaunchFailure` or `cudaErrorIllegalAddress` goes undetected
+- Silent data corruption when downstream code assumes kernel produced valid output
+- Extremely difficult to debug: error appears unrelated to actual failure
 
 **Prevention:**
 ```cpp
-// SAFE: Use 5-word padding to avoid bank conflicts
-__shared__ float shared[256 + 5];  // +5 avoids power-of-2 strides
-value = shared[threadIdx.x * 33];  // Now accesses different banks
+// CORRECT: Check for kernel errors immediately after launch
+cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0);
+cudaError_t err = cudaGetLastError();  // MUST check this
+if (err != cudaSuccess) {
+    throw cuda_exception(err, "kernel launch", __FILE__, __LINE__);
+}
 
-// Alternative: Use shuffle instructions instead of shared memory
-value = __shfl_down(value, 16);  // No shared memory needed
+// EVEN BETTER: Use NOVA_CHECK for automatic error checking
+NOVA_CHECK(cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0));
+NOVA_CHECK_WITH_STREAM(cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0), stream);
 ```
 
-**Detection:** NVIDIA profiler shows "shared memory efficiency" below 80% or high "shared_load_transaction" counts.
+**Detection:** NVIDIA compute-sanitizer (`compute-sanitizer --tool memcheck`) detects illegal memory access in kernels.
 
-**Phase Recommendation:** Phase 1 (Shared Memory Access Patterns) - Define bank-conflict-free access patterns before implementing sort kernels.
+**Phase Recommendation:** Phase 33 (Error Framework) — Ensure NOVA_CHECK wraps ALL kernel launches.
 
 ---
 
-### 1.2 Warp Divergence in Variable-Length Sorting
+### 1.2 Ignoring Error State from Previous Operations
 
-**What goes wrong:** Sorting variable-length records (strings, structs) requires conditional logic that varies by thread, causing warp divergence where threads take different execution paths.
+**What goes wrong:** `cudaGetLastError()` returns an error from an earlier unrelated operation, not the immediately preceding one.
 
-**Why it happens:** The SIMT execution model executes all threads in a warp on the same instruction. When threads branch based on data-dependent lengths, inactive threads still consume execution cycles.
+**Why it happens:** CUDA maintains a single per-thread error state. Any un-checked CUDA call can pollute the error state:
 
 ```cpp
-// DIVERGENT: Different threads take different paths
-if (keyLengths[threadIdx] < 8) {
-    // Thread 0, 4, 8, 12... execute here
-    sortSmallKey(key, threadIdx);
-} else if (keyLengths[threadIdx] < 16) {
-    // Thread 1, 5, 9, 13... execute here
-    sortMediumKey(key, threadIdx);
-} else {
-    // Thread 2, 6, 10, 14... execute here
-    sortLargeKey(key, threadIdx);
+// WRONG: cudaGetLastError returns error from cudaFuncGetAttributes,
+// not from the kernel launch
+cudaFuncGetAttributes(&attrs, kernel);
+cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0);
+cudaError_t err = cudaGetLastError();  // Returns cudaSuccess (good!)
+// BUT cudaFuncGetAttributes set error state to something else earlier
+// and cudaLaunchKernel succeeded, so this is correct
+```
+
+**Consequences:**
+- Incorrect error attribution when debugging
+- Logic errors if code checks `cudaGetLastError()` after multiple operations
+
+**Prevention:**
+```cpp
+// PATTERN: Clear error state before critical section, then check
+cudaPeekAtLastError();  // Clear any pending error
+// ... perform operations ...
+cudaError_t err = cudaGetLastError();
+if (err != cudaSuccess) {
+    // Error is from the operations above, not stale state
+}
+```
+
+**Note:** Nova's `cuda_error_guard` handles this automatically by peeking at existing errors before checking new ones.
+
+---
+
+### 1.3 Error Handling in Async Callbacks
+
+**What goes wrong:** Calling CUDA APIs from stream callbacks causes `cudaErrorNotPermitted` or undefined behavior.
+
+**Why it happens:** CUDA stream callbacks execute on the host but in a restricted context. The CUDA Runtime API is partially blocked:
+
+```cpp
+// WRONG: CUDA API calls in callback are not permitted
+void CUDART_CB myCallback(cudaStream_t stream, cudaError_t status, void* userData) {
+    int device;
+    cudaGetDevice(&device);  // May fail!
+    cudaMalloc(&ptr, size);  // Will likely fail!
+    // Many runtime APIs are disallowed in callbacks
+}
+cudaStreamAddCallback(stream, myCallback, nullptr, 0);
+```
+
+**Consequences:**
+- Intermittent failures depending on callback timing
+- `cudaErrorNotPermitted` returned
+- Resource leaks if allocation fails silently
+
+**Prevention:**
+```cpp
+// CORRECT: Use cudaStreamQuery for error detection instead
+void checkStreamErrors(cudaStream_t stream) {
+    cudaError_t err = cudaStreamQuery(stream);
+    if (err == cudaErrorNotReady) {
+        // Work still in progress, not an error
+        return;
+    }
+    if (err != cudaSuccess) {
+        // Actual error occurred
+        throw cuda_exception(err, "stream", __FILE__, __LINE__);
+    }
+}
+
+// CORRECT: For callbacks, only use allowed operations
+void CUDART_CB safeCallback(cudaStream_t stream, cudaError_t status, void* userData) {
+    // Read-only operations may work, but safest to avoid CUDA APIs entirely
+    // Signal another thread via atomics or condition variables instead
+    std::atomic_store(&callbackCompleted, true);
+}
+```
+
+**Phase Recommendation:** Phase 22 (Communication Error Recovery) — Use stream query patterns, not callback CUDA calls.
+
+---
+
+### 1.4 Memory Allocation Without Checking for Null
+
+**What goes wrong:** `cudaMalloc` returns `cudaSuccess` even when allocation fails (pre-Pascal), leading to null pointer dereference.
+
+**Why it happens:** Legacy behavior (compute capability < 6.0): `cudaMalloc` returns `cudaSuccess` but sets ptr to 0. Modern behavior (Pascal+): `cudaMalloc` returns `cudaErrorMemoryAllocation`.
+
+```cpp
+// DANGEROUS: Assuming ptr is non-null after cudaSuccess
+void* ptr;
+cudaError_t err = cudaMalloc(&ptr, size);
+if (err == cudaSuccess) {
+    // ptr might still be nullptr on older GPUs!
+    memset(ptr, 0, size);  // Crash!
 }
 ```
 
 **Consequences:**
-- Up to 32x slowdown in worst divergence case
-- Performance varies non-deterministically with input distribution
-- Compiler cannot auto-vectorize around divergence
+- Null pointer dereference crashes on Kepler/Maxwell GPUs
+- Silent corruption or security vulnerabilities
+- Hard to reproduce on modern hardware
 
 **Prevention:**
-1. **Sort by type first, then by key** - All keys of same length together
-2. **Warp-uniform control flow** - Use predicates that vary within warps only for memory operations, not compute
-3. **Multi-pass approach** - One pass to classify, second pass to sort homogeneous groups
-
 ```cpp
-// PREFER: Classify first, sort homogeneous groups
-int bucket = classifyLength(keyLengths[threadIdx]);  // 0, 1, or 2
-__shared__ int bucketCount[3];
-// Count bucket sizes...
-// Launch homogeneous sort kernels per bucket
+// ROBUST: Always check both error AND pointer
+void* ptr = nullptr;
+NOVA_CHECK(cudaMalloc(&ptr, size));
+if (ptr == nullptr) {
+    throw cuda_exception(cudaErrorMemoryAllocation, "cudaMalloc",
+                         __FILE__, __LINE__);
+}
+// Now safe to use ptr
 ```
-
-**Phase Recommendation:** Phase 2 (Warp-Synchronous Design) - Model divergence patterns before kernel implementation.
 
 ---
 
-### 1.3 Memory Coalescing for Variable-Length Data
+### 1.5 Forgetting to Free Resources on Error Paths
 
-**What goes wrong:** Variable-length sorting (string sort, record sort) cannot guarantee contiguous memory access, leading to severe memory bandwidth underutilization.
+**What goes wrong:** Memory leaks and resource exhaustion when errors occur mid-function.
 
-**Why it happens:** Fixed-length sort assumes all elements are contiguous in memory. Variable-length elements with pointers/offsets break this assumption:
+**Why it happens:** Early returns or exceptions bypass cleanup code:
 
 ```cpp
-// BAD: Non-contiguous access pattern
-StringRecord* records = getRecords();
-for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    StringRecord& r = records[i];  // May point anywhere
-    sortKey(r.key, r.keyLength);   // Scatter-gather pattern
+// WRONG: Leaks memory if check2 fails
+void process(Buffer& buf) {
+    float* d_temp;
+    cudaMalloc(&d_temp, size1);  // Allocated
+    
+    check1();  // May throw
+    cudaMalloc(&d_temp2, size2);  // Allocated
+    
+    check2();  // May throw - d_temp leaked!
+    
+    // cleanup never runs
+}
+
+// WRONG: Double-free on exception
+void process() {
+    float* d_a = nullptr, *d_b = nullptr;
+    cudaMalloc(&d_a, size);
+    cudaMalloc(&d_b, size);
+    
+    if (condition) throw std::runtime_error("fail");
+    
+    cudaFree(d_a);  // If exception here, d_b leaked
+    cudaFree(d_b);
 }
 ```
 
-**Consequences:**
-- Memory bandwidth drops to 10-20% of peak
-- Latency hiding fails because threads wait for scattered memory
-- Sorting throughput inversely proportional to string variance
-
 **Prevention:**
-1. **Pack records contiguously** with fixed-size headers
-2. **Use indirection** - Sort indices/keys first, then reorder
-3. **Radix sort friendly encoding** - Pre-compute fixed-length sortable keys
-
 ```cpp
-// BETTER: Pack with fixed-size headers
-struct PackedRecord {
-    uint32_t length;
-    uint32_t sortKey;        // Precomputed for variable data
-    char data[];             // Variable payload
+// PATTERN: RAII wrappers (Buffer class already handles this)
+Buffer temp1(size1);
+Buffer temp2(size2);
+// Exceptions automatically free resources
+
+// PATTERN: Scope guards for C-style code
+struct CudaFree {
+    void* ptr;
+    ~CudaFree() { if (ptr) cudaFree(ptr); }
 };
 
-// Now sorting accesses contiguous memory
-PackedRecord* records = packRecords(original);
-radixSort(records, n);       // Coalesced access guaranteed
-```
-
-**Phase Recommendation:** Phase 1 (Memory Layout) - Define data layout before algorithm implementation.
-
----
-
-### 1.4 Numerical Stability in Key Comparisons
-
-**What goes wrong:** Floating-point key sorting produces inconsistent results across runs, architectures, and optimization levels due to non-associativity of floating-point operations.
-
-**Why it happens:** `(a < b)` may differ from `(b > a)` in floating-point due to rounding. Parallel sort evaluates comparisons in different orders than serial sort.
-
-**Consequences:**
-- Results vary across GPU generations (different instruction scheduling)
-- Debug vs. release builds produce different orderings
-- Numerical reproducibility impossible without deterministic reduction
-
-**Prevention:**
-1. **Use integer keys** for sortable floating-point values (encode via `float_as_int`)
-2. **Define stable comparison** - Use bitwise operations on integer representations
-3. **Accept non-determinism** - Document as acceptable for numerical sorts
-
-```cpp
-// STABLE: Integer comparison for floating-point keys
-__device__ bool compareKeys(float a, float b) {
-    uint32_t ia = float_as_uint(a);
-    uint32_t ib = float_as_uint(b);
-    // Handle sign bit for correct ordering
-    return (ia ^ (1u << 31)) < (ib ^ (1u << 31));
+void process() {
+    CudaFree guard1{nullptr}, guard2{nullptr};
+    cudaMalloc(&guard1.ptr, size1);
+    cudaMalloc(&guard2.ptr, size2);
+    // Exception-safe: both freed on unwind
 }
 ```
 
-**Phase Recommendation:** Phase 3 (Correctness Verification) - Define numerical stability requirements and comparison semantics.
+**Phase Recommendation:** Phase 10 (Resource Management) — Enforce RAII patterns via code review.
 
 ---
 
-## 2. Linear Algebra Extras Pitfalls
+### 1.6 Error Propagation Across CUDA Contexts
 
-### 2.1 Convergence Issues in Iterative Eigensolvers
+**What goes wrong:** Errors from one device context leak into another when using multi-GPU code.
 
-**What goes wrong:** Power iteration, Rayleigh quotient iteration, and Krylov subspace methods fail to converge or converge to wrong eigenvalues due to numerical issues.
+**Why it happens:** Each CUDA context maintains its own error state. Explicit context switching (`cudaSetDevice`) doesn't automatically clear error state:
 
-**Why it happens:**
-1. **Clustered eigenvalues** - Nearly equal eigenvalues cause slow separation
-2. **Poor initial guesses** - Starting vectors orthogonal to dominant eigenspace
-3. **Loss of orthogonality** - Gram-Schmidt orthonormalization accumulates errors
+```cpp
+// WRONG: Error from device 0 persists when switching to device 1
+cudaSetDevice(0);
+cudaMalloc(&ptr0, size);  // Fails on device 0
+cudaSetDevice(1);
+cudaMalloc(&ptr1, size);  // Error state still shows device 0 error!
+// cudaGetLastError() returns device 0's error, not cudaSuccess
+```
 
 **Consequences:**
-- Algorithm never terminates (no convergence check catches this)
-- Returns eigenvalues with wrong multiplicity
-- Eigenvectors span wrong subspace
+- Incorrect error attribution in multi-GPU scenarios
+- Operations fail with misleading error messages
+- Debugging complexity increases exponentially
 
 **Prevention:**
 ```cpp
-// MUST HAVE: Convergence monitoring with fault tolerance
-float monitorConvergence(const Matrix& A, const Vector& v, float lambda, int iter) {
-    float residual = norm(A * v - lambda * v) / norm(v);
+// CORRECT: Clear error after context switch
+cudaSetDevice(0);
+NOVA_CHECK(cudaMalloc(&ptr0, size));  // Check and clear
+
+cudaSetDevice(1);
+cudaPeekAtLastError();  // Clear any stale error from context switch
+NOVA_CHECK(cudaMalloc(&ptr1, size));  // Now errors are from device 1
+```
+
+---
+
+## 2. Performance Optimization Pitfalls
+
+### 2.1 Premature Optimization Without Profiling
+
+**What goes wrong:** Complex optimizations applied to code that isn't a bottleneck waste development time and reduce maintainability.
+
+**Why it happens:** Intuition about performance is frequently wrong, especially for GPUs where memory access patterns dominate:
+
+```cpp
+// PREMATURE: Optimizing a kernel that's called once per frame
+// while memory transfers dominate runtime
+__global__ void complexKernel(float* data, int n) {
+    // Complex optimized computation...
+}
+
+// Reality: This kernel takes 0.1ms, but cudaMemcpy takes 10ms
+// Optimizing the kernel provides 0.1ms improvement, ignoring 10ms problem
+```
+
+**Consequences:**
+- 10x development effort for 1% performance gain
+- Code complexity increases without proportional benefit
+- Maintainability decreases
+
+**Prevention:**
+```cpp
+// CORRECT: Profile first, then optimize hotspots
+void profileApplication() {
+    // Use NVIDIA Nsight Compute/Visual Profiler
+    // Or NVIDIA Tools Extension (NVTX) for custom markers
     
-    // Detect pathological cases
-    if (iter > maxIterations * 0.9 && residual > tolerance * 10) {
-        // Likely in clustered eigenvalue regime
-        // Trigger subspace expansion or restart
-        return -1.0f;  // Signal to restart with new vector
+    // Identify top 3 hotspots:
+    // 1. Memory transfer: 10ms (50% of runtime) - OPTIMIZE THIS
+    // 2. Kernel A: 5ms (25%) - OPTIMIZE THIS
+    // 3. Kernel B: 0.1ms (0.5%) - IGNORE
+}
+```
+
+**Source:** NVIDIA Best Practices Guide explicitly states: "Before implementing lower priority recommendations, make sure all higher priority recommendations that are relevant have already been applied."
+
+---
+
+### 2.2 Profiling on Unrealistic Workloads
+
+**What goes wrong:** Optimizations based on tiny or synthetic data sizes don't translate to production workloads.
+
+**Why it happens:** GPU performance characteristics change dramatically with data size due to occupancy, cache effects, and memory bandwidth saturation:
+
+```cpp
+// WRONG: Testing with data that fits in L2 cache
+void benchmark() {
+    const int N = 1024;  // Fits in cache - unrepresentative!
+    benchmarkKernel(data, N);  // Reports 100 GB/s
+    
+    // Production workload:
+    const int N_PROD = 10 * 1024 * 1024;  // Cache thrashing
+    // Same kernel reports 20 GB/s - 5x slower!
+}
+```
+
+**Consequences:**
+- Wrong optimization priorities (tuning for cache-resident data)
+- Performance regression in production
+- False confidence from benchmark results
+
+**Prevention:**
+```cpp
+// CORRECT: Profile with production-representative sizes
+void comprehensiveBenchmark() {
+    std::vector<int> testSizes = {
+        1024,           // Small boundary
+        65536,          // L2 cache fitting
+        1024 * 1024,    // L2 cache thrashing
+        16 * 1024 * 1024,      // Working set > L2
+        128 * 1024 * 1024,     // Memory pressure
+    };
+    
+    for (int n : testSizes) {
+        Buffer d_data(n);
+        // Warm up
+        kernel(d_data.data(), n);
+        cudaDeviceSynchronize();
+        
+        // Measure steady-state performance
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < 100; i++) {
+            kernel(d_data.data(), n);
+        }
+        cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
+        
+        // Report both throughput AND scaling behavior
+        reportPerformance(n, duration);
+    }
+}
+```
+
+---
+
+### 2.3 Ignoring Memory Transfer Overhead
+
+**What goes wrong:** Optimizing kernel compute time while ignoring host-device transfer time.
+
+**Why it happens:** Host-device bandwidth (20-50 GB/s) is 5-10x slower than device memory bandwidth (500-1000 GB/s):
+
+```cpp
+// WRONG: Focusing on kernel optimization
+__global__ void optimizeMe(float* data, int n) {
+    // Complex computation...
+}
+
+// Reality: This kernel is called with data transfer overhead
+void process() {
+    float* h_data = loadData();  // CPU memory
+    
+    float* d_data;
+    cudaMalloc(&d_data, size);
+    
+    cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);  // SLOW
+    optimizeMe<<<blocks, threads>>>(d_data, n);  // Fast kernel
+    cudaMemcpy(h_data, d_data, size, cudaMemcpyDeviceToHost);  // SLOW
+    
+    // Transfer time: 20ms, Kernel time: 1ms
+    // Optimizing kernel saves 1ms, optimizing transfer saves 20ms
+}
+```
+
+**Consequences:**
+- 20x opportunity cost from wrong optimization target
+- Performance doesn't improve despite complex kernel optimization
+
+**Prevention:**
+```cpp
+// CORRECT: Minimize transfers first
+void optimizedProcess() {
+    // Strategy 1: Keep data on device
+    float* d_data;
+    cudaMalloc(&d_data, size);
+    cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);  // One-time
+    
+    for (int iteration = 0; iteration < 1000; iteration++) {
+        // Process on device without transfers
+        kernel<<<blocks, threads>>>(d_data, n);
     }
     
-    return residual;
+    cudaMemcpy(h_data, d_data, size, cudaMemcpyDeviceToHost);  // One-time
 }
 
-// Rayleigh quotient iteration with safeguards
-Vector rayleighQuotientIter(const Matrix& A, Vector v0, float lambda0) {
-    Vector v = normalize(v0);
-    float lambda = lambda0;
+// Strategy 2: Overlap transfers with compute
+void overlappedProcess() {
+    cudaStream_t s1, s2;
+    cudaStreamCreate(&s1);
+    cudaStreamCreate(&s2);
     
-    for (int iter = 0; iter < maxIter; iter++) {
-        if (iter > 0) {
-            // Compute shift directly from current estimate
-            lambda = dot(v, A * v);  // Rayleigh quotient
-        }
-        
-        Vector w = solve(A - lambda * I);  // May be ill-conditioned
-        v = normalize(w);
-        
-        float conv = monitorConvergence(A, v, lambda, iter);
-        if (conv >= 0 && conv < tolerance) break;
-        if (conv < 0) {
-            // Restart with new random vector
-            v = randomOrthogonalVector(v);
-        }
-    }
-    return v;
+    cudaMemcpyAsync(d_next, h_next, size, H2D, s1);
+    kernel<<<..., s2>>>(d_current, n);  // Compute while transferring
+    cudaMemcpyAsync(h_output, d_current, size, D2H, s2);  // Transfer while computing next
 }
 ```
 
-**Phase Recommendation:** Phase 4 (Eigensolver Implementation) - Include convergence monitoring and restart logic from the start.
-
 ---
 
-### 2.2 Numerical Stability in SVD
+### 2.4 Tuning for One Architecture
 
-**What goes wrong:** Singular Value Decomposition produces inaccurate small singular values and wrong singular vectors due to catastrophic cancellation in certain decomposition stages.
+**What goes wrong:** Block size, shared memory usage, and unroll factors optimized for one GPU don't perform well on others.
 
-**Why it happens:**
-1. **One-sided Jacobi/Golub-Kahan** - Cancellation in bi-diagonalization
-2. **Divide-by-zero in QR iteration** - Near-zero off-diagonal elements
-3. **Orthogonality loss** - Householder reflectors degrade over many steps
+**Why it happens:** Different compute capabilities have different resources (registers, shared memory, warp size, SM count):
+
+```cpp
+// WRONG: Hardcoded for RTX 3090 (sm_86)
+__global__ void kernel(float* data) {
+    __shared__ float shared[256];  // Fixed size
+    // ...
+}
+dim3 block(256);  // Good for sm_86, bad for A100 (sm_80)
+
+// WRONG: Assumes 32 threads/warp always
+// Different architectures have different warp sizes (future-proofing concern)
+```
 
 **Consequences:**
-- Small singular values have relative error >> machine epsilon
-- Rank determination fails (small values should be zero)
-- U and V matrices no longer orthogonal
+- 2-5x performance regression on different GPUs
+- Poor scaling across GPU generations
+- Technical debt from architecture-specific code
 
 **Prevention:**
 ```cpp
-// USE: Batched condition-number aware SVD
-struct SVDResult {
-    Matrix U, S, Vt;
-    int rank;
-    float condition;  // sigma_max / sigma_min
+// CORRECT: Query device capabilities and adapt
+struct KernelConfig {
+    int blockSize;
+    int sharedMemBytes;
+    int unrollFactor;
 };
 
-SVDResult stableSVD(const Matrix& A) {
-    // First pass: estimate condition number
-    float normEst = estimateOneNorm(A);  // Used for pivoting decisions
+KernelConfig autoTune(const cudaDeviceProp& props) {
+    KernelConfig cfg;
     
-    // Condition-dependent algorithm selection
-    if (normEst > 1e10 || normEst < 1e-10) {
-        // Use double precision or extended precision
-        return doubleSVD(A);  // Convert to double, compute, convert back
-    }
+    // Occupancy-based block size selection
+    int maxBlocks;
+    cudaOccupancyMaxPotentialBlockSize(&maxBlocks, &cfg.blockSize,
+        kernel, cfg.sharedMemBytes, 0);
     
-    // Standard path with monitoring
-    Matrix B = bidiagonalize(A);  // Golub-Kahan with column pivoting
+    // Shared memory scaled to device capability
+    cfg.sharedMemBytes = std::min(props.sharedMemPerBlock, size_t{65536});
     
-    for (int iter = 0; iter < maxQRIter; iter++) {
-        // Safe QR step with threshold
-        float threshold = max(abs(B.offDiag)) * machineEpsilon;
-        if (abs(B.offDiag[k]) < threshold) {
-            B.offDiag[k] = 0;  // Deflate early
-        }
-        // Continue with implicit shifts...
-    }
+    // Unroll factor based on register pressure
+    cfg.unrollFactor = (props.regsPerBlock > 65536) ? 8 : 4;
     
-    // Final rank determination with tolerance scaled by condition
-    float tol = max(A.rows, A.cols) * machineEpsilon * normEst;
-    int rank = countSingularValuesGreaterThan(tol, S);
-    
-    return {U, S, Vt, rank, normEst / S[rank]};
+    return cfg;
 }
-```
 
-**Phase Recommendation:** Phase 5 (SVD Implementation) - Implement condition number estimation and adaptive precision switching.
+// CORRECT: Use warp-native operations
+// __shfl_sync works across all architectures
+// Bank conflict avoidance via padding works across all shared memory configs
+```
 
 ---
 
-### 2.3 Memory Usage for Large Matrices
+### 2.5 Microbenchmarking Without Warmup
 
-**What goes wrong:** Eigenvalue decomposition and SVD of large matrices cause out-of-memory errors or severe memory pressure due to intermediate allocations.
+**What goes wrong:** First-run timing includes JIT compilation, cache warmup, and allocation overhead.
 
-**Why it happens:**
-- Full Householder reflections stored (n^2 per step)
-- Implicitly shifted QR creates temporary matrices
-- Eigensolver requires tridiagonal + eigenvector storage
-- SVD U, S, Vt each require n^2 storage
+**Why it happens:** CUDA JIT compiles PTX to SASS on first kernel launch. L2 cache is cold. Memory allocations trigger driver overhead:
 
-**Consequences:**
-- OOM errors on matrices that "should" fit
-- Memory thrashing reduces effective bandwidth
-- Cannot process matrices that fit in GPU memory
-
-**Prevention:**
 ```cpp
-// MEMORY-EFFICIENT: In-place tridiagonalization
-void memoryEfficientEigenSolve(Matrix& A) {
-    // In-place Householder reduces memory by 2/3
-    for (int k = 0; k < A.n - 2; k++) {
-        // Compute Householder vector in-place
-        Vector& x = A.col(k).segment(k+1);
-        Vector u = householderInPlace(x);  // Overwrites x
-        
-        // Apply to trailing submatrix in-place
-        applyHouseholderInPlace(A, k, u);  // No temp allocations
-    }
-    
-    // Now A contains tridiagonal T (upper part) and Householder data
-    // Memory used: n^2 instead of 3*n^2 for naive implementation
+// WRONG: Timing includes JIT compilation
+void badBenchmark() {
+    auto start = now();
+    kernel<<<blocks, threads>>>(d_data, n);  // First launch - JIT
+    cudaDeviceSynchronize();
+    auto end = now();  // Time includes JIT compilation!
 }
 
-// STREAMING: Process large matrices in tiles
-void tiledSVD(const LargeMatrix& A, int tileSize = 4096) {
-    // Estimate memory requirements
-    size_t available = getAvailableMemory();
-    size_t perTile = 3 * tileSize * tileSize * sizeof(double);
-    int tilesAcross = (A.n + tileSize - 1) / tileSize;
+// WRONG: Cold cache measurements
+void badBenchmark2() {
+    cudaFree(nullptr);  // Clear cache
     
-    // Use iterative refinement instead of full decomposition
-    // Compute only the singular vectors needed
-    Matrix Ur, Sr, Vr;
-    for (int i = 0; i < tilesAcross; i++) {
-        for (int j = 0; j < tilesAcross; j++) {
-            // Load, process, discard tile
-            Tile tile = loadTile(A, i, j);
-            processTile(tile, Ur, Sr, Vr);
-            // tile automatically freed when out of scope
-        }
-    }
+    auto start = now();
+    kernel<<<...>>>(d_data, n);  // Cold cache
+    cudaDeviceSynchronize();
+    auto end = now();
+    // Not representative of steady-state
 }
 ```
 
-**Phase Recommendation:** Phase 1 (Memory Planning) - Estimate memory requirements and define streaming strategies before implementation.
-
----
-
-### 2.4 Accuracy vs. Performance Tradeoffs
-
-**What goes wrong:** Faster algorithms (iterative refinement, randomized SVD) trade accuracy without exposing this tradeoff to users.
-
-**Why it happens:**
-- Power iteration with early termination
-- Randomized SVD with insufficient power iterations
-- Single-precision instead of double for "speed"
-- Implicit type conversions lose precision
-
 **Consequences:**
-- Silent accuracy degradation
-- Users unaware their results are approximate
-- Different inputs produce different accuracy levels
+- 2-100x variance in first-run timing
+- Incorrect optimization decisions
+- CI flakiness from JIT timing variance
 
 **Prevention:**
 ```cpp
-// PROVIDE: Accuracy tier selection
-enum class SVDPrecision { Fast, Standard, High };
-
-struct SVDConfig {
-    SVDPrecision precision = SVDPrecision::Standard;
-    int maxIterations = 100;
-    float convergenceTol = 1e-6f;
-};
-
-SVDResult svd(const Matrix& A, const SVDConfig& config = {}) {
-    switch (config.precision) {
-        case SVDPrecision::Fast:
-            // Randomized SVD with 2 power iterations
-            return randomizedSVD(A, 2, config.maxIterations);
-        case SVDPrecision::Standard:
-            // Standard Jacobi with 10 iterations
-            return jacobiSVD(A, 10, config.convergenceTol);
-        case SVDPrecision::High:
-            // Extra-precise Jacobi with refinement
-            return extraPreciseSVD(A, config.convergenceTol);
+// CORRECT: Warmup runs before measurement
+void properBenchmark() {
+    // Warmup: Force JIT compilation
+    for (int i = 0; i < 10; i++) {
+        kernel<<<blocks, threads>>>(d_data, n);
     }
-}
-
-// DOCUMENT: Provide expected accuracy bounds
-float expectedRelativeError(SVDPrecision p, float conditionNumber) {
-    switch (p) {
-        case Fast:        return 1e-3 * conditionNumber * machineEpsilon;
-        case Standard:    return 1e-6 * conditionNumber * machineEpsilon;
-        case High:        return 1e-10 * conditionNumber * machineEpsilon;
+    cudaDeviceSynchronize();
+    
+    // Clear L2 cache
+    cudaDeviceSetCacheConfig(cudaFuncCachePreferNone);
+    
+    // Now measure steady-state
+    std::vector<double> timings;
+    for (int i = 0; i < 100; i++) {
+        auto start = now();
+        kernel<<<blocks, threads>>>(d_data, n);
+        cudaDeviceSynchronize();
+        timings.push_back(elapsed(start, now()));
     }
+    
+    // Report statistics, not single timing
+    reportPercentiles(timings);
 }
 ```
 
-**Phase Recommendation:** Phase 3 (API Design) - Expose accuracy/performance tradeoff in public API with clear documentation.
-
 ---
 
-## 3. Numerical Methods Pitfalls
+## 3. Stress Testing Pitfalls
 
-### 3.1 Monte Carlo Variance Issues
+### 3.1 Flaky Tests from Uninitialized Memory
 
-**What goes wrong:** Monte Carlo simulations produce high-variance results or fail to reduce variance at expected rate due to sampling inefficiencies.
+**What goes wrong:** Tests pass in isolation but fail in suites due to memory state bleeding between tests.
 
-**Why it happens:**
-1. **Correlated samples** - Using same random seed across iterations
-2. **Wrong random walk** - Antithetic variates not properly paired
-3. **Systematic bias** - Quasi-random sequences misconfigured
-4. **Variance accumulates** - Multiplicative processes amplify noise
+**Why it happens:** GPU memory persists across kernel launches within a process. Tests that don't fully initialize output buffers see stale data:
 
-**Consequences:**
-- Requires 100x more samples than theory predicts
-- Results unstable across runs
-- Confidence intervals don't contain true value
-
-**Prevention:**
 ```cpp
-// CORRECT: Parallel Monte Carlo with proper variance tracking
-struct MonteCarloResult {
-    double mean;
-    double variance;
-    double stdError;
-    int samples;
-    bool converged;
-};
-
-MonteCarloResult parallelMonteCarlo(
-    const MonteCarloConfig& config,
-    curandState* states,  // One state per thread
-    int samplesPerThread
-) {
-    double localSum = 0.0;
-    double localSumSq = 0.0;
-    
-    for (int i = 0; i < samplesPerThread; i++) {
-        double u1 = curand_uniform(&states[threadIdx.x]);
-        double u2 = curand_uniform(&states[threadIdx.x]);
-        
-        // Use Box-Muller for Gaussian (or Philox for speed)
-        double z = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
-        
-        // Compute sample
-        double sample = evaluatePath(z);
-        
-        localSum += sample;
-        localSumSq += sample * sample;
-    }
-    
-    // Reduce across all threads
-    double totalSum = blockReduceSum(localSum);
-    double totalSumSq = blockReduceSum(localSumSq);
-    
-    if (threadIdx.x == 0) {
-        int totalSamples = gridDim.x * blockDim.x * samplesPerThread;
-        double mean = totalSum / totalSamples;
-        // Welford's online algorithm for numerical stability
-        double variance = (totalSumSq - totalSum*totalSum/totalSamples) / (totalSamples-1);
-        double stdError = sqrt(variance / totalSamples);
-        
-        return {
-            mean,
-            variance,
-            stdError,
-            totalSamples,
-            stdError < config.targetError
-        };
+// WRONG: Partially initialized output
+__global__ void kernel(float* out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        out[i] = compute(i);  // But what about out[n-1] on last block?
     }
 }
 
-// USE: Quasi-Monte Carlo for low-discrepancy sequences
-void quasiMonteCarlo(int n, float* samples) {
-    // Sobol sequences provide better distribution than pseudorandom
-    // for integration-type problems
+// Test assumes output is initialized, but kernel doesn't write all elements
+TEST_F(KernelTest, Basic) {
+    float* d_out;
+    cudaMalloc(&d_out, n * sizeof(float));
+    // d_out contains garbage!
+    
+    kernel<<<blocks, threads>>>(d_out, n);
+    cudaMemcpy(h_out, d_out, n * sizeof(float), cudaMemcpyDeviceToHost);
+    
     for (int i = 0; i < n; i++) {
-        samples[i] = sobolSample(i, dimension);  // Well-distributed
+        EXPECT_EQ(h_out[i], expected[i]);  // Garbage at uninitialized indices!
     }
 }
 ```
 
-**Phase Recommendation:** Phase 6 (Random Number Generation Infrastructure) - Establish PRNG quality standards before Monte Carlo implementation.
-
----
-
-### 3.2 Convergence Monitoring Failures
-
-**What goes wrong:** Iterative numerical methods (root finding, integration, optimization) terminate prematurely or never terminate due to poor convergence monitoring.
-
-**Why it happens:**
-1. **Relative vs. absolute tolerance** - Not distinguishing between them
-2. **Stalling detection** - Not detecting when progress stops
-3. **Oscillation detection** - Missing periodic behavior
-4. **Numerical cancellation** - Computing differences of similar values
-
 **Consequences:**
-- "Converged" solution far from actual root
-- Infinite loop or very slow convergence
-- Different results on different architectures
+- Tests pass locally, fail on CI (different memory patterns)
+- Tests pass with one CUDA version, fail with another
+- Non-deterministic failures that are hard to reproduce
 
 **Prevention:**
 ```cpp
-// ROBUST: Comprehensive convergence monitoring
-struct ConvergenceStatus {
-    bool converged;
-    bool stalled;
-    bool oscillating;
-    int iterations;
-    float rate;  // Convergence rate estimate
+// CORRECT: Always initialize output buffers
+TEST_F(KernelTest, Basic) {
+    float* d_out;
+    cudaMalloc(&d_out, n * sizeof(float));
+    
+    // Initialize to safe value
+    cudaMemset(d_out, 0xFF, n * sizeof(float));  // NaN for floats
+    
+    kernel<<<blocks, threads>>>(d_out, n);
+    cudaDeviceSynchronize();  // Ensure kernel completes
+    
+    // Verify all elements were written
+    std::vector<float> h_out(n);
+    cudaMemcpy(h_out.data(), d_out, n * sizeof(float), cudaMemcpyDeviceToHost);
+    
+    for (int i = 0; i < n; i++) {
+        ASSERT_FALSE(std::isnan(h_out[i])) << "Index " << i << " not written";
+        EXPECT_EQ(h_out[i], expected[i]);
+    }
+}
+
+// CORRECT: Use initialization patterns in kernels
+__global__ void safeKernel(float* out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        out[i] = compute(i);
+    } else {
+        out[i] = 0;  // Initialize unused elements
+    }
+}
+```
+
+---
+
+### 3.2 Race Conditions in Stream-Based Tests
+
+**What goes wrong:** Tests fail intermittently due to stream synchronization missing or incorrect.
+
+**Why it happens:** CUDA streams execute asynchronously. Tests that don't wait for completion read stale data:
+
+```cpp
+// WRONG: No synchronization
+TEST_F(StreamTest, AsyncCopy) {
+    float *d_data, *h_data = new float[n];
+    cudaMalloc(&d_data, n * sizeof(float));
+    
+    cudaMemcpyAsync(d_data, h_data, n * sizeof(float), cudaMemcpyHostToDevice, stream);
+    
+    // WRONG: Immediately reading from device after async call
+    // Stream hasn't executed yet!
+    float* h_result = new float[n];
+    cudaMemcpy(h_result, d_data, n * sizeof(float), cudaMemcpyDeviceToHost);
+    // h_result contains garbage
+}
+```
+
+**Consequences:**
+- Intermittent test failures (depends on timing)
+- Flaky CI jobs
+- Difficult to debug timing-dependent issues
+
+**Prevention:**
+```cpp
+// CORRECT: Always synchronize before reading results
+TEST_F(StreamTest, AsyncCopy) {
+    float *d_data, *h_data = new float[n];
+    cudaMalloc(&d_data, n * sizeof(float));
+    
+    cudaMemcpyAsync(d_data, h_data, n * sizeof(float), cudaMemcpyHostToDevice, stream);
+    
+    // Synchronize stream
+    NOVA_CHECK_WITH_STREAM(cudaStreamSynchronize(stream), stream);
+    
+    // Now safe to read
+    float* h_result = new float[n];
+    cudaMemcpy(h_result, d_data, n * sizeof(float), cudaMemcpyDeviceToHost);
+    
+    for (int i = 0; i < n; i++) {
+        EXPECT_EQ(h_result[i], h_data[i]);
+    }
+}
+
+// CORRECT: Use events for fine-grained synchronization
+TEST_F(StreamTest, EventSync) {
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    
+    cudaEventRecord(start, stream);
+    kernel<<<..., stream>>>(d_data, n);
+    cudaEventRecord(stop, stream);
+    
+    // Wait for specific event
+    cudaEventSynchronize(stop);
+    
+    float elapsed;
+    cudaEventElapsedTime(&elapsed, start, stop);
+}
+```
+
+---
+
+### 3.3 Coverage Gaps for Edge Cases
+
+**What goes wrong:** Tests cover happy paths but miss boundary conditions, leading to production failures.
+
+**Why it happens:** Common edge cases are systematically omitted:
+
+| Edge Case | Why Missed |
+|-----------|------------|
+| Empty input (n=0) | "Nobody uses this" |
+| Single element | "Not worth testing" |
+| Power-of-2 boundaries | "Shouldn't matter" |
+| Maximum allocation | "Too expensive to test" |
+| Alignment boundaries | "Unlikely to matter" |
+
+**Consequences:**
+- Production crashes on edge cases
+- Security vulnerabilities from buffer overflows
+- Numerical instability at boundaries
+
+**Prevention:**
+```cpp
+// CORRECT: Explicit edge case tests
+class EdgeCaseTest : public ::testing::Test {
+protected:
+    void TestEmptyInput() {
+        float* d_out;
+        NOVA_CHECK(cudaMalloc(&d_out, 0));
+        kernel<<<1, 1>>>(d_out, 0);  // Should not crash
+        NOVA_CHECK(cudaGetLastError());
+        cudaFree(d_out);
+    }
+    
+    void TestSingleElement() {
+        float data = 42.0f;
+        float* d_data;
+        NOVA_CHECK(cudaMalloc(&d_data, sizeof(float)));
+        NOVA_CHECK(cudaMemcpy(d_data, &data, sizeof(float), cudaMemcpyHostToDevice));
+        
+        kernel<<<1, 1>>>(d_data, 1);
+        NOVA_CHECK(cudaGetLastError());
+        
+        float result;
+        NOVA_CHECK(cudaMemcpy(&result, d_data, sizeof(float), cudaMemcpyDeviceToHost));
+        EXPECT_EQ(result, expected);
+        
+        cudaFree(d_data);
+    }
+    
+    void TestPowerOfTwoBoundary(int size) {
+        std::vector<float> h_data(size);
+        std::iota(h_data.begin(), h_data.end(), 0);
+        
+        Buffer d_data(size);
+        d_data.copyFrom(h_data.data(), size);
+        
+        kernel<<<(size + 255) / 256, 256>>>(d_data.data(), size);
+        NOVA_CHECK(cudaGetLastError());
+        
+        // Verify all elements processed
+    }
 };
 
-ConvergenceStatus monitorConvergence(
-    const std::vector<float>& errors,
-    const ConvergenceConfig& config
-) {
-    if (errors.size() < 3) return {false, false, false, 0, 0.0f};
-    
-    float absTol = config.absoluteTolerance;
-    float relTol = config.relativeTolerance;
-    float prev = errors[errors.size() - 1];
-    float prevPrev = errors[errors.size() - 2];
-    
-    // Check absolute and relative tolerance
-    bool meetsAbsTol = prev < absTol;
-    bool meetsRelTol = prev < relTol * errors[0];
-    bool converged = meetsAbsTol && meetsRelTol;
-    
-    // Detect stalling: no progress for N iterations
-    bool stalled = false;
-    if (errors.size() >= config.stallWindow) {
-        float maxRecent = *std::max_element(
-            errors.end() - config.stallWindow, errors.end()
-        );
-        float minRecent = *std::min_element(
-            errors.end() - config.stallWindow, errors.end()
-        );
-        stalled = (maxRecent - minRecent) < absTol * 0.1f;
-    }
-    
-    // Detect oscillation
-    bool oscillating = false;
-    if (errors.size() >= 6) {
-        // Check if error keeps increasing then decreasing
-        float changes = 0;
-        for (size_t i = errors.size() - 4; i < errors.size() - 1; i++) {
-            if ((errors[i+1] > errors[i]) != (errors[i] > errors[i-1])) {
-                changes++;
-            }
-        }
-        oscillating = changes >= 3;
-    }
-    
-    // Estimate convergence rate
-    float rate = 0.0f;
-    if (prevPrev > 0 && prev > 0) {
-        rate = log(prev / prevPrev) / log(prevPrev / errors[errors.size()-3]);
-    }
-    
-    return {converged, stalled, oscillating, (int)errors.size(), rate};
-}
-
-// SAFE: Newton-Raphson with monitoring
-float safeNewtonRoot(float x0, const RootConfig& config) {
-    float x = x0;
-    std::vector<float> errors;
-    
-    for (int iter = 0; iter < config.maxIterations; iter++) {
-        float fx = f(x);
-        float dfx = df(x);
-        
-        float dx = fx / dfx;
-        x -= dx;
-        
-        float error = abs(dx);
-        errors.push_back(error);
-        
-        auto status = monitorConvergence(errors, config.convergence);
-        
-        if (status.converged) break;
-        if (status.stalled) {
-            // Try smaller step or different method
-            x += dx * 0.5f;  // Bisection step
-        }
-        if (status.oscillating) {
-            // Switch to bisection
-            return bisectionRoot(x - dx*2, x, config);
-        }
-        if (iter == config.maxIterations - 1) {
-            throw ConvergenceError(status);
-        }
-    }
-    return x;
-}
+TEST_F(EdgeCaseTest, EmptyInput) { TestEmptyInput(); }
+TEST_F(EdgeCaseTest, SingleElement) { TestSingleElement(); }
+TEST_F(EdgeCaseTest, Size256) { TestPowerOfTwoBoundary(256); }
+TEST_F(EdgeCaseTest, Size1024) { TestPowerOfTwoBoundary(1024); }
+TEST_F(EdgeCaseTest, Size65536) { TestPowerOfTwoBoundary(65536); }
 ```
-
-**Phase Recommendation:** Phase 3 (Convergence Monitoring Infrastructure) - Implement monitoring before any iterative method.
 
 ---
 
-### 3.3 Pseudo-Random Number Generation Quality
+### 3.4 Resource Leak Tests Missing
 
-**What goes wrong:** Using inappropriate PRNGs for Monte Carlo or stochastic simulation produces statistically biased results.
+**What goes wrong:** Memory leak tests don't exist, allowing gradual resource exhaustion in long-running applications.
 
-**Why it happens:**
-1. **Linear congruential generators** - Poor distribution in high dimensions
-2. **Same seed everywhere** - All threads produce identical sequences
-3. **Period too short** - Sequences repeat before simulation completes
-4. **State collision** - Multiple threads use same state
+**Why it happens:** GPU memory leaks are silent and accumulate over time. Single-run tests don't detect them:
+
+```cpp
+// WRONG: Test allocates but doesn't check cleanup
+TEST_F(MemoryTest, Allocation) {
+    float* ptr;
+    cudaMalloc(&ptr, size);
+    
+    // Do work...
+    
+    // WRONG: Not verifying cleanup
+    // cudaFree(ptr);  // Forgotten!
+}
+```
 
 **Consequences:**
-- Monte Carlo integrals systematically wrong
-- Stochastic differential equations biased
-- Gambling simulations fail statistical tests
-- Different GPUs produce different results
+- Out-of-memory errors after hours of operation
+- Gradual performance degradation
+- Application crashes in production
 
 **Prevention:**
 ```cpp
-// GPU-APPROPRIATE: Use cuRAND or similar
-#include <curand.h>
-
-// SETUP: One RNG state per thread, properly initialized
-__global__ void setupRNG(curandState* states, unsigned long long seed) {
-    int id = blockIdx.x * blockDim.x + threadIdx.x;
-    // Different seed per thread using sequence number
-    curand_init(seed, id, 0, &states[id]);
+// CORRECT: Memory leak detection test
+TEST_F(MemoryLeakTest, NoLeakInOperations) {
+    size_t memBefore, memAfter;
+    cudaMemGetInfo(&memBefore, nullptr);
+    
+    // Perform many allocations/deallocations
+    for (int i = 0; i < 1000; i++) {
+        Buffer temp(1024 * 1024);
+        temp.copyFrom(data.data(), data.size());
+        // temp automatically freed at end of iteration
+    }
+    
+    cudaMemGetInfo(&memAfter, nullptr);
+    
+    // Allow small variance for fragmentation
+    EXPECT_LE(memBefore - memAfter, 1024 * 1024)  // < 1MB leak
+        << "Memory leak detected: " << (memBefore - memAfter) << " bytes";
 }
 
-__global__ void simulation(curandState* states) {
-    int id = blockIdx.x * blockDim.x + threadIdx.x;
-    curandState localState = states[id];
+// CORRECT: Test with leak sanitizer
+// Run with: compute-sanitizer --tool leakcheck ./test
+TEST_F(MemoryLeakTest, NoCudaLeaks) {
+    float* ptr1, *ptr2;
+    NOVA_CHECK(cudaMalloc(&ptr1, 1024));
+    NOVA_CHECK(cudaMalloc(&ptr2, 1024));
     
-    // Now each thread has independent, high-quality sequence
-    float u1 = curand_uniform(&localState);
-    float u2 = curand_uniform(&localState);
-    float normal = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
+    // ... use pointers ...
     
-    // Use in simulation...
-    
-    // Save state for next call
-    states[id] = localState;
+    NOVA_CHECK(cudaFree(ptr1));
+    NOVA_CHECK(cudaFree(ptr2));
+    // compute-sanitizer will report any leaks
 }
-
-// QUALITY: Use Philox for Monte Carlo (counter-based, predictable)
-curandGenerator_t gen;
-curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_PHILOX4_32_10);
-curandSetPseudoRandomGeneratorSeed(gen, 1234ULL);
-curandGenerateUniform(gen, d_output, N);
-
-// For cryptographically secure: CURAND_RNG_PSEUDO_XORWOW
-// For maximum speed: CURAND_RNG_PSEUDO_MRG32K3A
 ```
-
-**Phase Recommendation:** Phase 6 (PRNG Infrastructure) - Choose and implement PRNG strategy early; changing later breaks reproducibility.
 
 ---
 
-### 3.4 Numerical Stability in Numerical Integration
+### 3.5 Determinism Tests Missing
 
-**What goes wrong:** Quadrature and integration routines produce inaccurate results due to cancellation, poor node selection, or adaptive step size issues.
+**What goes wrong:** Non-deterministic algorithms produce varying results, but tests don't verify determinism.
 
-**Why it happens:**
-1. **Gauss quadrature** - Nodes/weights computed incorrectly
-2. **Adaptive Simpson** - Step size oscillates
-3. **Infinite bounds** - Transformation introduces instability
-4. **Singular endpoints** - Improper handling of integrable singularities
+**Why it happens:** Floating-point non-associativity, parallel reduction order, and race conditions cause result variation:
+
+```cpp
+// WRONG: Test expects exact match but GPU reduction order varies
+TEST_F(ReduceTest, Sum) {
+    std::vector<float> data(1000);
+    std::iota(data.begin(), data.end(), 1.0f);
+    
+    float result = reduce(data);
+    
+    EXPECT_EQ(result, 500500.0f);  // May fail on different GPUs!
+}
+```
 
 **Consequences:**
-- Integration error >> requested tolerance
-- Adaptive algorithm infinite loops
-- NaN/Inf from overflow in transformation
+- Tests fail on different GPU architectures
+- Performance optimizations change reduction order and break tests
+- Debug/release build differences
 
 **Prevention:**
 ```cpp
-// STABLE: Adaptive quadrature with reliable error estimation
-struct QuadResult {
-    double value;
-    double error;
-    int functionEvaluations;
-    bool converged;
+// CORRECT: Test with tolerance for floating-point
+TEST_F(ReduceTest, Sum) {
+    std::vector<float> data(1000);
+    std::iota(data.begin(), data.end(), 1.0f);
+    
+    float result = reduce(data);
+    
+    EXPECT_NEAR(result, 500500.0f, 0.001f)  // Allow small error
+        << "Result: " << result << " expected: " << 500500.0f;
+}
+
+// CORRECT: Test determinism by running multiple times
+TEST_F(ReduceTest, Determinism) {
+    std::vector<float> data(1000);
+    std::iota(data.begin(), data.end(), 1.0f);
+    
+    float result1 = reduce(data);
+    float result2 = reduce(data);
+    float result3 = reduce(data);
+    
+    EXPECT_EQ(result1, result2);
+    EXPECT_EQ(result2, result3);
+}
+
+// CORRECT: Integer comparisons for stable results
+TEST_F(SortTest, StableSort) {
+    // Use integer keys for deterministic sorting
+    std::vector<uint32_t> keys(1000);
+    std::iota(keys.begin(), keys.end(), 0);
+    std::shuffle(keys.begin(), keys.end(), std::mt19937{42});  // Fixed seed
+    
+    sort(keys);
+    
+    for (int i = 1; i < keys.size(); i++) {
+        EXPECT_LT(keys[i-1], keys[i]);
+    }
+}
+```
+
+---
+
+## 4. Reliability Pitfalls
+
+### 4.1 False Confidence from Passing Unit Tests
+
+**What goes wrong:** Unit tests cover individual components but miss integration failures.
+
+**Why it happens:** Unit tests run components in isolation with controlled inputs:
+
+```cpp
+// Unit test passes: component works in isolation
+TEST_F(MatrixMultiplyTest, SinglePrecision) {
+    Matrix a = generateMatrix(256, 256);
+    Matrix b = generateMatrix(256, 256);
+    Matrix c = matmul(a, b);
+    EXPECT_TRUE(verify(c, expected));
+    // PASSES
+}
+
+// Integration failure: memory alignment issue only occurs with large matrices
+TEST_F(IntegrationTest, LargeMatrixMultiply) {
+    Matrix a = generateMatrix(8192, 8192);  // Different code path
+    Matrix b = generateMatrix(8192, 8192);
+    Matrix c = matmul(a, b);  // CRASHES - alignment issue
+}
+```
+
+**Consequences:**
+- High unit test coverage, low integration reliability
+- Production failures on edge cases
+- Refactoring breaks production code without breaking tests
+
+**Prevention:**
+```cpp
+// CORRECT: Layered testing pyramid
+class TestPyramid {
+    // Level 1: Unit tests (many, fast)
+    void testComponentIsolation() { /* ... */ }
+    
+    // Level 2: Integration tests (fewer, slower)
+    void testComponentInteraction() { /* ... */ }
+    
+    // Level 3: System tests (few, slowest)
+    void testFullPipeline() { /* ... */ }
+    
+    // Level 4: Property-based tests (medium, catches edge cases)
+    void testProperties() { /* random inputs */ }
 };
 
-QuadResult adaptiveQuad(
-    double a, double b,
-    double (*f)(double),
-    double tol,
-    int maxDepth = 50
-) {
-    // Initial Simpson's rule estimate
-    double c = (a + b) / 2;
-    double fa = f(a), fb = f(b), fc = f(c);
-    double S = (b - a) / 6 * (fa + 4*fc + fb);
-    
-    // Recursive adaptive refinement
-    return adaptiveQuadRec(a, c, fa, fc, S, tol, 0, maxDepth, f);
+// CORRECT: Property-based testing for edge cases
+TEST_F(PropertyTest, MatrixMultiplyCorrectness) {
+    // Generate random valid matrices
+    for (int trial = 0; trial < 1000; trial++) {
+        int m = randomInt(1, 16384);
+        int n = randomInt(1, 16384);
+        int k = randomInt(1, 16384);
+        
+        Matrix a = generateRandomMatrix(m, k);
+        Matrix b = generateRandomMatrix(k, n);
+        
+        Matrix c = matmul(a, b);
+        Matrix expected = cpuMatmul(a, b);  // Reference
+        
+        EXPECT_MATRIX_NEAR(c, expected, 1e-5f);
+    }
 }
+```
 
-QuadResult adaptiveQuadRec(
-    double a, double b, double fa, double fb,
-    double S, double tol, int depth, int maxDepth,
-    double (*f)(double)
-) {
-    double c = (a + b) / 2;
-    double fc = f(c);
-    
-    // Two Simpson estimates
-    double Sleft = (c - a) / 6 * (fa + 4*f((a+c)/2) + fc);
-    double Sright = (b - c) / 6 * (fc + 4*f((c+b)/2) + fb);
-    double S2 = Sleft + Sright;
-    
-    // Error estimation
-    double E = (S2 - S) / 15.0;  // Richardson extrapolation
-    
-    if (depth >= maxDepth) {
-        return {S2, abs(E), -1, false};
-    }
-    
-    if (abs(E) < tol) {
-        // Extrapolated estimate
-        double S_extrap = S2 + E;
-        return {S_extrap, abs(E), -1, true};
-    }
-    
-    // Recurse
-    auto left = adaptiveQuadRec(a, c, fa, fc, Sleft, tol/2, depth+1, maxDepth, f);
-    auto right = adaptiveQuadRec(c, b, fc, fb, Sright, tol/2, depth+1, maxDepth, f);
+---
+
+### 4.2 Missing Device Capability Checks
+
+**What goes wrong:** Code assumes capabilities that aren't available on all target GPUs.
+
+**Why it happens:** Features have minimum compute capability requirements:
+
+| Feature | Minimum CC | GPUs Affected |
+|---------|-----------|---------------|
+| Unified memory | 3.0 | Kepler (3.0-3.7) |
+| Dynamic parallelism | 3.5 | Kepler (3.0-3.7) |
+| FP16 tensor cores | 7.0 | Pascal (6.0-6.2) |
+| BF16 | 8.0 | Ampere (8.0-8.9) |
+| DP4a | 6.1 | Pascal+ |
+
+**Consequences:**
+- `cudaErrorNoKernelImageForDevice` at runtime
+- Silent fallback to slow code paths
+- Different results on different GPUs
+
+**Prevention:**
+```cpp
+// CORRECT: Check capability before using features
+struct DeviceCapabilities {
+    int computeCapabilityMajor;
+    int computeCapabilityMinor;
+    int maxThreadsPerBlock;
+    size_t sharedMemPerBlock;
+    bool supportsFP16;
+    bool supportsTensorCore;
+    bool supportsUnifiedAddressing;
+};
+
+DeviceCapabilities queryDevice(int deviceId) {
+    cudaDeviceProp prop;
+    NOVA_CHECK(cudaGetDeviceProperties(&prop, deviceId));
     
     return {
-        left.value + right.value,
-        sqrt(left.error*left.error + right.error*right.error),
-        -1,
-        left.converged && right.converged
+        prop.major,
+        prop.minor,
+        prop.maxThreadsPerBlock,
+        prop.sharedMemPerBlock,
+        prop.major >= 5.3,  // Half-precision
+        prop.major >= 7.0,  // Tensor cores
+        prop.unifiedAddressing
     };
 }
 
-// TRANSFORMATION: Stable infinite integral
-double integrateInfinite(double (*f)(double), double tol) {
-    // Use tanh-sinh quadrature for infinite intervals
-    // It's more stable than rational transformations
+// CORRECT: Conditional feature usage
+void process(Buffer& data) {
+    auto caps = queryDevice(currentDevice());
     
-    // Or use Monte Carlo with importance sampling:
-    // Integral(f(x), x=0..inf) = Integral(f(t/(1-t))/t^2, t=0..1)
-    // with t = exp(-u) substitution
-}
-```
-
-**Phase Recommendation:** Phase 4 (Integration Implementation) - Implement multiple integration methods and error estimation before adaptive routines.
-
----
-
-## 4. Signal Processing Pitfalls
-
-### 4.1 Boundary Condition Handling
-
-**What goes wrong:** Convolution, filtering, and wavelet transforms produce incorrect results near boundaries due to improper padding or boundary handling.
-
-**Why it happens:**
-1. **Zero padding** - Creates discontinuities at edges
-2. **Circular padding** - Wrong assumption of periodicity
-3. **Replication padding** - Introduces spurious high frequencies
-4. **Symmetric padding** - Misapplied to non-symmetric signals
-
-**Consequences:**
-- Edge artifacts in filtered images/signals
-- Gibbs phenomenon near boundaries
-- Wavelet coefficients wrong at coarse scales
-
-**Prevention:**
-```cpp
-// PROPER: Boundary handling modes
-enum class BoundaryMode {
-    Zero,       // Extend with zeros
-    Replicate,  // Repeat edge values
-    Symmetric,  // Mirror at boundary
-    Periodic,   // Assume periodic
-    Reflect     // Reflect without edge duplication
-};
-
-__device__ float applyBoundaryMode(
-    float* data, int idx, int size,
-    BoundaryMode mode
-) {
-    if (idx >= 0 && idx < size) {
-        return data[idx];
-    }
-    
-    switch (mode) {
-        case BoundaryMode::Zero:
-            return 0.0f;
-        case BoundaryMode::Replicate:
-            return data[clamp(idx, 0, size - 1)];
-        case BoundaryMode::Symmetric:
-            idx = abs(idx) % (2 * size);
-            return data[idx < size ? idx : 2 * size - 1 - idx];
-        case BoundaryMode::Periodic:
-            return data[((idx % size) + size) % size];
-        case BoundaryMode::Reflect:
-            if (idx < 0) idx = -idx - 1;
-            if (idx >= size) idx = 2 * size - idx - 1;
-            return data[idx];
-    }
-}
-
-// SELECT: Appropriate mode per application
-// - Symmetric: DCT, image processing (preserves edge statistics)
-// - Reflect: Wavelet transforms (coefficients less biased)
-// - Periodic: FFT convolution (must be periodic)
-// - Replicate: Audio (natural continuation)
-void chooseBoundaryMode(const SignalProperties& props) {
-    if (props.isImage && props.hasSharpEdges) {
-        return BoundaryMode::Reflect;  // Best for edge preservation
-    }
-    if (props.needsPeriodic) {
-        return BoundaryMode::Periodic;  // For FFT
-    }
-    return BoundaryMode::Symmetric;  // Safe default
-}
-```
-
-**Phase Recommendation:** Phase 5 (Signal Processing Framework) - Define boundary handling strategy in convolution framework design.
-
----
-
-### 4.2 FFT Size Constraints
-
-**What goes wrong:** Using FFT sizes that aren't power of 2, 3, 5, or 7 (radices supported by cuFFT) causes severe performance degradation.
-
-**Why it happens:** cuFFT uses radix-based Cooley-Tukey decomposition. Sizes with prime factors outside {2, 3, 5, 7} require Bluestein's algorithm (O(n^2) in intermediate storage) or fail entirely.
-
-**Consequences:**
-- Performance drops by 10-100x for prime-length FFTs
-- Memory allocation failures for Bluestein
-- Unexpected results due to implicit resizing
-
-**Prevention:**
-```cpp
-// FIND: Optimal FFT size
-int findOptimalFFTSize(int n) {
-    if (n <= 0) return 1;
-    
-    // Check if already optimal (power of 2, 3, 5, 7 only)
-    while (n % 2 == 0) n /= 2;
-    while (n % 3 == 0) n /= 3;
-    while (n % 5 == 0) n /= 5;
-    while (n % 7 == 0) n /= 7;
-    
-    if (n == 1) return true;  // Optimal!
-    
-    // Find nearest larger optimal size
-    int base = n;
-    n = ((n + 15) / 16) * 16;  // Round up to power of 16
-    
-    // Binary search for closest optimal size
-    while (!isOptimalSize(n)) {
-        n++;
-    }
-    return n;
-}
-
-bool isOptimalSize(int n) {
-    while (n % 2 == 0) n /= 2;
-    while (n % 3 == 0) n /= 3;
-    while (n % 5 == 0) n /= 5;
-    while (n % 7 == 0) n /= 7;
-    return n == 1;
-}
-
-// PAD: Automatically pad to optimal size
-void fftConvolve(
-    const float* signal, int signalLen,
-    const float* kernel, int kernelLen,
-    float* output
-) {
-    int optimalSize = findOptimalFFTSize(signalLen + kernelLen - 1);
-    
-    // Zero-pad both inputs
-    float* paddedSignal = padToSize(signal, signalLen, optimalSize);
-    float* paddedKernel = padToSize(kernel, kernelLen, optimalSize);
-    
-    // Now FFT size is guaranteed optimal
-    cufftHandle plan;
-    cufftPlan1d(&plan, optimalSize, CUFFT_R2C, 1);
-    cufftExecR2C(plan, paddedSignal, ...);
-    cufftExecR2C(plan, paddedKernel, ...);
-    // ... convolution ...
-}
-```
-
-**Phase Recommendation:** Phase 2 (FFT Infrastructure) - Wrap cuFFT with automatic size optimization from the start.
-
----
-
-### 4.3 IIR Filter Stability
-
-**What goes wrong:** IIR (Infinite Impulse Response) filters become unstable when implemented on GPU due to coefficient quantization or state accumulation errors.
-
-**Why it happens:**
-1. **Pole migration** - Quantized coefficients move poles outside unit circle
-2. **State precision** - Accumulated state values lose precision
-3. **Overflow** - Large inputs cause state overflow
-4. **Parallel form issues** - Direct form parallelization introduces coupling
-
-**Consequences:**
-- Filter output grows without bound (unstable)
-- Filter outputs NaN/Inf
-- Different stability on GPU vs CPU (different floating-point)
-
-**Prevention:**
-```cpp
-// STABLE: State-space IIR with overflow protection
-struct StableIIRState {
-    float b0, b1, b2;  // Feedforward coefficients
-    float a1, a2;      // Feedback coefficients
-    float s1, s2;      // State (delay elements)
-};
-
-__device__ float stableIIRStep(StableIIRState& state, float x) {
-    // Direct Form II (fewer multiplications, less state exposure)
-    // w[n] = x[n] - a1*w[n-1] - a2*w[n-2]
-    
-    float w = x - state.a1 * state.s1 - state.a2 * state.s2;
-    
-    // Saturation to prevent overflow
-    w = fmaxf(fminf(w, 1e10f), -1e10f);
-    
-    // y[n] = b0*w[n] + b1*w[n-1] + b2*w[n-2]
-    float y = state.b0 * w + state.b1 * state.s1 + state.b2 * state.s2;
-    
-    // Update state
-    state.s2 = state.s1;
-    state.s1 = w;
-    
-    return y;
-}
-
-// VERIFY: Filter stability before use
-bool verifyFilterStability(float a1, float a2) {
-    // Characteristic equation: z^2 + a1*z + a2 = 0
-    // Roots must be inside unit circle
-    
-    float disc = a1*a1 - 4*a2;
-    if (disc >= 0) {
-        // Real roots
-        float r1 = (-a1 - sqrt(disc)) / 2;
-        float r2 = (-a1 + sqrt(disc)) / 2;
-        return fabsf(r1) < 1.0f && fabsf(r2) < 1.0f;
+    if (caps.supportsFP16) {
+        // Use fast FP16 path
+        kernel_fp16<<<blocks, threads, 0, stream>>>(data_fp16);
     } else {
-        // Complex conjugate roots
-        float magnitude = sqrt(a2);  // |r| = sqrt(a2) for conjugate pair
-        return magnitude < 1.0f - 1e-6f;  // Small margin for numerical
+        // Use compatible FP32 path
+        kernel_fp32<<<blocks, threads, 0, stream>>>(data_fp32);
     }
-}
-
-// QUANTIZE: Safe coefficient quantization
-float quantizeCoefficient(float coeff, int bits) {
-    float scale = (1 << (bits - 1)) - 1.0f;
-    float quantized = round(coeff * scale) / scale;
-    
-    // Check stability after quantization
-    float a1 = quantized;  // Your actual coefficient
-    float a2 = 0.5f;       // Second feedback coefficient
-    
-    if (!verifyFilterStability(a1, a2)) {
-        // Fall back to lower order or different structure
-        return coeff;  // Let it fail gracefully
-    }
-    return quantized;
 }
 ```
 
-**Phase Recommendation:** Phase 5 (IIR Filter Implementation) - Implement stability verification in filter design, not just runtime.
-
 ---
 
-### 4.4 Numerical Precision in Wavelet Transforms
+### 4.3 Ignoring ECC Error Handling
 
-**What goes wrong:** Discrete Wavelet Transform (DWT) accumulates numerical errors over multiple decomposition levels, producing inaccurate coefficients at coarser scales.
+**What goes wrong:** Production systems with ECC memory don't handle corrected errors gracefully.
 
-**Why it happens:**
-1. **Repeated filtering** - Error accumulates with each level
-2. **Downsampling** - Aliasing amplifies quantization errors
-3. **High-pass filter** - Amplifies numerical noise
-4. **Floating-point rounding** - Error grows with transform length
+**Why it happens:** ECC GPUs report corrected single-bit errors but programs ignore them:
+
+```cpp
+// WRONG: Ignoring ECC corrected errors
+void process(Buffer& data) {
+    // GPU memory has experienced corrected bit flip
+    // cudaErrorCorrected ECC error not checked
+    
+    kernel<<<blocks, threads>>>(data.data(), data.size());
+    // Results may be unreliable but error not detected
+}
+```
 
 **Consequences:**
-- Energy not conserved across decomposition levels
-- Small wavelet coefficients swamped by numerical noise
-- Reconstruction error exceeds theoretical minimum
+- Silent data corruption in scientific computing
+- Reliability failures in long-running applications
+- Difficult to debug intermittent failures
 
 **Prevention:**
 ```cpp
-// PRECISE: Wavelet transform with error monitoring
-struct WaveletResult {
-    std::vector<float> coefficients;  // [cA_n, cD_n, cD_{n-1}, ..., cD_1]
-    std::vector<float> reconstructionError;
-    int levels;
-};
+// CORRECT: Monitor ECC status via NVML
+#include <nvml.h>
 
-WaveletResult stableWaveletDecomp(
-    const float* signal, int length,
-    const Wavelet& wavelet,
-    int maxLevels
-) {
-    WaveletResult result;
-    result.levels = min(maxLevels, (int)log2(length));
+nvmlReturn_t checkECCStatus(int device) {
+    nvmlEccCounterType_t types[] = {NVML_VOLATILE_ECC, NVML_AGGREGATE_ECC};
     
-    // Current signal level
-    std::vector<float> current(signal, signal + length);
-    std::vector<float> prevSignal(length);
-    
-    // Low-pass (approximation) and high-pass (detail) outputs
-    std::vector<float> approx, detail;
-    
-    for (int level = 0; level < result.levels; level++) {
-        int n = current.size();
-        prevSignal = current;  // Save for error analysis
+    for (auto type : types) {
+        nvmlEccCounter64_t singleBit, doubleBit;
+        nvmlDeviceGetMemoryErrorCounter(device, NVML_MEMORY_ERROR_TYPE_CORRECTED,
+                                        type, NVML_MEMORY_LOCATION_DEVICE_MEMORY,
+                                        &singleBit);
+        nvmlDeviceGetMemoryErrorCounter(device, NVML_MEMORY_ERROR_TYPE_UNCORRECTED,
+                                        type, NVML_MEMORY_LOCATION_DEVICE_MEMORY,
+                                        &doubleBit);
         
-        // Convolve with downsampling
-        approx = convolveDownsample(current, wavelet.lo, n/2);  // Low
-        detail = convolveDownsample(current, wavelet.hi, n/2);  // High
-        
-        // Check for energy conservation
-        float inputEnergy = energy(current);
-        float outputEnergy = energy(approx) + energy(detail);
-        float energyError = abs(outputEnergy - inputEnergy) / inputEnergy;
-        
-        result.reconstructionError.push_back(energyError);
-        
-        // Warn if energy error exceeds threshold
-        if (energyError > 1e-6f) {
-            // Consider switching to integer wavelet or lifting scheme
-            printf("Warning: Level %d energy error %e exceeds threshold\n",
-                   level, energyError);
+        if (singleBit > warningThreshold) {
+            // Log warning, consider checkpointing
+            logECCWarning(device, type, singleBit);
         }
         
-        // Continue with approximation for next level
-        current = approx;
+        if (doubleBit > 0) {
+            // Uncorrectable error - fail safely
+            throw EccUncorrectableError(device, doubleBit);
+        }
     }
-    
-    // Assemble result
-    result.coefficients = current;  // Final approximation
-    for (int i = result.levels - 1; i >= 0; i--) {
-        result.coefficients.insert(result.coefficients.end(),
-                                   detail.begin(), detail.end());
-    }
-    
-    return result;
+    return NVML_SUCCESS;
 }
 
-// LIFTING SCHEME: More numerically stable than convolution
-// Use Cohen-Daubechies-Feauveau (CDF) wavelets via lifting
-struct LiftingWavelet {
-    float p, u;  // Lifting coefficients
+// CORRECT: Periodic health monitoring
+class GPUHealthMonitor {
+    size_t lastSingleBitErrors_{0};
+    
+    void checkAndAlert() {
+        size_t currentErrors = querySingleBitErrors();
+        if (currentErrors > lastSingleBitErrors_) {
+            size_t newErrors = currentErrors - lastSingleBitErrors_;
+            logWarning("ECC corrected errors: ", newErrors);
+            
+            if (newErrors > threshold_) {
+                // Consider checkpoint and restart
+                requestCheckpoint("ECC error threshold exceeded");
+            }
+        }
+        lastSingleBitErrors_ = currentErrors;
+    }
 };
-
-float liftStep(float even, float float odd, float p) {
-    return odd - p * (even + evenNext);  // Predict
-}
-
-float liftUpdate(float even, float odd, float u) {
-    return even + u * (odd + oddPrev);   // Update
-}
-
-// Lifting is exact for perfect reconstruction
-// (floating-point errors notwithstanding, but much smaller)
 ```
 
-**Phase Recommendation:** Phase 6 (Wavelet Implementation) - Compare convolution-based vs lifting scheme and document precision guarantees.
+---
+
+### 4.4 Missing Timeout Handling
+
+**What goes wrong:** GPU kernels run forever due to infinite loops or deadlocks, causing watchdog timer resets.
+
+**Why it happens:** Infinite loops or improper synchronization cause GPU to hang:
+
+```cpp
+// DANGEROUS: Infinite loop in kernel
+__global__ void badKernel(float* data, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    while (true) {  // Infinite loop!
+        data[i] = compute(data[i]);
+    }
+}
+
+// DANGEROUS: Deadlock via improper barrier usage
+__global__ void deadlockKernel(float* data) {
+    __shared__ float shared[256];
+    
+    if (threadIdx.x < 128) {
+        shared[threadIdx.x] = data[threadIdx.x];
+    }
+    __syncthreads();  // First barrier
+    
+    if (threadIdx.x >= 128) {
+        // Only half threads reach here
+        shared[threadIdx.x] = data[threadIdx.x];
+    }
+    __syncthreads();  // DEADLOCK - 128 threads waiting forever
+}
+```
+
+**Consequences:**
+- Watchdog timer reset (GPU reset by driver)
+- Application crash
+- Other GPUs in system affected
+- Difficult recovery
+
+**Prevention:**
+```cpp
+// CORRECT: Use cudaOccupancyMaxActiveBlocksPerMin to estimate kernel duration
+void validateKernelLaunch(const void* kernel) {
+    int blocks;
+    int gridSize;
+    NOVA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &blocks, kernel, 256, 0));
+    
+    cudaDeviceProp prop;
+    int device;
+    cudaGetDevice(&device);
+    cudaGetDeviceProperties(&prop, device);
+    
+    gridSize = blocks * prop.multiProcessorCount;
+    
+    // Sanity check: kernel should complete in reasonable time
+    // Rough estimate: if gridSize * iterations > threshold, warn
+    if (gridSize > 100000) {
+        logWarning("Large kernel launch: ", gridSize, " blocks");
+    }
+}
+
+// CORRECT: Watchdog timeout configuration
+// Set CUDA_TIMEOUT to reasonable value
+// cudaDeviceSetLimit(cudaLimitTimeout, timeout_ms);
+
+// CORRECT: Stream timeout for testing
+TEST_F(StreamTest, KernelTimeout) {
+    cudaStream_t stream;
+    cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    
+    kernel<<<1000, 256, 0, stream>>>(data, n);
+    
+    cudaError_t err = cudaStreamQuery(stream);
+    if (err == cudaErrorNotReady) {
+        // Wait with timeout
+        for (int i = 0; i < 100; i++) {
+            std::this_thread::sleep_for(100ms);
+            err = cudaStreamQuery(stream);
+            if (err == cudaSuccess) break;
+            if (err != cudaErrorNotReady) {
+                ADD_FAILURE() << "Kernel error: " << cudaGetErrorString(err);
+                break;
+            }
+        }
+        if (err == cudaErrorNotReady) {
+            ADD_FAILURE() << "Kernel timeout exceeded";
+        }
+    }
+}
+```
+
+---
+
+### 4.5 Floating-Point Comparison Stability
+
+**What goes wrong:** Floating-point comparisons use exact equality, failing on different GPUs or optimization levels.
+
+**Why it happens:** IEEE 754 compliance varies slightly, and floating-point operations are not associative:
+
+```cpp
+// WRONG: Exact equality comparison
+TEST_F(MathTest, Sum) {
+    float result = compute();
+    EXPECT_EQ(result, 1.0f);  // May be 0.9999999 or 1.0000001
+}
+```
+
+**Consequences:**
+- Tests fail on different GPU generations
+- Tests fail between debug/release builds
+- Tests fail with different CUDA versions
+
+**Prevention:**
+```cpp
+// CORRECT: Tolerance-based comparison
+TEST_F(MathTest, Sum) {
+    float result = compute();
+    EXPECT_NEAR(result, 1.0f, 1e-6f);  // Absolute tolerance
+}
+
+// CORRECT: Relative tolerance for large values
+TEST_F(MathTest, LargeSum) {
+    float result = compute();  // Result ~1e10
+    EXPECT_FLOAT_EQ(result, expected);  // Uses relative tolerance
+}
+
+// CORRECT: Custom comparison for GPU-specific needs
+MATCHER_P(FloatNear, expected, abs_error) {
+    return std::abs(arg - expected) <= abs_error;
+}
+
+TEST_F(MathTest, CustomComparison) {
+    float result = compute();
+    EXPECT_THAT(result, FloatNear(1.0f, 1e-6f));
+}
+
+// CORRECT: For stable comparisons, use integer bit patterns
+TEST_F(SortTest, StableSort) {
+    // Sort by integer representation for stability
+    std::vector<uint32_t> keys = floatAsUint(original);
+    sort(keys);
+    
+    for (int i = 1; i < keys.size(); i++) {
+        EXPECT_LE(keys[i-1], keys[i]);
+    }
+}
+```
 
 ---
 
@@ -1069,27 +1251,34 @@ float liftUpdate(float even, float odd, float u) {
 
 | Phase Topic | Likely Pitfall | Mitigation Strategy |
 |-------------|----------------|---------------------|
-| 1. Shared Memory Access | Bank conflicts | Bank-conflict-free padding, use shuffle |
-| 1. Memory Layout | Non-coalesced variable access | Pack records, sort indices first |
-| 2. Warp-Synchronous Design | Divergence patterns | Pre-classify data, warp-uniform control flow |
-| 2. FFT Infrastructure | Non-power-of-2/3/5/7 sizes | Auto-pad to optimal size |
-| 3. Correctness Verification | Floating-point comparison stability | Integer-encoded keys for stable sort |
-| 3. Convergence Monitoring | Premature/late termination | Multi-criteria convergence with stalling detection |
-| 4. Eigensolver Implementation | Non-convergence in clustered eigenvalues | Monitor convergence, restart with orthogonal vectors |
-| 4. Integration Routines | Adaptive step size oscillation | Richardson extrapolation error estimation |
-| 5. SVD Implementation | Accuracy degradation with condition | Condition estimation, adaptive precision |
-| 5. IIR Filters | Pole migration to instability | Pre-verify stability, saturation arithmetic |
-| 5. Signal Processing Framework | Boundary artifacts | Explicit boundary modes, select per application |
-| 6. PRNG Infrastructure | Statistical bias, state collision | Per-thread independent seeds, quality PRNG |
-| 6. Monte Carlo | High variance, non-convergence | Proper variance tracking, quasi-Monte Carlo |
-| 6. Wavelet Transform | Energy loss over levels | Lifting scheme, energy conservation checks |
+| 33. Error Framework | Missing cudaGetLastError | Enforce NOVA_CHECK on all kernel launches |
+| 22. Error Recovery | Ignoring async errors | Stream query patterns, not callback CUDA calls |
+| Memory Pool | Resource leaks | RAII wrappers, leak sanitizer tests |
+| Multi-GPU | Error state across contexts | Clear error after context switch |
+| 27. Kernel Fusion | Profiling on tiny data | Production-representative sizes |
+| Performance | Memory transfer overhead | Minimize transfers before kernel optimization |
+| 26. Profiling | Microbenchmark warmup | JIT warmup runs, cache warmup |
+| 29. Benchmarks | Tuning for one GPU | Query device capabilities, auto-tune |
+| Test Infrastructure | Flaky async tests | Stream synchronization before reads |
+| Fuzz Testing | Edge case gaps | Edge case parameterized tests |
+| Memory Tests | No leak detection | cudaMemGetInfo before/after, compute-sanitizer |
+| 31. Regression Tests | False confidence | Integration tests, property-based tests |
+| 24. Signal Handling | Watchdog timeouts | Occupancy validation, timeout tests |
+| 23. ECC Handling | Ignoring corrected errors | NVML health monitoring |
+| Math Operations | FP comparison instability | Tolerance-based comparisons |
 
 ---
 
 ## Sources
 
-- [NVIDIA CUDA C++ Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/) - **HIGH confidence** (official NVIDIA documentation)
+- [NVIDIA CUDA C++ Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/) - **HIGH confidence** (official NVIDIA documentation, v13.2)
+- [NVIDIA CUDA Runtime API Error Handling](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__ERROR.html) - **HIGH confidence** (official API documentation)
 - [NVIDIA CUDA C++ Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/) - **HIGH confidence** (official NVIDIA documentation)
-- [Faster Parallel Reductions on Kepler (NVIDIA Blog)](https://developer.nvidia.com/blog/faster-parallel-reductions-kepler/) - **HIGH confidence** (NVIDIA developer blog)
-- [Precision and Performance: Floating-Point and IEEE 754 Compliance](https://developer.nvidia.com/content/precision-performance-floating-point-and-ieee-754-compliance-nvidia-gpus) - **HIGH confidence** (NVIDIA technical documentation)
-- cuFFT documentation and cuRAND documentation - **HIGH confidence** (NVIDIA CUDA libraries)
+- [Compute Sanitizer Documentation](https://docs.nvidia.com/compute-sanitizer/) - **HIGH confidence** (NVIDIA tools)
+- [NVML Documentation](https://docs.nvidia.com/deploy/nvml-api/) - **HIGH confidence** (NVIDIA management library)
+- [Google Test Best Practices](https://google.github.io/googletest/) - **MEDIUM confidence** (established testing framework)
+- [CUDA Pro Tip: Unified Memory Performance](https://developer.nvidia.com/blog/unified-memory-cuda-pro-tip-memory-management/) - **HIGH confidence** (NVIDIA developer blog)
+
+---
+
+*Last updated: 2026-04-28 for Nova v2.4 Production Hardening milestone*

@@ -76,6 +76,17 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ Haar wavelet transform — v2.3
 - ✓ FIR filters — v2.3
 
+### Planned (v2.4)
+
+- [ ] CUDA Graphs for batch workload optimization (10-50x launch overhead reduction)
+- [ ] L2 cache persistence for working set optimization
+- [ ] Priority stream pool for latency-sensitive operations
+- [ ] NVBench GPU microbenchmarking integration
+- [ ] Async error tracking and propagation
+- [ ] NVTX domain extensions for observability
+- [ ] Error injection framework for chaos testing
+- [ ] Memory pressure and concurrent stream stress tests
+
 ### Completed (v1.6)
 
 - [x] Distributed batch normalization with cross-GPU sync — Phase 25
