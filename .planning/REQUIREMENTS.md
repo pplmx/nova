@@ -1,137 +1,92 @@
-# Requirements — v2.2 Comprehensive Enhancement
+# Requirements: Nova CUDA Library Enhancement
 
-## Milestone Summary
+**Defined:** 2026-04-28
+**Core Value:** A reliable, high-performance CUDA compute library that can be trusted in production environments, with comprehensive algorithms for scientific computing, image processing, and emerging workloads.
 
-| Metric | Value |
-|--------|-------|
-| Milestone | v2.2 Comprehensive Enhancement |
-| Started | 2026-04-27 |
-| Total Requirements | 18 |
+## v1 Requirements
 
----
+Requirements for v2.3 milestone. Each maps to roadmap phases.
 
-## Performance Optimization
+### Sorting & Searching
 
-### Kernel Fusion
+- [ ] **SORT-01**: User can sort key-value pairs in ascending or descending order using GPU radix sort
+- [ ] **SORT-02**: User can find the k largest elements in a dataset without performing a full sort
+- [ ] **SORT-03**: User can perform binary search on sorted arrays using warp shuffle primitives
 
-- [ ] **PERF-01**: User can fuse chained operations (matmul + bias + activation) into single kernel
+### Linear Algebra Extras
 
-### Memory Optimization
+- [ ] **LINALG-01**: User can compute SVD (singular value decomposition) with standard and randomized modes
+- [ ] **LINALG-02**: User can compute eigenvalues and eigenvectors of symmetric matrices
+- [ ] **LINALG-03**: User can compute QR, Cholesky, and LDL matrix factorizations
 
-- [ ] **PERF-02**: User can configure automatic memory pool tuning based on workload patterns
-- [ ] **PERF-04**: User can enable memory compression for checkpoint data with configurable ratio
+### Numerical Methods
 
-### Autotuning
+- [ ] **NUM-01**: User can run Monte Carlo simulations with variance reduction via antithetic variates
+- [ ] **NUM-02**: User can compute numerical integrals using trapezoidal and Simpson rules
+- [ ] **NUM-03**: User can find roots of functions using bisection and Newton-Raphson methods
+- [ ] **NUM-04**: User can perform interpolation using linear and cubic spline methods
 
-- [ ] **PERF-03**: User can run autotuning to discover optimal block/tile sizes for target GPU
+### Signal Processing
 
----
+- [ ] **SIGNAL-01**: User can compute FFT-based convolution for efficient large-kernel filtering
+- [ ] **SIGNAL-02**: User can compute Haar wavelet transform (forward and inverse)
+- [ ] **SIGNAL-03**: User can apply FIR (finite impulse response) filters to signals
 
-## New Operators
+## v2 Requirements
 
-### Transformer Components
+Deferred to future release. Tracked but not in current roadmap.
 
-- [ ] **OP-01**: User can run multi-head attention with configurable heads and dropout
-- [ ] **OP-02**: User can apply positional encoding (sinusoidal or learned)
+### Sorting & Searching
 
-### Loss Functions
+- **SORT-10**: User can perform distributed sorting across multiple GPUs (requires NCCL)
 
-- [ ] **OP-03**: User can compute cross-entropy loss with numerical stability
-- [ ] **OP-04**: User can compute focal loss for class imbalance
-- [ ] **OP-05**: User can compute contrastive loss for representation learning
+### Linear Algebra Extras
 
-### Optimizers
+- **LINALG-10**: User can compute generalized SVD for rectangular matrices
+- **LINALG-11**: User can compute sparse eigensolver (requires cuDSS)
 
-- [ ] **OP-06**: User can use AdamW optimizer with weight decay
-- [ ] **OP-07**: User can use LAMB optimizer for large batch training
-- [ ] **OP-08**: User can apply gradient clipping with configurable threshold
+### Signal Processing
 
----
-
-## Tooling
-
-### Debugging
-
-- [ ] **TOOL-01**: User can run memory sanitizer checks for out-of-bounds access
-- [ ] **TOOL-02**: User can detect shared memory bank conflicts
-
-### Profiling
-
-- [ ] **TOOL-03**: User can visualize kernel execution timeline
-- [ ] **TOOL-04**: User can analyze memory bandwidth utilization
-
-### Developer Utilities
-
-- [ ] **TOOL-05**: User can generate kernel boilerplate via CLI
-- [ ] **TOOL-06**: User can run automated benchmark comparisons
-
----
-
-## Documentation
-
-### User Guides
-
-- [ ] **DOC-01**: User can follow comprehensive tutorial on transformer implementation
-
-### Architecture
-
-- [ ] **DOC-02**: User can read architecture overview of five-layer design
-- [ ] **DOC-03**: User can access decision rationale for key design choices
-
-### API
-
-- [ ] **DOC-04**: User can reference API documentation with code examples
-
----
-
-## Future Requirements
-
-*Deferred from this milestone:*
-
-- Custom CUDA kernels via JIT compilation
-- Distributed training examples
-- Real-time profiling dashboard
-- Python bindings exploration
-
----
+- **SIGNAL-10**: User can compute Daubechies wavelet transform
+- **SIGNAL-11**: User can implement IIR (infinite impulse response) filters
+- **SIGNAL-12**: User can perform continuous wavelet transform
 
 ## Out of Scope
 
-- Python bindings — separate project
-- Real-time video processing pipeline
-- Web-based visualization tools
-- Cloud-specific optimizations
+Explicitly excluded. Documented to prevent scope creep.
 
----
+| Feature | Reason |
+|---------|--------|
+| Multi-GPU sorting (NCCL) | Requires multi-node setup; defer to v2.4+ |
+| Real-time audio pipeline | Low latency requirements conflict with batch-oriented GPU model |
+| Sparse eigensolver (cuDSS) | cuSolverSP deprecated, cuDSS not fully stable |
+| Quasi-Monte Carlo (Sobol) | Implementation complexity not justified for v2.3 |
 
 ## Traceability
 
-| REQ-ID | Phase | Status |
-|--------|-------|--------|
-| PERF-01 | 48 | Mapped |
-| PERF-02 | 49 | Mapped |
-| PERF-03 | 48 | Mapped |
-| PERF-04 | 49 | Mapped |
-| OP-01 | 50 | Mapped |
-| OP-02 | 50 | Mapped |
-| OP-03 | 50 | Mapped |
-| OP-04 | 50 | Mapped |
-| OP-05 | 50 | Mapped |
-| OP-06 | 51 | Mapped |
-| OP-07 | 51 | Mapped |
-| OP-08 | 51 | Mapped |
-| TOOL-01 | 52 | Mapped |
-| TOOL-02 | 52 | Mapped |
-| TOOL-03 | 52 | Mapped |
-| TOOL-04 | 52 | Mapped |
-| TOOL-05 | 52 | Mapped |
-| TOOL-06 | 52 | Mapped |
-| DOC-01 | 53 | Mapped |
-| DOC-02 | 53 | Mapped |
-| DOC-03 | 53 | Mapped |
-| DOC-04 | 53 | Mapped |
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| SORT-01 | Phase 54 | Pending |
+| SORT-02 | Phase 54 | Pending |
+| SORT-03 | Phase 54 | Pending |
+| LINALG-01 | Phase 55 | Pending |
+| LINALG-02 | Phase 55 | Pending |
+| LINALG-03 | Phase 55 | Pending |
+| NUM-01 | Phase 56 | Pending |
+| NUM-02 | Phase 56 | Pending |
+| NUM-03 | Phase 56 | Pending |
+| NUM-04 | Phase 56 | Pending |
+| SIGNAL-01 | Phase 57 | Pending |
+| SIGNAL-02 | Phase 57 | Pending |
+| SIGNAL-03 | Phase 57 | Pending |
+
+**Coverage:**
+- v1 requirements: 13 total
+- Mapped to phases: 13 ✓
+- Unmapped: 0 ✓
 
 ---
-
-*Requirements defined: 2026-04-27 for v2.2 Comprehensive Enhancement*
-*18 total requirements across 4 categories*
+*Requirements defined: 2026-04-28*
+*Last updated: 2026-04-28 after initial definition for v2.3*

@@ -1,203 +1,89 @@
-# Roadmap — v2.2 Comprehensive Enhancement
+# Roadmap: Nova v2.3 Extended Algorithms
 
-## Milestone Summary
+## Milestones
 
-| Metric | Value |
-|--------|-------|
-| Milestone | v2.2 Comprehensive Enhancement |
-| Requirements | 18 |
-| Phases | 6 |
-| Started | 2026-04-27 |
+- ✅ **v2.2 Comprehensive Enhancement** - Phases 1-53 (shipped 2026-04-27)
+- 🚧 **v2.3 Extended Algorithms** - Phases 54-58 (in progress)
+- 📋 **v2.4 Production Hardening** - Phases 59+ (planned)
 
-## Phase Overview
+## Phase Summary
 
-| # | Phase | Goal | Requirements | Success Criteria |
-|---|-------|------|--------------|------------------|
-| 48 | Kernel Fusion & Autotuning | Fused kernels and hardware-aware tuning | PERF-01, PERF-03 | 4 criteria |
-| 49 | Memory Optimization | Enhanced memory management and compression | PERF-02, PERF-04 | 4 criteria |
-| 50 | Transformer & Loss | Transformer components and loss functions | OP-01, OP-02, OP-03, OP-04, OP-05 | 5 criteria |
-| 51 | Optimizers | AdamW, LAMB, gradient clipping | OP-06, OP-07, OP-08 | 3 criteria |
-| 52 | Tooling | Debug, profiling, developer utilities | TOOL-01, TOOL-02, TOOL-03, TOOL-04, TOOL-05, TOOL-06 | 6 criteria |
-| 53 | Documentation | User guides, architecture, API docs | DOC-01, DOC-02, DOC-03, DOC-04 | 4 criteria |
+- [ ] **Phase 54: Foundation & Sorting** - GPU radix sort, top-k selection, binary search
+- [ ] **Phase 55: Linear Algebra Extras** - SVD, eigenvalue decomposition, matrix factorization
+- [ ] **Phase 56: Numerical Methods** - Monte Carlo, integration, root finding, interpolation
+- [ ] **Phase 57: Signal Processing** - FFT convolution, wavelet transform, FIR filters
+- [ ] **Phase 58: Integration & Polish** - Performance, benchmarks, documentation
 
----
+## Phase Details
 
-## Phase 48: Kernel Fusion & Autotuning
+### Phase 54: Foundation & Sorting
+**Goal**: Users can efficiently sort key-value pairs and search sorted data using GPU primitives
+**Depends on**: Nothing (first phase of milestone)
+**Requirements**: SORT-01, SORT-02, SORT-03
+**Success Criteria** (what must be TRUE):
+  1. User can sort arrays of key-value pairs in ascending or descending order using GPU radix sort
+  2. User can find the k largest elements in a dataset without performing a full sort
+  3. User can perform binary search on sorted arrays using warp shuffle primitives
+  4. Sorting operations integrate cleanly with existing Buffer and MemoryPool patterns
+**Plans**: TBD
 
-**Goal:** Enable kernel fusion for chained operations and autotuning infrastructure
+### Phase 55: Linear Algebra Extras
+**Goal**: Users can compute advanced matrix decompositions for scientific computing applications
+**Depends on**: Phase 54
+**Requirements**: LINALG-01, LINALG-02, LINALG-03
+**Success Criteria** (what must be TRUE):
+  1. User can compute SVD with standard and randomized modes for matrix decomposition
+  2. User can compute eigenvalues and eigenvectors of symmetric matrices
+  3. User can compute QR, Cholesky, and LDL matrix factorizations
+  4. All decompositions provide condition number estimation for numerical stability feedback
+**Plans**: TBD
 
-**Requirements:** PERF-01, PERF-03
+### Phase 56: Numerical Methods
+**Goal**: Users can run numerical computations for scientific simulations and data analysis
+**Depends on**: Phase 55
+**Requirements**: NUM-01, NUM-02, NUM-03, NUM-04
+**Success Criteria** (what must be TRUE):
+  1. User can run Monte Carlo simulations with variance reduction via antithetic variates
+  2. User can compute numerical integrals using trapezoidal and Simpson rules
+  3. User can find roots of functions using bisection and Newton-Raphson methods
+  4. User can perform interpolation using linear and cubic spline methods
+**Plans**: TBD
+**UI hint**: yes
 
-**Success Criteria:**
-1. User can fuse matmul + bias + activation into single kernel
-2. User can configure fusion patterns via policy
-3. User can run autotuning for block sizes on target GPU
-4. Autotuned parameters persist in config file
+### Phase 57: Signal Processing
+**Goal**: Users can process signals using FFT-based convolution, wavelet transforms, and FIR filters
+**Depends on**: Phase 56
+**Requirements**: SIGNAL-01, SIGNAL-02, SIGNAL-03
+**Success Criteria** (what must be TRUE):
+  1. User can compute FFT-based convolution for efficient large-kernel filtering
+  2. User can compute Haar wavelet transform with forward and inverse operations
+  3. User can apply FIR filters to signals with configurable coefficients
+  4. Signal processing operations handle boundary conditions gracefully
+**Plans**: TBD
 
-**Dependencies:** None (foundation phase)
+### Phase 58: Integration & Polish
+**Goal**: All new algorithms are tested, benchmarked, and documented for production use
+**Depends on**: Phase 57
+**Requirements**: (Cross-cutting)
+**Success Criteria** (what must be TRUE):
+  1. All new algorithms pass unit tests with >80% coverage
+  2. Performance benchmarks exist for each algorithm domain
+  3. API documentation covers all new functions with usage examples
+  4. CMake integration properly links CUDA library dependencies (cuSOLVER, cuRAND)
+**Plans**: TBD
 
-**Key Decisions:**
-- Use CUDA fusion API where available
-- Provide fallback manual fusion for older CUDA versions
-- Autotuning uses grid search with warmup runs
+## Progress
 
----
+| Phase | Goal | Requirements | Success Criteria | Status |
+|-------|------|--------------|------------------|--------|
+| 54. Foundation & Sorting | GPU sorting primitives | SORT-01, SORT-02, SORT-03 | 4 criteria | Not started |
+| 55. Linear Algebra Extras | Matrix decompositions | LINALG-01, LINALG-02, LINALG-03 | 4 criteria | Not started |
+| 56. Numerical Methods | Scientific computing | NUM-01, NUM-02, NUM-03, NUM-04 | 4 criteria | Not started |
+| 57. Signal Processing | Signal transforms | SIGNAL-01, SIGNAL-02, SIGNAL-03 | 4 criteria | Not started |
+| 58. Integration & Polish | Production readiness | (cross-cutting) | 4 criteria | Not started |
 
-## Phase 49: Memory Optimization
-
-**Goal:** Enhanced memory management with pool tuning and compression
-
-**Requirements:** PERF-02, PERF-04
-
-**Success Criteria:**
-1. User can enable adaptive memory pool sizing
-2. User can configure memory pool based on workload profile
-3. User can enable checkpoint compression with ZSTD
-4. Memory compression shows >50% size reduction for typical checkpoints
-
-**Dependencies:** None (uses existing memory infrastructure)
-
-**Key Decisions:**
-- Workload profiling uses histogram-based learning
-- Compression uses ZSTD with level 3 default
-- Pool sizing respects existing device limits
-
----
-
-## Phase 50: Transformer & Loss
-
-**Goal:** Transformer components and loss functions
-
-**Requirements:** OP-01, OP-02, OP-03, OP-04, OP-05
-
-**Success Criteria:**
-1. User can run multi-head attention with configurable heads
-2. User can apply sinusoidal or learned positional encoding
-3. User can compute numerically stable cross-entropy loss
-4. User can compute focal loss with configurable gamma
-5. User can compute contrastive loss with temperature
-
-**Dependencies:** Phase 44 (uses existing matmul infrastructure)
-
-**Key Decisions:**
-- Attention supports both self-attention and cross-attention
-- Positional encoding is swappable via policy
-- Loss functions use log-sum-exp for numerical stability
-
----
-
-## Phase 51: Optimizers
-
-**Goal:** Implement AdamW and LAMB optimizers with gradient clipping
-
-**Requirements:** OP-06, OP-07, OP-08
-
-**Success Criteria:**
-1. User can instantiate AdamW with configurable lr/weight_decay
-2. User can instantiate LAMB with layer-wise LR decay
-3. User can apply gradient clipping with configurable norm threshold
-
-**Dependencies:** Phase 50 (uses transformer components for testing)
-
-**Key Decisions:**
-- LAMB uses trust ratio clipping per layer
-- Gradient clipping uses global norm by default
-- All optimizers support mixed precision (FP16/BF16)
+**Coverage:** 13/13 requirements mapped ✓
 
 ---
 
-## Phase 52: Tooling
-
-**Goal:** Debugging, profiling enhancements, and developer utilities
-
-**Requirements:** TOOL-01, TOOL-02, TOOL-03, TOOL-04, TOOL-05, TOOL-06
-
-**Success Criteria:**
-1. User can run memory sanitizer with ASAN/UBSAN integration
-2. User can detect bank conflict patterns in shared memory access
-3. User can visualize kernel timeline in Chrome trace format
-4. User can measure memory bandwidth utilization per kernel
-5. User can generate kernel boilerplate via nova-codegen CLI
-6. User can run automated benchmark comparison against baseline
-
-**Dependencies:** Phases 48-49 (uses performance infrastructure)
-
-**Key Decisions:**
-- Sanitizer integration via CMake options
-- Timeline export uses Chrome trace format (standard)
-- CLI code generation uses Jinja2 templates
-
----
-
-## Phase 53: Documentation
-
-**Goal:** Comprehensive documentation covering architecture and usage
-
-**Requirements:** DOC-01, DOC-02, DOC-03, DOC-04
-
-**Success Criteria:**
-1. User can follow transformer implementation tutorial
-2. User can understand five-layer architecture from docs
-3. User can read decision rationale for key design choices
-4. User can find code examples for all major APIs
-
-**Dependencies:** All previous phases (documents what was built)
-
-**Key Decisions:**
-- Tutorial is narrative-style with runnable examples
-- Architecture docs use mermaid diagrams
-- Decision rationale stored in ARCHITECTURE.md
-
----
-
-## Requirement Coverage Matrix
-
-| REQ-ID | Phase | Covered |
-|--------|-------|---------|
-| PERF-01 | 48 | ✅ |
-| PERF-02 | 49 | ✅ |
-| PERF-03 | 48 | ✅ |
-| PERF-04 | 49 | ✅ |
-| OP-01 | 50 | ✅ |
-| OP-02 | 50 | ✅ |
-| OP-03 | 50 | ✅ |
-| OP-04 | 50 | ✅ |
-| OP-05 | 50 | ✅ |
-| OP-06 | 51 | ✅ |
-| OP-07 | 51 | ✅ |
-| OP-08 | 51 | ✅ |
-| TOOL-01 | 52 | ✅ |
-| TOOL-02 | 52 | ✅ |
-| TOOL-03 | 52 | ✅ |
-| TOOL-04 | 52 | ✅ |
-| TOOL-05 | 52 | ✅ |
-| TOOL-06 | 52 | ✅ |
-| DOC-01 | 53 | ✅ |
-| DOC-02 | 53 | ✅ |
-| DOC-03 | 53 | ✅ |
-| DOC-04 | 53 | ✅ |
-
-**All 18 requirements mapped across 6 phases.**
-
----
-
-## Execution Order
-
-```
-Phase 48 (Kernel Fusion & Autotuning) ← Foundation
-         ↓
-Phase 49 (Memory Optimization) ← Independent, can parallel
-         ↓
-Phase 50 (Transformer & Loss) ← Builds on fusion
-         ↓
-Phase 51 (Optimizers) ← Builds on transformer
-         ↓
-Phase 52 (Tooling) ← Independent, can parallel
-         ↓
-Phase 53 (Documentation) ← Requires all previous phases
-```
-
----
-
-*Roadmap created: 2026-04-27 for v2.2 Comprehensive Enhancement*
-*6 phases, 18 requirements, all covered*
+*Roadmap created: 2026-04-28 for v2.3 Extended Algorithms*
