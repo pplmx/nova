@@ -289,3 +289,36 @@
 - Documentation (architecture guide, transformer tutorial)
 
 **Next:** TBD
+
+---
+
+## v2.4 Production Hardening (Shipped: 2026-04-28)
+
+**Phases completed:** 5 phases, 15 requirements
+
+**Key accomplishments:**
+
+- **Phase 59: CUDA Graphs Foundation** - GraphExecutor, MemoryNode, AlgoWrapper
+- **Phase 60: Performance Optimization** - L2PersistenceManager, PriorityStreamPool, NVBench
+- **Phase 61: Observability & Monitoring** - NVTX domains, AsyncErrorTracker, HealthMetrics
+- **Phase 62: Stress Testing** - ErrorInjection, MemoryPressure, ConcurrentStreams
+- **Phase 63: Integration & Polish** - CMake integration, PRODUCTION.md guide
+
+**Requirements delivered:** 15 total (GRAPH-01 to GRAPH-03, PERF-01 to PERF-03, OBS-01 to OBS-03, STRESS-01 to STRESS-03, INT-01 to INT-03)
+
+**Core features implemented:**
+- CUDA Graphs with 10-50x launch overhead reduction for batch workloads
+- L2 cache persistence with RAII control for iterative algorithms
+- Priority stream pool (low/normal/high) for latency-sensitive operations
+- NVTX domain extensions per layer (memory, device, algo, api, production)
+- AsyncErrorTracker for deferred CUDA kernel errors
+- HealthMetrics dashboard with JSON/CSV export
+- ErrorInjection framework for chaos testing and fault tolerance
+- Memory pressure and concurrent stream stress tests
+- Production hardening guide (docs/PRODUCTION.md)
+
+**New modules:**
+- `cuda/production/` - Production hardening components
+- `cuda/observability/` - Observability extensions
+
+**Next:** TBD
