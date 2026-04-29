@@ -1,177 +1,312 @@
-# Stack Research
+# Technology Stack Additions for v2.7
 
-**Domain:** CUDA GPU Inference Optimization
-**Researched:** 2026-04-29
+**Analysis Date:** 2026-04-30
+**Confidence:** HIGH
+**Sources:** NVIDIA official documentation, GitHub releases
+
+## Executive Summary
+
+v2.7 adds three capability areas: robustness testing, performance profiling, and advanced algorithms. Most tooling is either already in the stack or available from NVIDIA at no additional cost. **One critical migration required:** CUB has been archived and moved to the unified CCCL repository.
+
+---
+
+## 1. What's Already in the Stack
+
+The project already has significant tooling. Do NOT re-add:
+
+| Existing | Version | Source | Already Provides |
+|----------|---------|--------|------------------|
+| Google Test | v1.17.0 | FetchContent | Unit tests |
+| libFuzzer | Clang-only | Built-in | Fuzz testing |
+| Property-based tests | Custom | In-repo | Property testing |
+| NVTX | Header-only | CUDA toolkit | Profiling annotations |
+| CUDA Events | Built-in | CUDA toolkit | Kernel timing |
+| Google Benchmark | v1.9.0 | External | Microbenchmarks |
+| Error injection framework | Custom | v2.4 shipped | Chaos testing |
+| Memory pressure stress tests | Custom | v2.4 shipped | Stress testing |
+
+---
+
+## 2. Recommended Additions
+
+### 2.1 Robustness Testing
+
+#### Option A: NVIDIA Compute Sanitizer (Recommended)
+**Status:** Part of CUDA Toolkit — no installation needed
 **Confidence:** HIGH
 
-## Recommended Stack
+Compute Sanitizer is a functional correctness checking suite included in CUDA 12+. It provides:
 
-### Core Technologies
+| Tool | Purpose | Use Case |
+|------|---------|----------|
+| `memcheck` | Out-of-bounds, misaligned access detection | Memory safety validation |
+| `racecheck` | Shared memory data race detection | Concurrent kernel validation |
+| `initcheck` | Uninitialized memory access detection | Initialization bug finding |
+| `synccheck` | Invalid synchronization detection | Async operation validation |
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| NVIDIA Transformer Engine | 2.14+ | Attention primitives, fused layers, FP8/FP4 quantization | Official NVIDIA library with C/C++ API, native paged KV cache support, CUDA Graphs integration |
-| FlashAttention | 2.5.x (FA2) / 3.x (FA3) | IO-aware exact attention algorithm | 2-4x faster than standard attention, O(n) memory instead of O(n^2), supports MQA/GQA |
-| cuDNN | 9.x | Low-level CUDA primitives | Hardware-accelerated attention via `cudnnAttentionForward`, fused attention kernels |
-| CUTLASS | 3.x | CUDA Templates for Linear Algebra | Reference GEMM implementations for custom fused kernels, FP8 support |
-
-### Supporting Libraries
-
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| FlashAttention (hopper) | 3.x beta | Optimized for H100/H800 | When targeting Hopper architectures, need FP8 forward |
-| FlashAttention-4 (CuTeDSL) | 4.x | Next-gen kernels for Hopper/Blackwell | When targeting B200 or newer, maximum performance |
-| NCCL | 2.21+ | GPU interconnects | Sequence parallelism, tensor pipeline communication |
-
-### Development Tools
-
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| NVCC | CUDA compiler (CUDA 20+) | Required for device code compilation |
-| NVTX | NVIDIA Tools Extension | Existing nova integration (v2.4) - continue using for profiling |
-| CUDA Graphs | Kernel launch optimization | Existing nova integration (v2.4) - essential for paged attention |
-| Nsight Compute | Kernel profiling | Verify attention kernel efficiency |
-
-## Key Architectural Decisions
-
-### 1. Attention Backend Selection
-
-**For pure C++ (no PyTorch dependency):**
-
-| Architecture | Recommended Backend | Justification |
-|--------------|---------------------|---------------|
-| Ampere (A100) | TransformerEngine C API | Stable, full feature set, paged attention support |
-| Ada (RTX 4090) | TransformerEngine C API | Same as Ampere, hardware supports all TE features |
-| Hopper (H100) | TE + FA3 kernel reference | TE uses FA3 internally, consider direct FA3 for max control |
-
-**Why TransformerEngine over raw FlashAttention:**
-- Native C/C++ API (no PyTorch dependency)
-- Built-in paged KV cache management
-- CUDA Graphs support via `make_graphed_callables`
-- FP8/FP4 quantization with calibrated scaling factors
-- Context parallelism for sequence parallelism
-
-### 2. KV Cache Strategy
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| Vanilla contiguous KV cache | Simple | Memory fragmentation, max seq length fixed |
-| **Paged KV cache (recommended)** | Memory efficient, variable length, batching | More complex management |
-
-TransformerEngine 2.x provides paged attention via `DotProductAttention` with block table support - aligns with vLLM's architecture.
-
-### 3. Precision Selection
-
-| Precision | Use Case | Notes |
-|-----------|----------|-------|
-| BF16 | Default | Best accuracy/performance balance |
-| FP8 (E4M3/E5M2) | Large batch inference | Requires calibration, 2x memory bandwidth improvement |
-| FP8 with block scaling | Quantized weights | Better accuracy for inference-only |
-| FP4 | Extreme compression | Experimental, NVFP4 only on Hopper+ |
-
-## Installation
-
+**Integration:**
 ```bash
-# TransformerEngine (C++ only, requires CUDA 12+)
-git clone --recursive https://github.com/NVIDIA/TransformerEngine.git
-cd TransformerEngine
-mkdir build && cd build
-cmake .. -DBUILD_C=ON -DBUILD_PYTHON=OFF -DDEV=ON
-make -j$(nproc)
-make install
-
-# FlashAttention (for kernel reference / PyTorch integration)
-pip install flash-attn --no-build-isolation
-
-# cuDNN (should be in CUDA container)
-# Typically included in: nvidia/cuda:12.x-cudnn8-runtime
+# Replace direct execution with sanitizer wrapper
+cuda-compute-sanitizer --tool memcheck ./bin/nova-tests
 ```
 
-## Alternatives Considered
+**CMake Integration:**
+```cmake
+# Optional sanitizer builds
+option(NOVA_ENABLE_SANITIZERS "Enable sanitizer builds for testing" OFF)
+if(NOVA_ENABLE_SANITIZERS)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
+endif()
+```
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| TransformerEngine | Raw cuDNN attention | Need minimal dependencies, only basic attention |
-| TransformerEngine | Triton kernels | Custom attention patterns, AMD ROCm support |
-| TE C API | FlashAttention Python | PyTorch-based deployment, faster iteration |
+**Why not AddressSanitizer:** ASAN does not work with CUDA kernels. Compute Sanitizer is the only option for GPU memory checking.
 
-### Why NOT Raw cuDNN Attention Alone
+**Source:** [NVIDIA Compute Sanitizer Documentation](https://docs.nvidia.com/compute-sanitizer/)
 
-- cuDNN `cudnnAttentionForward` is a low-level primitive, not a complete solution
-- No paged KV cache support
-- No FP8/quantization integration
-- Requires significant glue code
+#### Option B: Tracy Profiler (Optional - Open Source)
+**Status:** v0.13.1 (Dec 2025), Apache 2.0
+**Confidence:** MEDIUM
 
-### Why NOT Triton Alone
+Open-source profiler with CUDA support, nanosecond resolution, real-time telemetry.
 
-- Triton is a higher-level language but adds compilation overhead
-- Less control over low-level CUDA details for performance-critical paths
-- TE uses optimized CUTLASS kernels with better utilization
+**Use if:** You want a free alternative to Nsight for continuous profiling in CI or local development.
 
-## What NOT to Use
+**Not required if:** Nsight Systems provides sufficient capability (it usually does for CUDA development).
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| FlashAttention v1.x | Outdated, no longer maintained | FlashAttention-2+ |
-| PyTorch-only attention backends | Incompatible with pure C++ | TransformerEngine C API |
-| Standard O(n^2) attention | Memory quadratic in sequence length | FlashAttention or TE DotProductAttention |
-| Custom GEMM without CUTLASS | reinventing wheel | CUTLASS templates or TE fused layers |
+**Source:** [Tracy Profiler GitHub](https://github.com/wolfpld/tracy)
 
-## Stack Patterns by Architecture
+---
 
-**If targeting Ampere (A100) or Ada (RTX 4090):**
-- Use TransformerEngine 2.14+ with C API
-- BF16 for inference, FP8 for large batch
-- Paged KV cache via `DotProductAttention`
-- CUDA Graphs for iterative decoding
+### 2.2 Performance Profiling
 
-**If targeting Hopper (H100/H800):**
-- Use TransformerEngine with FA3 backend internally
-- Consider FP8 block scaling for weight quantization
-- FlashAttention-3 beta for maximum control (via `hopper/` subdirectory)
-- Leverage WGMMA instructions via TE
+#### NVIDIA Nsight Compute CLI
+**Status:** v13.2 (March 2026), Part of CUDA Toolkit
+**Confidence:** HIGH
 
-**If supporting multiple architectures:**
-- Abstract attention backend behind interface
-- Use compile-time CUDA architecture flags
-- Consider FATBIN for precompiled kernels
+Kernel-level profiler with detailed metrics. Already partially referenced via NVBench headers in v2.4.
 
-## Version Compatibility
+**Installation:** Included in CUDA Toolkit
+```bash
+# Profile a kernel
+ncu --set full ./bin/nova-benchmark --benchmark_filter=BM_Matmul
+```
 
-| Component | Compatible With | Notes |
-|-----------|-----------------|-------|
-| TransformerEngine 2.14 | CUDA 12.0+, cuDNN 8.9+ | Requires PyTorch or standalone C API |
-| FlashAttention 2.5.x | CUDA 12.0+, PyTorch 2.0+ | Head dims up to 256 |
-| FlashAttention 3 beta | CUDA 12.3+, H100/H800 only | FP16/BF16, FP8 forward |
-| FlashAttention 4 | CUDA 13+, H100/B200 | CuTeDSL-based, best Blackwell support |
-| cuDNN 9.x | CUDA 12.0+ | Attention primitives, fused attention |
+**Python Report Interface for CI:**
+```bash
+# Generate JSON report for trend analysis
+ncu --export json --output profile.ncu-rep ./bin/nova-benchmark
+```
 
-## Integration with Existing nova Infrastructure
+**CMake:**
+```cmake
+find_package(CUDAToolkit REQUIRED)
+# ncu CLI available via CUDA_TOOLKIT_TARGET_DIR
+```
 
-### Existing Components (v2.2, v1.3, v2.4)
+**Source:** [Nsight Compute Documentation](https://docs.nvidia.com/nsight-compute/)
 
-| Component | New Integration Point |
-|-----------|----------------------|
-| `MultiHeadAttention` (v2.2) | Replace internals with TE `DotProductAttention` |
-| `TensorParallelMatmul` (v1.3) | Works with TE `Linear.set_tensor_parallel_group()` |
-| `PipelineParallelism` (v1.3) | Compatible with TE layer interfaces |
-| `CUDA Graphs` (v2.4) | TE `make_graphed_callables()` for attention |
-| `NVTX` (v2.4) | TE exposes `get_cudnn_version()` for diagnostics |
+#### NVIDIA Nsight Systems
+**Status:** v2026.2 (March 2026), Part of CUDA Toolkit
+**Confidence:** HIGH
 
-### Recommended Integration Approach
+System-wide timeline profiler. Excellent for understanding multi-stream interactions and GPU utilization.
 
-1. **Phase 1:** Replace attention internals with TE C API
-2. **Phase 2:** Add paged KV cache management layer
-3. **Phase 3:** Integrate sequence parallelism via TE context parallel groups
-4. **Phase 4:** Add FP8/quantization support
+**Installation:** Separate download from [NVIDIA Nsight Systems](https://developer.nvidia.com/nsight-systems) (free registration required).
+
+**Use for:**
+- Multi-stream timeline visualization
+- CPU-GPU interaction analysis
+- Identifying pipeline bottlenecks
+
+**Source:** [Nsight Systems Documentation](https://docs.nvidia.com/nsight-systems/)
+
+---
+
+### 2.3 Algorithm Libraries
+
+#### Critical: CUB → CCCL Migration Required
+**Status:** CUB 2.1.0 archived, now part of CCCL
+**Confidence:** HIGH
+
+**CUB has been moved to the unified [NVIDIA CCCL (CUDA C++ Core Libraries)](https://github.com/nvidia/cccl) repository.**
+
+**Action Required:**
+1. Update CMake from CUB to CCCL
+2. Update includes from `<cub/cub.cuh>` to `<cub/cub.cuh>` (CCCL provides same headers)
+
+**CMake Update:**
+```cmake
+# Old (will break)
+find_package(CUB)
+
+# New
+include(FetchContent)
+FetchContent_Declare(
+  cccl
+  GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
+  GIT_TAG        2.6.0  # Check latest release
+  GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(cccl)
+target_link_libraries(nova PRIVATE CCCL::cccl)
+```
+
+**Why:** Using archived CUB may work today but will become deprecated. CCCL is actively maintained and provides backward-compatible headers.
+
+**Source:** [CCCL GitHub](https://github.com/nvidia/cccl)
+
+#### Optional: cuCollections (Concurrent Data Structures)
+**Status:** Header-only, requires NVCC 12.0+, C++17
+**Confidence:** MEDIUM
+
+GPU-accelerated concurrent data structures for advanced algorithms.
+
+**Consider if building:**
+- Hash table-based algorithms
+- Concurrent set/map operations
+- Lock-free data structure needs
+
+**Not required for:**
+- Basic sorting, scanning (CUB/CCCL handles)
+- Graph algorithms (already implemented)
+- Numerical methods (already implemented)
+
+**CMake:**
+```cmake
+FetchContent_Declare(
+  cuco
+  GIT_REPOSITORY https://github.com/NVIDIA/cuCollections.git
+  GIT_TAG        dev  # Active development
+  OPTIONS        "BUILD_TESTS OFF" "BUILD_BENCHMARKS OFF"
+)
+FetchContent_MakeAvailable(cuco)
+target_link_libraries(nova PRIVATE cuco)
+```
+
+**Requirements:** Volta or newer (sm_70+). **Does not support Pascal (sm_60)** — relevant if 6.0 architecture support is still needed.
+
+**Source:** [cuCollections GitHub](https://github.com/NVIDIA/cuCollections)
+
+---
+
+## 3. What's NOT Needed
+
+| Library | Why Avoid | Alternative |
+|---------|-----------|-------------|
+| Valgrind | Does not support CUDA | Compute Sanitizer |
+| Intel VTune | x86-focused | Nsight Compute/Systems |
+| Allinea/ARM DDT | Commercial, less CUDA-native | Nsight tools (free) |
+| Extra property-based testing frameworks | Custom framework sufficient | Keep existing |
+| Commercial profiling tools | NVIDIA tools are free and comprehensive | Nsight suite |
+
+---
+
+## 4. Complete Stack Additions for v2.7
+
+### Required Migration
+
+| Component | Current | Target | Rationale |
+|-----------|---------|--------|-----------|
+| CUB | Direct include | CCCL 2.6.0 | CUB archived, CCCL is maintained |
+
+### Recommended Additions
+
+| Component | Version | Integration | Purpose |
+|-----------|---------|-------------|---------|
+| Compute Sanitizer | CUDA 12+ built-in | CLI wrapper | Memory safety, race detection |
+| Nsight Compute CLI | CUDA 12+ built-in | CMake detection | Kernel profiling |
+| Nsight Systems | v2026.2 | Optional download | Timeline visualization |
+
+### Optional Additions
+
+| Component | Version | When Needed |
+|-----------|---------|-------------|
+| Tracy Profiler | v0.13.1 | If Nsight licensing/access is problematic |
+| cuCollections | dev branch | If concurrent hash tables needed |
+
+---
+
+## 5. Version Compatibility
+
+| Tool | Min CUDA | Min NVCC | Notes |
+|------|----------|----------|-------|
+| Compute Sanitizer | 11.0+ | — | Full feature set in CUDA 12+ |
+| Nsight Compute | 11.0+ | — | v13.2 requires CUDA 12.0+ |
+| Nsight Systems | 11.0+ | — | Supports all target archs |
+| CCCL | 11.0+ | 11.0+ | Backward compatible |
+| cuCollections | 12.0+ | 12.0+ | Dropped CUDA 11 support Feb 2026 |
+| Tracy | 11.0+ | — | CUDA support varies by version |
+
+**Note on sm_60 (Pascal):** cuCollections does not support Pascal. Compute Sanitizer and Nsight tools support Pascal. If maintaining sm_60 support, do not add cuCollections.
+
+---
+
+## 6. Installation Summary
+
+### Minimal Additions (Required)
+
+```bash
+# No installation needed — all NVIDIA tools are part of CUDA Toolkit
+# Just need to migrate CUB → CCCL in CMake
+
+# Install Nsight Systems (optional, for GUI timeline analysis)
+# Download from: https://developer.nvidia.com/nsight-systems/get-started
+```
+
+### CMake Changes for v2.7
+
+```cmake
+# 1. Replace CUB with CCCL
+FetchContent_Declare(
+  cccl
+  GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
+  GIT_TAG        2.6.0
+  GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(cccl)
+
+# 2. Link CCCL instead of CUB
+target_link_libraries(nova PUBLIC CCCL::cccl)
+
+# 3. Add optional sanitizer support
+option(NOVA_ENABLE_SANITIZER "Build with sanitizer support" OFF)
+if(NOVA_ENABLE_SANITIZER)
+    set_target_properties(nova PROPERTIES
+        CXX_SANITIZERS "address,thread"
+    )
+endif()
+
+# 4. Nsight Compute CLI detection
+find_program(NCU_PATH ncu PATHS ENV PATH)
+if(NCU_PATH)
+    message(STATUS "Nsight Compute found: ${NCU_PATH}")
+endif()
+```
+
+---
+
+## 7. Confidence Assessment
+
+| Area | Confidence | Notes |
+|------|------------|-------|
+| CUB → CCCL migration | HIGH | Official migration path, well documented |
+| Compute Sanitizer | HIGH | Part of CUDA toolkit, no version concerns |
+| Nsight Compute/Systems | HIGH | Version 13.2/2026.2 verified current |
+| cuCollections | MEDIUM | Active development, API may change |
+| Tracy | MEDIUM | Good alternative if Nsight unavailable |
+
+---
 
 ## Sources
 
-- [NVIDIA TransformerEngine 2.14 Documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/index.html) — HIGH confidence
-- [FlashAttention GitHub (Dao-AILab)](https://github.com/Dao-AILab/flash-attention) — HIGH confidence
-- [FlashAttention-3 Blog](https://tridao.me/blog/2024/flash3/) — HIGH confidence
-- [Transformer Engine Gemma Inference Tutorial](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/te_gemma/tutorial_generation_gemma_with_te.html) — HIGH confidence
+- [NVIDIA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/)
+- [Nsight Compute v13.2](https://docs.nvidia.com/nsight-compute/)
+- [Nsight Systems v2026.2](https://docs.nvidia.com/nsight-systems/)
+- [CCCL GitHub](https://github.com/nvidia/cccl)
+- [cuCollections GitHub](https://github.com/NVIDIA/cuCollections)
+- [Tracy Profiler v0.13.1](https://github.com/wolfpld/tracy)
+- [Google Benchmark v1.9.5](https://github.com/google/benchmark)
 
 ---
-*Stack research for: CUDA GPU Inference Optimization*
-*Researched: 2026-04-29*
+
+*Stack research: 2026-04-30 for v2.7 Comprehensive Testing & Validation*
