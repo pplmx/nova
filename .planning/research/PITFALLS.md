@@ -1,1249 +1,1186 @@
-# CUDA Library Production Hardening Pitfalls
+# CUDA Transformer Inference Pitfalls
 
-**Project:** Nova CUDA Library v2.4 Production Hardening
-**Domain:** CUDA Production Readiness
-**Researched:** 2026-04-28
-**Confidence:** HIGH (based on NVIDIA official documentation, established production patterns, and codebase analysis)
+**Project:** Transformer & Inference Optimization
+**Domain:** CUDA Attention Kernel Implementation
+**Context:** Adding FlashAttention, KV cache, and paged attention to existing CUDA library
+**Researched:** 2026-04-29
+**Confidence:** HIGH (based on FlashAttention official implementation, vLLM source analysis, and established ML optimization patterns)
 
 ## Executive Summary
 
-This document catalogs common pitfalls when adding production hardening to CUDA libraries, organized into four categories: error handling, performance optimization, stress testing, and reliability. Each pitfall includes root cause analysis, production consequences, and actionable mitigation strategies.
+This document catalogs common pitfalls when implementing attention optimization features (FlashAttention, KV cache, paged attention) in CUDA transformer libraries. Each pitfall includes root cause analysis, production consequences, and actionable mitigation strategies.
 
 Key cross-cutting themes:
-- **Asynchronous operation errors** are frequently mishandled (cudaGetLastError semantics)
-- **Profiling on synthetic data** leads to wrong optimization priorities
-- **Flaky GPU tests** often indicate timing dependencies, not actual failures
-- **False confidence from passing tests** is the most dangerous pitfall
+- **Softmax numerical stability** is the most common correctness bug in attention kernels
+- **Memory layout assumptions** cause subtle correctness issues across different batch/sequence dimensions
+- **Workspace allocation lifecycle** mismatches lead to crashes or memory corruption
+- **Block table consistency** between CPU and GPU is frequently mishandled in paged attention
+- **Backward pass communication** in tensor/pipeline parallelism has complex synchronization requirements
 
 ---
 
-## 1. CUDA Error Handling Pitfalls
+## 1. Attention Kernel Correctness Pitfalls
 
-### 1.1 Missing cudaGetLastError() After Kernel Launch
+### 1.1 Softmax Numerical Overflow/Underflow
 
-**What goes wrong:** CUDA API calls return `cudaSuccess` even when the kernel fails, masking errors that appear asynchronously.
+**What goes wrong:** Attention scores overflow or underflow during softmax computation, producing NaN outputs or incorrect probabilities.
 
-**Why it happens:** Kernel launches are asynchronous. The CUDA runtime queues the launch but returns immediately. The actual error (out-of-resources, invalid configuration, illegal address) is recorded separately and must be retrieved via `cudaGetLastError()`.
+**Why it happens:** The standard softmax formula `exp(x_i) / sum(exp(x_j))` is numerically unstable when `x_i` values are large. The exponential of large values overflows to infinity, and subtraction of large values causes underflow to zero.
 
 ```cpp
-// WRONG: Assumes kernel succeeded if cudaLaunchKernel returns success
-cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0);
-// ... other code ...
-// cudaSuccess here doesn't mean kernel succeeded!
+// WRONG: Naive softmax - numerically unstable
+__device__ float naive_softmax(float score, float max_score, float sum_exp) {
+    return exp(score - max_score) / sum_exp;  // exp of large negative = 0 (underflow)
+    // exp of large positive = inf (overflow)
+}
 
-// WRONG: Only checking API call, not kernel execution
-cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
-if (err != cudaSuccess) { /* handles memcpy error only */ }
+// Problematic input: scores = [1000, 1001, 1002]
+// exp(1000) = inf (overflow)
+// exp(-1) = 0.368, but all subtractions from 1002 give underflow
 ```
 
 **Consequences:**
-- Program continues with undefined behavior after kernel failure
-- `cudaErrorLaunchFailure` or `cudaErrorIllegalAddress` goes undetected
-- Silent data corruption when downstream code assumes kernel produced valid output
-- Extremely difficult to debug: error appears unrelated to actual failure
+- NaN outputs propagate through the model
+- Training divergence or inference hallucinations
+- Extremely hard to debug: depends on input magnitude, only manifests at certain scales
 
 **Prevention:**
 ```cpp
-// CORRECT: Check for kernel errors immediately after launch
-cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0);
-cudaError_t err = cudaGetLastError();  // MUST check this
-if (err != cudaSuccess) {
-    throw cuda_exception(err, "kernel launch", __FILE__, __LINE__);
-}
-
-// EVEN BETTER: Use NOVA_CHECK for automatic error checking
-NOVA_CHECK(cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0));
-NOVA_CHECK_WITH_STREAM(cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0), stream);
-```
-
-**Detection:** NVIDIA compute-sanitizer (`compute-sanitizer --tool memcheck`) detects illegal memory access in kernels.
-
-**Phase Recommendation:** Phase 33 (Error Framework) — Ensure NOVA_CHECK wraps ALL kernel launches.
-
----
-
-### 1.2 Ignoring Error State from Previous Operations
-
-**What goes wrong:** `cudaGetLastError()` returns an error from an earlier unrelated operation, not the immediately preceding one.
-
-**Why it happens:** CUDA maintains a single per-thread error state. Any un-checked CUDA call can pollute the error state:
-
-```cpp
-// WRONG: cudaGetLastError returns error from cudaFuncGetAttributes,
-// not from the kernel launch
-cudaFuncGetAttributes(&attrs, kernel);
-cudaLaunchKernel(&kernel, dim3, dim3, args, 0, 0);
-cudaError_t err = cudaGetLastError();  // Returns cudaSuccess (good!)
-// BUT cudaFuncGetAttributes set error state to something else earlier
-// and cudaLaunchKernel succeeded, so this is correct
-```
-
-**Consequences:**
-- Incorrect error attribution when debugging
-- Logic errors if code checks `cudaGetLastError()` after multiple operations
-
-**Prevention:**
-```cpp
-// PATTERN: Clear error state before critical section, then check
-cudaPeekAtLastError();  // Clear any pending error
-// ... perform operations ...
-cudaError_t err = cudaGetLastError();
-if (err != cudaSuccess) {
-    // Error is from the operations above, not stale state
-}
-```
-
-**Note:** Nova's `cuda_error_guard` handles this automatically by peeking at existing errors before checking new ones.
-
----
-
-### 1.3 Error Handling in Async Callbacks
-
-**What goes wrong:** Calling CUDA APIs from stream callbacks causes `cudaErrorNotPermitted` or undefined behavior.
-
-**Why it happens:** CUDA stream callbacks execute on the host but in a restricted context. The CUDA Runtime API is partially blocked:
-
-```cpp
-// WRONG: CUDA API calls in callback are not permitted
-void CUDART_CB myCallback(cudaStream_t stream, cudaError_t status, void* userData) {
-    int device;
-    cudaGetDevice(&device);  // May fail!
-    cudaMalloc(&ptr, size);  // Will likely fail!
-    // Many runtime APIs are disallowed in callbacks
-}
-cudaStreamAddCallback(stream, myCallback, nullptr, 0);
-```
-
-**Consequences:**
-- Intermittent failures depending on callback timing
-- `cudaErrorNotPermitted` returned
-- Resource leaks if allocation fails silently
-
-**Prevention:**
-```cpp
-// CORRECT: Use cudaStreamQuery for error detection instead
-void checkStreamErrors(cudaStream_t stream) {
-    cudaError_t err = cudaStreamQuery(stream);
-    if (err == cudaErrorNotReady) {
-        // Work still in progress, not an error
-        return;
+// CORRECT: Numerically stable softmax using max subtraction
+template <int THREADS>
+__device__ float softmax_kernel(float* scores, int seq_len, int tid) {
+    // Step 1: Find max (will be most negative, preventing overflow)
+    float thread_max = -INFINITY;
+    for (int i = tid; i < seq_len; i += THREADS) {
+        thread_max = fmaxf(thread_max, scores[i]);
     }
-    if (err != cudaSuccess) {
-        // Actual error occurred
-        throw cuda_exception(err, "stream", __FILE__, __LINE__);
+    
+    // Warp-level reduction for max
+    float max_val = warp_reduce_max(thread_max);
+    
+    // Step 2: Compute exp with stable subtraction
+    float thread_sum = 0.0f;
+    for (int i = tid; i < seq_len; i += THREADS) {
+        float shifted = scores[i] - max_val;  // Always <= 0, no overflow
+        thread_sum += expf(shifted);
     }
+    
+    // Step 3: Normalize
+    float sum_exp = warp_reduce_sum(thread_sum);
+    return expf(scores[tid] - max_val) / sum_exp;
 }
 
-// CORRECT: For callbacks, only use allowed operations
-void CUDART_CB safeCallback(cudaStream_t stream, cudaError_t status, void* userData) {
-    // Read-only operations may work, but safest to avoid CUDA APIs entirely
-    // Signal another thread via atomics or condition variables instead
-    std::atomic_store(&callbackCompleted, true);
+// CORRECT: Alternative - use log-sum-exp trick
+float stable_log_softmax(float* scores, int n) {
+    float max_score = scores[0];
+    for (int i = 1; i < n; i++) max_score = fmax(max_score, scores[i]);
+    
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) sum += expf(scores[i] - max_score);
+    
+    return max_score + logf(sum);  // Log-sum-exp is numerically stable
 }
 ```
 
-**Phase Recommendation:** Phase 22 (Communication Error Recovery) — Use stream query patterns, not callback CUDA calls.
+**Detection:**
+```cpp
+// CORRECT: Sanity check in tests
+void test_attention_numerical_stability() {
+    std::vector<float> large_scores = {1000.0f, 1001.0f, 1002.0f, -1000.0f, -1001.0f};
+    auto result = attention(large_scores);
+    
+    // Check no NaN/Inf
+    for (float v : result) {
+        ASSERT_FALSE(std::isnan(v)) << "NaN detected";
+        ASSERT_FALSE(std::isinf(v)) << "Inf detected";
+    }
+    
+    // Check sum to 1.0
+    float sum = std::accumulate(result.begin(), result.end(), 0.0f);
+    EXPECT_NEAR(sum, 1.0f, 1e-5f) << "Probabilities don't sum to 1";
+}
+```
+
+**Phase Recommendation:** Phase 1 (FlashAttention Integration) — Implement stable softmax from day one.
 
 ---
 
-### 1.4 Memory Allocation Without Checking for Null
+### 1.2 Incorrect Mask Handling in FlashAttention
 
-**What goes wrong:** `cudaMalloc` returns `cudaSuccess` even when allocation fails (pre-Pascal), leading to null pointer dereference.
+**What goes wrong:** Attention masks are incorrectly applied, causing tokens to attend where they shouldn't or missing valid attention patterns.
 
-**Why it happens:** Legacy behavior (compute capability < 6.0): `cudaMalloc` returns `cudaSuccess` but sets ptr to 0. Modern behavior (Pascal+): `cudaMalloc` returns `cudaErrorMemoryAllocation`.
+**Why it happens:** FlashAttention requires specific mask integration. Common mistakes include:
+- Applying masks after softmax instead of before
+- Wrong mask shape/striding
+- Ignoring causal masking in streaming scenarios
 
 ```cpp
-// DANGEROUS: Assuming ptr is non-null after cudaSuccess
-void* ptr;
-cudaError_t err = cudaMalloc(&ptr, size);
-if (err == cudaSuccess) {
-    // ptr might still be nullptr on older GPUs!
-    memset(ptr, 0, size);  // Crash!
+// WRONG: Applying mask after softmax - corrupts probability distribution
+__global__ void wrong_mask_kernel(float* output, float* scores, 
+                                   bool* mask, int seq_len) {
+    int row = blockIdx.x;
+    int col = threadIdx.x;
+    
+    // Compute softmax first
+    float max_score = // ... reduction
+    float exp_score = expf(scores[row * seq_len + col] - max_score);
+    float sum_exp = // ... reduction
+    
+    // WRONG: Mask after softmax - wrong!
+    if (!mask[row * seq_len + col]) {
+        exp_score = 0.0f;  // Changes normalization
+    }
+    
+    output[row * seq_len + col] = exp_score / sum_exp;
+}
+
+// WRONG: Incorrect stride for packed sequence masks
+__global__ void wrong_stride_mask(float* output, float* scores,
+                                   int32_t* cu_seqlens, int32_t* seq_ids) {
+    // cu_seqlens has shape [batch_size + 1]
+    // WRONG: Treating cu_seqlens as having same stride as scores
+    int bid = seq_ids[col];  // Might be wrong if sequences packed differently
+    int local_pos = col - cu_seqlens[bid];  // Incorrect offset calculation
 }
 ```
 
 **Consequences:**
-- Null pointer dereference crashes on Kepler/Maxwell GPUs
-- Silent corruption or security vulnerabilities
-- Hard to reproduce on modern hardware
+- Data leakage in masked regions (attention to future tokens)
+- Missing attention to valid tokens
+- Incorrect results when sequences of different lengths are batched
 
 **Prevention:**
 ```cpp
-// ROBUST: Always check both error AND pointer
-void* ptr = nullptr;
-NOVA_CHECK(cudaMalloc(&ptr, size));
-if (ptr == nullptr) {
-    throw cuda_exception(cudaErrorMemoryAllocation, "cudaMalloc",
-                         __FILE__, __LINE__);
-}
-// Now safe to use ptr
-```
-
----
-
-### 1.5 Forgetting to Free Resources on Error Paths
-
-**What goes wrong:** Memory leaks and resource exhaustion when errors occur mid-function.
-
-**Why it happens:** Early returns or exceptions bypass cleanup code:
-
-```cpp
-// WRONG: Leaks memory if check2 fails
-void process(Buffer& buf) {
-    float* d_temp;
-    cudaMalloc(&d_temp, size1);  // Allocated
+// CORRECT: Apply mask before softmax
+__global__ void correct_mask_kernel(float* output, float* scores,
+                                     bool* mask, int seq_len,
+                                     float attn_scale) {
+    int row = blockIdx.x;
+    int col = threadIdx.x;
+    int idx = row * seq_len + col;
     
-    check1();  // May throw
-    cudaMalloc(&d_temp2, size2);  // Allocated
+    // Apply mask BEFORE softmax
+    float score = scores[idx];
+    if (mask[idx]) {
+        score = -INFINITY;  // Softmax treats -inf as 0 probability
+    }
     
-    check2();  // May throw - d_temp leaked!
-    
-    // cleanup never runs
+    // Then compute softmax on masked scores
+    // ... stable softmax implementation ...
 }
 
-// WRONG: Double-free on exception
-void process() {
-    float* d_a = nullptr, *d_b = nullptr;
-    cudaMalloc(&d_a, size);
-    cudaMalloc(&d_b, size);
+// CORRECT: Proper packed sequence mask handling
+struct PackedSequenceMask {
+    int32_t* cu_seqlens_q;  // Cumulative sequence lengths for queries
+    int32_t* cu_seqlens_k;  // Cumulative sequence lengths for keys
+    int32_t* seq_ids;       // Which sequence each position belongs to
     
-    if (condition) throw std::runtime_error("fail");
-    
-    cudaFree(d_a);  // If exception here, d_b leaked
-    cudaFree(d_b);
-}
-```
-
-**Prevention:**
-```cpp
-// PATTERN: RAII wrappers (Buffer class already handles this)
-Buffer temp1(size1);
-Buffer temp2(size2);
-// Exceptions automatically free resources
-
-// PATTERN: Scope guards for C-style code
-struct CudaFree {
-    void* ptr;
-    ~CudaFree() { if (ptr) cudaFree(ptr); }
+    __device__ bool is_valid(int global_pos, int seq_len) {
+        if (seq_ids == nullptr) return true;  // No packing
+        
+        int seq_id = seq_ids[global_pos];
+        int seq_start = cu_seqlens_k[seq_id];
+        int seq_len_actual = cu_seqlens_k[seq_id + 1] - seq_start;
+        
+        return (global_pos - seq_start) < seq_len_actual;
+    }
 };
-
-void process() {
-    CudaFree guard1{nullptr}, guard2{nullptr};
-    cudaMalloc(&guard1.ptr, size1);
-    cudaMalloc(&guard2.ptr, size2);
-    // Exception-safe: both freed on unwind
-}
 ```
 
-**Phase Recommendation:** Phase 10 (Resource Management) — Enforce RAII patterns via code review.
+**Phase Recommendation:** Phase 2 (KV Cache Integration) — Test mask handling with variable-length sequences.
 
 ---
 
-### 1.6 Error Propagation Across CUDA Contexts
+### 1.3 Incorrect Dropout Mask Generation/Replication
 
-**What goes wrong:** Errors from one device context leak into another when using multi-GPU code.
+**What goes wrong:** Attention dropout masks are inconsistently generated between forward and backward passes, or masks are incorrectly replicated across heads.
 
-**Why it happens:** Each CUDA context maintains its own error state. Explicit context switching (`cudaSetDevice`) doesn't automatically clear error state:
-
-```cpp
-// WRONG: Error from device 0 persists when switching to device 1
-cudaSetDevice(0);
-cudaMalloc(&ptr0, size);  // Fails on device 0
-cudaSetDevice(1);
-cudaMalloc(&ptr1, size);  // Error state still shows device 0 error!
-// cudaGetLastError() returns device 0's error, not cudaSuccess
-```
-
-**Consequences:**
-- Incorrect error attribution in multi-GPU scenarios
-- Operations fail with misleading error messages
-- Debugging complexity increases exponentially
-
-**Prevention:**
-```cpp
-// CORRECT: Clear error after context switch
-cudaSetDevice(0);
-NOVA_CHECK(cudaMalloc(&ptr0, size));  // Check and clear
-
-cudaSetDevice(1);
-cudaPeekAtLastError();  // Clear any stale error from context switch
-NOVA_CHECK(cudaMalloc(&ptr1, size));  // Now errors are from device 1
-```
-
----
-
-## 2. Performance Optimization Pitfalls
-
-### 2.1 Premature Optimization Without Profiling
-
-**What goes wrong:** Complex optimizations applied to code that isn't a bottleneck waste development time and reduce maintainability.
-
-**Why it happens:** Intuition about performance is frequently wrong, especially for GPUs where memory access patterns dominate:
+**Why it happens:** FlashAttention's dropout is deterministic with a seed. Common issues:
+- Different dropout rates in forward/backward
+- Seed not properly propagated
+- Dropout mask not matching the scale factor
 
 ```cpp
-// PREMATURE: Optimizing a kernel that's called once per frame
-// while memory transfers dominate runtime
-__global__ void complexKernel(float* data, int n) {
-    // Complex optimized computation...
-}
+// WRONG: Different dropout treatment in forward vs backward
+// Forward pass:
+float dropout_mask = (curand_uniform(&rng) < dropout_prob) ? 0.0f : 
+                     (1.0f / (1.0f - dropout_prob));  // Scale factor applied
+attn_weights *= dropout_mask;
 
-// Reality: This kernel takes 0.1ms, but cudaMemcpy takes 10ms
-// Optimizing the kernel provides 0.1ms improvement, ignoring 10ms problem
-```
-
-**Consequences:**
-- 10x development effort for 1% performance gain
-- Code complexity increases without proportional benefit
-- Maintainability decreases
-
-**Prevention:**
-```cpp
-// CORRECT: Profile first, then optimize hotspots
-void profileApplication() {
-    // Use NVIDIA Nsight Compute/Visual Profiler
-    // Or NVIDIA Tools Extension (NVTX) for custom markers
-    
-    // Identify top 3 hotspots:
-    // 1. Memory transfer: 10ms (50% of runtime) - OPTIMIZE THIS
-    // 2. Kernel A: 5ms (25%) - OPTIMIZE THIS
-    // 3. Kernel B: 0.1ms (0.5%) - IGNORE
-}
-```
-
-**Source:** NVIDIA Best Practices Guide explicitly states: "Before implementing lower priority recommendations, make sure all higher priority recommendations that are relevant have already been applied."
-
----
-
-### 2.2 Profiling on Unrealistic Workloads
-
-**What goes wrong:** Optimizations based on tiny or synthetic data sizes don't translate to production workloads.
-
-**Why it happens:** GPU performance characteristics change dramatically with data size due to occupancy, cache effects, and memory bandwidth saturation:
-
-```cpp
-// WRONG: Testing with data that fits in L2 cache
-void benchmark() {
-    const int N = 1024;  // Fits in cache - unrepresentative!
-    benchmarkKernel(data, N);  // Reports 100 GB/s
-    
-    // Production workload:
-    const int N_PROD = 10 * 1024 * 1024;  // Cache thrashing
-    // Same kernel reports 20 GB/s - 5x slower!
+// Backward pass (different code path):
+if (curand_uniform(&rng_backward) < dropout_prob) {  // WRONG: Different RNG state
+    grad_input = 0.0f;
 }
 ```
 
 **Consequences:**
-- Wrong optimization priorities (tuning for cache-resident data)
-- Performance regression in production
-- False confidence from benchmark results
+- Training divergence (dropout mask differs between forward/backward)
+- Incorrect gradients
+- Non-deterministic training behavior
 
 **Prevention:**
 ```cpp
-// CORRECT: Profile with production-representative sizes
-void comprehensiveBenchmark() {
-    std::vector<int> testSizes = {
-        1024,           // Small boundary
-        65536,          // L2 cache fitting
-        1024 * 1024,    // L2 cache thrashing
-        16 * 1024 * 1024,      // Working set > L2
-        128 * 1024 * 1024,     // Memory pressure
-    };
+// CORRECT: Use cuBLASLt dropout descriptor or explicit state propagation
+struct AttentionDropout {
+    uint64_t seed;
+    uint64_t offset;
+    float prob;
     
-    for (int n : testSizes) {
-        Buffer d_data(n);
-        // Warm up
-        kernel(d_data.data(), n);
-        cudaDeviceSynchronize();
+    // Forward pass generates and caches mask state
+    DropoutState forward(float* output, const float* input, int elements) {
+        DropoutState state;
+        state.seed = curand4(&rng).x;
+        state.offset = 0;
         
-        // Measure steady-state performance
-        auto start = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < 100; i++) {
-            kernel(d_data.data(), n);
-        }
-        cudaDeviceSynchronize();
-        auto end = std::chrono::high_resolution_clock::now();
-        
-        // Report both throughput AND scaling behavior
-        reportPerformance(n, duration);
-    }
-}
-```
-
----
-
-### 2.3 Ignoring Memory Transfer Overhead
-
-**What goes wrong:** Optimizing kernel compute time while ignoring host-device transfer time.
-
-**Why it happens:** Host-device bandwidth (20-50 GB/s) is 5-10x slower than device memory bandwidth (500-1000 GB/s):
-
-```cpp
-// WRONG: Focusing on kernel optimization
-__global__ void optimizeMe(float* data, int n) {
-    // Complex computation...
-}
-
-// Reality: This kernel is called with data transfer overhead
-void process() {
-    float* h_data = loadData();  // CPU memory
-    
-    float* d_data;
-    cudaMalloc(&d_data, size);
-    
-    cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);  // SLOW
-    optimizeMe<<<blocks, threads>>>(d_data, n);  // Fast kernel
-    cudaMemcpy(h_data, d_data, size, cudaMemcpyDeviceToHost);  // SLOW
-    
-    // Transfer time: 20ms, Kernel time: 1ms
-    // Optimizing kernel saves 1ms, optimizing transfer saves 20ms
-}
-```
-
-**Consequences:**
-- 20x opportunity cost from wrong optimization target
-- Performance doesn't improve despite complex kernel optimization
-
-**Prevention:**
-```cpp
-// CORRECT: Minimize transfers first
-void optimizedProcess() {
-    // Strategy 1: Keep data on device
-    float* d_data;
-    cudaMalloc(&d_data, size);
-    cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);  // One-time
-    
-    for (int iteration = 0; iteration < 1000; iteration++) {
-        // Process on device without transfers
-        kernel<<<blocks, threads>>>(d_data, n);
+        // Kernel uses curand4 with state for deterministic dropout
+        dropout_kernel<<<blocks, threads>>>(output, input, state, prob, elements);
+        return state;
     }
     
-    cudaMemcpy(h_data, d_data, size, cudaMemcpyDeviceToHost);  // One-time
-}
-
-// Strategy 2: Overlap transfers with compute
-void overlappedProcess() {
-    cudaStream_t s1, s2;
-    cudaStreamCreate(&s1);
-    cudaStreamCreate(&s2);
-    
-    cudaMemcpyAsync(d_next, h_next, size, H2D, s1);
-    kernel<<<..., s2>>>(d_current, n);  // Compute while transferring
-    cudaMemcpyAsync(h_output, d_current, size, D2H, s2);  // Transfer while computing next
-}
+    // Backward pass receives same state
+    void backward(float* grad_input, const float* grad_output,
+                  DropoutState state, const float* fwd_input) {
+        // Same seed, same offset = same dropout pattern
+        dropout_backward_kernel<<<blocks, threads>>>(
+            grad_input, grad_output, state, prob, elements);
+    }
+};
 ```
 
 ---
 
-### 2.4 Tuning for One Architecture
+## 2. KV Cache Memory Pitfalls
 
-**What goes wrong:** Block size, shared memory usage, and unroll factors optimized for one GPU don't perform well on others.
+### 2.1 KV Cache Memory Fragmentation
 
-**Why it happens:** Different compute capabilities have different resources (registers, shared memory, warp size, SM count):
+**What goes wrong:** KV cache allocations cause severe memory fragmentation over time, leading to OOM failures even when total free memory exceeds required allocation.
+
+**Why it happens:** Variable sequence lengths and dynamic allocation patterns create fragmentation:
 
 ```cpp
-// WRONG: Hardcoded for RTX 3090 (sm_86)
-__global__ void kernel(float* data) {
-    __shared__ float shared[256];  // Fixed size
+// WRONG: Naive per-sequence allocation causes fragmentation
+void allocate_kv_cache(Request& req) {
+    // Request 1: seq_len=512, needs 512 * 128 * sizeof(float) = 256KB
+    // Request 2: seq_len=1000, needs 1000 * 128 * sizeof(float) = 500KB
+    // Request 3: seq_len=256, needs 256 * 128 * sizeof(float) = 128KB
     // ...
-}
-dim3 block(256);  // Good for sm_86, bad for A100 (sm_80)
-
-// WRONG: Assumes 32 threads/warp always
-// Different architectures have different warp sizes (future-proofing concern)
-```
-
-**Consequences:**
-- 2-5x performance regression on different GPUs
-- Poor scaling across GPU generations
-- Technical debt from architecture-specific code
-
-**Prevention:**
-```cpp
-// CORRECT: Query device capabilities and adapt
-struct KernelConfig {
-    int blockSize;
-    int sharedMemBytes;
-    int unrollFactor;
-};
-
-KernelConfig autoTune(const cudaDeviceProp& props) {
-    KernelConfig cfg;
+    // After many allocations/deallocations: holes between blocks
     
-    // Occupancy-based block size selection
-    int maxBlocks;
-    cudaOccupancyMaxPotentialBlockSize(&maxBlocks, &cfg.blockSize,
-        kernel, cfg.sharedMemBytes, 0);
-    
-    // Shared memory scaled to device capability
-    cfg.sharedMemBytes = std::min(props.sharedMemPerBlock, size_t{65536});
-    
-    // Unroll factor based on register pressure
-    cfg.unrollFactor = (props.regsPerBlock > 65536) ? 8 : 4;
-    
-    return cfg;
+    // Eventually: 2GB free but no contiguous 500KB block
+    void* ptr = cudaMalloc(&ptr, needed_size);  // FAILS!
 }
 
-// CORRECT: Use warp-native operations
-// __shfl_sync works across all architectures
-// Bank conflict avoidance via padding works across all shared memory configs
-```
-
----
-
-### 2.5 Microbenchmarking Without Warmup
-
-**What goes wrong:** First-run timing includes JIT compilation, cache warmup, and allocation overhead.
-
-**Why it happens:** CUDA JIT compiles PTX to SASS on first kernel launch. L2 cache is cold. Memory allocations trigger driver overhead:
-
-```cpp
-// WRONG: Timing includes JIT compilation
-void badBenchmark() {
-    auto start = now();
-    kernel<<<blocks, threads>>>(d_data, n);  // First launch - JIT
-    cudaDeviceSynchronize();
-    auto end = now();  // Time includes JIT compilation!
-}
-
-// WRONG: Cold cache measurements
-void badBenchmark2() {
-    cudaFree(nullptr);  // Clear cache
+// WRONG: Mixing allocation sizes from different pools
+void process_batch() {
+    // KV cache blocks from pool A
+    allocate_from_pool_A(batch_kv_cache, batch_size);
     
-    auto start = now();
-    kernel<<<...>>>(d_data, n);  // Cold cache
-    cudaDeviceSynchronize();
-    auto end = now();
-    // Not representative of steady-state
+    // Attention outputs from pool B (different allocator)
+    allocate_from_pool_B(attn_output, output_size);
+    
+    // Both pools fragment independently, neither is efficiently used
 }
 ```
 
 **Consequences:**
-- 2-100x variance in first-run timing
-- Incorrect optimization decisions
-- CI flakiness from JIT timing variance
+- OOM errors despite sufficient total memory
+- Reduced effective batch size over time
+- Performance degradation as allocations become more scattered
 
 **Prevention:**
 ```cpp
-// CORRECT: Warmup runs before measurement
-void properBenchmark() {
-    // Warmup: Force JIT compilation
-    for (int i = 0; i < 10; i++) {
-        kernel<<<blocks, threads>>>(d_data, n);
-    }
-    cudaDeviceSynchronize();
+// CORRECT: Use block-based KV cache with fixed block size
+class KVCacheManager {
+    static constexpr int BLOCK_SIZE = 64;  // Sequence positions per block
+    static constexpr int NUM_BLOCKS = 16384;  // Pre-allocated blocks
     
-    // Clear L2 cache
-    cudaDeviceSetCacheConfig(cudaFuncCachePreferNone);
-    
-    // Now measure steady-state
-    std::vector<double> timings;
-    for (int i = 0; i < 100; i++) {
-        auto start = now();
-        kernel<<<blocks, threads>>>(d_data, n);
-        cudaDeviceSynchronize();
-        timings.push_back(elapsed(start, now()));
-    }
-    
-    // Report statistics, not single timing
-    reportPercentiles(timings);
-}
-```
-
----
-
-## 3. Stress Testing Pitfalls
-
-### 3.1 Flaky Tests from Uninitialized Memory
-
-**What goes wrong:** Tests pass in isolation but fail in suites due to memory state bleeding between tests.
-
-**Why it happens:** GPU memory persists across kernel launches within a process. Tests that don't fully initialize output buffers see stale data:
-
-```cpp
-// WRONG: Partially initialized output
-__global__ void kernel(float* out, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        out[i] = compute(i);  // But what about out[n-1] on last block?
-    }
-}
-
-// Test assumes output is initialized, but kernel doesn't write all elements
-TEST_F(KernelTest, Basic) {
-    float* d_out;
-    cudaMalloc(&d_out, n * sizeof(float));
-    // d_out contains garbage!
-    
-    kernel<<<blocks, threads>>>(d_out, n);
-    cudaMemcpy(h_out, d_out, n * sizeof(float), cudaMemcpyDeviceToHost);
-    
-    for (int i = 0; i < n; i++) {
-        EXPECT_EQ(h_out[i], expected[i]);  // Garbage at uninitialized indices!
-    }
-}
-```
-
-**Consequences:**
-- Tests pass locally, fail on CI (different memory patterns)
-- Tests pass with one CUDA version, fail with another
-- Non-deterministic failures that are hard to reproduce
-
-**Prevention:**
-```cpp
-// CORRECT: Always initialize output buffers
-TEST_F(KernelTest, Basic) {
-    float* d_out;
-    cudaMalloc(&d_out, n * sizeof(float));
-    
-    // Initialize to safe value
-    cudaMemset(d_out, 0xFF, n * sizeof(float));  // NaN for floats
-    
-    kernel<<<blocks, threads>>>(d_out, n);
-    cudaDeviceSynchronize();  // Ensure kernel completes
-    
-    // Verify all elements were written
-    std::vector<float> h_out(n);
-    cudaMemcpy(h_out.data(), d_out, n * sizeof(float), cudaMemcpyDeviceToHost);
-    
-    for (int i = 0; i < n; i++) {
-        ASSERT_FALSE(std::isnan(h_out[i])) << "Index " << i << " not written";
-        EXPECT_EQ(h_out[i], expected[i]);
-    }
-}
-
-// CORRECT: Use initialization patterns in kernels
-__global__ void safeKernel(float* out, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        out[i] = compute(i);
-    } else {
-        out[i] = 0;  // Initialize unused elements
-    }
-}
-```
-
----
-
-### 3.2 Race Conditions in Stream-Based Tests
-
-**What goes wrong:** Tests fail intermittently due to stream synchronization missing or incorrect.
-
-**Why it happens:** CUDA streams execute asynchronously. Tests that don't wait for completion read stale data:
-
-```cpp
-// WRONG: No synchronization
-TEST_F(StreamTest, AsyncCopy) {
-    float *d_data, *h_data = new float[n];
-    cudaMalloc(&d_data, n * sizeof(float));
-    
-    cudaMemcpyAsync(d_data, h_data, n * sizeof(float), cudaMemcpyHostToDevice, stream);
-    
-    // WRONG: Immediately reading from device after async call
-    // Stream hasn't executed yet!
-    float* h_result = new float[n];
-    cudaMemcpy(h_result, d_data, n * sizeof(float), cudaMemcpyDeviceToHost);
-    // h_result contains garbage
-}
-```
-
-**Consequences:**
-- Intermittent test failures (depends on timing)
-- Flaky CI jobs
-- Difficult to debug timing-dependent issues
-
-**Prevention:**
-```cpp
-// CORRECT: Always synchronize before reading results
-TEST_F(StreamTest, AsyncCopy) {
-    float *d_data, *h_data = new float[n];
-    cudaMalloc(&d_data, n * sizeof(float));
-    
-    cudaMemcpyAsync(d_data, h_data, n * sizeof(float), cudaMemcpyHostToDevice, stream);
-    
-    // Synchronize stream
-    NOVA_CHECK_WITH_STREAM(cudaStreamSynchronize(stream), stream);
-    
-    // Now safe to read
-    float* h_result = new float[n];
-    cudaMemcpy(h_result, d_data, n * sizeof(float), cudaMemcpyDeviceToHost);
-    
-    for (int i = 0; i < n; i++) {
-        EXPECT_EQ(h_result[i], h_data[i]);
-    }
-}
-
-// CORRECT: Use events for fine-grained synchronization
-TEST_F(StreamTest, EventSync) {
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    
-    cudaEventRecord(start, stream);
-    kernel<<<..., stream>>>(d_data, n);
-    cudaEventRecord(stop, stream);
-    
-    // Wait for specific event
-    cudaEventSynchronize(stop);
-    
-    float elapsed;
-    cudaEventElapsedTime(&elapsed, start, stop);
-}
-```
-
----
-
-### 3.3 Coverage Gaps for Edge Cases
-
-**What goes wrong:** Tests cover happy paths but miss boundary conditions, leading to production failures.
-
-**Why it happens:** Common edge cases are systematically omitted:
-
-| Edge Case | Why Missed |
-|-----------|------------|
-| Empty input (n=0) | "Nobody uses this" |
-| Single element | "Not worth testing" |
-| Power-of-2 boundaries | "Shouldn't matter" |
-| Maximum allocation | "Too expensive to test" |
-| Alignment boundaries | "Unlikely to matter" |
-
-**Consequences:**
-- Production crashes on edge cases
-- Security vulnerabilities from buffer overflows
-- Numerical instability at boundaries
-
-**Prevention:**
-```cpp
-// CORRECT: Explicit edge case tests
-class EdgeCaseTest : public ::testing::Test {
-protected:
-    void TestEmptyInput() {
-        float* d_out;
-        NOVA_CHECK(cudaMalloc(&d_out, 0));
-        kernel<<<1, 1>>>(d_out, 0);  // Should not crash
-        NOVA_CHECK(cudaGetLastError());
-        cudaFree(d_out);
-    }
-    
-    void TestSingleElement() {
-        float data = 42.0f;
-        float* d_data;
-        NOVA_CHECK(cudaMalloc(&d_data, sizeof(float)));
-        NOVA_CHECK(cudaMemcpy(d_data, &data, sizeof(float), cudaMemcpyHostToDevice));
-        
-        kernel<<<1, 1>>>(d_data, 1);
-        NOVA_CHECK(cudaGetLastError());
-        
-        float result;
-        NOVA_CHECK(cudaMemcpy(&result, d_data, sizeof(float), cudaMemcpyDeviceToHost));
-        EXPECT_EQ(result, expected);
-        
-        cudaFree(d_data);
-    }
-    
-    void TestPowerOfTwoBoundary(int size) {
-        std::vector<float> h_data(size);
-        std::iota(h_data.begin(), h_data.end(), 0);
-        
-        Buffer d_data(size);
-        d_data.copyFrom(h_data.data(), size);
-        
-        kernel<<<(size + 255) / 256, 256>>>(d_data.data(), size);
-        NOVA_CHECK(cudaGetLastError());
-        
-        // Verify all elements processed
-    }
-};
-
-TEST_F(EdgeCaseTest, EmptyInput) { TestEmptyInput(); }
-TEST_F(EdgeCaseTest, SingleElement) { TestSingleElement(); }
-TEST_F(EdgeCaseTest, Size256) { TestPowerOfTwoBoundary(256); }
-TEST_F(EdgeCaseTest, Size1024) { TestPowerOfTwoBoundary(1024); }
-TEST_F(EdgeCaseTest, Size65536) { TestPowerOfTwoBoundary(65536); }
-```
-
----
-
-### 3.4 Resource Leak Tests Missing
-
-**What goes wrong:** Memory leak tests don't exist, allowing gradual resource exhaustion in long-running applications.
-
-**Why it happens:** GPU memory leaks are silent and accumulate over time. Single-run tests don't detect them:
-
-```cpp
-// WRONG: Test allocates but doesn't check cleanup
-TEST_F(MemoryTest, Allocation) {
-    float* ptr;
-    cudaMalloc(&ptr, size);
-    
-    // Do work...
-    
-    // WRONG: Not verifying cleanup
-    // cudaFree(ptr);  // Forgotten!
-}
-```
-
-**Consequences:**
-- Out-of-memory errors after hours of operation
-- Gradual performance degradation
-- Application crashes in production
-
-**Prevention:**
-```cpp
-// CORRECT: Memory leak detection test
-TEST_F(MemoryLeakTest, NoLeakInOperations) {
-    size_t memBefore, memAfter;
-    cudaMemGetInfo(&memBefore, nullptr);
-    
-    // Perform many allocations/deallocations
-    for (int i = 0; i < 1000; i++) {
-        Buffer temp(1024 * 1024);
-        temp.copyFrom(data.data(), data.size());
-        // temp automatically freed at end of iteration
-    }
-    
-    cudaMemGetInfo(&memAfter, nullptr);
-    
-    // Allow small variance for fragmentation
-    EXPECT_LE(memBefore - memAfter, 1024 * 1024)  // < 1MB leak
-        << "Memory leak detected: " << (memBefore - memAfter) << " bytes";
-}
-
-// CORRECT: Test with leak sanitizer
-// Run with: compute-sanitizer --tool leakcheck ./test
-TEST_F(MemoryLeakTest, NoCudaLeaks) {
-    float* ptr1, *ptr2;
-    NOVA_CHECK(cudaMalloc(&ptr1, 1024));
-    NOVA_CHECK(cudaMalloc(&ptr2, 1024));
-    
-    // ... use pointers ...
-    
-    NOVA_CHECK(cudaFree(ptr1));
-    NOVA_CHECK(cudaFree(ptr2));
-    // compute-sanitizer will report any leaks
-}
-```
-
----
-
-### 3.5 Determinism Tests Missing
-
-**What goes wrong:** Non-deterministic algorithms produce varying results, but tests don't verify determinism.
-
-**Why it happens:** Floating-point non-associativity, parallel reduction order, and race conditions cause result variation:
-
-```cpp
-// WRONG: Test expects exact match but GPU reduction order varies
-TEST_F(ReduceTest, Sum) {
-    std::vector<float> data(1000);
-    std::iota(data.begin(), data.end(), 1.0f);
-    
-    float result = reduce(data);
-    
-    EXPECT_EQ(result, 500500.0f);  // May fail on different GPUs!
-}
-```
-
-**Consequences:**
-- Tests fail on different GPU architectures
-- Performance optimizations change reduction order and break tests
-- Debug/release build differences
-
-**Prevention:**
-```cpp
-// CORRECT: Test with tolerance for floating-point
-TEST_F(ReduceTest, Sum) {
-    std::vector<float> data(1000);
-    std::iota(data.begin(), data.end(), 1.0f);
-    
-    float result = reduce(data);
-    
-    EXPECT_NEAR(result, 500500.0f, 0.001f)  // Allow small error
-        << "Result: " << result << " expected: " << 500500.0f;
-}
-
-// CORRECT: Test determinism by running multiple times
-TEST_F(ReduceTest, Determinism) {
-    std::vector<float> data(1000);
-    std::iota(data.begin(), data.end(), 1.0f);
-    
-    float result1 = reduce(data);
-    float result2 = reduce(data);
-    float result3 = reduce(data);
-    
-    EXPECT_EQ(result1, result2);
-    EXPECT_EQ(result2, result3);
-}
-
-// CORRECT: Integer comparisons for stable results
-TEST_F(SortTest, StableSort) {
-    // Use integer keys for deterministic sorting
-    std::vector<uint32_t> keys(1000);
-    std::iota(keys.begin(), keys.end(), 0);
-    std::shuffle(keys.begin(), keys.end(), std::mt19937{42});  // Fixed seed
-    
-    sort(keys);
-    
-    for (int i = 1; i < keys.size(); i++) {
-        EXPECT_LT(keys[i-1], keys[i]);
-    }
-}
-```
-
----
-
-## 4. Reliability Pitfalls
-
-### 4.1 False Confidence from Passing Unit Tests
-
-**What goes wrong:** Unit tests cover individual components but miss integration failures.
-
-**Why it happens:** Unit tests run components in isolation with controlled inputs:
-
-```cpp
-// Unit test passes: component works in isolation
-TEST_F(MatrixMultiplyTest, SinglePrecision) {
-    Matrix a = generateMatrix(256, 256);
-    Matrix b = generateMatrix(256, 256);
-    Matrix c = matmul(a, b);
-    EXPECT_TRUE(verify(c, expected));
-    // PASSES
-}
-
-// Integration failure: memory alignment issue only occurs with large matrices
-TEST_F(IntegrationTest, LargeMatrixMultiply) {
-    Matrix a = generateMatrix(8192, 8192);  // Different code path
-    Matrix b = generateMatrix(8192, 8192);
-    Matrix c = matmul(a, b);  // CRASHES - alignment issue
-}
-```
-
-**Consequences:**
-- High unit test coverage, low integration reliability
-- Production failures on edge cases
-- Refactoring breaks production code without breaking tests
-
-**Prevention:**
-```cpp
-// CORRECT: Layered testing pyramid
-class TestPyramid {
-    // Level 1: Unit tests (many, fast)
-    void testComponentIsolation() { /* ... */ }
-    
-    // Level 2: Integration tests (fewer, slower)
-    void testComponentInteraction() { /* ... */ }
-    
-    // Level 3: System tests (few, slowest)
-    void testFullPipeline() { /* ... */ }
-    
-    // Level 4: Property-based tests (medium, catches edge cases)
-    void testProperties() { /* random inputs */ }
-};
-
-// CORRECT: Property-based testing for edge cases
-TEST_F(PropertyTest, MatrixMultiplyCorrectness) {
-    // Generate random valid matrices
-    for (int trial = 0; trial < 1000; trial++) {
-        int m = randomInt(1, 16384);
-        int n = randomInt(1, 16384);
-        int k = randomInt(1, 16384);
-        
-        Matrix a = generateRandomMatrix(m, k);
-        Matrix b = generateRandomMatrix(k, n);
-        
-        Matrix c = matmul(a, b);
-        Matrix expected = cpuMatmul(a, b);  // Reference
-        
-        EXPECT_MATRIX_NEAR(c, expected, 1e-5f);
-    }
-}
-```
-
----
-
-### 4.2 Missing Device Capability Checks
-
-**What goes wrong:** Code assumes capabilities that aren't available on all target GPUs.
-
-**Why it happens:** Features have minimum compute capability requirements:
-
-| Feature | Minimum CC | GPUs Affected |
-|---------|-----------|---------------|
-| Unified memory | 3.0 | Kepler (3.0-3.7) |
-| Dynamic parallelism | 3.5 | Kepler (3.0-3.7) |
-| FP16 tensor cores | 7.0 | Pascal (6.0-6.2) |
-| BF16 | 8.0 | Ampere (8.0-8.9) |
-| DP4a | 6.1 | Pascal+ |
-
-**Consequences:**
-- `cudaErrorNoKernelImageForDevice` at runtime
-- Silent fallback to slow code paths
-- Different results on different GPUs
-
-**Prevention:**
-```cpp
-// CORRECT: Check capability before using features
-struct DeviceCapabilities {
-    int computeCapabilityMajor;
-    int computeCapabilityMinor;
-    int maxThreadsPerBlock;
-    size_t sharedMemPerBlock;
-    bool supportsFP16;
-    bool supportsTensorCore;
-    bool supportsUnifiedAddressing;
-};
-
-DeviceCapabilities queryDevice(int deviceId) {
-    cudaDeviceProp prop;
-    NOVA_CHECK(cudaGetDeviceProperties(&prop, deviceId));
-    
-    return {
-        prop.major,
-        prop.minor,
-        prop.maxThreadsPerBlock,
-        prop.sharedMemPerBlock,
-        prop.major >= 5.3,  // Half-precision
-        prop.major >= 7.0,  // Tensor cores
-        prop.unifiedAddressing
+    // All blocks are same size, eliminating fragmentation
+    struct Block {
+        float k_cache[MAX_HEADS][BLOCK_SIZE][HEAD_DIM];
+        float v_cache[MAX_HEADS][BLOCK_SIZE][HEAD_DIM];
+        int seq_len;  // Actual used length
+        int ref_count;
     };
-}
-
-// CORRECT: Conditional feature usage
-void process(Buffer& data) {
-    auto caps = queryDevice(currentDevice());
     
-    if (caps.supportsFP16) {
-        // Use fast FP16 path
-        kernel_fp16<<<blocks, threads, 0, stream>>>(data_fp16);
-    } else {
-        // Use compatible FP32 path
-        kernel_fp32<<<blocks, threads, 0, stream>>>(data_fp32);
+    std::vector<Block> blocks_;  // Single contiguous allocation
+    std::unordered_map<int64_t, std::vector<int>> block_indices_;  // seq_id -> blocks
+    
+    Block* allocate(int64_t seq_id, int num_blocks_needed) {
+        // Simple freelist - all blocks same size = no fragmentation
+        std::vector<int> indices;
+        for (int i = 0; i < num_blocks_needed; i++) {
+            int idx = free_list_.back();
+            free_list_.pop_back();
+            indices.push_back(idx);
+        }
+        block_indices_[seq_id] = indices;
+        return &blocks_[indices[0]];
     }
+};
+
+// CORRECT: Use CUDA's stream-ordered allocator for dynamic sizes
+void setup_kv_cache_pool() {
+    cudaMemPoolHandle_t pool;
+    cudaMempoolCreate(&pool, {
+        .allocType = cudaMemPoolAllocType::cudaMemPoolAllocation,
+        .minGranularity = 4096,
+        .releaseThreshold = 0,
+    });
+    
+    // Enable reuse across streams
+    cudaMemPoolSetAttribute(pool, 
+        cudaMemPoolAttrReleaseThreshold, &release_threshold);
 }
 ```
+
+**Phase Recommendation:** Phase 3 (Memory Management) — Implement block-based KV cache allocation.
 
 ---
 
-### 4.3 Ignoring ECC Error Handling
+### 2.2 KV Cache Eviction Without Coordinate Update
 
-**What goes wrong:** Production systems with ECC memory don't handle corrected errors gracefully.
+**What goes wrong:** KV cache blocks are evicted but internal state still references old block indices, causing reads from garbage memory.
 
-**Why it happens:** ECC GPUs report corrected single-bit errors but programs ignore them:
+**Why it happens:** Eviction removes data but cached references become dangling pointers:
 
 ```cpp
-// WRONG: Ignoring ECC corrected errors
-void process(Buffer& data) {
-    // GPU memory has experienced corrected bit flip
-    // cudaErrorCorrected ECC error not checked
+// WRONG: Eviction without invalidating references
+class KVCache {
+    std::unordered_map<int64_t, std::vector<int>> seq_to_blocks_;
     
-    kernel<<<blocks, threads>>>(data.data(), data.size());
-    // Results may be unreliable but error not detected
-}
+    void evict_if_needed() {
+        if (memory_pressure_ > threshold_) {
+            auto oldest = find_oldest_sequence();
+            
+            // Remove from eviction tracking
+            seq_to_blocks_.erase(oldest);  // But blocks_[] still contains data!
+            
+            // Mark blocks as free
+            for (int idx : blocks_[oldest]) {
+                free_list_.push_back(idx);
+            }
+        }
+    }
+    
+    // BUG: Someone still holds reference to evicted sequence
+    void attention_with_cached_kv(Request& req) {
+        auto it = seq_to_blocks_.find(req.seq_id);
+        if (it == seq_to_blocks_.end()) {
+            // req.seq_id was evicted but we're looking for it
+            // This path won't be taken if we tracked eviction correctly
+        }
+    }
+};
 ```
 
 **Consequences:**
-- Silent data corruption in scientific computing
-- Reliability failures in long-running applications
-- Difficult to debug intermittent failures
+- Reading from freed/reallocated memory
+- Silent data corruption
+- Intermittent crashes that are hard to reproduce
 
 **Prevention:**
 ```cpp
-// CORRECT: Monitor ECC status via NVML
-#include <nvml.h>
-
-nvmlReturn_t checkECCStatus(int device) {
-    nvmlEccCounterType_t types[] = {NVML_VOLATILE_ECC, NVML_AGGREGATE_ECC};
+// CORRECT: Use sequence version tracking
+struct KVCacheBlock {
+    int64_t seq_id;
+    uint64_t version;  // Incremented on each update
+    bool in_use;
     
-    for (auto type : types) {
-        nvmlEccCounter64_t singleBit, doubleBit;
-        nvmlDeviceGetMemoryErrorCounter(device, NVML_MEMORY_ERROR_TYPE_CORRECTED,
-                                        type, NVML_MEMORY_LOCATION_DEVICE_MEMORY,
-                                        &singleBit);
-        nvmlDeviceGetMemoryErrorCounter(device, NVML_MEMORY_ERROR_TYPE_UNCORRECTED,
-                                        type, NVML_MEMORY_LOCATION_DEVICE_MEMORY,
-                                        &doubleBit);
-        
-        if (singleBit > warningThreshold) {
-            // Log warning, consider checkpointing
-            logECCWarning(device, type, singleBit);
-        }
-        
-        if (doubleBit > 0) {
-            // Uncorrectable error - fail safely
-            throw EccUncorrectableError(device, doubleBit);
-        }
+    bool is_valid(int64_t current_seq_id, uint64_t current_version) const {
+        return in_use && seq_id == current_seq_id && version == current_version;
     }
-    return NVML_SUCCESS;
-}
+};
 
-// CORRECT: Periodic health monitoring
-class GPUHealthMonitor {
-    size_t lastSingleBitErrors_{0};
+class SafeKVCache {
+    std::vector<KVCacheBlock> blocks_;
+    std::atomic<uint64_t> global_version_{0};
     
-    void checkAndAlert() {
-        size_t currentErrors = querySingleBitErrors();
-        if (currentErrors > lastSingleBitErrors_) {
-            size_t newErrors = currentErrors - lastSingleBitErrors_;
-            logWarning("ECC corrected errors: ", newErrors);
-            
-            if (newErrors > threshold_) {
-                // Consider checkpoint and restart
-                requestCheckpoint("ECC error threshold exceeded");
+    void evict(int64_t seq_id) {
+        uint64_t new_version = ++global_version_;
+        
+        for (auto& block : blocks_) {
+            if (block.seq_id == seq_id) {
+                block.seq_id = -1;  // Mark as invalid
+                block.in_use = false;
             }
         }
-        lastSingleBitErrors_ = currentErrors;
+    }
+    
+    bool verify_block(int block_idx, int64_t expected_seq_id, 
+                      uint64_t expected_version) {
+        const auto& block = blocks_[block_idx];
+        return block.is_valid(expected_seq_id, expected_version);
     }
 };
 ```
 
 ---
 
-### 4.4 Missing Timeout Handling
+## 3. FlashAttention Implementation Pitfalls
 
-**What goes wrong:** GPU kernels run forever due to infinite loops or deadlocks, causing watchdog timer resets.
+### 3.1 Incorrect Head Dimension Alignment
 
-**Why it happens:** Infinite loops or improper synchronization cause GPU to hang:
+**What goes wrong:** FlashAttention fails or produces incorrect results when head dimension is not a multiple of the required alignment.
+
+**Why it happens:** FlashAttention kernels require specific alignments for efficient execution:
 
 ```cpp
-// DANGEROUS: Infinite loop in kernel
-__global__ void badKernel(float* data, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    while (true) {  // Infinite loop!
-        data[i] = compute(data[i]);
-    }
+// WRONG: Assuming any head_dim works
+// FlashAttention v2 requires head_dim % 8 == 0 for FP16
+// FlashAttention v3 requires head_dim % 16 == 0 for FP16 with Tensor Cores
+
+template <int HEAD_DIM>
+__global__ void flash_attention_kernel(...) {
+    // HEAD_DIM might be 96 (not multiple of 8)
+    // FlashAttention will fall back to slow kernel or fail
 }
 
-// DANGEROUS: Deadlock via improper barrier usage
-__global__ void deadlockKernel(float* data) {
-    __shared__ float shared[256];
-    
-    if (threadIdx.x < 128) {
-        shared[threadIdx.x] = data[threadIdx.x];
-    }
-    __syncthreads();  // First barrier
-    
-    if (threadIdx.x >= 128) {
-        // Only half threads reach here
-        shared[threadIdx.x] = data[threadIdx.x];
-    }
-    __syncthreads();  // DEADLOCK - 128 threads waiting forever
-}
+// WRONG: Hardcoding alignment assumptions
+constexpr int THREADS_PER_HEAD = 128;
+constexpr int ELEMENTS_PER_THREAD = HEAD_DIM / THREADS_PER_HEAD;  // Div by 0 if HEAD_DIM=0
 ```
 
 **Consequences:**
-- Watchdog timer reset (GPU reset by driver)
-- Application crash
-- Other GPUs in system affected
-- Difficult recovery
+- Kernel launch failure with misaligned configuration
+- Fallback to slow reference implementation without warning
+- Silent accuracy degradation if padding is done incorrectly
 
 **Prevention:**
 ```cpp
-// CORRECT: Use cudaOccupancyMaxActiveBlocksPerMin to estimate kernel duration
-void validateKernelLaunch(const void* kernel) {
-    int blocks;
-    int gridSize;
-    NOVA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &blocks, kernel, 256, 0));
+// CORRECT: Query and adapt to alignment requirements
+struct FlashAttentionConfig {
+    static constexpr int MIN_HEAD_DIM = 64;   // FlashAttention minimum
+    static constexpr int ALIGNMENT = 8;       // Must be multiple of 8
+    static constexpr int MAX_HEAD_DIM = 256;  // Common maximum
     
-    cudaDeviceProp prop;
-    int device;
-    cudaGetDevice(&device);
-    cudaGetDeviceProperties(&prop, device);
-    
-    gridSize = blocks * prop.multiProcessorCount;
-    
-    // Sanity check: kernel should complete in reasonable time
-    // Rough estimate: if gridSize * iterations > threshold, warn
-    if (gridSize > 100000) {
-        logWarning("Large kernel launch: ", gridSize, " blocks");
+    static int round_up_head_dim(int head_dim) {
+        if (head_dim < MIN_HEAD_DIM) return MIN_HEAD_DIM;
+        return ((head_dim + ALIGNMENT - 1) / ALIGNMENT) * ALIGNMENT;
     }
+    
+    static bool is_supported(int head_dim) {
+        return head_dim >= MIN_HEAD_DIM && 
+               head_dim <= MAX_HEAD_DIM &&
+               head_dim % ALIGNMENT == 0;
+    }
+};
+
+// CORRECT: Pad heads if necessary
+Tensor prepare_kv_heads(const Tensor& input, int num_kv_heads) {
+    int padded_kv_heads = FlashAttentionConfig::round_up_head_dim(num_kv_heads);
+    
+    if (padded_kv_heads != num_kv_heads) {
+        Tensor padded(input.shape());
+        // Copy input to first num_kv_heads positions
+        // Pad remaining with zeros
+        pad_heads(padded, input, num_kv_heads, padded_kv_heads);
+        return padded;
+    }
+    return input;
 }
 
-// CORRECT: Watchdog timeout configuration
-// Set CUDA_TIMEOUT to reasonable value
-// cudaDeviceSetLimit(cudaLimitTimeout, timeout_ms);
-
-// CORRECT: Stream timeout for testing
-TEST_F(StreamTest, KernelTimeout) {
-    cudaStream_t stream;
-    cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+// CORRECT: Fallback for unsupported head dims
+void attention_dispatch(const Tensor& q, const Tensor& k, const Tensor& v,
+                        Tensor& output) {
+    int head_dim = q.shape(-1);
     
-    kernel<<<1000, 256, 0, stream>>>(data, n);
-    
-    cudaError_t err = cudaStreamQuery(stream);
-    if (err == cudaErrorNotReady) {
-        // Wait with timeout
-        for (int i = 0; i < 100; i++) {
-            std::this_thread::sleep_for(100ms);
-            err = cudaStreamQuery(stream);
-            if (err == cudaSuccess) break;
-            if (err != cudaErrorNotReady) {
-                ADD_FAILURE() << "Kernel error: " << cudaGetErrorString(err);
-                break;
-            }
-        }
-        if (err == cudaErrorNotReady) {
-            ADD_FAILURE() << "Kernel timeout exceeded";
-        }
+    if (FlashAttentionConfig::is_supported(head_dim)) {
+        flash_attention_forward(q, k, v, output);
+    } else {
+        // Fall back to memory-efficient attention or paddle to supported size
+        LOG(WARNING) << "Head dim " << head_dim << " not supported, using fallback";
+        naive_attention_forward(q, k, v, output);
     }
 }
 ```
 
 ---
 
-### 4.5 Floating-Point Comparison Stability
+### 3.2 FlashAttention Workspace Allocation Issues
 
-**What goes wrong:** Floating-point comparisons use exact equality, failing on different GPUs or optimization levels.
+**What goes wrong:** Workspace buffer is too small, not properly synchronized, or has incorrect lifetime.
 
-**Why it happens:** IEEE 754 compliance varies slightly, and floating-point operations are not associative:
+**Why it happens:** FlashAttention requires workspace for intermediate computations:
 
 ```cpp
-// WRONG: Exact equality comparison
-TEST_F(MathTest, Sum) {
-    float result = compute();
-    EXPECT_EQ(result, 1.0f);  // May be 0.9999999 or 1.0000001
+// WRONG: Fixed workspace size for all configurations
+float* workspace;
+cudaMalloc(&workspace, 1024 * 1024);  // 1MB - might not be enough!
+
+// FlashAttention requires workspace proportional to:
+// - batch_size * num_heads * seq_len * sizeof(float)
+// For large sequences, 1MB is insufficient
+
+// WRONG: Checking workspace size once at initialization
+void init_attention() {
+    // Query workspace once
+    size_t workspace_bytes;
+    flash_attn_v2_get_workspace_size(...);  // Called only at startup
+    cudaMalloc(&workspace_, workspace_bytes);
+    
+    // But user changes batch_size at runtime!
+    // workspace_bytes is now wrong
+}
+
+// WRONG: Using workspace after it's been freed
+class AttentionRunner {
+    Buffer workspace_;  // RAII buffer
+    
+    void run(const Config& cfg) {
+        // Run attention
+        flash_attention(q, k, v, output, workspace_.data(), workspace_.size());
+        
+        // Free workspace for reuse
+        workspace_.reset();
+        
+        // Later: try to use workspace for another operation
+        // BUG: workspace_.data() now points to freed memory
+        other_operation(workspace_.data());  // Crash!
+    }
+};
+```
+
+**Consequences:**
+- CUDA out-of-memory errors
+- Incorrect results from buffer overflow
+- Crashes from use-after-free
+
+**Prevention:**
+```cpp
+// CORRECT: Dynamic workspace allocation per configuration
+class FlashAttentionWorkspace {
+    Buffer buffer_;
+    
+    void ensure_size(const FlashAttentionParams& params) {
+        size_t required = flash_attn_v2_get_workspace_size(
+            params.batch_size, params.num_heads, params.seq_len, params.head_dim,
+            params.causal, params.dropout_prob);
+        
+        if (buffer_.size() < required) {
+            buffer_ = Buffer(required);  // Reallocate if needed
+        }
+    }
+    
+    void* data() { return buffer_.data(); }
+    size_t size() { return buffer_.size(); }
+};
+
+// CORRECT: Proper workspace lifecycle management
+class AttentionSession {
+    FlashAttentionWorkspace workspace_;
+    
+    void run_batch(const Batch& batch) {
+        // Ensure workspace is sized for this batch
+        workspace_.ensure_size(batch.to_params());
+        
+        // Workspace lives for entire session, not per-call
+        flash_attention(q, k, v, output, workspace_.data(), workspace_.size());
+        
+        // Workspace persists - safe for subsequent operations
+    }
+    
+    ~AttentionSession() {
+        // Workspace freed here, after all operations complete
+    }
+};
+
+// CORRECT: Verify workspace allocation succeeded
+void run_with_workspace_check(...) {
+    size_t required = get_workspace_size(params);
+    
+    if (available_memory() < required) {
+        // Handle OOM gracefully
+        throw OutOfMemoryError(required, available_memory());
+    }
+    
+    Buffer workspace(required);
+    NOVA_CHECK(flash_attention(..., workspace.data(), workspace.size()));
+}
+```
+
+**Phase Recommendation:** Phase 1 (FlashAttention Integration) — Implement dynamic workspace sizing.
+
+---
+
+## 4. Paged Attention Pitfalls
+
+### 4.1 Block Table CPU-GPU Consistency
+
+**What goes wrong:** Block table modifications on CPU are not visible to GPU kernel, or synchronization is incorrect.
+
+**Why it happens:** CPU and GPU have separate memory views. Block table updates require explicit synchronization:
+
+```cpp
+// WRONG: Modifying block table on CPU, then launching kernel immediately
+void update_and_attend(int seq_id, const std::vector<int>& new_blocks) {
+    // CPU writes new block indices
+    for (int i = 0; i < new_blocks.size(); i++) {
+        block_table_cpu_[seq_id * max_blocks + i] = new_blocks[i];
+    }
+    
+    // WRONG: Launch kernel without synchronization
+    // CPU write may not be visible to GPU yet!
+    paged_attention_kernel<<<...>>>(q, block_table_gpu_, seq_id, ...);
+    
+    // Results are undefined - might use stale block indices
+}
+
+// WRONG: Wrong synchronization primitive
+void wrong_sync(int seq_id) {
+    update_block_table(seq_id);
+    
+    // WRONG: cudaStreamSynchronize on default stream
+    // But kernel launched on different stream!
+    cudaStreamSynchronize(stream_);  // Wrong stream!
+    
+    launch_kernel<<<..., stream_>>>(...);
 }
 ```
 
 **Consequences:**
-- Tests fail on different GPU generations
-- Tests fail between debug/release builds
-- Tests fail with different CUDA versions
+- Attention reads from wrong KV cache blocks
+- Silent correctness corruption
+- Non-deterministic behavior depending on timing
 
 **Prevention:**
 ```cpp
-// CORRECT: Tolerance-based comparison
-TEST_F(MathTest, Sum) {
-    float result = compute();
-    EXPECT_NEAR(result, 1.0f, 1e-6f);  // Absolute tolerance
-}
-
-// CORRECT: Relative tolerance for large values
-TEST_F(MathTest, LargeSum) {
-    float result = compute();  // Result ~1e10
-    EXPECT_FLOAT_EQ(result, expected);  // Uses relative tolerance
-}
-
-// CORRECT: Custom comparison for GPU-specific needs
-MATCHER_P(FloatNear, expected, abs_error) {
-    return std::abs(arg - expected) <= abs_error;
-}
-
-TEST_F(MathTest, CustomComparison) {
-    float result = compute();
-    EXPECT_THAT(result, FloatNear(1.0f, 1e-6f));
-}
-
-// CORRECT: For stable comparisons, use integer bit patterns
-TEST_F(SortTest, StableSort) {
-    // Sort by integer representation for stability
-    std::vector<uint32_t> keys = floatAsUint(original);
-    sort(keys);
+// CORRECT: Proper CPU-GPU synchronization for block table updates
+class PagedAttentionManager {
+    // CPU mirror of block table
+    std::vector<int32_t> block_table_cpu_;
     
-    for (int i = 1; i < keys.size(); i++) {
-        EXPECT_LE(keys[i-1], keys[i]);
+    // GPU block table
+    Buffer block_table_gpu_;
+    
+    // Flag to track pending updates
+    std::atomic<bool> update_pending_{false};
+    
+    void update_block_table(int seq_id, const std::vector<int>& blocks) {
+        // Update CPU copy
+        int offset = seq_id * max_blocks_;
+        for (int i = 0; i < blocks.size(); i++) {
+            block_table_cpu_[offset + i] = blocks[i];
+        }
+        
+        // Copy to GPU synchronously
+        int copy_size = blocks.size() * sizeof(int32_t);
+        cudaMemcpyAsync(
+            block_table_gpu_.data() + offset,
+            block_table_cpu_.data() + offset,
+            copy_size,
+            cudaMemcpyHostToDevice,
+            sync_stream_  // Dedicated synchronization stream
+        );
+        
+        // Wait for copy to complete before kernel launch
+        NOVA_CHECK_WITH_STREAM(cudaStreamSynchronize(sync_stream_), sync_stream_);
+        
+        update_pending_.store(false);
+    }
+    
+    void attention(int seq_id, const Tensor& q) {
+        // Ensure block table is synchronized
+        assert(!update_pending_.load());
+        
+        // Now safe to launch attention kernel
+        paged_attention_kernel<<<..., attention_stream_>>>(
+            q.data(), block_table_gpu_.data(), seq_id, ...);
+    }
+};
+
+// CORRECT: Alternative using CUDA events for fine-grained sync
+void update_with_events(int seq_id) {
+    // Record event after CPU update
+    cudaEvent_t update_event;
+    cudaEventCreate(&update_event);
+    
+    // CPU writes complete at this point
+    cudaEventRecord(update_event, sync_stream_);
+    
+    // Make kernel wait for the event
+    cudaStreamWaitEvent(attention_stream_, update_event, 0);
+    
+    // Launch kernel - guaranteed to see updated block table
+    paged_attention_kernel<<<..., attention_stream_>>>(...);
+    
+    cudaEventDestroy(update_event);
+}
+```
+
+---
+
+### 4.2 Block Table Out-of-Bounds Access
+
+**What goes wrong:** Kernel accesses block_table beyond allocated bounds when sequence uses maximum possible blocks.
+
+**Why it happens:** Block table indexing doesn't validate sequence length against max_blocks:
+
+```cpp
+// WRONG: No bounds checking on block table access
+__global__ void paged_attention_kernel(
+    float* q,           // Query
+    int32_t* block_table,  // Block indices
+    int max_blocks,     // Maximum blocks per sequence
+    int seq_len,        // Actual sequence length
+    ...) {
+    
+    int block_idx = blockIdx.x;  // Which block we're computing
+    int token_idx = block_idx * BLOCK_SIZE;  // First token in block
+    int block_offset = token_idx % BLOCK_SIZE;
+    
+    // WRONG: Accessing block_table[block_idx] without checking block_idx < max_blocks
+    int kv_block_idx = block_table[block_idx];  // Could be out of bounds!
+    
+    // If seq_len == max_blocks * BLOCK_SIZE exactly, block_idx could equal max_blocks
+}
+```
+
+**Consequences:**
+- CUDA illegal memory access
+- Crashes or silent data corruption
+- Non-deterministic failures
+
+**Prevention:**
+```cpp
+// CORRECT: Explicit bounds validation
+__global__ void paged_attention_safe(
+    float* q, int32_t* block_table,
+    int max_blocks, int seq_len,
+    int max_seq_len,  // Absolute maximum sequence length
+    ...) {
+    
+    int block_idx = blockIdx.x;
+    int token_idx = block_idx * BLOCK_SIZE;
+    
+    // Guard against out-of-bounds
+    if (token_idx >= seq_len) {
+        return;  // This block doesn't need computation
+    }
+    
+    // Calculate which block table entry we need
+    int table_entry = token_idx / BLOCK_SIZE;
+    
+    // Validate table entry is within bounds
+    assert(table_entry < max_blocks && "Block table access out of bounds");
+    
+    // Now safe to access
+    int kv_block_idx = block_table[table_entry];
+    assert(kv_block_idx < num_kv_blocks && "KV block index out of bounds");
+}
+
+// CORRECT: Host-side validation before kernel launch
+void launch_paged_attention(...) {
+    int num_blocks_needed = (seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    
+    // Validate sequence fits in block table
+    if (num_blocks_needed > max_blocks) {
+        throw std::runtime_error(
+            "Sequence too long: " + std::to_string(seq_len) + 
+            " requires " + std::to_string(num_blocks_needed) + 
+            " blocks, but max is " + std::to_string(max_blocks));
+    }
+    
+    // Validate all block indices are valid
+    for (int i = 0; i < num_blocks_needed; i++) {
+        int block_idx = block_table[seq_id * max_blocks + i];
+        if (block_idx < 0 || block_idx >= num_kv_blocks) {
+            throw std::runtime_error("Invalid block index: " + std::to_string(block_idx));
+        }
+    }
+    
+    paged_attention_kernel<<<...>>>(...);
+}
+```
+
+---
+
+## 5. Sequence Length Handling Pitfalls
+
+### 5.1 Variable Sequence Length in Batched Attention
+
+**What goes wrong:** Batched attention processes variable-length sequences incorrectly, causing cross-contamination or incorrect masking.
+
+**Why it happens:** Sequences with different lengths share batched operations without proper offset handling:
+
+```cpp
+// WRONG: Assuming all sequences have same length
+__global__ void batch_attention_kernel(float* output, float* input, int batch_size, int seq_len) {
+    int batch_idx = blockIdx.x / seq_len;  // WRONG if sequences differ in length
+    int seq_idx = blockIdx.x % seq_len;    // Misleading calculation
+    
+    // This approach breaks when:
+    // Sequence 0: length 512
+    // Sequence 1: length 128
+    // Both are padded to seq_len=512, but sequence 1's "padding" is garbage
+}
+
+// WRONG: Not handling ragged tensors properly
+void ragged_attention(float* q, int* cu_seqlens, int batch_size) {
+    for (int b = 0; b < batch_size; b++) {
+        int start = cu_seqlens[b];
+        int end = cu_seqlens[b + 1];
+        
+        // WRONG: Processing entire [start, end) range
+        // But kernel has no awareness of start offset for shared memory
+        attention_kernel<<<blocks, threads>>>(q + b * max_seq_len * head_dim, ...);
+        // Uses q[b * max_seq_len * head_dim ..], not q[start * head_dim ..]
     }
 }
 ```
+
+**Consequences:**
+- Attention reads from wrong positions
+- Cross-sequence contamination
+- Incorrect outputs for variable-length batches
+
+**Prevention:**
+```cpp
+// CORRECT: Use cumulative sequence lengths for offset calculation
+struct VariableSeqLengths {
+    int* cu_seqlens_q;  // Shape: [batch_size + 1], cumulative lengths
+    int* cu_seqlens_k;  // May differ for cross-attention
+    int max_seq_len;
+    
+    int num_tokens(int batch_idx) const {
+        return cu_seqlens_q[batch_idx + 1] - cu_seqlens_q[batch_idx];
+    }
+    
+    int token_offset(int batch_idx) const {
+        return cu_seqlens_q[batch_idx];
+    }
+};
+
+__global__ void packed_attention_kernel(
+    float* output, float* q, int32_t* cu_seqlens, int total_tokens, ...) {
+    
+    int token_idx = blockIdx.x * BLOCK_TOKENS + threadIdx.x;
+    if (token_idx >= total_tokens) return;
+    
+    // Find which sequence this token belongs to
+    int seq_idx = find_sequence(token_idx, cu_seqlens);
+    
+    // Local position within sequence (for causal masking)
+    int local_pos = token_idx - cu_seqlens[seq_idx];
+    
+    // Now compute attention with correct offsets
+    compute_attention(output, q, token_idx, local_pos, ...);
+}
+
+// CORRECT: Separate kernel launches per sequence when necessary
+void attention_variable_seqlen(float* output, float* q, 
+                               const VariableSeqLengths& seq_lens) {
+    int offset = 0;
+    for (int b = 0; b < seq_lens.batch_size; b++) {
+        int seq_len = seq_lens.num_tokens(b);
+        
+        // Launch kernel for this specific sequence
+        dim3 blocks((seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        attention_kernel<<<blocks, threads>>>(
+            output + offset, q + offset, seq_len, ...);
+        
+        offset += seq_len * head_dim;
+        NOVA_CHECK(cudaGetLastError());
+    }
+}
+```
+
+---
+
+### 5.2 Position Embedding Mismatch with Sequence Length
+
+**What goes wrong:** Position embeddings (RoPE, Alibi) produce incorrect values for sequences longer than trained on or with unusual lengths.
+
+**Why it happens:** Position encoding tables or precomputed frequencies don't scale correctly:
+
+```cpp
+// WRONG: Fixed-size position embedding table
+float position_embeddings[4096 * head_dim];  // Only works up to seq_len=4096
+
+void attention_with_pos_emb(float* q, int seq_len) {
+    for (int pos = 0; pos < seq_len; pos++) {
+        if (pos >= 4096) {
+            // WRONG: Truncating or accessing out of bounds
+            break;  // Or: pos = 4095;  // Wrong position encoding!
+        }
+        apply_position_embedding(q + pos * head_dim, position_embeddings[pos]);
+    }
+}
+
+// WRONG: Precomputed frequencies don't scale
+float freqs_cis[seq_len * head_dim / 2];  // Recomputing requires knowing max_seq_len
+```
+
+**Consequences:**
+- Incorrect attention patterns for long sequences
+- Degraded model quality
+- Silent failures that are hard to detect
+
+**Prevention:**
+```cpp
+// CORLECT: Dynamic position embedding computation
+void apply_rope(float* q, int seq_len, int pos, int head_dim, float base = 10000.0f) {
+    // Compute RoPE frequencies on-the-fly
+    for (int i = 0; i < head_dim / 2; i++) {
+        float freq = base * exp2(-2.0f * i / head_dim);
+        float theta = pos / freq;
+        
+        float cos_val = cos(theta);
+        float sin_val = sin(theta);
+        
+        int dim = i * 2;
+        float q0 = q[dim], q1 = q[dim + 1];
+        
+        // Rotate
+        q[dim] = q0 * cos_val - q1 * sin_val;
+        q[dim + 1] = q0 * sin_val + q1 * cos_val;
+    }
+}
+
+// CORRECT: Extend RoPE with position scaling for fine-tuned models
+void apply_extended_rope(float* q, int seq_len, int pos, int rope_cfg_len,
+                         float rope_scaling = 1.0f) {
+    int effective_pos = (pos < rope_cfg_len) ? 
+                        pos : 
+                        rope_cfg_len + (pos - rope_cfg_len) * rope_scaling;
+    
+    apply_rope(q, seq_len, effective_pos, head_dim);
+}
+```
+
+---
+
+## 6. Tensor/Pipeline Parallelism Pitfalls
+
+### 6.1 Attention Backward Pass Communication Deadlock
+
+**What goes wrong:** Backward pass in tensor parallelism hangs due to incorrect NCCL operation ordering or collective communication errors.
+
+**Why it happens:** Attention backward requires all-reduce after local computation:
+
+```cpp
+// WRONG: Missing all-reduce in backward pass
+__global__ void attention_backward_kernel(float* grad_q, float* grad_k, float* grad_v,
+                                           float* grad_out, ...) {
+    // Compute local gradients
+    compute_local_gradients(grad_q, grad_k, grad_v, grad_out, ...);
+    
+    // WRONG: Not synchronizing across ranks!
+    // Each rank has partial gradient, not the full gradient
+}
+
+// WRONG: All-reduce in wrong position
+void attention_backward(float* grad_q, ...) {
+    // Compute gradients w.r.t. Q, K, V
+    compute_dQ_dK_dV(grad_q, grad_k, grad_v, ...);
+    
+    // WRONG: Reducing Q gradient here
+    ncclAllReduce(grad_q, grad_q, NCCL_SUM);  // Q should use local gradients only
+    
+    // More local computation...
+    compute_dS(grad_q, ...);
+    
+    // BUG: K and V gradients never reduced!
+}
+
+// WRONG: Deadlock from mismatched collective calls
+void parallel_backward(float* grad_q, float* grad_k, float* grad_v) {
+    // Rank 0:
+    ncclAllReduce(grad_k, grad_k, NCCL_SUM);  // K first
+    
+    // Rank 1:
+    ncclAllReduce(grad_v, grad_v, NCCL_SUM);  // V first
+    
+    // DEADLOCK: Both waiting for different operations
+}
+```
+
+**Consequences:**
+- Collective operations deadlocking
+- Incorrect gradients (unreduced)
+- Hanging training jobs
+
+**Prevention:**
+```cpp
+// CORRECT: Proper gradient synchronization
+class ParallelAttention {
+    ncclComm_t comm_;
+    int rank_;
+    int world_size_;
+    
+    void backward(float* grad_q, float* grad_k, float* grad_v,
+                  float* grad_out, ...) {
+        // Step 1: Compute local gradients
+        compute_local_dQ_dK_dV(grad_q, grad_k, grad_v, grad_out, ...);
+        
+        // Step 2: Synchronize K and V gradients (shared across ranks)
+        // Each rank has correct gradients for its K/V partition
+        // But we need full gradient for all-reduce with other activations
+        ncclAllReduce(grad_k, grad_k, num_kv_heads * head_dim, NCCL_SUM, comm_);
+        ncclAllReduce(grad_v, grad_v, num_kv_heads * head_dim, NCCL_SUM, comm_);
+        
+        // Step 3: Propagate gradients through attention scores
+        compute_dS(grad_q, grad_k, grad_v, ...);
+        
+        // Step 4: Q gradient needs all-reduce
+        ncclAllReduce(grad_q, grad_q, num_q_heads * head_dim, NCCL_SUM, comm_);
+    }
+};
+
+// CORRECT: Use deterministic collective operation order
+void synchronized_backward(float* grad_q, float* grad_k, float* grad_v) {
+    // All ranks MUST use same operation order
+    // Order: dK -> dV -> dQ (or any consistent order)
+    
+    cudaStreamSynchronize(stream_);  // Ensure all local computation done
+    
+    // All ranks call in same order
+    ncclAllReduce(grad_k, grad_k, ..., comm_, stream_);
+    ncclAllReduce(grad_v, grad_v, ..., comm_, stream_);
+    ncclAllReduce(grad_q, grad_q, ..., comm_, stream_);
+    
+    cudaStreamSynchronize(stream_);  // Wait for all operations
+}
+
+// CORRECT: Use NCCL's built-in grouping
+void grouped_backward(float* grad_q, float* grad_k, float* grad_v) {
+    // Group related operations for efficiency
+    ncclGroupStart();
+    ncclAllReduce(grad_k, grad_k, ..., comm_, stream_);
+    ncclAllReduce(grad_v, grad_v, ..., comm_, stream_);
+    ncclGroupEnd();
+    
+    // Local computation
+    
+    ncclGroupStart();
+    ncclAllReduce(grad_q, grad_q, ..., comm_, stream_);
+    ncclGroupEnd();
+}
+```
+
+---
+
+### 6.2 Pipeline Parallelism PP Stage Boundary Errors
+
+**What goes wrong:** KV cache communication between pipeline stages is incorrect, causing gradient misalignment or missing updates.
+
+**Why it happens:** Pipelined forward/backward creates micro-batches that must synchronize at stage boundaries:
+
+```cpp
+// WRONG: Not handling PP schedule correctly
+class PipelineStage {
+    void forward_microbatch(Microbatch& mb) {
+        // Compute with local layers
+        compute_local(mb);
+        
+        // WRONG: Sending KV cache immediately, but backward needs it too
+        send_kv_cache(mb.k_cache, mb.v_cache, next_stage_);
+        
+        // Backward will fail - KV cache already sent!
+    }
+    
+    void backward_microbatch(Microbatch& mb) {
+        // Need KV cache for backward, but it's already been sent!
+        compute_backward(mb);  // BUG: missing KV cache
+    }
+};
+
+// WRONG: Overwriting KV cache before backward completes
+void pp_forward(Microbatch& mb) {
+    // Receive KV from previous stage
+    if (has_prev_stage) {
+        recv_kv_cache(mb.k_cache, prev_stage_);
+    }
+    
+    // Store for later backward
+    kv_store_[mb.creation_time] = mb.kv_cache;  // Save reference
+    
+    // Compute attention
+    attention(mb);
+    
+    // Send to next stage
+    send_kv_cache(mb.k_cache, next_stage_);
+    
+    // WRONG: Overwriting storage before backward completes
+    // If backward uses async communication, this could be race condition
+    mb.k_cache = {};  // Clearing too early!
+}
+```
+
+**Consequences:**
+- Backward pass uses stale or missing KV cache
+- Gradient desynchronization
+- Training divergence
+
+**Prevention:**
+```cpp
+// CORRECT: PP-aware KV cache management
+class PipelineStage {
+    struct PPContext {
+        std::vector<float> k_cache;
+        std::vector<float> v_cache;
+        int microbatch_id;
+        bool backward_complete;
+    };
+    
+    std::vector<PPContext> kv_contexts_;
+    int forward_microbatch_count_ = 0;
+    
+    void forward_microbatch(Microbatch& mb) {
+        // Receive KV if first stage
+        if (has_prev_stage_) {
+            recv_kv_cache(mb.k_cache, prev_stage_);
+        }
+        
+        // Store context for backward (with ref counting)
+        int ctx_id = forward_microbatch_count_++;
+        kv_contexts_.push_back({
+            .k_cache = mb.k_cache.clone(),
+            .v_cache = mb.v_cache.clone(),
+            .microbatch_id = mb.id,
+            .backward_complete = false,
+        });
+        
+        // Send after storing
+        if (has_next_stage_) {
+            send_kv_cache(mb.k_cache, next_stage_);
+        }
+        
+        // Local computation
+        compute_attention(mb);
+    }
+    
+    void backward_microbatch(int microbatch_id) {
+        // Find matching context
+        auto it = std::find_if(kv_contexts_.begin(), kv_contexts_.end(),
+            [microbatch_id](const PPContext& ctx) { 
+                return ctx.microbatch_id == microbatch_id; 
+            });
+        
+        // Wait for context to be available
+        while (it == kv_contexts_.end() || !it->backward_complete) {
+            // Wait for context to be created and backward to be ready
+            std::this_thread::yield();
+        }
+        
+        // Use stored KV cache for backward
+        compute_backward_with_kv(microbatch_id, it->k_cache, it->v_cache);
+        
+        // Mark complete - now safe to reuse
+        it->backward_complete = true;
+        cleanup_if_safe(it);
+    }
+    
+    void cleanup_if_safe(std::vector<PPContext>::iterator it) {
+        // Clean up if backward is done and no more need
+        if (it->backward_complete && !has_prev_stage_) {
+            // Safe to free
+            kv_contexts_.erase(it);
+        }
+    }
+};
+```
+
+**Phase Recommendation:** Phase 4 (Parallelism) — Implement PP-aware KV cache lifecycle management.
 
 ---
 
@@ -1251,34 +1188,31 @@ TEST_F(SortTest, StableSort) {
 
 | Phase Topic | Likely Pitfall | Mitigation Strategy |
 |-------------|----------------|---------------------|
-| 33. Error Framework | Missing cudaGetLastError | Enforce NOVA_CHECK on all kernel launches |
-| 22. Error Recovery | Ignoring async errors | Stream query patterns, not callback CUDA calls |
-| Memory Pool | Resource leaks | RAII wrappers, leak sanitizer tests |
-| Multi-GPU | Error state across contexts | Clear error after context switch |
-| 27. Kernel Fusion | Profiling on tiny data | Production-representative sizes |
-| Performance | Memory transfer overhead | Minimize transfers before kernel optimization |
-| 26. Profiling | Microbenchmark warmup | JIT warmup runs, cache warmup |
-| 29. Benchmarks | Tuning for one GPU | Query device capabilities, auto-tune |
-| Test Infrastructure | Flaky async tests | Stream synchronization before reads |
-| Fuzz Testing | Edge case gaps | Edge case parameterized tests |
-| Memory Tests | No leak detection | cudaMemGetInfo before/after, compute-sanitizer |
-| 31. Regression Tests | False confidence | Integration tests, property-based tests |
-| 24. Signal Handling | Watchdog timeouts | Occupancy validation, timeout tests |
-| 23. ECC Handling | Ignoring corrected errors | NVML health monitoring |
-| Math Operations | FP comparison instability | Tolerance-based comparisons |
+| FlashAttention Integration | Softmax overflow | Stable softmax from day 1 |
+| FlashAttention Integration | Head dim alignment | Query requirements, pad if needed |
+| FlashAttention Integration | Workspace sizing | Dynamic allocation per config |
+| KV Cache | Memory fragmentation | Block-based fixed-size allocation |
+| KV Cache | Stale references | Version tracking on blocks |
+| Paged Attention | CPU-GPU sync | Dedicated sync stream with synchronization |
+| Paged Attention | Out-of-bounds access | Bounds validation before kernel launch |
+| Sequence Handling | Cross-batch contamination | Cumulative length arrays |
+| Sequence Handling | Position embedding limits | Dynamic computation or extrapolation |
+| Parallelism | Gradient deadlocks | Deterministic collective ordering |
+| Parallelism | PP KV lifecycle | Reference counting with cleanup |
 
 ---
 
 ## Sources
 
-- [NVIDIA CUDA C++ Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/) - **HIGH confidence** (official NVIDIA documentation, v13.2)
-- [NVIDIA CUDA Runtime API Error Handling](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__ERROR.html) - **HIGH confidence** (official API documentation)
-- [NVIDIA CUDA C++ Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/) - **HIGH confidence** (official NVIDIA documentation)
-- [Compute Sanitizer Documentation](https://docs.nvidia.com/compute-sanitizer/) - **HIGH confidence** (NVIDIA tools)
-- [NVML Documentation](https://docs.nvidia.com/deploy/nvml-api/) - **HIGH confidence** (NVIDIA management library)
-- [Google Test Best Practices](https://google.github.io/googletest/) - **MEDIUM confidence** (established testing framework)
-- [CUDA Pro Tip: Unified Memory Performance](https://developer.nvidia.com/blog/unified-memory-cuda-pro-tip-memory-management/) - **HIGH confidence** (NVIDIA developer blog)
+- [FlashAttention Paper](https://arxiv.org/abs/2205.14135) - **HIGH confidence** (official source, v3.1 release)
+- [FlashAttention GitHub Repository](https://github.com/Dao-AILab/flash-attention) - **HIGH confidence** (reference implementation)
+- [vLLM Paged Attention Paper](https://arxiv.org/abs/2309.06180) - **HIGH confidence** (official vLLM source)
+- [vLLM GitHub Repository](https://github.com/vllm-project/vllm) - **HIGH confidence** (production implementation)
+- [NVIDIA Transformer Engine](https://github.com/NVIDIA/TransformerEngine) - **HIGH confidence** (NVIDIA official)
+- [RoPE Position Encoding](https://arxiv.org/abs/2104.09864) - **HIGH confidence** (original paper)
+- [Megatron-LM Tensor Parallelism](https://arxiv.org/abs/1909.08053) - **HIGH confidence** (NVIDIA deep learning)
+- [GPipe Pipeline Parallelism](https://arxiv.org/abs/1811.06965) - **HIGH confidence** (Google Brain)
 
 ---
 
-*Last updated: 2026-04-28 for Nova v2.4 Production Hardening milestone*
+*Last updated: 2026-04-29 for Transformer & Inference Optimization milestone*

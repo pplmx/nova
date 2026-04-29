@@ -1,303 +1,177 @@
-# Technology Stack: Nova CUDA Library v2.4 Production Hardening
+# Stack Research
 
-**Project:** Nova CUDA Library
-**Version:** v2.4 Production Hardening
-**Researched:** 2026-04-28
-**Confidence:** HIGH (based on official NVIDIA documentation and established patterns)
+**Domain:** CUDA GPU Inference Optimization
+**Researched:** 2026-04-29
+**Confidence:** HIGH
 
-## Executive Summary
+## Recommended Stack
 
-This v2.4 milestone focuses on NEW production hardening features that complement the existing infrastructure (error framework v1.8, profiling v1.6-1.7, fuzz testing v2.0). The primary additions are CUDA Graphs for batch workload optimization, enhanced observability hooks, L2 cache persistence controls, and CUDA-native benchmarking.
+### Core Technologies
 
----
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| NVIDIA Transformer Engine | 2.14+ | Attention primitives, fused layers, FP8/FP4 quantization | Official NVIDIA library with C/C++ API, native paged KV cache support, CUDA Graphs integration |
+| FlashAttention | 2.5.x (FA2) / 3.x (FA3) | IO-aware exact attention algorithm | 2-4x faster than standard attention, O(n) memory instead of O(n^2), supports MQA/GQA |
+| cuDNN | 9.x | Low-level CUDA primitives | Hardware-accelerated attention via `cudnnAttentionForward`, fused attention kernels |
+| CUTLASS | 3.x | CUDA Templates for Linear Algebra | Reference GEMM implementations for custom fused kernels, FP8 support |
 
-## 1. Recommended New Technologies
+### Supporting Libraries
 
-### 1.1 CUDA Graphs (Primary Addition)
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| FlashAttention (hopper) | 3.x beta | Optimized for H100/H800 | When targeting Hopper architectures, need FP8 forward |
+| FlashAttention-4 (CuTeDSL) | 4.x | Next-gen kernels for Hopper/Blackwell | When targeting B200 or newer, maximum performance |
+| NCCL | 2.21+ | GPU interconnects | Sequence parallelism, tensor pipeline communication |
 
-**Why needed:** Reduces host-side kernel launch overhead by 10-50x for repeated workloads. Critical for production batch processing.
+### Development Tools
 
-| Component | Version | Purpose | Why |
-|-----------|---------|---------|-----|
-| CUDA Graphs API | CUDA 10+ | Capture/replay compute graphs | Eliminates per-kernel launch overhead |
-| Stream Capture | Built-in | Convert existing streams to graphs | Non-invasive integration with current async model |
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| NVCC | CUDA compiler (CUDA 20+) | Required for device code compilation |
+| NVTX | NVIDIA Tools Extension | Existing nova integration (v2.4) - continue using for profiling |
+| CUDA Graphs | Kernel launch optimization | Existing nova integration (v2.4) - essential for paged attention |
+| Nsight Compute | Kernel profiling | Verify attention kernel efficiency |
 
-**Key capabilities:**
-- `cudaGraphCreate()`, `cudaGraphInstantiate()`, `cudaGraphLaunch()`
-- Conditional nodes (IF/WHILE/SWITCH) for dynamic workloads
-- Graph memory nodes for stream-ordered allocation in graphs
-- Device graph launch for nested execution
+## Key Architectural Decisions
 
-**Integration point:** The existing five-layer architecture can add a `GraphExecutor` in the API layer that wraps algorithm pipelines.
+### 1. Attention Backend Selection
 
-```cpp
-// Example: Wrapping existing algorithms in a graph
-class GraphExecutor {
-    cudaGraph_t graph_;
-    cudaGraphExec_t executable_;
-public:
-    template<typename... Ops>
-    void capture(Stream& stream, Ops&&... ops) {
-        cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeGlobal);
-        (ops.execute(stream), ...);  // Existing algorithm calls
-        cudaStreamEndCapture(stream.get(), &graph_);
-        cudaGraphInstantiate(&executable_, graph_, nullptr, nullptr, 0);
-    }
-    void launch(Stream& stream) {
-        cudaGraphLaunch(executable_, stream.get());
-    }
-};
+**For pure C++ (no PyTorch dependency):**
+
+| Architecture | Recommended Backend | Justification |
+|--------------|---------------------|---------------|
+| Ampere (A100) | TransformerEngine C API | Stable, full feature set, paged attention support |
+| Ada (RTX 4090) | TransformerEngine C API | Same as Ampere, hardware supports all TE features |
+| Hopper (H100) | TE + FA3 kernel reference | TE uses FA3 internally, consider direct FA3 for max control |
+
+**Why TransformerEngine over raw FlashAttention:**
+- Native C/C++ API (no PyTorch dependency)
+- Built-in paged KV cache management
+- CUDA Graphs support via `make_graphed_callables`
+- FP8/FP4 quantization with calibrated scaling factors
+- Context parallelism for sequence parallelism
+
+### 2. KV Cache Strategy
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Vanilla contiguous KV cache | Simple | Memory fragmentation, max seq length fixed |
+| **Paged KV cache (recommended)** | Memory efficient, variable length, batching | More complex management |
+
+TransformerEngine 2.x provides paged attention via `DotProductAttention` with block table support - aligns with vLLM's architecture.
+
+### 3. Precision Selection
+
+| Precision | Use Case | Notes |
+|-----------|----------|-------|
+| BF16 | Default | Best accuracy/performance balance |
+| FP8 (E4M3/E5M2) | Large batch inference | Requires calibration, 2x memory bandwidth improvement |
+| FP8 with block scaling | Quantized weights | Better accuracy for inference-only |
+| FP4 | Extreme compression | Experimental, NVFP4 only on Hopper+ |
+
+## Installation
+
+```bash
+# TransformerEngine (C++ only, requires CUDA 12+)
+git clone --recursive https://github.com/NVIDIA/TransformerEngine.git
+cd TransformerEngine
+mkdir build && cd build
+cmake .. -DBUILD_C=ON -DBUILD_PYTHON=OFF -DDEV=ON
+make -j$(nproc)
+make install
+
+# FlashAttention (for kernel reference / PyTorch integration)
+pip install flash-attn --no-build-isolation
+
+# cuDNN (should be in CUDA container)
+# Typically included in: nvidia/cuda:12.x-cudnn8-runtime
 ```
 
-**Source:** [CUDA Programming Guide: CUDA Graphs](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#cuda-graphs)
+## Alternatives Considered
 
-### 1.2 NVBench (Benchmarking Library)
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| TransformerEngine | Raw cuDNN attention | Need minimal dependencies, only basic attention |
+| TransformerEngine | Triton kernels | Custom attention patterns, AMD ROCm support |
+| TE C API | FlashAttention Python | PyTorch-based deployment, faster iteration |
 
-**Why needed:** Google Benchmark (v1.7) handles end-to-end benchmarks. NVBench provides GPU kernel microbenchmarking with NVIDIA-specific features.
+### Why NOT Raw cuDNN Attention Alone
 
-| Component | Version | Purpose | Why |
-|-----------|---------|---------|-----|
-| NVBench | 1.x | GPU kernel microbenchmarking | Official NVIDIA benchmarking library |
-| nvbench::cli | Built-in | Runtime configuration | Parameter sweeps without recompilation |
+- cuDNN `cudnnAttentionForward` is a low-level primitive, not a complete solution
+- No paged KV cache support
+- No FP8/quantization integration
+- Requires significant glue code
 
-**Why not just extend Google Benchmark:** NVBench has built-in support for L2 cache management, thermal throttling detection, memory bandwidth measurement, and GPU-specific measurement types (cold vs. batch measurements).
+### Why NOT Triton Alone
 
-**Integration:** Install via CMake FetchContent or as a submodule alongside existing benchmark infrastructure.
+- Triton is a higher-level language but adds compilation overhead
+- Less control over low-level CUDA details for performance-critical paths
+- TE uses optimized CUTLASS kernels with better utilization
 
-**Source:** [NVIDIA/nvbench GitHub](https://github.com/NVIDIA/nvbench)
+## What NOT to Use
 
-### 1.3 L2 Cache Persistence
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| FlashAttention v1.x | Outdated, no longer maintained | FlashAttention-2+ |
+| PyTorch-only attention backends | Incompatible with pure C++ | TransformerEngine C API |
+| Standard O(n^2) attention | Memory quadratic in sequence length | FlashAttention or TE DotProductAttention |
+| Custom GEMM without CUTLASS | reinventing wheel | CUTLASS templates or TE fused layers |
 
-**Why needed:** Control cache behavior for working sets that should persist across kernel launches.
+## Stack Patterns by Architecture
 
-| Component | API | Purpose | Why |
-|-----------|-----|---------|-----|
-| cudaDeviceSetL2CacheEnabled() | CUDA 11+ | Enable L2 persisting accesses | Keep working set in cache |
-| cudaAccessPolicyWindow | CUDA 11+ | Per-pointer persistence hints | Granular control |
+**If targeting Ampere (A100) or Ada (RTX 4090):**
+- Use TransformerEngine 2.14+ with C API
+- BF16 for inference, FP8 for large batch
+- Paged KV cache via `DotProductAttention`
+- CUDA Graphs for iterative decoding
 
-**Use case:** After allocating memory for an algorithm's working set, prefetch to GPU and set persisting access. The data stays in L2 across multiple kernel launches.
+**If targeting Hopper (H100/H800):**
+- Use TransformerEngine with FA3 backend internally
+- Consider FP8 block scaling for weight quantization
+- FlashAttention-3 beta for maximum control (via `hopper/` subdirectory)
+- Leverage WGMMA instructions via TE
 
-```cpp
-// Example: Persisting L2 access for iterative algorithms
-void enablePersistence(DeviceBuffer& buffer) {
-    cudaAccessPolicyWindow window = {
-        .base_ptr = buffer.data(),
-        .num_bytes = buffer.size(),
-        .hitProp = cudaAccessPropertyPersisting,
-        .missProp = cudaAccessPropertyAlways,
-        .hitRatio = 1.0  // 100% persisting
-    };
-    cudaLaunchKernelSetAccessPolicy(&window, 1);
-}
-```
+**If supporting multiple architectures:**
+- Abstract attention backend behind interface
+- Use compile-time CUDA architecture flags
+- Consider FATBIN for precompiled kernels
 
-**Source:** [CUDA Programming Guide: L2 Access Management](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#device-memory-l2-access-management)
+## Version Compatibility
 
-### 1.4 Stream Priorities
+| Component | Compatible With | Notes |
+|-----------|-----------------|-------|
+| TransformerEngine 2.14 | CUDA 12.0+, cuDNN 8.9+ | Requires PyTorch or standalone C API |
+| FlashAttention 2.5.x | CUDA 12.0+, PyTorch 2.0+ | Head dims up to 256 |
+| FlashAttention 3 beta | CUDA 12.3+, H100/H800 only | FP16/BF16, FP8 forward |
+| FlashAttention 4 | CUDA 13+, H100/B200 | CuTeDSL-based, best Blackwell support |
+| cuDNN 9.x | CUDA 12.0+ | Attention primitives, fused attention |
 
-**Why needed:** Prioritize latency-sensitive operations over batch workloads.
+## Integration with Existing nova Infrastructure
 
-| Component | API | Purpose | Why |
-|-----------|-----|---------|-----|
-| cudaStreamCreateWithPriority() | CUDA 10+ | Create high-priority streams | Preempt lower-priority work |
-| cudaStreamGetPriority() | CUDA 10+ | Query stream priority | Monitoring |
+### Existing Components (v2.2, v1.3, v2.4)
 
-**Use case:** Create high-priority streams for time-critical algorithms while batch work uses default/low priority streams.
+| Component | New Integration Point |
+|-----------|----------------------|
+| `MultiHeadAttention` (v2.2) | Replace internals with TE `DotProductAttention` |
+| `TensorParallelMatmul` (v1.3) | Works with TE `Linear.set_tensor_parallel_group()` |
+| `PipelineParallelism` (v1.3) | Compatible with TE layer interfaces |
+| `CUDA Graphs` (v2.4) | TE `make_graphed_callables()` for attention |
+| `NVTX` (v2.4) | TE exposes `get_cudnn_version()` for diagnostics |
 
-```cpp
-// Example: Priority streams
-int priority_low, priority_high;
-cudaDeviceGetStreamPriorityRange(&priority_low, &priority_high);
-// priority_high is the highest priority (most negative on some systems)
+### Recommended Integration Approach
 
-cudaStream_t urgent_stream, batch_stream;
-cudaStreamCreateWithPriority(&urgent_stream, cudaStreamNonBlocking, priority_high);
-cudaStreamCreateWithPriority(&batch_stream, cudaStreamNonBlocking, priority_low);
-```
+1. **Phase 1:** Replace attention internals with TE C API
+2. **Phase 2:** Add paged KV cache management layer
+3. **Phase 3:** Integrate sequence parallelism via TE context parallel groups
+4. **Phase 4:** Add FP8/quantization support
 
-**Source:** [CUDA Programming Guide: Stream Priorities](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#stream-priorities)
+## Sources
 
-### 1.5 Async Error Propagation
-
-**Why needed:** CUDA errors are asynchronous - they appear on subsequent calls. Production code needs better visibility.
-
-| Component | API | Purpose | Why |
-|-----------|-----|---------|-----|
-| cudaGetLastError() | Built-in | Check for async errors | Required after kernel launches |
-| cudaError_t async notification | CUDA 12+ | Programmatic async error callbacks | Real-time error detection |
-
-**Integration:** Extend the existing error framework (v1.8) with async-aware error checking.
-
-```cpp
-// Extend existing error category
-class CudaAsyncErrorCategory : public std::error_category {
-    // Maps cudaError_t to production-meaningful messages
-    // Includes context: which stream, which operation
-};
-```
-
-**Source:** [CUDA Runtime API: Error Handling](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__ERROR.html)
+- [NVIDIA TransformerEngine 2.14 Documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/index.html) — HIGH confidence
+- [FlashAttention GitHub (Dao-AILab)](https://github.com/Dao-AILab/flash-attention) — HIGH confidence
+- [FlashAttention-3 Blog](https://tridao.me/blog/2024/flash3/) — HIGH confidence
+- [Transformer Engine Gemma Inference Tutorial](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/te_gemma/tutorial_generation_gemma_with_te.html) — HIGH confidence
 
 ---
-
-## 2. Observability Integration Points
-
-### 2.1 NVTX Extensions (Already exists - extend)
-
-The v1.7 NVTX integration should be extended with:
-
-| Extension | Purpose |
-|-----------|---------|
-| `nvtx_range_push/pop` wrappers | Scoped timing regions |
-| Custom domain creation | Separate domains for each layer (memory, device, algo, api) |
-| Payload annotations | Attach metadata (size, operation type) to ranges |
-
-### 2.2 CUpti Integration
-
-For deeper observability, consider adding CUPTI (CUDA Performance Tools Interface):
-
-| Component | Purpose | When to Use |
-|-----------|---------|-------------|
-| cupiActivity | Activity tracing (kernel, memcpy) | Production profiling |
-| cupiEvent | Hardware counters | Performance tuning |
-| cupiSourceLocator | Line-level profiling | Kernel optimization |
-
-**Recommendation:** Start with extending NVTX. Add CUPTI only if users request hardware counter access.
-
-### 2.3 Device Health Monitoring
-
-Extending v1.5 memory error detection:
-
-| Metric | API | Purpose |
-|--------|-----|---------|
-| Device memory used | cudaMemGetInfo | Memory pressure |
-| ECC errors | cuEvent APIs | Hardware health |
-| Temperature | NVML API | Thermal throttling |
-| Power draw | NVML API | Performance ceiling |
-
----
-
-## 3. Stress Testing Enhancements
-
-### 3.1 CUDA Error Injection
-
-**Why needed:** Test fault tolerance without real hardware failures.
-
-```cpp
-// Production hardening: Test error recovery paths
-class ErrorInjector {
-    std::random_device rd_;
-    std::mt19937 gen_;
-    double failure_rate_ = 0.0;
-
-public:
-    void setFailureRate(double rate) { failure_rate_ = rate; }
-
-    // Wrap CUDA calls to inject failures in test builds
-    template<typename Func>
-    cudaError_t wrap(Func&& f) {
-        if (std::uniform_real_distribution<>(0.0, 1.0)(gen_) < failure_rate_) {
-            return cudaErrorMemoryAllocation;  // Simulate OOM
-        }
-        return f();
-    }
-};
-```
-
-### 3.2 Chaos Testing with Stream Priorities
-
-Test behavior under resource contention by mixing high and low priority work.
-
----
-
-## 4. Already Covered - Do NOT Add
-
-| Feature | Exists In | Why Not Duplicate |
-|---------|-----------|-------------------|
-| Error framework (std::error_code) | v1.8 | Comprehensive |
-| CUDA event profiling | v1.6 | Works well |
-| NVTX annotations | v1.7 | Header-only, compile-time toggle |
-| Google Benchmark | v1.7 | End-to-end benchmarks complete |
-| libFuzzer | v2.0 | Fuzzing infrastructure complete |
-| Property-based testing | v2.0 | QuickCheck-style tests complete |
-| Memory pool statistics | v1.0 | Fragmentation reporting works |
-| Stream-based async | v1.0 | Foundation solid |
-| Coverage reports (lcov/genhtml) | v2.0 | CI integration complete |
-| Performance regression testing | v1.7 | Statistical significance (Welch's t-test) |
-
----
-
-## 5. Dependencies
-
-### 5.1 New External Dependencies
-
-| Library | Version | Purpose | CMake Integration |
-|---------|---------|---------|-------------------|
-| NVBench | 1.x | GPU microbenchmarking | FetchContent_Declare |
-
-```cmake
-# Add to cmake/fetch_dependencies.cmake
-FetchContent_Declare(
-    nvbench
-    GIT_REPOSITORY https://github.com/NVIDIA/nvbench.git
-    GIT_TAG main
-)
-FetchContent_MakeAvailable(nvbench)
-```
-
-### 5.2 CUDA Toolkit Features Required
-
-All features are in CUDA 10+ (compatible with CUDA 20 target):
-- CUDA Graphs: CUDA 10+
-- Stream Priorities: CUDA 10+
-- L2 Cache Persistence: CUDA 11+
-- Async Error Notifications: CUDA 12+
-
----
-
-## 6. Implementation Recommendations
-
-### Phase Structure
-
-1. **Phase 1: CUDA Graphs Foundation**
-   - GraphExecutor wrapper class
-   - Integration with existing Stream layer
-   - Example: Wrap reduce/scan algorithms
-
-2. **Phase 2: Performance Extensions**
-   - L2 cache persistence for iterative algorithms
-   - Stream priority management
-   - NVBench microbenchmarks for kernel tuning
-
-3. **Phase 3: Observability**
-   - NVTX domain extensions per layer
-   - Async error propagation
-   - Device health metrics
-
-4. **Phase 4: Stress Testing**
-   - Error injection framework
-   - Chaos testing patterns
-   - Integration with existing fuzz testing
-
-### Key Design Decisions
-
-| Decision | Rationale | Outcome |
-|----------|-----------|---------|
-| GraphExecutor in API layer | Non-invasive, composable with existing algorithms | Wrapper pattern |
-| NVBench over custom timing | NVIDIA-maintained, GPU-aware measurement | Better accuracy |
-| Extend NVTX vs. new system | Minimal overhead, v1.7 already exists | Additive only |
-| Error injection opt-in | Only for test builds, never production | Safety |
-
----
-
-## 7. Sources
-
-- **CUDA Programming Guide:** https://docs.nvidia.com/cuda/cuda-c-programming-guide/
-- **CUDA Runtime API:** https://docs.nvidia.com/cuda/cuda-runtime-api/
-- **NVBench:** https://github.com/NVIDIA/nvbench
-- **CCCL (Thrust/CUB/libcudacxx):** https://github.com/NVIDIA/cccl
-- **CUDA Graphs Best Practices:** https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#cuda-graphs
-
----
-
-*Last updated: 2026-04-28*
+*Stack research for: CUDA GPU Inference Optimization*
+*Researched: 2026-04-29*

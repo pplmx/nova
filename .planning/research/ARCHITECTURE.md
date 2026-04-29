@@ -1,49 +1,48 @@
-# Architecture Research: Production Hardening Integration
+# Architecture Research: Transformer & Inference Optimization
 
-**Domain:** Nova CUDA Library v2.4 - Production Hardening
-**Researched:** 2026-04-28
-**Confidence:** HIGH (based on existing codebase analysis and CUDA best practices)
-**For:** v2.4 Production Hardening
+**Domain:** Nova CUDA Library - Transformer Inference Architecture
+**Researched:** 2026-04-29
+**Confidence:** HIGH (based on FlashAttention paper, vLLM architecture, and existing codebase patterns)
+**For:** Transformer & Inference Optimization milestone
 
 ## Executive Summary
 
-Production hardening for Nova CUDA Library requires integration at four key integration points: error handling enrichment, performance optimization hooks, stress testing expansion, and reliability monitoring. The existing five-layer architecture provides solid foundations, but v2.4 must add cross-cutting concerns that span all layers. This document recommends placing production hardening features in a new `production/` layer that enriches existing components rather than modifying them, preserving backward compatibility while adding fault tolerance, performance capture, and observability.
+Transformer inference optimization requires integration at four key points: memory management (KV cache), attention computation (FlashAttention), block management (paged attention), and distributed computation (sequence parallelism). The existing five-layer architecture (`memory → device → algo → api`) provides a solid foundation, but a new `inference/` layer is needed to orchestrate the tight coupling between these components. This document recommends a layered approach where FlashAttention kernels live in `algo/`, KV cache in `memory/`, block management in `inference/`, and sequence parallelism extends `distributed/`.
 
 ## Current State Analysis
 
-### Existing Production Infrastructure
+### Existing Infrastructure
 
-| Component | Location | Status | Gap for v2.4 |
-|-----------|----------|--------|--------------|
-| Error Handling | `cuda/error/cuda_error.hpp` | RAII guards, std::error_code | No per-algorithm recovery strategies |
-| Stream Management | `cuda/stream/`, `cuda/async/` | Priority streams, StreamManager | No CUDA Graph capture/replay |
-| Memory Pool | `cuda/memory/memory_pool.hpp` | Metrics, fragmentation tracking | No adaptive allocation strategies |
-| Profiler | `cuda/performance/profiler.hpp` | Kernel timing, memory bandwidth | No reliability event correlation |
-| Memory Error Handler | `cuda/memory_error/` | Health monitoring, degradation | No integration with algorithm layer |
-| Fuzz Testing | `tests/fuzz/` | libFuzzer integration | Limited to memory and matmul |
+| Component | Location | Status | Gap for Inference |
+|-----------|----------|--------|-------------------|
+| Transformer Layer | `cuda/neural/` | MHA, FFW patterns | No FlashAttention integration |
+| Memory Pool | `cuda/memory/` | Fragmentation tracking | No KV cache-specific allocator |
+| Distributed Matmul | `cuda/distributed/` | TP/PP patterns | No sequence parallelism |
+| Graph Executor | `cuda/production/` | CUDA Graph capture | No attention kernel capture |
+| NVTX | `cuda/observability/` | Domain annotations | No inference-specific spans |
 
-### Five-Layer Architecture with Production Layer
+### Five-Layer Architecture with Inference Layer
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                       Production Layer (NEW)                         │
-│     (reliability monitoring, production hooks, health reporting)     │
-│                    Depends on: all other layers                     │
+│                      Inference Layer (NEW)                           │
+│          (BlockManager, Scheduler, SequenceManager)                  │
+│                    Depends on: algo, memory, distributed            │
 ├─────────────────────────────────────────────────────────────────────┤
-│                          API Layer                                   │
+│                         API Layer                                    │
 │              (include/cuda/api/) - Public interface                 │
 │                     Depends on: algo layer                          │
 ├─────────────────────────────────────────────────────────────────────┤
-│                       Algorithm Layer                                │
-│         (include/cuda/algo/) - Parallel algorithm wrappers          │
-│                     Uses: device, memory, production                │
+│                        Algorithm Layer                               │
+│          (include/cuda/algo/) - FlashAttention, kernels             │
+│                     Uses: device, memory, inference                 │
 ├─────────────────────────────────────────────────────────────────────┤
-│                        Device Layer                                  │
+│                         Device Layer                                 │
 │           (include/cuda/device/) - Device management                │
 │              Shared: reduce kernels, warp/block primitives          │
 ├─────────────────────────────────────────────────────────────────────┤
-│                       Memory Layer                                   │
-│           (include/cuda/memory/) - Buffer, MemoryPool               │
+│                        Memory Layer                                  │
+│           (include/cuda/memory/) - Buffer, MemoryPool, KVCache      │
 │         Reusable by: all algorithm domains                          │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Stream Layer                                  │
@@ -52,1023 +51,716 @@ Production hardening for Nova CUDA Library requires integration at four key inte
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## 1. Error Handling Integration
+---
 
-### 1.1 Current Error Handling Architecture
+## 1. FlashAttention Integration
 
-**Existing patterns in `cuda/error/cuda_error.hpp`:**
-- `cuda_error_guard` - RAII guard for error capture
-- `NOVA_CHECK` macro - Throws `cuda_exception` on error
-- `std::error_code` integration via `cuda_error_category`
-- Recovery hints per error type
+### 1.1 FlashAttention CUDA Kernel Architecture
 
-**Integration Points for v2.4:**
-- Algorithm layer (enhance with recovery strategies)
-- Memory layer (integrate with MemoryPool)
-- Stream layer (capture stream-specific errors)
+FlashAttention computes attention in tiles that fit in SRAM, reducing HBM bandwidth from O(N²d) to O(Nd) while maintaining numerical stability via online softmax.
 
-### 1.2 Recommended Patterns
+**Key architectural decisions from FlashAttention v2/v3:**
 
-#### Pattern 1: Algorithm-Specific Error Categories
+| Aspect | Standard Attention | FlashAttention | Why |
+|--------|-------------------|----------------|-----|
+| Memory access | O(N²d) HBM reads | O(Nd) HBM reads | Tiled computation |
+| SRAM usage | Minimal | O(Nd) per tile | Reuse in registers |
+| Numerical stability | Exp-sum normalization | Online normalization | Single pass |
+| Autoregressive mask | Post-compute | Streaming inference | Causal masking in-place |
+
+**Tile size selection:**
+- SMEM limit: 64KB-228KB depending on compute capability
+- Block size: 64x64 or 128x64 (threads x head_dim)
+- Number of splits: 1 for long sequences, >1 for memory-constrained cases
+
+### 1.2 Integration with Existing Algo Layer
 
 ```cpp
-// include/cuda/production/error_categories.hpp
+// include/cuda/algo/flash_attention.h
 #pragma once
 
-#include "cuda/error/cuda_error.hpp"
-#include <system_error>
+#include "cuda/memory/buffer.h"
+#include "cuda/stream/stream.h"
+#include <cstddef>
 
-namespace nova::production {
+namespace nova::algo {
 
-// Error category for algorithm-specific errors
-class algorithm_error_category : public std::error_category {
-public:
-    const char* name() const noexcept override { return "nova-algorithm"; }
-    std::string message(int ev) const override;
-    bool equivalent(const std::error_code& code, int condition) const noexcept override;
-};
-
-const std::error_category& algorithm_category();
-
-// Algorithm error codes
-enum class algorithm_errc {
-    memory_allocation_failed = 1,
-    invalid_input_size = 2,
-    algorithm_timeout = 3,
-    numerical_overflow = 4,
-    stream_dependency_cycle = 5,
-};
-
-}  // namespace nova::production
-
-// Extend std::error_code for algorithm errors
-namespace std {
-    template<>
-    struct is_error_code_enum<nova::production::algorithm_errc> : true_type {};
-}
-```
-
-#### Pattern 2: Recovery-Aware Result Type
-
-```cpp
-// include/cuda/production/result.hpp
-#pragma once
-
-#include <expected>
-#include <variant>
-#include <functional>
-
-namespace nova::production {
-
-enum class RecoveryStrategy {
-    None,           // No recovery possible
-    Retry,          // Retry with same parameters
-    RetryWithBackoff,  // Retry with exponential backoff
-    ReduceScale,    // Reduce batch size or parallelism
-    Fallback,       // Fall back to simpler algorithm
-    Degrade,        // Degrade to reduced functionality
-    Abort           // Must abort, cannot continue
-};
-
-struct ErrorContext {
-    cudaError_t cuda_error;
-    const char* operation;
-    const char* file;
-    int line;
-    int device_id;
-    void* stream;
-    std::chrono::steady_clock::time_point timestamp;
-    RecoveryStrategy suggested_strategy;
-    std::function<void()> recovery_action;
-};
-
-template<typename T>
-class Result {
-public:
-    Result(T value) : variant_(std::move(value)) {}
-    Result(ErrorContext error) : variant_(std::move(error)) {}
-    
-    bool has_value() const { return std::holds_alternative<T>(variant_); }
-    T& value() { return std::get<T>(variant_); }
-    const T& value() const { return std::get<T>(variant_); }
-    
-    bool has_error() const { return std::holds_alternative<ErrorContext>(variant_); }
-    const ErrorContext& error() const { return std::get<ErrorContext>(variant_); }
-    
-    // Execute recovery if available
-    bool attempt_recovery() {
-        if (!has_error()) return true;
-        const auto& ctx = error();
-        if (ctx.recovery_action && ctx.suggested_strategy != RecoveryStrategy::None) {
-            ctx.recovery_action();
-            return true;
-        }
-        return false;
-    }
-
-private:
-    std::variant<T, ErrorContext> variant_;
-};
-
-// Convenience macro for error-aware algorithms
-#define NOVA_TRY_RESULT(expr) \
-    ({ \
-        auto __result = (expr); \
-        if (!__result.has_value()) { \
-            return __result.error(); \
-        } \
-        __result.value(); \
-    })
-```
-
-#### Pattern 3: Algorithm-Level Error Hook
-
-```cpp
-// include/cuda/production/error_hook.hpp
-#pragma once
-
-#include <functional>
-#include <vector>
-#include <mutex>
-#include "result.hpp"
-
-namespace nova::production {
-
-class ErrorHookRegistry {
-public:
-    using ErrorHook = std::function<void(const ErrorContext&)>;
-    
-    static ErrorHookRegistry& instance();
-    
-    void register_hook(const char* algorithm_name, ErrorHook hook);
-    void unregister_hook(const char* algorithm_name);
-    
-    void invoke_hooks(const ErrorContext& ctx) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = hooks_.find(ctx.operation);
-        if (it != hooks_.end()) {
-            for (const auto& hook : it->second) {
-                hook(ctx);
-            }
-        }
-    }
-
-private:
-    ErrorHookRegistry() = default;
-    std::mutex mutex_;
-    std::unordered_map<std::string, std::vector<ErrorHook>> hooks_;
-};
-
-}  // namespace nova::production
-```
-
-### 1.3 Integration with Existing Layers
-
-**Memory Layer Integration:**
-```cpp
-// Extend cuda/memory/memory_pool.h
-
-class MemoryPool {
-public:
-    // Existing methods...
-    
-    // New: Error-aware allocation with recovery
-    Result<void*> allocate_with_retry(size_t bytes, int stream_id = -1,
-                                      int max_retries = 3);
-    
-    // New: Get allocation failure statistics
-    struct AllocationStats {
-        size_t total_allocations;
-        size_t failed_allocations;
-        size_t retry_successes;
-        size_t fallback_allocations;
-    };
-    AllocationStats get_allocation_stats() const;
-};
-```
-
-**Stream Layer Integration:**
-```cpp
-// Extend cuda/stream/stream.h
-
-class Stream {
-public:
-    // Existing constructors...
-    
-    // New: Error-tracking stream wrapper
-    class TrackedStream {
-    public:
-        TrackedStream(cudaStream_t stream);
-        
-        cudaStream_t get() const { return stream_; }
-        
-        // Track last error with context
-        Result<void> last_error() const;
-        void record_error(cudaError_t err, const char* operation);
-        
-        // Stream-specific metrics
-        struct StreamMetrics {
-            size_t pending_ops;
-            float queue_time_ms;
-            size_t error_count;
-        };
-        StreamMetrics get_metrics() const;
-        
-    private:
-        cudaStream_t stream_;
-        ErrorContext last_error_;
-        std::atomic<size_t> pending_ops_{0};
-    };
-};
-```
-
-## 2. Performance Optimization Patterns
-
-### 2.1 CUDA Graphs Integration
-
-**Recommendation:** Add optional CUDA Graph capture for repeated kernel sequences.
-
-#### CUDA Graph Capture Pattern
-
-```cpp
-// include/cuda/production/graph_capture.hpp
-#pragma once
-
-#include <cuda_runtime.h>
-#include <memory>
-#include <functional>
-
-namespace nova::production {
-
-class GraphCapture {
+// FlashAttention algorithm interface
+class FlashAttention {
 public:
     struct Config {
-        bool enabled = false;
-        size_t warmup_iterations = 10;
-        size_t capture_iterations = 5;
-        size_t max_graphs = 4;  // Cache multiple graph sizes
+        bool enable_dropout = false;
+        float dropout_scale = 1.0f;
+        bool enable_causal_mask = true;
+        int num_splits = 1;  // For very long sequences
+        int tile_size = 64;
+        bool is_fp16 = true;
+        bool is_bias = false;
     };
-    
-    GraphCapture() = default;
-    explicit GraphCapture(const Config& config);
-    ~GraphCapture();
-    
-    // Disable copying (GPU resources)
-    GraphCapture(const GraphCapture&) = delete;
-    GraphCapture& operator=(const GraphCapture&) = delete;
-    
-    // Move semantics
-    GraphCapture(GraphCapture&& other) noexcept;
-    GraphCapture& operator=(GraphCapture&& other) noexcept;
-    
-    // Begin capture - all CUDA calls until end_capture() are recorded
-    void begin_capture(cudaStream_t stream);
-    
-    // End capture and instantiate graph
-    bool end_capture();
-    
-    // Execute captured graph
-    void execute(cudaStream_t stream);
-    
-    // Execute with automatic warmup and capture
-    void execute_with_warmup(cudaStream_t stream);
-    
-    // Check if graph is available for current size
-    bool has_cached_graph(size_t working_size) const;
-    
-    // Clear cached graphs
-    void clear_cache();
-    
-    // Performance metrics
-    struct GraphMetrics {
-        bool is_valid;
-        size_t node_count;
-        float capture_time_ms;
-        float execution_time_ms;
-        float speedup_vs_direct;
-    };
-    GraphMetrics get_metrics() const;
+
+    FlashAttention() = default;
+    explicit FlashAttention(const Config& config) : config_(config) {}
+
+    // Forward pass: Q (query), K (key), V (value) -> O (output)
+    void forward(
+        memory::Buffer& output,
+        const memory::Buffer& query,    // [seq_len, batch, num_heads, head_dim]
+        const memory::Buffer& key,
+        const memory::Buffer& value,
+        memory::Buffer& softmax_lse,     // [num_heads, num_blocks] log-sum-exp
+        const Stream& stream
+    );
+
+    // Backward pass for training
+    void backward(
+        memory::Buffer& dq,
+        memory::Buffer& dk,
+        memory::Buffer& dv,
+        const memory::Buffer& output,
+        const memory::Buffer& dout,
+        const memory::Buffer& query,
+        const memory::Buffer& key,
+        const memory::Buffer& value,
+        const memory::Buffer& softmax_lse,
+        const Stream& stream
+    );
+
+    Config config() const { return config_; }
+    void set_config(const Config& config) { config_ = config; }
 
 private:
     Config config_;
-    cudaGraph_t graph_ = nullptr;
-    cudaGraphExec_t graph_exec_ = nullptr;
-    cudaStream_t capture_stream_ = nullptr;
-    bool capturing_ = false;
-    bool warmed_up_ = false;
-    size_t working_size_ = 0;
-    
-    GraphMetrics metrics_;
 };
 
-}  // namespace nova::production
+// Factory for creating FlashAttention with appropriate kernel
+std::unique_ptr<FlashAttention> create_flash_attention(
+    const FlashAttention::Config& config,
+    int num_heads,
+    int head_dim
+);
+
+}  // namespace nova::algo
 ```
 
-#### Algorithm-Level Graph Integration
+### 1.3 Replacement Pattern for Standard Attention
+
+FlashAttention replaces standard attention in the `TransformerLayer` while maintaining the same interface:
 
 ```cpp
-// include/cuda/production/optimized_algorithm.hpp
-#pragma once
+// include/cuda/neural/transformer_layer.h (extension)
+namespace nova::neural {
 
-#include "graph_capture.hpp"
-#include <functional>
+// Configurable attention backend
+enum class AttentionBackend {
+    Standard,      // Original implementation
+    FlashAttention, // FlashAttention v2/v3
+    PagedAttention // vLLM-style block attention
+};
 
-namespace nova::production {
-
-// Mixin for algorithms that benefit from CUDA Graph
-template<typename BaseAlgorithm>
-class GraphOptimizedAlgorithm : public BaseAlgorithm {
+template<typename Config>
+class TransformerLayer {
 public:
-    using BaseAlgorithm::BaseAlgorithm;
-    
-    void set_graph_config(typename GraphCapture::Config config) {
-        graph_config_ = config;
-        graph_capture_ = std::make_unique<GraphCapture>(config);
-    }
-    
-protected:
-    // Hook for subclasses to wrap their operations
-    void execute_with_graph_capture(std::function<void()> operations,
-                                    cudaStream_t stream) {
-        if (graph_capture_ && graph_config_.enabled) {
-            if (!graph_capture_->has_cached_graph(working_size_)) {
-                graph_capture_->begin_capture(stream);
-                operations();
-                if (graph_capture_->end_capture()) {
-                    graph_capture_->execute_with_warmup(stream);
-                }
-            } else {
-                graph_capture_->execute(stream);
-            }
-        } else {
-            operations();
+    void set_attention_backend(AttentionBackend backend) {
+        attention_backend_ = backend;
+        
+        switch (backend) {
+            case AttentionBackend::FlashAttention:
+                attention_impl_ = std::make_unique<algo::FlashAttention>(
+                    flash_attention_config_
+                );
+                break;
+            case AttentionBackend::Standard:
+                attention_impl_ = std::make_unique<MHAImpl>(...);
+                break;
+            // PagedAttention handled separately via KVCacheManager
         }
     }
-    
-    std::unique_ptr<GraphCapture> graph_capture_;
-    typename GraphCapture::Config graph_config_;
-    size_t working_size_ = 0;
+
+private:
+    AttentionBackend attention_backend_ = AttentionBackend::FlashAttention;
+    std::unique_ptr<AttentionImpl> attention_impl_;
+    algo::FlashAttention::Config flash_attention_config_;
 };
 
-}  // namespace nova::production
+}  // namespace nova::neural
 ```
 
-### 2.2 Stream Priority Integration
+---
 
-**Existing:** `StreamManager` already supports priority streams with `get_high_priority_stream()` and `get_low_priority_stream()`.
+## 2. KV Cache Allocator
 
-**Enhancement:** Add priority-aware scheduling for algorithm operations.
+### 2.1 KV Cache Memory Layout
+
+The KV cache stores key and value tensors for all tokens in the sequence, accessed during autoregressive decoding.
+
+**Memory layout options:**
+
+| Layout | Shape | Access Pattern | Memory Efficiency |
+|--------|-------|----------------|-------------------|
+| Contiguous | [seq_len, batch, num_heads, head_dim] | Sequential | High for prefill, wasted during decode |
+| Paged (vLLM) | Fixed blocks with pointers | Random access | High fragmentation control |
+| Hybrid | Contiguous + paged swap | Mixed | Best of both worlds |
+
+**For Nova:** Paged layout is recommended for inference workloads due to variable sequence lengths.
+
+### 2.2 KV Cache Allocator Design
 
 ```cpp
-// include/cuda/production/stream_priority.hpp
+// include/cuda/memory/kv_cache_allocator.h
 #pragma once
 
-#include "cuda/async/stream_manager.h"
-#include <unordered_map>
-
-namespace nova::production {
-
-enum class OperationPriority {
-    Critical = 0,    // Highest priority (lowest number)
-    High = 1,
-    Normal = 2,
-    Low = 3,
-    Background = 4   // Lowest priority
-};
-
-class PriorityScheduler {
-public:
-    struct Operation {
-        std::function<void()> func;
-        OperationPriority priority;
-        const char* name;
-    };
-    
-    explicit PriorityScheduler(int num_priorities = 5);
-    
-    // Submit operation to priority queue
-    void submit(Operation op);
-    
-    // Execute all pending operations, higher priority first
-    void execute_all();
-    
-    // Get priority range from hardware
-    static cuda::async::PriorityRange get_priority_range();
-    
-    // Map logical priority to hardware priority
-    int to_hardware_priority(OperationPriority priority);
-
-private:
-    std::vector<std::vector<Operation>> priority_queues_;
-    int num_priorities_;
-};
-
-// RAII scoped priority assignment
-class ScopedOperationPriority {
-public:
-    ScopedOperationPriority(OperationPriority priority);
-    ~ScopedOperationPriority();
-    
-    static OperationPriority current();
-    
-private:
-    static thread_local OperationPriority current_priority_;
-};
-
-}  // namespace nova::production
-```
-
-### 2.3 Performance Hook Integration
-
-```cpp
-// include/cuda/production/performance_hooks.hpp
-#pragma once
-
-#include "cuda/performance/profiler.h"
-#include <functional>
-
-namespace nova::production {
-
-class PerformanceHookRegistry {
-public:
-    using PreOperationHook = std::function<void(const char* op_name)>;
-    using PostOperationHook = std::function<void(const char* op_name, float elapsed_ms)>;
-    
-    static PerformanceHookRegistry& instance();
-    
-    void register_pre_hook(PreOperationHook hook);
-    void register_post_hook(PostOperationHook hook);
-    
-    void invoke_pre(const char* op_name) {
-        for (const auto& hook : pre_hooks_) hook(op_name);
-    }
-    
-    void invoke_post(const char* op_name, float elapsed_ms) {
-        for (const auto& hook : post_hooks_) hook(op_name, elapsed_ms);
-    }
-
-private:
-    std::vector<PreOperationHook> pre_hooks_;
-    std::vector<PostOperationHook> post_hooks_;
-};
-
-// Macro for automatic performance tracking
-#define NOVA_PROFILE_OPERATION(op_name, operation) \
-    do { \
-        nova::production::PerformanceHookRegistry::instance().invoke_pre(op_name); \
-        auto __start = std::chrono::steady_clock::now(); \
-        operation; \
-        auto __end = std::chrono::steady_clock::now(); \
-        float __elapsed = std::chrono::duration<float, std::milli>(__end - __start).count(); \
-        nova::production::PerformanceHookRegistry::instance().invoke_post(op_name, __elapsed); \
-    } while (0)
-
-}  // namespace nova::production
-```
-
-## 3. Stress Testing Infrastructure
-
-### 3.1 Current Fuzz Testing Architecture
-
-**Existing in `tests/fuzz/`:**
-- `memory_pool_fuzz.cpp` - Memory allocation fuzzing
-- `algorithm_fuzz.cpp` - Algorithm input fuzzing
-- `matmul_fuzz.cpp` - Matrix multiplication fuzzing
-
-**Gap for v2.4:**
-- No stream-specific fuzzing
-- No multi-GPU stress testing
-- No error injection testing
-
-### 3.2 Stress Testing Infrastructure Pattern
-
-```cpp
-// include/cuda/production/stress_test.hpp
-#pragma once
-
-#include <random>
-#include <functional>
-#include <atomic>
-
-namespace nova::production::stress {
-
-// Stress test configuration
-struct StressConfig {
-    size_t max_iterations = 10000;
-    size_t timeout_seconds = 300;
-    float failure_threshold = 0.01f;  // 1% failure rate threshold
-    size_t memory_stress_size = 1 << 30;  // 1GB max allocation
-    bool enable_error_injection = false;
-    float error_injection_rate = 0.001f;  // 0.1% error injection
-    size_t concurrent_operations = 4;
-};
-
-// Error injection types
-enum class InjectErrorType {
-    CudaError,
-    MemoryFailure,
-    Timeout,
-    Corruption,
-    StreamError
-};
-
-class ErrorInjector {
-public:
-    explicit ErrorInjector(float injection_rate);
-    
-    bool should_inject() {
-        return distribution_(rng_) < injection_rate_;
-    }
-    
-    void set_error_type(InjectErrorType type);
-    cudaError_t get_injected_error();
-
-private:
-    std::mt19937 rng_;
-    std::uniform_real_distribution<float> distribution_;
-    float injection_rate_;
-    InjectErrorType error_type_ = InjectErrorType::CudaError;
-};
-
-// Stress test runner
-class StressRunner {
-public:
-    explicit StressRunner(const StressConfig& config);
-    
-    // Register a stress test
-    void register_test(const char* name, 
-                       std::function<bool()> test_func,
-                       std::function<void()> setup = nullptr,
-                       std::function<void()> teardown = nullptr);
-    
-    // Run all registered tests
-    struct StressResults {
-        size_t total_runs;
-        size_t total_failures;
-        float failure_rate;
-        std::chrono::milliseconds total_time;
-        std::unordered_map<std::string, size_t> failures_by_test;
-    };
-    
-    StressResults run();
-    
-    // Run with parallel workers
-    StressResults run_parallel(size_t num_workers);
-    
-private:
-    struct TestCase {
-        const char* name;
-        std::function<bool()> test_func;
-        std::function<void()> setup;
-        std::function<void()> teardown;
-    };
-    
-    StressConfig config_;
-    std::vector<TestCase> tests_;
-    std::atomic<bool> should_stop_{false};
-};
-
-}  // namespace nova::production::stress
-```
-
-### 3.3 Integration with Existing Test Framework
-
-```cpp
-// tests/production/stress_test.cpp
-#include "cuda/production/stress_test.hpp"
-#include <gtest/gtest.h>
-
-namespace nova {
-namespace production {
-namespace stress {
-namespace test {
-
-// Example: Stream stress test
-class StreamStressTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        cudaDeviceReset();
-        config_ = StressConfig{
-            .max_iterations = 1000,
-            .timeout_seconds = 60,
-            .concurrent_operations = 4
-        };
-    }
-    
-    StressConfig config_;
-};
-
-TEST_F(StreamStressTest, ConcurrentStreamOperations) {
-    StressRunner runner(config_);
-    
-    runner.register_test("stream_create_destroy", []() {
-        cuda::stream::Stream stream;
-        return stream.get() != nullptr;
-    });
-    
-    runner.register_test("stream_priority", []() {
-        auto range = cuda::async::get_stream_priority_range();
-        if (range.min_priority >= range.max_priority) return true;  // Skip if no priority support
-        
-        cuda::stream::Stream high_priority(range.min_priority, cudaStreamNonBlocking);
-        cuda::stream::Stream low_priority(range.max_priority, cudaStreamNonBlocking);
-        return high_priority.get() && low_priority.get();
-    });
-    
-    auto results = runner.run_parallel(4);
-    EXPECT_LT(results.failure_rate, config_.failure_threshold);
-}
-
-// Example: Memory pool stress test
-class MemoryPoolStressTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        cudaDeviceReset();
-        config_ = StressConfig{
-            .max_iterations = 500,
-            .timeout_seconds = 120,
-            .memory_stress_size = 1 << 28  // 256MB
-        };
-    }
-    
-    StressConfig config_;
-};
-
-TEST_F(MemoryPoolStressTest, AllocationDeallocationCycle) {
-    StressRunner runner(config_);
-    std::mt19937 rng(42);
-    std::uniform_int_distribution<size_t> size_dist(1024, 1 << 20);
-    
-    runner.register_test("pool_alloc_dealloc", [&]() {
-        cuda::memory::MemoryPool pool;
-        std::vector<void*> ptrs;
-        
-        for (size_t i = 0; i < 100; ++i) {
-            void* ptr = pool.allocate(size_dist(rng));
-            if (!ptr) return false;
-            ptrs.push_back(ptr);
-        }
-        
-        for (void* ptr : ptrs) {
-            pool.deallocate(ptr, 0);
-        }
-        return true;
-    });
-    
-    auto results = runner.run();
-    EXPECT_EQ(results.total_failures, 0);
-}
-
-}  // namespace test
-}  // namespace stress
-}  // namespace production
-}  // namespace nova
-```
-
-### 3.4 Edge Case Coverage Map
-
-| Edge Case Category | Current Coverage | v2.4 Enhancement |
-|-------------------|------------------|------------------|
-| Large allocations | Basic fuzzing | Multi-GB allocation stress |
-| Concurrent streams | Missing | Stream race condition tests |
-| Error propagation | Missing | Error injection framework |
-| Memory fragmentation | Partial | Long-running fragmentation tests |
-| Device failover | Missing | Multi-device fallback tests |
-| Timeout handling | Missing | Operation timeout tests |
-
-## 4. Reliability Monitoring Integration
-
-### 4.1 Current Monitoring Infrastructure
-
-**Existing:**
-- `DeviceHealthMonitor` - Device health tracking
-- `MemoryErrorHandler` - Error classification and recovery
-- `Profiler` - Kernel timing and bandwidth
-- `MemoryPool::PoolMetrics` - Pool statistics
-
-**Gap for v2.4:**
-- No unified observability layer
-- No correlation between errors and performance
-- No alerting infrastructure
-
-### 4.2 Unified Monitoring Architecture
-
-```cpp
-// include/cuda/production/monitor.hpp
-#pragma once
-
-#include <chrono>
-#include <unordered_map>
+#include "cuda/memory/buffer.h"
+#include <cstddef>
 #include <vector>
-#include <functional>
-#include <mutex>
+#include <unordered_map>
 
-namespace nova::production::monitor {
+namespace nova::memory {
 
-// Health levels for system components
-enum class HealthLevel {
-    Healthy,
-    Degraded,
-    Critical,
-    Failed
-};
-
-// Metric types
-enum class MetricType {
-    Counter,
-    Gauge,
-    Histogram,
-    Duration
-};
-
-struct MetricValue {
-    double value;
-    std::chrono::steady_clock::time_point timestamp;
-};
-
-class MetricsCollector {
+class KVCacheAllocator {
 public:
-    static MetricsCollector& instance();
-    
-    // Register a metric
-    void register_metric(const std::string& name, MetricType type);
-    
-    // Record metric values
-    void record_counter(const std::string& name, double delta = 1.0);
-    void record_gauge(const std::string& name, double value);
-    void record_histogram(const std::string& name, double value);
-    void record_duration(const std::string& name, std::chrono::microseconds duration);
-    
-    // Query metrics
-    std::vector<MetricValue> get_metric(const std::string& name,
-                                         std::chrono::steady_clock::time_point since);
-    double get_rate(const std::string& counter_name,
-                    std::chrono::seconds window);
+    struct Block {
+        void* data;                  // GPU pointer to block memory
+        int block_id;                // Unique identifier
+        int num_tokens;              // Tokens in this block
+        bool is_allocated;           // Currently in use
+        int64_t sequence_id;         // Which sequence owns this
+        Block* prev;                 // Linked list for sequence
+        Block* next;
+    };
+
+    struct Config {
+        int num_heads = 32;
+        int head_dim = 128;
+        int max_block_tokens = 16;   // Tokens per block (power of 2)
+        int num_blocks = 1024;       // Total blocks (determines max memory)
+        int num_layers = 32;         // For multi-layer models
+        bool enable_prefix_caching = true;
+    };
+
+    explicit KVCacheAllocator(const Config& config);
+    ~KVCacheAllocator();
+
+    // Allocate blocks for a new sequence
+    std::vector<Block*> allocate(int64_t sequence_id, int num_tokens);
+
+    // Append tokens to existing sequence (during decoding)
+    std::vector<Block*> append(int64_t sequence_id, int num_tokens);
+
+    // Free all blocks for a sequence
+    void free(int64_t sequence_id);
+
+    // Evict blocks when memory pressure (LRU)
+    void evict(int num_blocks_needed);
+
+    // Get blocks for a sequence (for attention computation)
+    std::vector<Block*> get_blocks(int64_t sequence_id) const;
+
+    // Block-level access for paged attention
+    Block* get_block(int64_t sequence_id, int block_index) const;
+
+    // Prefix caching: find blocks matching prefix tokens
+    struct PrefixMatch {
+        int64_t sequence_id;
+        int num_matching_tokens;
+        int first_block_index;
+    };
+    std::optional<PrefixMatch> find_prefix_match(
+        const void* prefix_tokens,
+        int prefix_length
+    ) const;
+
+    // Statistics
+    struct KVCacheStats {
+        int total_blocks;
+        int allocated_blocks;
+        int free_blocks;
+        float fragmentation_percent;
+        size_t total_memory;
+        size_t used_memory;
+    };
+    KVCacheStats get_stats() const;
 
 private:
-    MetricsCollector() = default;
-    std::mutex mutex_;
-    std::unordered_map<std::string, std::vector<MetricValue>> metrics_;
-    std::unordered_map<std::string, MetricType> metric_types_;
+    Config config_;
+    std::vector<Block> blocks_;                    // All blocks
+    std::vector<Block*> free_list_;                // Available blocks
+    std::unordered_map<int64_t, std::vector<Block*>> sequence_blocks_;
+    std::unordered_map<int64_t, std::pair<Block*, Block*>> sequence_ranges_;
+    
+    // Prefix cache index: hash(tokens) -> block
+    std::unordered_map<uint64_t, Block*> prefix_cache_;
 };
 
-// Health monitoring
-class HealthMonitor {
-public:
-    struct ComponentHealth {
-        std::string component_name;
-        HealthLevel level;
-        std::string message;
-        std::chrono::steady_clock::time_point last_check;
-    };
-    
-    static HealthMonitor& instance();
-    
-    // Register component for monitoring
-    void register_component(const std::string& name,
-                            std::function<ComponentHealth()> check_func);
-    
-    // Get health of all components
-    std::vector<ComponentHealth> get_all_health();
-    
-    // Get overall system health
-    HealthLevel get_overall_health();
-    
-    // Set alert callback
-    using AlertCallback = std::function<void(HealthLevel, const std::string&, const std::string&)>;
-    void set_alert_callback(AlertCallback callback);
-
-private:
-    struct Component {
-        std::string name;
-        std::function<ComponentHealth()> check_func;
-        HealthLevel last_level = HealthLevel::Healthy;
-    };
-    
-    std::mutex mutex_;
-    std::vector<Component> components_;
-    AlertCallback alert_callback_;
-};
-
-// Event correlation for debugging
-class EventCorrelator {
-public:
-    struct Event {
-        std::string type;
-        std::string source;
-        std::string message;
-        std::chrono::steady_clock::time_point timestamp;
-        std::unordered_map<std::string, std::string> metadata;
-    };
-    
-    static EventCorrelator& instance();
-    
-    void record_event(Event event);
-    
-    // Find correlated events within time window
-    std::vector<Event> find_correlated(const std::string& event_type,
-                                        std::chrono::milliseconds window);
-    
-    // Get event timeline for diagnosis
-    struct TimelineEntry {
-        std::chrono::steady_clock::time_point time;
-        std::string event_type;
-        std::string summary;
-        bool is_error;
-    };
-    std::vector<TimelineEntry> get_timeline(std::chrono::milliseconds window);
-
-private:
-    EventCorrelator() = default;
-    std::mutex mutex_;
-    std::vector<Event> events_;
-    static constexpr size_t MAX_EVENTS = 10000;
-};
-
-}  // namespace nova::production::monitor
+}  // namespace nova::memory
 ```
 
-### 4.3 Integration Points for Existing Components
+### 2.3 Integration with Memory Layer
+
+The `KVCacheAllocator` extends the memory layer with inference-specific allocation patterns:
 
 ```cpp
-// Extension: cuda/memory/memory_pool.h additions
+// Extension to cuda/memory/memory_pool.h
 
 namespace cuda::memory {
 
 class MemoryPool {
 public:
     // Existing methods...
-    
-    // New: Register with health monitor
-    void register_with_monitor() {
-        monitor::HealthMonitor::instance().register_component(
-            "memory_pool",
-            [this]() -> monitor::HealthMonitor::ComponentHealth {
-                auto metrics = get_metrics();
-                double utilization = (double)metrics.peak_allocated_bytes / 
-                                    (config_.block_size * config_.max_blocks);
-                
-                HealthLevel level = HealthLevel::Healthy;
-                std::string msg;
-                
-                if (utilization > 0.95) {
-                    level = HealthLevel::Critical;
-                    msg = "Memory pool near capacity";
-                } else if (utilization > 0.8) {
-                    level = HealthLevel::Degraded;
-                    msg = "Memory pool under pressure";
-                }
-                
-                return { "memory_pool", level, msg, std::chrono::steady_clock::now() };
-            }
-        );
+
+    // New: Get KV cache allocator (if configured)
+    KVCacheAllocator* get_kv_cache() const {
+        return kv_cache_.get();
     }
-    
-    // New: Record metrics
-    void record_metrics() {
-        auto metrics = get_metrics();
-        auto& collector = monitor::MetricsCollector::instance();
-        collector.record_gauge("memory_pool_allocated", metrics.peak_allocated_bytes);
-        collector.record_counter("memory_pool_hits", metrics.hits);
-        collector.record_counter("memory_pool_misses", metrics.misses);
-        collector.record_gauge("memory_pool_fragmentation", metrics.fragmentation_percent);
+
+    // New: Set KV cache allocator
+    void set_kv_cache(std::unique_ptr<KVCacheAllocator> allocator) {
+        kv_cache_ = std::move(allocator);
     }
+
+private:
+    std::unique_ptr<KVCacheAllocator> kv_cache_;
 };
 
 }  // namespace cuda::memory
 ```
 
+---
+
+## 3. Paged Attention Block Manager
+
+### 3.1 vLLM Block Manager Design Patterns
+
+The vLLM block manager implements paged attention with physical/physical block mapping:
+
+**Key concepts:**
+- **Logical blocks:** Tokens as they appear in the sequence
+- **Physical blocks:** Fixed-size GPU memory allocations
+- **Block table:** Mapping from logical to physical blocks
+
+**vLLM patterns to adopt:**
+
+| Pattern | vLLM Implementation | Nova Adaptation |
+|---------|---------------------|-----------------|
+| Block allocation | Lazy allocation on token generation | Batch allocation on sequence start |
+| Block eviction | LRU when memory exhausted | Coordinated with KVCacheAllocator |
+| Cross-request sharing | Prefix caching via hash | Nova prefix_cache_ map |
+| GPU-CPU sync | cudaEvent polling | Stream synchronization |
+
+### 3.2 Paged Attention Integration
+
 ```cpp
-// Extension: cuda/stream/stream.h additions
+// include/cuda/inference/block_manager.h (NEW MODULE)
+#pragma once
 
-namespace cuda::stream {
+#include "cuda/memory/kv_cache_allocator.h"
+#include "cuda/algo/flash_attention.h"
+#include <memory>
+#include <shared_mutex>
+#include <unordered_map>
 
-class Stream {
+namespace nova::inference {
+
+class BlockManager {
 public:
-    // Existing methods...
-    
-    // New: Register stream metrics
-    void register_metrics(const std::string& name) {
-        auto& collector = monitor::MetricsCollector::instance();
-        collector.register_metric("stream_" + name + "_pending", MetricType::Gauge);
-        collector.register_metric("stream_" + name + "_errors", MetricType::Counter);
+    struct Config {
+        int max_model_len = 8192;
+        int block_size = 16;
+        int num_cpu_blocks = 2048;
+        int num_gpu_blocks = 4096;
+        bool enable_cuda_graph = true;
+    };
+
+    explicit BlockManager(const Config& config);
+    ~BlockManager();
+
+    // Sequence management
+    struct Sequence {
+        int64_t id;
+        int64_t created_at;
+        int num_tokens;
+        std::vector<int> logical_blocks;  // Block table (logical -> physical)
         
-        monitor::HealthMonitor::instance().register_component(
-            "stream_" + name,
-            [this, name]() -> monitor::HealthMonitor::ComponentHealth {
-                HealthLevel level = HealthLevel::Healthy;
-                return { "stream_" + name, level, "Stream healthy",
-                        std::chrono::steady_clock::now() };
-            }
-        );
-    }
+        // For FlashAttention: contiguous views of KV cache
+        memory::Buffer k_cache_view;
+        memory::Buffer v_cache_view;
+    };
+
+    // Create a new sequence
+    Sequence* create_sequence(int64_t sequence_id, int max_tokens);
+
+    // Add tokens to sequence (during autoregressive generation)
+    void append_tokens(int64_t sequence_id, int num_tokens);
+
+    // Get sequence
+    Sequence* get_sequence(int64_t sequence_id);
+    const Sequence* get_sequence(int64_t sequence_id) const;
+
+    // Free sequence
+    void free_sequence(int64_t sequence_id);
+
+    // Batch forward pass with paged attention
+    void forward_batch(
+        const std::vector<int64_t>& sequence_ids,
+        const memory::Buffer& query,
+        memory::Buffer& output,
+        const Stream& stream
+    );
+
+    // Memory management
+    void maybe_evict();
+    int get_num_free_blocks() const;
+
+private:
+    void allocate_blocks_for_sequence(Sequence* seq, int num_blocks);
+
+    Config config_;
+    std::unordered_map<int64_t, std::unique_ptr<Sequence>> sequences_;
+    std::shared_mutex sequence_mutex_;
+    
+    std::unique_ptr<memory::KVCacheAllocator> kv_cache_;
+    std::unique_ptr<algo::FlashAttention> attention_;
+    
+    // Block allocation tracking
+    std::vector<int> block_refcount_;  // Reference count per block
+    std::vector<int> free_blocks_;
+    int num_allocated_blocks_ = 0;
 };
 
-}  // namespace cuda::stream
+// Paged attention kernel interface
+class PagedAttention {
+public:
+    // Compute attention using block tables
+    static void forward(
+        memory::Buffer& output,
+        const memory::Buffer& query,
+        const memory::Buffer& key_cache,
+        const memory::Buffer& value_cache,
+        const std::vector<int>& block_table,  // Logical -> physical mapping
+        int num_tokens,
+        int num_heads,
+        int head_dim,
+        int block_size,
+        const Stream& stream
+    );
+};
+
+}  // namespace nova::inference
 ```
 
-### 4.4 Production Layer Component Map
+### 3.3 New Inference Module Structure
 
 ```
-Production Layer (cuda/production/)
-├── include/cuda/production/
-│   ├── error_categories.hpp     # Algorithm-specific error codes
-│   ├── result.hpp               # Recovery-aware Result<T> type
-│   ├── error_hook.hpp           # Error callback registry
-│   ├── graph_capture.hpp        # CUDA Graph capture utilities
-│   ├── optimized_algorithm.hpp  # Graph optimization mixin
-│   ├── stream_priority.hpp      # Priority scheduling
-│   ├── performance_hooks.hpp    # Performance callbacks
-│   ├── stress_test.hpp          # Stress testing framework
-│   ├── monitor.hpp              # Unified monitoring
-│   ├── health_monitor.hpp       # Health checking
-│   └── reliability.hpp          # High-level reliability API
+include/cuda/inference/
+├── block_manager.h          # Paged attention block manager
+├── sequence_manager.h       # Sequence lifecycle management
+├── scheduler.h              # Batching and scheduling
+├── cache_manager.h          # KV cache coordination
+├── paged_attention.h        # Paged attention kernels
+└── types.h                  # Common inference types
 ```
-
-## 5. Recommended Implementation Order
-
-### Phase 1: Error Handling Foundation (Week 1-2)
-1. Create `cuda/production/error_categories.hpp`
-2. Create `cuda/production/result.hpp` with `Result<T>`
-3. Add `allocate_with_retry` to MemoryPool
-4. Add error hook registration to Stream class
-
-### Phase 2: Monitoring Infrastructure (Week 2-3)
-1. Create `cuda/production/monitor.hpp`
-2. Integrate health monitoring with DeviceHealthMonitor
-3. Add MetricsCollector singleton
-4. Register existing components (MemoryPool, StreamManager)
-
-### Phase 3: Performance Optimization (Week 3-4)
-1. Create `cuda/production/graph_capture.hpp`
-2. Add CUDA Graph capture to priority operations
-3. Create `cuda/production/stream_priority.hpp`
-4. Integrate with StreamManager for priority-aware scheduling
-
-### Phase 4: Stress Testing (Week 4-5)
-1. Create `cuda/production/stress_test.hpp`
-2. Add stream stress tests
-3. Add memory pool fragmentation tests
-4. Integrate error injection framework
-
-### Phase 5: Integration and Polish (Week 5-6)
-1. Integrate all production hooks with algorithm layer
-2. Add comprehensive stress test coverage
-3. Performance regression testing
-4. Documentation and examples
-
-## 6. Backward Compatibility Checklist
-
-| Change | Compatibility Impact | Mitigation |
-|--------|---------------------|------------|
-| New `production/` layer | None (additive) | New namespace, no existing code affected |
-| MemoryPool extensions | Low | New methods optional, existing APIs unchanged |
-| Stream extensions | Low | New tracked stream is opt-in |
-| Result<T> type | None | New type, replaces manual error handling where used |
-| Stress test framework | None | Test-only code, not linked into library |
-
-## Anti-Patterns to Avoid
-
-### Anti-Pattern 1: Global Mutable State in Performance Path
-
-**What:** Singleton monitors modifying state during kernel execution.
-
-**Why bad:** Monitoring overhead affects production performance.
-
-**Do this instead:** Use lock-free data structures, batch metric collection, async reporting.
-
-### Anti-Pattern 2: Mandatory Production Overhead
-
-**What:** Force all users to pay for production hardening features.
-
-**Why bad:** Users who don't need production features suffer performance penalty.
-
-**Do this instead:** All production features are opt-in via compile-time flags or runtime configuration.
-
-### Anti-Pattern 3: Duplicate Error Handling
-
-**What:** Production layer reimplements error handling that exists in `cuda_error.hpp`.
-
-**Why bad:** Inconsistent behavior, maintenance burden.
-
-**Do this instead:** Extend existing `cuda_error.hpp` with production-specific categories, don't duplicate.
-
-### Anti-Pattern 4: Blocking Monitoring Calls
-
-**What:** Health checks that block on device queries during critical path.
-
-**Why bad:** Latency spikes in production workloads.
-
-**Do this instead:** Async health checks, cached health state, separate monitoring thread.
-
-## Sources
-
-- NVIDIA CUDA Programming Guide - CUDA Graphs
-- Existing Nova codebase patterns (`cuda/error/`, `cuda/async/`, `cuda/memory/`)
-- CUDA Best Practices Guide - Performance Optimization
-- libFuzzer documentation for stress testing
 
 ---
 
-*Architecture research for: Nova CUDA Library v2.4 Production Hardening*
-*Researched: 2026-04-28*
+## 4. Sequence Parallelism Extension
+
+### 4.1 Sequence Parallelism Patterns
+
+Sequence parallelism distributes sequence dimension across GPUs, complementing tensor parallelism (which splits attention heads).
+
+**Parallelism strategies:**
+
+| Strategy | Dimension | Communication | Use Case |
+|----------|-----------|---------------|----------|
+| Tensor Parallelism | Head dim | AllReduce per layer | Single-node multi-GPU |
+| Pipeline Parallelism | Layer | P2P activation pass | Multi-node scaling |
+| Sequence Parallelism | Sequence | AllReduce attention output | Long context |
+
+**Integration with existing distributed/ module:**
+
+```cpp
+// include/cuda/distributed/sequence_parallel.h (new file)
+#pragma once
+
+#include "cuda/distributed/common.h"
+#include "cuda/memory/buffer.h"
+
+namespace nova::distributed {
+
+// Sequence parallelism for attention
+class SequenceParallelAttention {
+public:
+    struct Config {
+        int num_model_parallel_gpus = 1;
+        int sequence_parallel_size = 1;  // Spans this many GPUs
+        bool reduce_scatter_output = true;
+    };
+
+    explicit SequenceParallelAttention(const Config& config);
+
+    // All-gather keys/values across sequence dimension
+    void gather_kv(
+        memory::Buffer& gathered_k,
+        memory::Buffer& gathered_v,
+        const memory::Buffer& local_k,
+        const memory::Buffer& local_v,
+        const Communicator& comm
+    );
+
+    // Reduce-scatter attention output
+    void scatter_output(
+        memory::Buffer& local_output,
+        const memory::Buffer& full_output,
+        const Communicator& comm
+    );
+
+    // Combined all-reduce for non-attention layers
+    void all_reduce_sequence(
+        memory::Buffer& data,
+        const Communicator& comm
+    );
+
+private:
+    Config config_;
+};
+
+// Ring sequence parallelism (for very long sequences)
+class RingSequenceParallelism {
+public:
+    struct Config {
+        int num_gpus;
+        int ring_size;
+    };
+
+    explicit RingSequenceParallelism(const Config& config);
+
+    // Ring attention: pass KV around the ring
+    void ring_attention(
+        memory::Buffer& query,
+        memory::Buffer& key,
+        memory::Buffer& value,
+        memory::Buffer& output,
+        const Communicator& comm
+    );
+
+private:
+    Config config_;
+};
+
+}  // namespace nova::distributed
+```
+
+### 4.2 Integration with Existing Distributed Module
+
+The sequence parallelism extension adds to existing TP/PP patterns:
+
+```cpp
+// include/cuda/distributed/matmul.h (existing) - extension
+namespace nova::distributed {
+
+class TensorParallelMatmul {
+public:
+    // Existing methods...
+
+    // New: Check if sequence parallelism is enabled
+    bool has_sequence_parallelism() const {
+        return seq_parallel_size_ > 1;
+    }
+
+    // New: Get sequence parallel communicator
+    Communicator get_sequence_comm() const {
+        return seq_comm_;
+    }
+
+private:
+    int seq_parallel_size_ = 1;
+    Communicator seq_comm_;
+};
+
+}  // namespace nova::distributed
+```
+
+---
+
+## 5. Component Interaction Diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              Inference Session                                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────┐     ┌──────────────────┐     ┌─────────────────────────┐   │
+│  │  Scheduler  │────▶│  SequenceManager │────▶│     BlockManager        │   │
+│  │ (Batching)  │     │ (Lifecycle)      │     │ (Paged Attention)       │   │
+│  └─────────────┘     └──────────────────┘     └───────────┬─────────────┘   │
+│          │                    │                            │                 │
+│          ▼                    ▼                            ▼                 │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      KVCacheAllocator                                │    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐  │    │
+│  │  │Free List    │  │Sequence Map│  │ Prefix Cache (hash → block) │  │    │
+│  │  └─────────────┘  └─────────────┘  └─────────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                      │                                      │
+└──────────────────────────────────────┼──────────────────────────────────────┘
+                                       │
+                    ┌──────────────────┼──────────────────┐
+                    ▼                  ▼                  ▼
+           ┌────────────────┐ ┌────────────────┐ ┌─────────────────┐
+           │ FlashAttention │ │  PagedAttn     │ │ SequenceParallel│
+           │    (Algo)      │ │  Kernel        │ │  (Distributed)  │
+           └────────────────┘ └────────────────┘ └─────────────────┘
+```
+
+---
+
+## 6. Memory Layout for Attention
+
+### 6.1 KV Cache Memory Layout (Paged)
+
+```
+Physical Block N (16 tokens, 32 heads, 128 head_dim, FP16)
+┌──────────────────────────────────────────────────────────────────────┐
+│ [Token 0] K: [H0][H1][H2]...[H31]  V: [H0][H1][H2]...[H31]          │
+│ [Token 1] K: [H0][H1][H2]...[H31]  V: [H0][H1][H2]...[H31]          │
+│ ...                                                                 │
+│ [Token 15] K: [H0][H1][H2]...[H31] V: [H0][H1][H2]...[H31]          │
+└──────────────────────────────────────────────────────────────────────┘
+
+Block Table (per sequence)
+┌─────────────────────────────────────────────────────────────────────┐
+│ Logical: [0] [1] [2] [3] ... [N-1] (token indices)                  │
+│ Physical: [3] [7] [2] [15] ... [1] (block indices, may be sparse)   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 6.2 FlashAttention Tile Layout
+
+```
+FlashAttention Forward Pass (tile size 64)
+
+            K dimension (seq_len)
+            ├─────────────────────────┤
+     ┌──────┴──────┬──────┬──────┐
+     │   Tile 0    │  T1  │  T2  │ ...
+ Q   │  Q·K^T /√d  │      │      │
+     ├──────┬──────┴──────┴──────┤
+     │  S   │ Softmax online     │
+     ├──────┴────────────────────┤
+     │  P·V → O                  │
+     └───────────────────────────┘
+```
+
+---
+
+## 7. Anti-Patterns to Avoid
+
+### Anti-Pattern 1: KV Cache Fragmentation
+
+**What:** Allocating individual tokens causes memory fragmentation.
+
+**Why bad:** Memory exhaustion before GPU memory is actually full.
+
+**Instead:** Allocate in power-of-2 block sizes (16, 32, 64 tokens).
+
+### Anti-Pattern 2: Synchronous KV Cache Access
+
+**What:** CPU waits for GPU KV cache updates during decoding.
+
+**Why bad:** Decoding throughput limited by CPU-GPU synchronization.
+
+**Instead:** Double-buffer KV cache, overlap token generation with attention.
+
+### Anti-Pattern 3: Per-Sequence KV Cache Allocation
+
+**What:** Allocate/deallocate KV cache per batch item.
+
+**Why bad:** Allocation overhead dominates for small batches.
+
+**Instead:** Pre-allocate block pool, assign blocks on demand.
+
+### Anti-Pattern 4: Ignoring Prefix Caching
+
+**What:** Not sharing KV cache for common prefixes (system prompts).
+
+**Why bad:** Repeated computation for identical prefixes.
+
+**Instead:** Hash prefixes, reuse cached KV blocks across sequences.
+
+---
+
+## 8. Scalability Considerations
+
+| Scale | KV Cache Strategy | Attention Strategy | Distributed Strategy |
+|-------|-------------------|-------------------|---------------------|
+| 1 GPU, short seq | Contiguous allocation | FlashAttention v2 | None |
+| 1 GPU, long seq | Paged attention | FlashAttention + splits | Sequence parallel |
+| Multi-GPU, single node | Paged attention | Tensor + sequence parallel | TP + SP |
+| Multi-node | Paged + prefix cache | Pipeline parallel | TP + PP + SP |
+
+### 100 Users / 1K Tokens
+
+- KV cache: ~2GB per GPU
+- Attention: FlashAttention v2 sufficient
+- Batching: 32-64 sequences per batch
+
+### 10K Users / 8K Tokens
+
+- KV cache: ~16GB per GPU
+- Attention: FlashAttention with num_splits > 1
+- Batching: 8-16 sequences per batch (memory constrained)
+
+### 1M Users / 32K Tokens
+
+- KV cache: Prefix caching essential
+- Attention: Ring attention or sequence parallel
+- Distributed: Multi-node TP + PP required
+
+---
+
+## 9. Implementation Order
+
+### Phase 1: Memory Infrastructure (Week 1-2)
+1. Create `cuda/memory/kv_cache_allocator.h`
+2. Implement block allocation and free list
+3. Add prefix caching infrastructure
+4. Write memory tests
+
+### Phase 2: FlashAttention Integration (Week 2-3)
+1. Create `cuda/algo/flash_attention.h`
+2. Integrate with existing TransformerLayer
+3. Add backward pass for training
+4. Benchmark against standard attention
+
+### Phase 3: Block Manager (Week 3-4)
+1. Create `cuda/inference/block_manager.h`
+2. Implement SequenceManager
+3. Add paged attention kernel
+4. Integrate with KVCacheAllocator
+
+### Phase 4: Distributed Extension (Week 4-5)
+1. Create `cuda/distributed/sequence_parallel.h`
+2. Implement ring sequence parallelism
+3. Integrate with existing TP/PP patterns
+4. Multi-GPU benchmarking
+
+### Phase 5: Integration and Optimization (Week 5-6)
+1. CUDA Graph capture for attention
+2. NVTX annotations per inference stage
+3. End-to-end throughput benchmarks
+4. Production readiness review
+
+---
+
+## Sources
+
+- [FlashAttention Paper (v2)](https://arxiv.org/abs/2205.14135) - **HIGH confidence**
+- [FlashAttention v3 Paper](https://arxiv.org/abs/2404.05117) - **HIGH confidence**
+- [vLLM Architecture](https://github.com/vllm-project/vllm) - **HIGH confidence** (open source reference)
+- [Ring Attention Paper](https://arxiv.org/abs/2310.02589) - **HIGH confidence**
+- [NVIDIA Transformer Engine](https://github.com/NVIDIA/TransformerEngine) - **HIGH confidence**
+- [CUDA Programming Guide: Shared Memory](https://docs.nvidia.com/cuda/cuda-c-programming-guide/) - **HIGH confidence**
+
+---
+
+*Architecture research for: Nova CUDA Library Transformer & Inference Optimization*
+*Researched: 2026-04-29*

@@ -1,84 +1,89 @@
-# Requirements — v2.5 Error Handling & Recovery
+# Milestone v2.6 Requirements
 
-## Milestone Goal
+**Milestone:** Transformer & Inference Optimization
+**Created:** 2026-04-29
+**Status:** Active
 
-Build a comprehensive error handling and recovery system with timeout policies, retry mechanisms, and graceful degradation capabilities.
+## v2.6 Requirements
 
-## Active Requirements
+### FlashAttention Integration
 
-### Timeout Management
+- [ ] **FA-01**: User can select attention backend (Standard/FlashAttention/PagedAttention) via enum configuration
+- [ ] **FA-02**: User can compute attention forward pass using FlashAttention with IO-aware tiling
+- [ ] **FA-03**: FlashAttention supports BF16 and FP16 datatypes with stable softmax normalization
+- [ ] **FA-04**: User can compute attention backward pass for training with deterministic dropout
 
-- [ ] **TO-01**: Per-operation timeout tracking with configurable deadlines
-  - *User can set timeout per CUDA operation via context parameter*
-  
-- [ ] **TO-02**: Watchdog timer system for detecting stalled operations
-  - *Background thread monitors active operations and detects hangs*
-  
-- [ ] **TO-03**: Deadline propagation across async operation chains
-  - *Timeouts cascade through dependent operations automatically*
-  
-- [ ] **TO-04**: Timeout callback/notification system
-  - *User-defined callbacks triggered on timeout events*
+### KV Cache Management
 
-### Retry Mechanisms
+- [ ] **KV-01**: User can allocate/deallocate KV cache blocks with fixed power-of-2 sizes (16/32/64 tokens)
+- [ ] **KV-02**: User can evict least-recently-used KV cache blocks when memory pressure exceeds threshold
+- [ ] **KV-03**: User can cache KV blocks by prefix hash for multi-turn conversation reuse
+- [ ] **KV-04**: User can query KV cache statistics (total/used/free blocks, fragmentation percentage)
 
-- [ ] **RT-01**: Exponential backoff with configurable base delay
-  - *Delays increase geometrically: base * 2^attempt*
-  
-- [ ] **RT-02**: Jitter implementation (full/decorrelated)
-  - *Prevents thundering herd with randomized delays*
-  
-- [ ] **RT-03**: Circuit breaker pattern with threshold configuration
-  - *Stops retrying after N consecutive failures, auto-recovers*
-  
-- [ ] **RT-04**: Retry policy composition and chaining
-  - *Combine multiple retry strategies programmatically*
+### Paged Attention
 
-### Graceful Degradation
+- [ ] **PA-01**: User can create sequence with logical blocks mapped to non-contiguous physical blocks via block table
+- [ ] **PA-02**: User can append tokens to sequence by allocating additional physical blocks
+- [ ] **PA-03**: Block table updates are synchronized on dedicated stream before kernel launch
+- [ ] **PA-04**: User can compute attention using block tables with out-of-bounds validation
 
-- [ ] **GD-01**: Reduced precision mode (FP64→FP32→FP16 fallback)
-  - *Automatic precision downgrade on memory/errors*
-  
-- [ ] **GD-02**: Fallback algorithm registry with priority ordering
-  - *Multiple implementations per operation, fallback chain*
-  
-- [ ] **GD-03**: Quality-aware degradation with threshold configuration
-  - *Configurable quality-vs-availability tradeoff*
-  
-- [ ] **GD-04**: Degradation event logging and metrics
-  - *Track degradation occurrences for observability*
+### Scheduler & Batching
 
-## Future Requirements
+- [ ] **SCHED-01**: User can create and manage multiple sequences with independent KV cache state
+- [ ] **SCHED-02**: User can schedule batched forward pass across variable-length sequences with iteration-level scheduling
+- [ ] **SCHED-03**: FlashAttention supports grouped-query attention (GQA) and multi-query attention (MQA)
 
-*Deferred to future milestones*
+### Sequence Parallelism
 
-- [ ] Multi-level circuit breaker (per-device, per-operation, global)
-- [ ] Adaptive timeout based on historical operation duration
-- [ ] Recovery action scripting for custom remediation
+- [ ] **SP-01**: User can compute attention with sequence dimension split across tensor parallel ranks
+- [ ] **SP-02**: Ring sequence parallelism enables attention over sequences exceeding single-GPU memory
+- [ ] **SP-03**: Sequence parallelism integrates with existing tensor parallelism communicator infrastructure
+
+---
+
+## Future Requirements (Deferred)
+
+- **FA-05**: FlashAttention-3 support for Hopper FP8 forward pass
+- **FA-06**: FlashAttention-4 support for Blackwell CuTeDSL kernels
+- **KV-05**: KV cache compression for reduced memory footprint
+- **PA-05**: Copy-on-write KV cache for beam search optimization
+- **SCHED-04**: Speculative decoding with rejection sampling
+- **SCHED-05**: Disaggregated prefill/decode for large-scale serving
+- **SP-04**: Decode context parallelism for decode-phase sequence distribution
+
+---
 
 ## Out of Scope
 
-- **Python bindings** — separate project
-- **Real-time video processing** — not relevant
-- **Full job restart** — covered by v1.5 checkpoint system
+- **Python bindings** — Separate project
+- **Triton kernels** — AMD ROCm support out of scope for NVIDIA-focused milestone
+- **FlashAttention-4** — Requires Blackwell (B200) which is not yet widely deployed
+
+---
 
 ## Traceability
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| TO-01 | — | — |
-| TO-02 | — | — |
-| TO-03 | — | — |
-| TO-04 | — | — |
-| RT-01 | — | — |
-| RT-02 | — | — |
-| RT-03 | — | — |
-| RT-04 | — | — |
-| GD-01 | — | — |
-| GD-02 | — | — |
-| GD-03 | — | — |
-| GD-04 | — | — |
+| Requirement | Phase | Success Criteria |
+|-------------|-------|------------------|
+| FA-01 | Phase 69 | Backend enum compiles, selection changes attention implementation |
+| FA-02 | Phase 69 | FlashAttention forward produces identical output to standard attention |
+| FA-03 | Phase 69 | BF16/FP16 outputs match within 1e-3 relative error |
+| FA-04 | Phase 69 | Backward pass gradients sum correctly across batch dimension |
+| KV-01 | Phase 70 | Block allocation completes in O(1) from freelist |
+| KV-02 | Phase 70 | LRU eviction triggers when free_blocks < threshold |
+| KV-03 | Phase 70 | Prefix cache hit reduces recomputation by 100% for shared prefixes |
+| KV-04 | Phase 70 | KVCacheStats reflects actual allocation state |
+| PA-01 | Phase 71 | BlockManager.create_sequence returns valid block table |
+| PA-02 | Phase 71 | append_tokens allocates new physical blocks |
+| PA-03 | Phase 71 | cudaStreamSynchronize called before attention kernel |
+| PA-04 | Phase 71 | Paged attention output matches contiguous attention within tolerance |
+| SCHED-01 | Phase 72 | Multiple sequences can coexist with independent state |
+| SCHED-02 | Phase 72 | Batched forward processes variable-length sequences correctly |
+| SCHED-03 | Phase 72 | GQA/MQA produces correct output with num_kv_heads < num_q_heads |
+| SP-01 | Phase 73 | Sequence attention output matches single-GPU result |
+| SP-02 | Phase 73 | Ring attention handles sequences up to 128K tokens |
+| SP-03 | Phase 73 | TP communicator correctly reduces sequence parallel output |
 
 ---
-*Requirements defined: 2026-04-28*
-*Milestone: v2.5 Error Handling & Recovery*
+*Requirements defined: 2026-04-29*
+*v2.6: Transformer & Inference Optimization*
