@@ -81,6 +81,17 @@ add_executable(nova-tests
     production/performance_test.cpp
     production/observability_test.cpp
     production/stress_test.cpp
+    algo/flash_attention_test.cu
+    algo/flash_attention_edge_test.cu
+    memory/kv_cache_allocator_test.cpp
+    memory/kv_cache_allocator_edge_test.cpp
+    inference/block_manager_test.cpp
+    inference/block_manager_edge_test.cpp
+    inference/scheduler_test.cpp
+    inference/scheduler_edge_test.cpp
+    inference/integration_test.cpp
+    distributed/sequence_parallel_test.cpp
+    distributed/sequence_parallel_edge_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
