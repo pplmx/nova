@@ -4,13 +4,20 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: Not started
+## Current Milestone: v2.6 Transformer & Inference Optimization
 
 **Previous milestone:** v2.5 Error Handling & Recovery — SHIPPED 2026-04-28
 
-**Status:** ✅ COMPLETE
+**Goal:** Optimize transformer inference with FlashAttention, KV cache management, and sequence parallelism for production LLM workloads.
 
-Run `/gsd-new-milestone` to start the next milestone.
+**Target features:**
+- FlashAttention-2/3 integration for memory-efficient attention
+- KV cache allocation and eviction policies
+- Paged attention for flexible memory management
+- Sequence parallelism across tensor model parallel ranks
+- Continuous batching for throughput optimization
+
+**Status:** Planning
 
 ## Core Value
 
