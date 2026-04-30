@@ -1,79 +1,95 @@
-# Milestone v2.7 Requirements
+# Milestone v2.8 Requirements
 
 **Project:** Nova CUDA Library Enhancement
-**Milestone:** v2.7 Comprehensive Testing & Validation
-**Date:** 2026-04-30
-**Total Requirements:** 16
+**Milestone:** v2.8 Numerical Computing & Performance
+**Date:** 2026-05-01
+**Total Requirements:** 17
 
 ## Requirements by Phase
 
-### Phase 75: Observability & Profiling
+### Phase 79: Sparse Format Foundation
 
-- [ ] **OBS-01**: User can export timeline visualizations in Chrome trace format from NVTX annotations
-- [ ] **OBS-02**: User can measure memory bandwidth (H2D/D2H/D2D) via NVbandwidth integration
-- [ ] **OBS-03**: User can collect kernel statistics (latency, throughput, occupancy) per kernel launch
-- [ ] **OBS-04**: User can analyze real-time occupancy and receive feedback on block size selection
+- [ ] **SPARSE-01**: User can store sparse matrices in ELL (ELLPACK) format with row-wise padding
+- [ ] **SPARSE-02**: User can store sparse matrices in SELL (Sliced ELLPACK) format with slice organization
+- [ ] **SPARSE-03**: User can convert CSR matrices to ELL/SELL format with automatic format selection
+- [ ] **SPARSE-04**: User can perform SpMV operations using ELL and SELL formats
 
-### Phase 76: Algorithm Extensions
+### Phase 80: Krylov Solver Core + Roofline
 
-- [ ] **ALGO-01**: User can perform segmented sort to sort elements within groups without full array copy
-- [ ] **ALGO-02**: User can compute sparse matrix-vector multiply using CSR/CSC formats from v2.1
-- [ ] **ALGO-03**: User can sort large datasets using sample sort when radix sort is inefficient
-- [ ] **ALGO-04**: User can compute single-source shortest paths using delta-stepping algorithm
+- [ ] **KRY-01**: User can solve symmetric positive-definite linear systems using Conjugate Gradient (CG) method
+- [ ] **KRY-02**: User can solve general non-symmetric linear systems using Generalized Minimal Residual (GMRES) method
+- [ ] **KRY-03**: User can solve non-symmetric linear systems using Biconjugate Gradient Stabilized (BiCGSTAB) method
+- [ ] **KRY-04**: User can configure convergence criteria (relative residual tolerance, max iterations)
+- [ ] **RF-01**: User can query device peak FLOP/s for FP64, FP32, and FP16 precision
+- [ ] **RF-02**: User can measure achieved memory bandwidth and compare against device peak
+- [ ] **RF-03**: User can calculate arithmetic intensity (FLOPs / Bytes accessed) for kernel operations
 
-### Phase 77: Robustness & Testing
+### Phase 81: Extended Formats + Roofline Analysis
 
-- [ ] **ROB-01**: User can validate memory safety using Compute Sanitizer (UAF, double-free, uninitialized memory)
-- [ ] **ROB-02**: User can run tests in isolated CUDA contexts without state pollution between tests
-- [ ] **ROB-03**: User can inject errors at specific layer boundaries (Memory, Device, Algorithm, Stream, Inference)
-- [ ] **ROB-04**: User can test CUDA-specific boundary conditions (256-byte alignment, warp size, SM limits)
-- [ ] **ROB-05**: User can control FP determinism levels (not_guaranteed, run_to_run, gpu_to_gpu)
+- [ ] **SPARSE-05**: User can store sparse matrices in HYB (Hybrid ELL+COO) format with automatic partition
+- [ ] **RF-04**: User can classify performance limiters (compute-bound vs memory-bound) using Roofline model
+- [ ] **RF-05**: User can export Roofline analysis data in JSON format for external visualization
 
-### Phase 78: Integration & Validation
+### Phase 82: Integration & Production
 
-- [ ] **INT-01**: User can run end-to-end robustness tests with simultaneous profiling enabled
-- [ ] **INT-02**: User can validate memory safety across all algorithm implementations
-- [ ] **INT-03**: User can establish performance regression baselines for comparison
-- [ ] **INT-04**: User can access updated documentation for new observability and algorithm features
+- [ ] **KRY-05**: User can reuse solver workspace across multiple solves via memory pool integration
+- [ ] **KRY-06**: User can access solver diagnostic information (iteration count, residual history, convergence status)
+- [ ] **INT-01**: User can run end-to-end tests validating all three feature categories
+- [ ] **INT-02**: User can run benchmarks comparing sparse format performance and solver convergence
+- [ ] **INT-03**: User can profile solver and format operations via NVTX annotations
+- [ ] **INT-04**: User can access updated documentation covering Krylov solvers, Roofline model, and sparse formats
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OBS-01 | Phase 75 | Pending |
-| OBS-02 | Phase 75 | Pending |
-| OBS-03 | Phase 75 | Pending |
-| OBS-04 | Phase 75 | Pending |
-| ALGO-01 | Phase 76 | Pending |
-| ALGO-02 | Phase 76 | Pending |
-| ALGO-03 | Phase 76 | Pending |
-| ALGO-04 | Phase 76 | Pending |
-| ROB-01 | Phase 77 | Pending |
-| ROB-02 | Phase 77 | Pending |
-| ROB-03 | Phase 77 | Pending |
-| ROB-04 | Phase 77 | Pending |
-| ROB-05 | Phase 77 | Pending |
-| INT-01 | Phase 78 | Pending |
-| INT-02 | Phase 78 | Pending |
-| INT-03 | Phase 78 | Pending |
-| INT-04 | Phase 78 | Pending |
+| SPARSE-01 | Phase 79 | Pending |
+| SPARSE-02 | Phase 79 | Pending |
+| SPARSE-03 | Phase 79 | Pending |
+| SPARSE-04 | Phase 79 | Pending |
+| KRY-01 | Phase 80 | Pending |
+| KRY-02 | Phase 80 | Pending |
+| KRY-03 | Phase 80 | Pending |
+| KRY-04 | Phase 80 | Pending |
+| RF-01 | Phase 80 | Pending |
+| RF-02 | Phase 80 | Pending |
+| RF-03 | Phase 80 | Pending |
+| SPARSE-05 | Phase 81 | Pending |
+| RF-04 | Phase 81 | Pending |
+| RF-05 | Phase 81 | Pending |
+| KRY-05 | Phase 82 | Pending |
+| KRY-06 | Phase 82 | Pending |
+| INT-01 | Phase 82 | Pending |
+| INT-02 | Phase 82 | Pending |
+| INT-03 | Phase 82 | Pending |
+| INT-04 | Phase 82 | Pending |
+
+**Coverage:**
+- v1 requirements: 20 total
+- Mapped to phases: 20
+- Unmapped: 0 ✓
 
 ## Out of Scope
 
-- Chaos engineering (ECC error simulation, PCIe fault injection) — defer to v2.8
-- Krylov subspace methods (CG, GMRES) — requires SpMV first, defer to v2.8
-- Roofline model visualization — requires bandwidth baseline, defer to v2.8
-- cuCollections — sm_70+ only, Pascal support incompatible
+| Feature | Reason |
+|---------|--------|
+| Direct sparse solvers (LU/Cholesky) | Use cuDSS for direct solves; separate module |
+| Full preconditioner library | Scope creep; just Jacobi as starting point |
+| Matrix-free solvers | Premature abstraction for v2.8 |
+| DIA/JDS sparse formats | Rarely optimal; defer if real need emerges |
+| Real-time Roofline monitoring | Batch analysis mode sufficient |
+| Multi-GPU distributed solvers | Future milestone |
 
 ## Future Requirements
 
-### Deferred from v2.7
+### Deferred from v2.8
 
-- Chaos engineering framework
-- Krylov subspace methods
-- Roofline model integration
+- ILU preconditioner for Krylov solvers
+- cuDSS wrapper for direct sparse solves
+- Multi-GPU distributed Krylov
+- BSR (Block Sparse Row) format support
 
 ---
-*Requirements defined: 2026-04-30*
-*Roadmap created: 2026-04-30*
+*Requirements defined: 2026-05-01*
+*Research completed: 2026-05-01*
 *Ready for planning: yes*
