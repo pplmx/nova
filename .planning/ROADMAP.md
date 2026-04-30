@@ -61,7 +61,10 @@
 6. User can measure achieved memory bandwidth and compare against device theoretical peak
 7. User can calculate arithmetic intensity (FLOPs per byte accessed) for any kernel operation
 
-**Plans:** TBD
+**Plans:** 1 plan in 1 wave
+
+**Plan list:**
+- [ ] 80-01-PLAN.md — Krylov solvers (CG/GMRES/BiCGSTAB) + Roofline infrastructure
 
 ---
 
@@ -109,7 +112,7 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 79. Sparse Format Foundation | 0/4 | Planned | - |
-| 80. Krylov Solver Core + Roofline | 0/1 | Not started | - |
+| 80. Krylov Solver Core + Roofline | 0/1 | Planned | - |
 | 81. Extended Formats + Roofline Analysis | 0/1 | Not started | - |
 | 82. Integration & Production | 0/1 | Not started | - |
 
