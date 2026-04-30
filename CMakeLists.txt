@@ -417,6 +417,16 @@ set(TOOLS_SOURCES
         ${SRC_CUDA_TOOLS}/tools.cpp
 )
 
+set(OBSERVABILITY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/observability)
+set(SRC_CUDA_OBSERVABILITY ${CMAKE_SOURCE_DIR}/src/observability)
+
+set(OBSERVABILITY_SOURCES
+        ${SRC_CUDA_OBSERVABILITY}/timeline.cpp
+        ${SRC_CUDA_OBSERVABILITY}/bandwidth_tracker.cpp
+        ${SRC_CUDA_OBSERVABILITY}/kernel_stats.cpp
+        ${SRC_CUDA_OBSERVABILITY}/occupancy_analyzer.cpp
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -442,6 +452,7 @@ set(ALL_CUDA_SOURCES
         ${FUSION_SOURCES}
         ${MEMORY_OPT_SOURCES}
         ${TOOLS_SOURCES}
+        ${OBSERVABILITY_SOURCES}
         ${ERROR_SOURCES}
 )
 

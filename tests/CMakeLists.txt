@@ -92,6 +92,10 @@ add_executable(nova-tests
     inference/integration_test.cpp
     distributed/sequence_parallel_test.cpp
     distributed/sequence_parallel_edge_test.cpp
+    observability/timeline_test.cpp
+    observability/bandwidth_tracker_test.cpp
+    observability/kernel_stats_test.cpp
+    observability/occupancy_analyzer_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
