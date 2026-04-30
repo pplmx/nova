@@ -45,7 +45,30 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - ✓ Performance baselines — Phase 78
 - ✓ Documentation updates — Phase 78
 
-**Next milestone:** v2.8 Numerical Computing & Performance
+### Completed (v2.8)
+
+- ✓ Sparse matrix ELL format with row-wise padding — Phase 79
+- ✓ Sparse matrix SELL format with configurable slice height — Phase 79
+- ✓ CSR to ELL/SELL conversion with automatic padding — Phase 79
+- ✓ ELL/SELL SpMV kernels matching CSR baseline — Phase 79
+- ✓ Conjugate Gradient (CG) solver for SPD systems — Phase 80
+- ✓ Generalized Minimal Residual (GMRES) solver — Phase 80
+- ✓ Biconjugate Gradient Stabilized (BiCGSTAB) solver — Phase 80
+- ✓ Convergence criteria configuration — Phase 80
+- ✓ Device peak FLOP/s queries (FP64/FP32/FP16) — Phase 80
+- ✓ Memory bandwidth measurement — Phase 80
+- ✓ Arithmetic intensity calculation — Phase 80
+- ✓ HYB (Hybrid ELL+COO) format for irregular matrices — Phase 81
+- ✓ Performance classification with confidence levels — Phase 81
+- ✓ JSON export for Roofline analysis — Phase 81
+- ✓ Solver workspace reuse via memory pool — Phase 82
+- ✓ Solver diagnostics (timing, convergence rate) — Phase 82
+- ✓ E2E integration tests — Phase 82
+- ✓ Performance benchmarks — Phase 82
+- ✓ NVTX integration with nova_sparse domain — Phase 82
+- ✓ Documentation updates — Phase 82
+
+**Next milestone:** TBD
 
 ## Core Value
 
