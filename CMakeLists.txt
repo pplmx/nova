@@ -421,6 +421,17 @@ set(TOOLS_SOURCES
         ${SRC_CUDA_TOOLS}/tools.cpp
 )
 
+set(TESTING_DIR ${CMAKE_SOURCE_DIR}/include/cuda/testing)
+set(SRC_CUDA_TESTING ${CMAKE_SOURCE_DIR}/src/testing)
+
+set(TESTING_SOURCES
+        ${SRC_CUDA_TESTING}/memory_safety.cpp
+        ${SRC_CUDA_TESTING}/test_isolation.cpp
+        ${SRC_CUDA_TESTING}/layer_error_injection.cpp
+        ${SRC_CUDA_TESTING}/boundary_testing.cpp
+        ${SRC_CUDA_TESTING}/fp_determinism.cpp
+)
+
 set(OBSERVABILITY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/observability)
 set(SRC_CUDA_OBSERVABILITY ${CMAKE_SOURCE_DIR}/src/observability)
 
@@ -457,6 +468,7 @@ set(ALL_CUDA_SOURCES
         ${MEMORY_OPT_SOURCES}
         ${TOOLS_SOURCES}
         ${OBSERVABILITY_SOURCES}
+        ${TESTING_SOURCES}
         ${ERROR_SOURCES}
 )
 
