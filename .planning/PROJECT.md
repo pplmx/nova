@@ -4,18 +4,13 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.7 Comprehensive Testing & Validation
+## Current Milestone: Not started
 
-**Goal:** Comprehensive robustness testing, enhanced profiling, and new algorithm capabilities
+**Previous milestone:** v2.7 Comprehensive Testing & Validation — SHIPPED 2026-04-30
 
-**Target features:**
-- Robustness & Testing: Error injection, boundary conditions, memory safety
-- Performance Profiling: Kernel timing, memory bandwidth, timeline visualization
-- New Algorithms: Advanced sorting, graph algorithms, numerical methods
+**Status:** ✅ COMPLETE
 
-**Previous milestone:** v2.6 Transformer & Inference Optimization — SHIPPED 2026-04-29
-
-**Status:** Planning
+Run `/gsd-new-milestone` to start the next milestone.
 
 ## Completed (v2.6)
 
@@ -25,6 +20,26 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - ✓ Sequence manager with continuous batching — Phase 72
 - ✓ Sequence parallelism across TP ranks — Phase 73
 - ✓ Integration tests with NVTX annotations — Phase 74
+
+## Completed (v2.7)
+
+- ✓ Timeline visualization with Chrome trace export — Phase 75
+- ✓ Memory bandwidth measurement (H2D/D2H/D2D) — Phase 75
+- ✓ Kernel statistics collection — Phase 75
+- ✓ Occupancy analyzer with recommendations — Phase 75
+- ✓ Segmented sort — Phase 76
+- ✓ SpMV using CSR/CSC formats — Phase 76
+- ✓ Sample sort for large datasets — Phase 76
+- ✓ Delta-stepping SSSP — Phase 76
+- ✓ Memory safety validation framework — Phase 77
+- ✓ Test isolation framework — Phase 77
+- ✓ Layer-aware error injection — Phase 77
+- ✓ Boundary condition tests — Phase 77
+- ✓ FP determinism control — Phase 77
+- ✓ E2E robustness + profiling — Phase 78
+- ✓ Memory safety validation — Phase 78
+- ✓ Performance baselines — Phase 78
+- ✓ Documentation updates — Phase 78
 
 **Next milestone:** TBD
 

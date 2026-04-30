@@ -352,4 +352,39 @@
 **New modules:**
 - `cuda/error/` - Error handling extensions (timeout, retry, degrade)
 
+---
+
+## v2.7 Comprehensive Testing & Validation (Shipped: 2026-04-30)
+
+**Phases completed:** 4 phases, 16 requirements
+
+**Key accomplishments:**
+
+- **Phase 75: Observability & Profiling** - Timeline export (Chrome trace), bandwidth tracker, kernel stats, occupancy analyzer
+- **Phase 76: Algorithm Extensions** - Segmented sort, SpMV (CSR/CSC), sample sort, delta-stepping SSSP
+- **Phase 77: Robustness & Testing** - Memory safety validation, test isolation, layer-aware error injection, boundary tests, FP determinism
+- **Phase 78: Integration & Validation** - E2E tests, memory validation, baselines, documentation
+
+**Requirements delivered:** 16 total (OBS-01 to OBS-04, ALGO-01 to ALGO-04, ROB-01 to ROB-05, INT-01 to INT-04)
+
+**Core features implemented:**
+- Chrome trace timeline export from NVTX annotations
+- Memory bandwidth measurement (H2D/D2H/D2D)
+- Per-kernel statistics collection (latency, throughput, occupancy)
+- Occupancy analyzer with block size recommendations
+- Segmented sort for group-wise sorting
+- SpMV using existing CSR/CSC formats from v2.1
+- Sample sort for large datasets
+- Delta-stepping SSSP for weighted graphs
+- Memory safety validation framework
+- Test isolation with per-test CUDA context reset
+- Layer-aware error injection (Memory, Device, Algorithm, Stream, Inference)
+- CUDA-specific boundary condition tests
+- FP determinism control (not_guaranteed, run_to_run, gpu_to_gpu)
+
+**New modules:**
+- `cuda/observability/` - Timeline, bandwidth tracker, kernel stats, occupancy
+- `cuda/testing/` - Memory safety, test isolation, error injection, boundary tests, FP determinism
+- `cuda/algo/` - Segmented sort, SpMV, sample sort, SSSP
+
 **Next:** TBD
