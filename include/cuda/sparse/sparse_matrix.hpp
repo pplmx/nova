@@ -9,7 +9,7 @@
 namespace nova {
 namespace sparse {
 
-enum class SparseFormat { CSR, CSC, ELL, SELL };
+enum class SparseFormat { CSR, CSC, ELL, SELL, HYB };
 
 template<typename T>
 class SparseMatrixCSR {

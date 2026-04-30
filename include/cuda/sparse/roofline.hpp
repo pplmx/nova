@@ -4,6 +4,10 @@
 #include <cuda_runtime.h>
 #include <cstddef>
 #include <cstdio>
+#include <string>
+#include <sstream>
+#include <vector>
+#include <ctime>
 
 namespace nova {
 namespace sparse {
@@ -148,6 +152,74 @@ public:
         return classify(m.arithmetic_intensity, m.peak_gflops);
     }
 
+    struct ClassificationConfidence {
+        PerformanceBound bound;
+        double confidence_percent;
+        double bandwidth_ceiling;
+        double compute_ceiling;
+    };
+
+    ClassificationConfidence classify_with_confidence(double ai, double peak_gflops) const {
+        ClassificationConfidence result;
+        double bandwidth_ceiling = ai * peaks_.memory_bandwidth_gbps;
+        result.bandwidth_ceiling = bandwidth_ceiling;
+        result.compute_ceiling = peak_gflops;
+
+        double ratio = bandwidth_ceiling / peak_gflops;
+
+        if (ratio < 0.85) {
+            result.bound = PerformanceBound::MEMORY_BOUND;
+            result.confidence_percent = (1.0 - ratio) * 100.0;
+        } else if (ratio > 1.15) {
+            result.bound = PerformanceBound::COMPUTE_BOUND;
+            result.confidence_percent = (ratio - 1.0) * 50.0 + 50.0;
+        } else {
+            result.bound = PerformanceBound::BALANCED;
+            result.confidence_percent = 100.0 - std::abs(ratio - 1.0) * 200.0;
+        }
+
+        return result;
+    }
+
+    static const char* bound_to_string(PerformanceBound b) {
+        switch (b) {
+            case PerformanceBound::COMPUTE_BOUND: return "COMPUTE_BOUND";
+            case PerformanceBound::MEMORY_BOUND: return "MEMORY_BOUND";
+            case PerformanceBound::BALANCED: return "BALANCED";
+            default: return "UNKNOWN";
+        }
+    }
+
+    std::string to_json(const RooflineMetrics& m, Precision p = Precision::FP32) const {
+        std::ostringstream oss;
+        oss << "{\n";
+        oss << "  \"kernel_name\": \"" << (m.kernel_name ? m.kernel_name : "unknown") << "\",\n";
+        oss << "  \"arithmetic_intensity\": " << m.arithmetic_intensity << ",\n";
+        oss << "  \"achieved_gflops\": " << m.achieved_gflops << ",\n";
+        oss << "  \"peak_gflops\": " << m.peak_gflops << ",\n";
+        oss << "  \"achieved_bandwidth_gbps\": " << m.achieved_bandwidth_gbps << ",\n";
+        oss << "  \"peak_bandwidth_gbps\": " << m.peak_bandwidth_gbps << ",\n";
+        oss << "  \"performance_bound\": \"" << bound_to_string(m.bound) << "\",\n";
+        double efficiency = m.peak_gflops > 0 ? (m.achieved_gflops / m.peak_gflops * 100.0) : 0.0;
+        oss << "  \"efficiency_percent\": " << efficiency << "\n";
+        oss << "}";
+        return oss.str();
+    }
+
+    std::string to_json_device_info(Precision p = Precision::FP32) const {
+        std::ostringstream oss;
+        oss << "{\n";
+        oss << "  \"peak_gflops\": " << compute_peak_performance(p) << ",\n";
+        oss << "  \"peak_bandwidth_gbps\": " << peaks_.memory_bandwidth_gbps << ",\n";
+        oss << "  \"fp64_peak_gflops\": " << peaks_.fp64_peak_gflops << ",\n";
+        oss << "  \"fp32_peak_gflops\": " << peaks_.fp32_peak_gflops << ",\n";
+        oss << "  \"fp16_peak_gflops\": " << peaks_.fp16_peak_gflops << ",\n";
+        oss << "  \"compute_capability\": \"" << peaks_.compute_capability_major
+            << "." << peaks_.compute_capability_minor << "\"\n";
+        oss << "}";
+        return oss.str();
+    }
+
     RooflineMetrics analyze_kernel(const char* name, long long flops,
                                    double measured_time_ms, size_t bytes,
                                    Precision p = Precision::FP32) {
@@ -235,6 +307,91 @@ inline double measure_bandwidth(int device_id, size_t size_bytes, int iterations
                             (elapsed_ms * 1e6);
     return bandwidth_gbps;
 }
+
+class RooflineAnalysis {
+public:
+    void add_kernel(const RooflineMetrics& metrics) {
+        kernels_.push_back(metrics);
+    }
+
+    void set_device_info(const DevicePeaks& peaks, Precision p, const char* device_name = "Unknown") {
+        device_peaks_ = peaks;
+        precision_ = p;
+        device_name_ = device_name;
+    }
+
+    std::string to_json() const {
+        std::ostringstream oss;
+        oss << "{\n";
+        oss << "  \"metadata\": {\n";
+        oss << "    \"device_name\": \"" << device_name_ << "\",\n";
+        oss << "    \"compute_capability\": \"" << device_peaks_.compute_capability_major
+            << "." << device_peaks_.compute_capability_minor << "\",\n";
+        oss << "    \"precision\": \"" << precision_to_string(precision_) << "\",\n";
+        oss << "    \"timestamp\": \"" << get_timestamp() << "\"\n";
+        oss << "  },\n";
+        oss << "  \"device_peaks\": {\n";
+        oss << "    \"peak_gflops\": " << get_peak_gflops() << ",\n";
+        oss << "    \"peak_bandwidth_gbps\": " << device_peaks_.memory_bandwidth_gbps << ",\n";
+        oss << "    \"fp64_peak_gflops\": " << device_peaks_.fp64_peak_gflops << ",\n";
+        oss << "    \"fp32_peak_gflops\": " << device_peaks_.fp32_peak_gflops << ",\n";
+        oss << "    \"fp16_peak_gflops\": " << device_peaks_.fp16_peak_gflops << "\n";
+        oss << "  },\n";
+        oss << "  \"kernels\": [\n";
+
+        for (size_t i = 0; i < kernels_.size(); ++i) {
+            const auto& m = kernels_[i];
+            oss << "    {\n";
+            oss << "      \"name\": \"" << (m.kernel_name ? m.kernel_name : "unknown") << "\",\n";
+            oss << "      \"arithmetic_intensity\": " << m.arithmetic_intensity << ",\n";
+            oss << "      \"achieved_gflops\": " << m.achieved_gflops << ",\n";
+            oss << "      \"peak_gflops\": " << m.peak_gflops << ",\n";
+            oss << "      \"achieved_bandwidth_gbps\": " << m.achieved_bandwidth_gbps << ",\n";
+            oss << "      \"peak_bandwidth_gbps\": " << m.peak_bandwidth_gbps << ",\n";
+            oss << "      \"performance_bound\": \"" << RooflineAnalyzer::bound_to_string(m.bound) << "\",\n";
+            double eff = m.peak_gflops > 0 ? (m.achieved_gflops / m.peak_gflops * 100.0) : 0.0;
+            oss << "      \"efficiency_percent\": " << eff << "\n";
+            oss << "    }";
+            if (i < kernels_.size() - 1) oss << ",";
+            oss << "\n";
+        }
+
+        oss << "  ]\n";
+        oss << "}";
+        return oss.str();
+    }
+
+private:
+    std::vector<RooflineMetrics> kernels_;
+    DevicePeaks device_peaks_;
+    Precision precision_ = Precision::FP32;
+    std::string device_name_;
+
+    double get_peak_gflops() const {
+        switch (precision_) {
+            case Precision::FP64: return device_peaks_.fp64_peak_gflops;
+            case Precision::FP32: return device_peaks_.fp32_peak_gflops;
+            case Precision::FP16: return device_peaks_.fp16_peak_gflops;
+            default: return device_peaks_.fp32_peak_gflops;
+        }
+    }
+
+    static const char* precision_to_string(Precision p) {
+        switch (p) {
+            case Precision::FP64: return "FP64";
+            case Precision::FP32: return "FP32";
+            case Precision::FP16: return "FP16";
+            default: return "FP32";
+        }
+    }
+
+    static std::string get_timestamp() {
+        time_t now = time(nullptr);
+        char buf[64];
+        strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+        return std::string(buf);
+    }
+};
 
 }
 }
