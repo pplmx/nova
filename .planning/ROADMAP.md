@@ -82,7 +82,12 @@
 2. User can classify performance limiters (compute-bound vs memory-bound) using Roofline model analysis
 3. User can export Roofline analysis data in JSON format for external visualization tools
 
-**Plans:** TBD
+**Plans:** 3 plans in 2 waves
+
+**Plan list:**
+- [ ] 81-01-PLAN.md — HYB matrix format (interface, implementation, SpMV)
+- [ ] 81-02-PLAN.md — Roofline JSON export + extended classification
+- [ ] 81-03-PLAN.md — Integration tests for HYB and Roofline
 
 ---
 
@@ -113,7 +118,7 @@
 |-------|----------------|--------|-----------|
 | 79. Sparse Format Foundation | 0/4 | Planned | - |
 | 80. Krylov Solver Core + Roofline | 0/1 | Planned | - |
-| 81. Extended Formats + Roofline Analysis | 0/1 | Not started | - |
+| 81. Extended Formats + Roofline Analysis | 0/3 | Planned | - |
 | 82. Integration & Production | 0/1 | Not started | - |
 
 ---
