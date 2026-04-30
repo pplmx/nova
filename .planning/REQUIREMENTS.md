@@ -3,7 +3,7 @@
 **Project:** Nova CUDA Library Enhancement
 **Milestone:** v2.8 Numerical Computing & Performance
 **Date:** 2026-05-01
-**Total Requirements:** 17
+**Total Requirements:** 20
 
 ## Requirements by Phase
 
@@ -65,7 +65,7 @@
 | INT-04 | Phase 82 | Pending |
 
 **Coverage:**
-- v1 requirements: 20 total
+- v2.8 requirements: 20 total
 - Mapped to phases: 20
 - Unmapped: 0 ✓
 
@@ -93,3 +93,4 @@
 *Requirements defined: 2026-05-01*
 *Research completed: 2026-05-01*
 *Ready for planning: yes*
+*Roadmap created: 2026-05-01*

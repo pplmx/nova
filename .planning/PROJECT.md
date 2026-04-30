@@ -14,7 +14,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - Advanced Sparse Formats (ELL, HYB) with pattern analysis
 - Integration tests, benchmarks, and chaos scenarios
 
-**Status:** Planning
+**Status:** Roadmap defined (4 phases)
 
 ## Completed (v2.6)
 

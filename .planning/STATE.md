@@ -18,19 +18,19 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (defining roadmap)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-01 — Milestone v2.8 started
+Status: Defining roadmap
+Last activity: 2026-05-01 — Milestone v2.8 roadmap created
 
 ## Phase List
 
 | Phase | Name | Goal | Status | Requirements |
 |-------|------|------|--------|--------------|
-| 79 | Krylov Foundation | CG solver, SpMV integration | Not started | KRY-01, KRY-02, KRY-03, KRY-04 |
-| 80 | Advanced Solvers + Roofline | GMRES, BiCGSTAB, RooflineModel | Not started | KRY-05, KRY-06, RF-01, RF-02, RF-03 |
-| 81 | Sparse Extensions + Visualization | ELL/HYB formats, Roofline charts | Not started | SPARSE-01, SPARSE-02, RF-04, RF-05 |
-| 82 | Integration + Chaos | E2E tests, benchmarks, chaos scenarios | Not started | INT-01, INT-02, INT-03, INT-04 |
+| 79 | Sparse Format Foundation | ELL/SELL storage, CSR conversion, SpMV | Not started | SPARSE-01 to SPARSE-04 (4) |
+| 80 | Krylov Solver Core + Roofline | CG/GMRES/BiCGSTAB solvers, device peaks, AI | Not started | KRY-01 to KRY-04, RF-01 to RF-03 (7) |
+| 81 | Extended Formats + Roofline Analysis | HYB format, performance classification, JSON | Not started | SPARSE-05, RF-04, RF-05 (3) |
+| 82 | Integration & Production | Memory pool, diagnostics, E2E, benchmarks, NVTX, docs | Not started | KRY-05, KRY-06, INT-01 to INT-04 (6) |
 
 ## Milestone History
 
@@ -54,7 +54,7 @@ Last activity: 2026-05-01 — Milestone v2.8 started
 | v2.5 Error Handling & Recovery | ✅ Shipped | 2026-04-28 | 12 |
 | v2.6 Transformer & Inference Optimization | ✅ Shipped | 2026-04-29 | 18 |
 | v2.7 Comprehensive Testing & Validation | ✅ Shipped | 2026-04-30 | 16 |
-| v2.8 Numerical Computing & Performance | 🏗️ In Progress | 2026-05-01 | TBD |
+| v2.8 Numerical Computing & Performance | 🏗️ In Progress | 2026-05-01 | 20 |
 
 ---
-*State updated: 2026-05-01 — v2.8 Numerical Computing & Performance started*
+*State updated: 2026-05-01 — v2.8 roadmap created*
