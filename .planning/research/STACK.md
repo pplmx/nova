@@ -1,312 +1,423 @@
-# Technology Stack Additions for v2.7
+# Technology Stack for v2.8 Numerical Computing & Performance
 
-**Analysis Date:** 2026-04-30
-**Confidence:** HIGH
-**Sources:** NVIDIA official documentation, GitHub releases
+**Analysis Date:** 2026-05-01
+**Confidence:** MEDIUM-HIGH
+**Note:** Some library capabilities require verification with current CUDA 12.x documentation; cuSPARSE iterative solver support has evolved.
+
+---
 
 ## Executive Summary
 
-v2.7 adds three capability areas: robustness testing, performance profiling, and advanced algorithms. Most tooling is either already in the stack or available from NVIDIA at no additional cost. **One critical migration required:** CUB has been archived and moved to the unified CCCL repository.
+v2.8 adds three capability areas: GPU-based iterative linear solvers (Krylov methods), Roofline performance model, and advanced sparse matrix formats (ELL/HYB). 
+
+**Key finding:** NVIDIAcuSOLVER does NOT provide general iterative solvers (CG, GMRES, BiCGSTAB) — these must be implemented using cuBLAS SpMV primitives. cuSPARSE provides native ELL format support and conversion to HYB. The Roofline model builds on existing bandwidth measurement from v2.7.
 
 ---
 
-## 1. What's Already in the Stack
+## 1. Krylov Solver Stack Requirements
 
-The project already has significant tooling. Do NOT re-add:
+### What NVIDIA Provides
 
-| Existing | Version | Source | Already Provides |
-|----------|---------|--------|------------------|
-| Google Test | v1.17.0 | FetchContent | Unit tests |
-| libFuzzer | Clang-only | Built-in | Fuzz testing |
-| Property-based tests | Custom | In-repo | Property testing |
-| NVTX | Header-only | CUDA toolkit | Profiling annotations |
-| CUDA Events | Built-in | CUDA toolkit | Kernel timing |
-| Google Benchmark | v1.9.0 | External | Microbenchmarks |
-| Error injection framework | Custom | v2.4 shipped | Chaos testing |
-| Memory pressure stress tests | Custom | v2.4 shipped | Stress testing |
+| Library | CG | GMRES | BiCGSTAB | Notes |
+|---------|-----|-------|----------|-------|
+| cuSOLVER | No | No | No | Provides only direct solvers (LU, QR, Cholesky, SVD) |
+| cuSPARSE | No | No | No | Provides SpMV primitives, not iterative solvers |
+| AmgX | Yes | Yes | Yes | NVIDIA's algebraic multigrid library, separate download |
 
----
+### Recommendation: Custom Implementation using cuBLAS/cuSPARSE
 
-## 2. Recommended Additions
+**Rationale:** AmgX is a separate product requiring enterprise licensing and is overly complex for basic iterative solvers. CG, GMRES, and BiCGSTAB can be implemented using existing SpMV from v2.7 plus cuBLAS BLAS-1/2 operations (dot product, axpy, norm).
 
-### 2.1 Robustness Testing
+**Stack additions needed:**
 
-#### Option A: NVIDIA Compute Sanitizer (Recommended)
-**Status:** Part of CUDA Toolkit — no installation needed
-**Confidence:** HIGH
+| Component | Source | Purpose | Integration |
+|-----------|--------|---------|-------------|
+| cuBLAS | CUDA toolkit (already linked) | BLAS-1/2 operations for Krylov kernels | `CUDA::cublas` already in `cuda_impl` |
+| Existing SpMV | v2.7 CSR/CSC | Sparse matrix-vector products | Already in `src/algo/spmv.cpp` |
+| Custom Krylov kernels | Implementation required | CG/GMRES/BiCGSTAB algorithms | New `src/cuda/solvers/` directory |
 
-Compute Sanitizer is a functional correctness checking suite included in CUDA 12+. It provides:
+### Custom Implementation Architecture
 
-| Tool | Purpose | Use Case |
-|------|---------|----------|
-| `memcheck` | Out-of-bounds, misaligned access detection | Memory safety validation |
-| `racecheck` | Shared memory data race detection | Concurrent kernel validation |
-| `initcheck` | Uninitialized memory access detection | Initialization bug finding |
-| `synccheck` | Invalid synchronization detection | Async operation validation |
-
-**Integration:**
-```bash
-# Replace direct execution with sanitizer wrapper
-cuda-compute-sanitizer --tool memcheck ./bin/nova-tests
+```
+src/cuda/solvers/
+├── krylov_solver.hpp      # Base class interface
+├── cg_solver.cu           # Conjugate Gradient
+├── gmres_solver.cu        # Generalized Minimal Residual  
+├── bicgstab_solver.cu     # Biconjugate Gradient Stabilized
+└── solver_utils.cu        # Common kernels (dot, norm, axpy)
 ```
 
-**CMake Integration:**
+**Dependencies:**
+- `cuda_runtime.h` — GPU allocation, streams
+- `cublas_v2.h` — BLAS-1/2 operations (already available)
+- `<cuda/sparse/sparse_ops.hpp>` — SpMV for matrix-vector products (existing)
+
+**No new external dependencies required.**
+
+### cuBLAS Operations Needed (Already Available)
+
+| Operation | cuBLAS Function | Purpose in Krylov |
+|-----------|-----------------|-------------------|
+| Dot product | `cublasDot` | Residual computation |
+| NRM2 | `cublasDnrm2` | Convergence check |
+| AXPY | `cublasAxpy` | Vector updates |
+| GEMV | `cublasGemv` | Dense matrix operations |
+| SpMV | Custom kernel (v2.7) | Sparse iterations |
+
+### CMake Integration
+
 ```cmake
-# Optional sanitizer builds
-option(NOVA_ENABLE_SANITIZERS "Enable sanitizer builds for testing" OFF)
-if(NOVA_ENABLE_SANITIZERS)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
-endif()
-```
-
-**Why not AddressSanitizer:** ASAN does not work with CUDA kernels. Compute Sanitizer is the only option for GPU memory checking.
-
-**Source:** [NVIDIA Compute Sanitizer Documentation](https://docs.nvidia.com/compute-sanitizer/)
-
-#### Option B: Tracy Profiler (Optional - Open Source)
-**Status:** v0.13.1 (Dec 2025), Apache 2.0
-**Confidence:** MEDIUM
-
-Open-source profiler with CUDA support, nanosecond resolution, real-time telemetry.
-
-**Use if:** You want a free alternative to Nsight for continuous profiling in CI or local development.
-
-**Not required if:** Nsight Systems provides sufficient capability (it usually does for CUDA development).
-
-**Source:** [Tracy Profiler GitHub](https://github.com/wolfpld/tracy)
-
----
-
-### 2.2 Performance Profiling
-
-#### NVIDIA Nsight Compute CLI
-**Status:** v13.2 (March 2026), Part of CUDA Toolkit
-**Confidence:** HIGH
-
-Kernel-level profiler with detailed metrics. Already partially referenced via NVBench headers in v2.4.
-
-**Installation:** Included in CUDA Toolkit
-```bash
-# Profile a kernel
-ncu --set full ./bin/nova-benchmark --benchmark_filter=BM_Matmul
-```
-
-**Python Report Interface for CI:**
-```bash
-# Generate JSON report for trend analysis
-ncu --export json --output profile.ncu-rep ./bin/nova-benchmark
-```
-
-**CMake:**
-```cmake
-find_package(CUDAToolkit REQUIRED)
-# ncu CLI available via CUDA_TOOLKIT_TARGET_DIR
-```
-
-**Source:** [Nsight Compute Documentation](https://docs.nvidia.com/nsight-compute/)
-
-#### NVIDIA Nsight Systems
-**Status:** v2026.2 (March 2026), Part of CUDA Toolkit
-**Confidence:** HIGH
-
-System-wide timeline profiler. Excellent for understanding multi-stream interactions and GPU utilization.
-
-**Installation:** Separate download from [NVIDIA Nsight Systems](https://developer.nvidia.com/nsight-systems) (free registration required).
-
-**Use for:**
-- Multi-stream timeline visualization
-- CPU-GPU interaction analysis
-- Identifying pipeline bottlenecks
-
-**Source:** [Nsight Systems Documentation](https://docs.nvidia.com/nsight-systems/)
-
----
-
-### 2.3 Algorithm Libraries
-
-#### Critical: CUB → CCCL Migration Required
-**Status:** CUB 2.1.0 archived, now part of CCCL
-**Confidence:** HIGH
-
-**CUB has been moved to the unified [NVIDIA CCCL (CUDA C++ Core Libraries)](https://github.com/nvidia/cccl) repository.**
-
-**Action Required:**
-1. Update CMake from CUB to CCCL
-2. Update includes from `<cub/cub.cuh>` to `<cub/cub.cuh>` (CCCL provides same headers)
-
-**CMake Update:**
-```cmake
-# Old (will break)
-find_package(CUB)
-
-# New
-include(FetchContent)
-FetchContent_Declare(
-  cccl
-  GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
-  GIT_TAG        2.6.0  # Check latest release
-  GIT_SHALLOW    TRUE
+# Add solver sources to cuda_impl
+set(SOLVER_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/cg_solver.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/gmres_solver.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/bicgstab_solver.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/solver_utils.cu
 )
-FetchContent_MakeAvailable(cccl)
-target_link_libraries(nova PRIVATE CCCL::cccl)
+list(APPEND ALL_CUDA_SOURCES ${SOLVER_SOURCES})
 ```
-
-**Why:** Using archived CUB may work today but will become deprecated. CCCL is actively maintained and provides backward-compatible headers.
-
-**Source:** [CCCL GitHub](https://github.com/nvidia/cccl)
-
-#### Optional: cuCollections (Concurrent Data Structures)
-**Status:** Header-only, requires NVCC 12.0+, C++17
-**Confidence:** MEDIUM
-
-GPU-accelerated concurrent data structures for advanced algorithms.
-
-**Consider if building:**
-- Hash table-based algorithms
-- Concurrent set/map operations
-- Lock-free data structure needs
-
-**Not required for:**
-- Basic sorting, scanning (CUB/CCCL handles)
-- Graph algorithms (already implemented)
-- Numerical methods (already implemented)
-
-**CMake:**
-```cmake
-FetchContent_Declare(
-  cuco
-  GIT_REPOSITORY https://github.com/NVIDIA/cuCollections.git
-  GIT_TAG        dev  # Active development
-  OPTIONS        "BUILD_TESTS OFF" "BUILD_BENCHMARKS OFF"
-)
-FetchContent_MakeAvailable(cuco)
-target_link_libraries(nova PRIVATE cuco)
-```
-
-**Requirements:** Volta or newer (sm_70+). **Does not support Pascal (sm_60)** — relevant if 6.0 architecture support is still needed.
-
-**Source:** [cuCollections GitHub](https://github.com/NVIDIA/cuCollections)
 
 ---
 
-## 3. What's NOT Needed
+## 2. Roofline Stack Requirements
+
+### What Already Exists (v2.7)
+
+The project already has:
+- `BandwidthTracker` in `include/cuda/observability/bandwidth_tracker.h`
+- Device memory bandwidth measurement (H2D/D2H/D2D)
+- Kernel timing via CUDA events
+
+### What's Needed for Roofline Model
+
+The Roofline model requires:
+
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| Arithmetic intensity calculation | Implementation required | FLOPs per byte of memory traffic |
+| Device memory bandwidth | `BandwidthTracker` (existing) | Memory bound ceiling |
+| Peak FLOP/s | Device properties API | Compute bound ceiling |
+| FLOP/s counter | Custom instrumentation | Actual achieved performance |
+
+### Implementation Stack
+
+**No external dependencies required.** Roofline model can be implemented using:
+
+1. **CUDA device properties** (`cudaDeviceGetAttribute`) — Peak FLOPS
+2. **Memory bandwidth measurement** (existing `BandwidthTracker`)
+3. **Kernel FLOP counter** — Custom per-kernel instrumentation
+4. **Visualization** — Potentially matplotlib/Python harness from v1.7
+
+### Data Sources
+
+| Metric | Source | Confidence |
+|--------|--------|------------|
+| Device peak FP32 GFLOP/s | `cudaDeviceGetAttribute(cudaDevAttrSingleKEngineClockRate)` | HIGH |
+| Device peak FP64 GFLOP/s | `cudaDeviceGetAttribute(cudaDevAttrDoubleKEngineClockRate)` | HIGH |
+| Memory bandwidth (HBM) | `BandwidthTracker::DeviceMemoryBandwidth` | HIGH (v2.7) |
+| Achieved FLOP/s | Custom kernel instrumentation | MEDIUM |
+
+### CMake Integration
+
+```cmake
+# Add Roofline sources
+set(ROOFLINE_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/cuda/roofline/roofline_model.cu
+)
+list(APPEND ALL_CUDA_SOURCES ${ROOFLINE_SOURCES})
+```
+
+---
+
+## 3. Sparse Format Stack Requirements
+
+### cuSPARSE Format Support
+
+| Format | cuSPARSE Native | Nova Implementation | Notes |
+|--------|-----------------|---------------------|-------|
+| CSR | `CUSPARSE_FORMAT_CSR` | Existing (v2.1) | Works with SpMV |
+| CSC | `CUSPARSE_FORMAT_CSC` | Existing (v2.1) | Works with SpMV |
+| ELL | `CUSPARSE_INDEX_RAW` | **Required** | Padded format for regular sparsity |
+| HYB | `CUSPARSE_MATRIX_TYPE_GENERAL` + analyze | **Required** | Hybrid ELL/COO format |
+
+### ELL Format (Equal-Length Lazy)
+
+**Purpose:** Efficient for matrices with regular, moderate sparsity (e.g., structured grids). Each row padded to max nnz per row.
+
+**Structure:**
+```
+values: [a00, a01, a02, pad, b00, b01, b02, pad, ...]  // max_nnz_per_row elements per row
+indices: [0, 2, 4, pad, 1, 3, 5, pad, ...]             // column indices, padded with -1 or row length
+```
+
+**cuSPARSE support:** 
+- `cusparseSpMV` with `CUSPARSE_FORMAT_ELL` via `cusparseCreateCsr` + conversion
+- Native ELL format in cuSPARSE 12.x via `cusparseCsr2Ell`, `cusparseEll2Csr`
+
+### HYB Format (Hybrid ELL/COO)
+
+**Purpose:** Handles irregular sparsity in first K columns with ELL, remainder with COO.
+
+**cuSPARSE support:**
+- `cusparseCreateHybMat` / `cusparseCscToHyb`
+- Automatic conversion: `cusparseCsrToHyb`
+- `cusparseSpMV` with HYB handle
+
+### Required Dependencies
+
+| Component | Source | Version | Purpose |
+|-----------|--------|---------|---------|
+| cuSPARSE | CUDA toolkit | 12.x | ELL/HYB format operations |
+| `CUDA::cusparse` | CMake target | — | Link to library |
+
+### CMake Integration
+
+```cmake
+# Add cusparse to cuda_impl (verify it's not already linked)
+target_link_libraries(cuda_impl PUBLIC
+    # ... existing links ...
+    CUDA::cusparse  # Add if not already present
+)
+
+# Add sparse format sources
+set(SPARSE_FORMAT_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/cuda/sparse/ell_matrix.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/sparse/hyb_matrix.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/sparse/format_conversion.cu
+)
+list(APPEND ALL_CUDA_SOURCES ${SPARSE_FORMAT_SOURCES})
+```
+
+### Header Integration
+
+```cpp
+// include/cuda/sparse/sparse_matrix.hpp
+#include <cusparse.h>  // Add if not present
+
+enum class SparseFormat { CSR, CSC, ELL, HYB };
+
+template<typename T>
+class SparseMatrixELL { /* ... */ };
+
+template<typename T>
+class SparseMatrixHYB { /* ... */ };
+```
+
+---
+
+## 4. Integration Points
+
+### With Existing cuSOLVER (linalg.h)
+
+The Krylov solvers should integrate with existing linear algebra:
+
+```cpp
+// New header: include/cuda/solvers/krylov_solver.hpp
+#include "cuda/linalg/linalg.h"
+#include "cuda/sparse/sparse_matrix.hpp"
+
+namespace cuda::solvers {
+
+class KrylovSolver {
+public:
+    virtual ~KrylovSolver() = default;
+    virtual bool solve(const float* A, float* x, const float* b, size_t n) = 0;
+};
+
+// Factory for creating solvers
+std::unique_ptr<KrylovSolver> create_cg_solver();
+std::unique_ptr<KrylovSolver> create_gmres_solver(int restart = 50);
+std::unique_ptr<KrylovSolver> create_bicgstab_solver();
+}  // namespace cuda::solvers
+```
+
+### With Existing SpMV (spmv.cpp)
+
+The ELL/HYB formats should share the sparse matrix hierarchy:
+
+```cpp
+// include/cuda/sparse/sparse_ops.hpp extensions
+namespace nova::sparse {
+
+template<typename T>
+void spmv(const SparseMatrixELL<T>& matrix, const T* x, T* y);
+
+template<typename T>
+void spmv(const SparseMatrixHYB<T>& matrix, const T* x, T* y);
+
+}  // namespace nova::sparse
+```
+
+### With Existing Observability (bandwidth_tracker.h)
+
+Roofline model should use existing bandwidth infrastructure:
+
+```cpp
+// include/cuda/roofline/roofline_model.hpp
+#include "cuda/observability/bandwidth_tracker.h"
+
+namespace cuda::roofline {
+
+class RooflineModel {
+public:
+    RooflineModel();
+    
+    // Add data point from kernel execution
+    void add_kernel(const std::string& name, 
+                    double flops, 
+                    double bytes_transferred,
+                    double elapsed_ms);
+    
+    // Generate Roofline chart data
+    std::vector<RooflinePoint> compute_roofline() const;
+    
+private:
+    std::vector<KernelMeasurement> measurements_;
+    observability::DeviceMemoryBandwidth bandwidth_;
+    double peak_flops_fp32_;
+};
+
+}  // namespace cuda::roofline
+```
+
+---
+
+## 5. Recommended Dependencies (with versions)
+
+### No New External Dependencies
+
+The v2.8 capabilities can be implemented using existing CUDA toolkit components:
+
+| Component | Status | Justification |
+|-----------|--------|---------------|
+| cuBLAS | Already linked | BLAS-1/2 for Krylov kernels |
+| cuSPARSE | **Add linking** | ELL/HYB format support |
+| CUDA events | Already available | Timing for Roofline |
+| Device properties | CUDA runtime API | Peak FLOP/s for Roofline |
+| Memory bandwidth | v2.7 `BandwidthTracker` | Bandwidth ceiling |
+
+### CMake Changes Required
+
+```cmake
+# Verify cusparse is linked in cuda_impl target
+# From CMakeLists.txt line 573-589:
+target_link_libraries(cuda_impl PUBLIC
+    cuda_device
+    cuda_algo
+    cuda_nccl
+    cuda_mpi
+    cuda_topology
+    cuda_multinode
+    cuda_checkpoint
+    cuda_comm
+    cuda_memory_error
+    cuda_preemption
+    CUDA::cudart
+    CUDA::cublas
+    CUDA::cusolver
+    CUDA::curand
+    CUDA::cufft
+    CUDA::cusparse  # ADD THIS LINE
+)
+```
+
+---
+
+## 6. Anti-Dependencies (What NOT to Add)
 
 | Library | Why Avoid | Alternative |
 |---------|-----------|-------------|
-| Valgrind | Does not support CUDA | Compute Sanitizer |
-| Intel VTune | x86-focused | Nsight Compute/Systems |
-| Allinea/ARM DDT | Commercial, less CUDA-native | Nsight tools (free) |
-| Extra property-based testing frameworks | Custom framework sufficient | Keep existing |
-| Commercial profiling tools | NVIDIA tools are free and comprehensive | Nsight suite |
+| **AmgX** | Separate enterprise product, overkill for basic Krylov | Custom implementation using cuBLAS |
+| **MAGMA** | CPU-GPU hybrid, not pure GPU iterative solvers | Custom GPU implementation |
+| **PETSc** | CPU-focused, CUDA support is secondary | Custom GPU implementation |
+| **ViennaCL** | Unmaintained, incomplete CUDA support | Custom GPU kernels |
+| **Eigen** | CPU-focused, CUDA support experimental | cuBLAS already available |
+| **Thrust** (new) | Not needed — existing CCCL covers | Keep existing CCCL |
+| **cuCollections** | Concurrent data structures, not needed | — |
 
 ---
 
-## 4. Complete Stack Additions for v2.7
+## 7. Summary: Stack Changes for v2.8
 
-### Required Migration
-
-| Component | Current | Target | Rationale |
-|-----------|---------|--------|-----------|
-| CUB | Direct include | CCCL 2.6.0 | CUB archived, CCCL is maintained |
-
-### Recommended Additions
-
-| Component | Version | Integration | Purpose |
-|-----------|---------|-------------|---------|
-| Compute Sanitizer | CUDA 12+ built-in | CLI wrapper | Memory safety, race detection |
-| Nsight Compute CLI | CUDA 12+ built-in | CMake detection | Kernel profiling |
-| Nsight Systems | v2026.2 | Optional download | Timeline visualization |
-
-### Optional Additions
-
-| Component | Version | When Needed |
-|-----------|---------|-------------|
-| Tracy Profiler | v0.13.1 | If Nsight licensing/access is problematic |
-| cuCollections | dev branch | If concurrent hash tables needed |
-
----
-
-## 5. Version Compatibility
-
-| Tool | Min CUDA | Min NVCC | Notes |
-|------|----------|----------|-------|
-| Compute Sanitizer | 11.0+ | — | Full feature set in CUDA 12+ |
-| Nsight Compute | 11.0+ | — | v13.2 requires CUDA 12.0+ |
-| Nsight Systems | 11.0+ | — | Supports all target archs |
-| CCCL | 11.0+ | 11.0+ | Backward compatible |
-| cuCollections | 12.0+ | 12.0+ | Dropped CUDA 11 support Feb 2026 |
-| Tracy | 11.0+ | — | CUDA support varies by version |
-
-**Note on sm_60 (Pascal):** cuCollections does not support Pascal. Compute Sanitizer and Nsight tools support Pascal. If maintaining sm_60 support, do not add cuCollections.
-
----
-
-## 6. Installation Summary
-
-### Minimal Additions (Required)
-
-```bash
-# No installation needed — all NVIDIA tools are part of CUDA Toolkit
-# Just need to migrate CUB → CCCL in CMake
-
-# Install Nsight Systems (optional, for GUI timeline analysis)
-# Download from: https://developer.nvidia.com/nsight-systems/get-started
-```
-
-### CMake Changes for v2.7
+### Additions to CMake
 
 ```cmake
-# 1. Replace CUB with CCCL
-FetchContent_Declare(
-  cccl
-  GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
-  GIT_TAG        2.6.0
-  GIT_SHALLOW    TRUE
+# 1. Add cusparse if not already linked
+find_package(CUDAToolkit REQUIRED)  # Already present
+# CUDA::cusparse target available after CUDAToolkit find
+
+# 2. New source directories
+set(CUDA_SOLVER_DIR ${CMAKE_SOURCE_DIR}/include/cuda/solvers)
+set(CUDA_ROOFLINE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/roofline)
+set(CUDA_SPARSE_EXT_DIR ${CMAKE_SOURCE_DIR}/include/cuda/sparse)
+
+# 3. New source files
+set(SOLVER_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/cg_solver.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/gmres_solver.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/solvers/bicgstab_solver.cu
 )
-FetchContent_MakeAvailable(cccl)
 
-# 2. Link CCCL instead of CUB
-target_link_libraries(nova PUBLIC CCCL::cccl)
+set(ROOFLINE_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/cuda/roofline/roofline_model.cu
+)
 
-# 3. Add optional sanitizer support
-option(NOVA_ENABLE_SANITIZER "Build with sanitizer support" OFF)
-if(NOVA_ENABLE_SANITIZER)
-    set_target_properties(nova PROPERTIES
-        CXX_SANITIZERS "address,thread"
-    )
-endif()
+set(SPARSE_EXT_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/cuda/sparse/ell_matrix.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/sparse/hyb_matrix.cu
+)
 
-# 4. Nsight Compute CLI detection
-find_program(NCU_PATH ncu PATHS ENV PATH)
-if(NCU_PATH)
-    message(STATUS "Nsight Compute found: ${NCU_PATH}")
-endif()
+list(APPEND ALL_CUDA_SOURCES 
+    ${SOLVER_SOURCES}
+    ${ROOFLINE_SOURCES}
+    ${SPARSE_EXT_SOURCES}
+)
+
+# 4. Update cuda_impl link libraries
+target_link_libraries(cuda_impl PUBLIC CUDA::cusparse)
 ```
+
+### New Include Directories
+
+| Directory | Purpose |
+|-----------|---------|
+| `include/cuda/solvers/` | Krylov solver interface |
+| `include/cuda/roofline/` | Roofline model implementation |
+| `include/cuda/sparse/` (extensions) | ELL/HYB sparse matrix classes |
+
+### No Version Upgrades Needed
+
+| Component | Current | v2.8 | Notes |
+|-----------|---------|------|-------|
+| CUDA | 20 | 20 | No change needed |
+| C++ | 23 | 23 | No change needed |
+| CMake | 4.0+ | 4.0+ | No change needed |
+| cuBLAS | toolkit | toolkit | Already linked |
+| cuSPARSE | toolkit | toolkit | Add link only |
+| CCCL | 2.6.0 | 2.6.0 | No change needed |
 
 ---
 
-## 7. Confidence Assessment
+## 8. Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| CUB → CCCL migration | HIGH | Official migration path, well documented |
-| Compute Sanitizer | HIGH | Part of CUDA toolkit, no version concerns |
-| Nsight Compute/Systems | HIGH | Version 13.2/2026.2 verified current |
-| cuCollections | MEDIUM | Active development, API may change |
-| Tracy | MEDIUM | Good alternative if Nsight unavailable |
+| Krylov solver approach | HIGH | CG/GMRES/BiCGSTAB well-documented, implementable with cuBLAS |
+| ELL format support | HIGH | cuSPARSE has mature ELL support |
+| HYB format support | MEDIUM | HYB is deprecated in cuSPARSE 12.x in favor of CSR+COO merge; verify |
+| Roofline model | HIGH | Uses existing infrastructure, no external deps |
+| No external deps needed | HIGH | All capabilities available in CUDA toolkit |
 
 ---
 
 ## Sources
 
-- [NVIDIA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/)
-- [Nsight Compute v13.2](https://docs.nvidia.com/nsight-compute/)
-- [Nsight Systems v2026.2](https://docs.nvidia.com/nsight-systems/)
-- [CCCL GitHub](https://github.com/nvidia/cccl)
-- [cuCollections GitHub](https://github.com/NVIDIA/cuCollections)
-- [Tracy Profiler v0.13.1](https://github.com/wolfpld/tracy)
-- [Google Benchmark v1.9.5](https://github.com/google/benchmark)
+- [cuSOLVER Documentation](https://docs.nvidia.com/cuda/cusolver/) — Direct solvers only, no iterative
+- [cuSPARSE Documentation](https://docs.nvidia.com/cuda/cusparse/) — ELL/HYB format support
+- [cuBLAS Documentation](https://docs.nvidia.com/cuda/cublas/) — BLAS operations for Krylov
+- [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) — All libraries included
+- [Roofline Model](https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineSideNoVir.pdf) — Berkeley benchmark methodology
 
 ---
 
-*Stack research: 2026-04-30 for v2.7 Comprehensive Testing & Validation*
+*Stack research: 2026-05-01 for v2.8 Numerical Computing & Performance*
