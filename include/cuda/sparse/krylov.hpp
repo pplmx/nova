@@ -4,9 +4,11 @@
 #include "sparse_matrix.hpp"
 #include "sparse_ops.hpp"
 #include "matrix.hpp"
+#include "preconditioner.hpp"
 #include <vector>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace nova {
 namespace sparse {
@@ -16,7 +18,8 @@ enum class SolverError {
     MAX_ITERATIONS,
     BREAKDOWN,
     INVALID_MATRIX,
-    CONVERGENCE_FAILURE
+    CONVERGENCE_FAILURE,
+    PRECONDITIONER_ERROR
 };
 
 template<typename T>
@@ -100,8 +103,15 @@ public:
 
     virtual SolverResult<T> solve(const SparseMatrixCSR<T>& A, const T* b, T* x) = 0;
 
+    void set_preconditioner(std::unique_ptr<Preconditioner<T>> prec) {
+        preconditioner_ = std::move(prec);
+    }
+
+    bool has_preconditioner() const { return preconditioner_ != nullptr; }
+
 protected:
     SolverConfig<T> config_;
+    std::unique_ptr<Preconditioner<T>> preconditioner_;
 };
 
 template<typename T>
@@ -194,8 +204,13 @@ public:
             return result;
         }
 
-        memory::Buffer<T> d_b(n), d_x(n), d_r(n), d_p(n), d_Ap(n);
-        std::vector<T> h_x(n, T{0}), h_r(n), h_p(n), h_Ap(n);
+        if (this->preconditioner_ && !has_preconditioner_) {
+            this->preconditioner_->setup(A);
+            has_preconditioner_ = true;
+        }
+
+        memory::Buffer<T> d_b(n), d_x(n), d_r(n), d_z(n), d_p(n), d_Ap(n);
+        std::vector<T> h_x(n, T{0}), h_r(n), h_z(n), h_p(n), h_Ap(n);
 
         d_b.copy_from(b, n);
         d_x.fill(T{0});
@@ -217,8 +232,14 @@ public:
             return result;
         }
 
-        h_p = h_r;
-        T r_dot_old = detail::dot_product(h_r.data(), h_r.data(), n);
+        if (this->preconditioner_) {
+            this->preconditioner_->apply(h_r.data(), h_z.data());
+        } else {
+            h_z = h_r;
+        }
+
+        h_p = h_z;
+        T r_dot_old = detail::dot_product(h_r.data(), h_z.data(), n);
 
         result.residual_history.reserve(this->config_.max_iterations);
 
@@ -241,8 +262,14 @@ public:
                 h_r[i] -= alpha * h_Ap[i];
             }
 
-            T r_dot_new = detail::dot_product(h_r.data(), h_r.data(), n);
-            T residual = std::sqrt(r_dot_new);
+            if (this->preconditioner_) {
+                this->preconditioner_->apply(h_r.data(), h_z.data());
+            } else {
+                h_z = h_r;
+            }
+
+            T r_dot_new = detail::dot_product(h_r.data(), h_z.data(), n);
+            T residual = detail::norm2(h_r.data(), n);
 
             result.residual_history.push_back(residual);
             result.relative_residual = residual / b_norm;
@@ -265,7 +292,7 @@ public:
 
             T beta = r_dot_new / r_dot_old;
             for (int i = 0; i < n; ++i) {
-                h_p[i] = h_r[i] + beta * h_p[i];
+                h_p[i] = h_z[i] + beta * h_p[i];
             }
 
             r_dot_old = r_dot_new;
@@ -279,6 +306,9 @@ public:
         }
         return result;
     }
+
+private:
+    bool has_preconditioner_ = false;
 };
 
 template<typename T>
