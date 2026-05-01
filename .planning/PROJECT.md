@@ -4,17 +4,17 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.9 Architecture Refactor
+## Current Milestone: v2.10 Sparse Solver Acceleration
 
-**Goal:** Refactor sparse module to use GPU memory (Buffer<T>), integrate cuSPARSE for acceleration, and unify CSR abstractions
+**Goal:** Accelerate Krylov solver convergence with preconditioners and sparse matrix ordering
 
 **Target features:**
-- Unified SparseMatrix<T> using cuda::memory::Buffer<T>
-- cuSPARSE integration for GPU-accelerated SpMV
-- GPU-accelerated Krylov solvers (CG, GMRESGPU, BiCGSTAB)
-- Backward compatibility with deprecated old API
+- Jacobi preconditioner (diagonal scaling)
+- RCM sparse matrix ordering (reduce fill-in)
+- ILU(0)/ILU(k) incomplete factorization
+- Integration with existing CG/GMRESGPU/BiCGSTAB solvers
 
-**Status:** Ready to complete (5 phases, audit passed)
+**Status:** Ready to start (Phase 88+)
 
 ## Completed (v2.6)
 
@@ -357,5 +357,5 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-05-01 after v2.8 Numerical Computing & Performance started*
-*v2.8: Krylov Solvers, Roofline Model, Advanced Sparse Formats*
+*Last updated: 2026-05-01 after v2.10 Sparse Solver Acceleration started*
+*v2.10: Preconditioners, Matrix Ordering, Solver Acceleration*

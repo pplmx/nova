@@ -1,12 +1,12 @@
 ---
 gsd_state_version: 1.0
 milestone: v2.10
-milestone_name: TBD
-status: ready_for_new_milestone
+milestone_name: Sparse Solver Acceleration
+status: planning
 last_updated: "2026-05-01"
 progress:
-  total_phases: 5
-  completed_phases: 5
+  total_phases: 0
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -18,14 +18,14 @@ progress:
 
 ## Current Position
 
-Phase: v2.9 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Ready for new milestone
-Last activity: 2026-05-01 — v2.9 shipped
+Status: Planning v2.10
+Last activity: 2026-05-01 — Milestone v2.10 started
 
 ## Phase List
 
-*No active phases — milestone v2.9 complete*
+*No active phases — milestone v2.10 starting*
 
 ## Milestone History
 
@@ -51,6 +51,7 @@ Last activity: 2026-05-01 — v2.9 shipped
 | v2.7 Comprehensive Testing & Validation | ✅ Shipped | 2026-04-30 | 16 |
 | v2.8 Numerical Computing & Performance | ✅ Shipped | 2026-05-01 | 20 |
 | v2.9 Architecture Refactor | ✅ Shipped | 2026-05-01 | 7 |
+| v2.10 Sparse Solver Acceleration | 🚧 In progress | 2026-05-01 | — |
 
 ---
-*State updated: 2026-05-01 — v2.9 shipped, ready for v2.10*
+*State updated: 2026-05-01 — v2.10 Sparse Solver Acceleration started*
