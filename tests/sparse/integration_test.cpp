@@ -1,237 +1,235 @@
-#include "sparse_matrix.hpp"
-#include "sparse_ops.hpp"
-#include "krylov.hpp"
-#include "hyb_matrix.hpp"
-#include "roofline.hpp"
-#include "solver_workspace.hpp"
+#include <gtest/gtest.h>
+#include <cuda/sparse/matrix.hpp>
+#include <cuda/sparse/krylov.hpp>
+#include <cuda/sparse/sparse_matrix.hpp>
+#include <cuda/memory/buffer.h>
 
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include <chrono>
-
-namespace nova {
-namespace sparse {
-namespace test {
+namespace nova::sparse::test {
 
 template<typename T>
-bool e2e_cg_pipeline() {
-    std::cout << "=== E2E CG Pipeline Test ===\n";
+bool approx_equal(T a, T b, T tol = T{1e-4}) {
+    return std::abs(a - b) < tol;
+}
 
-    int n = 50;
-    std::vector<T> dense(n * n, T{0});
+TEST(IntegrationTest, CSRToSparseMatrixConversion) {
+    std::vector<float> values = {1.0f, 2.0f, 3.0f, 4.0f};
+    std::vector<int> row_offsets = {0, 2, 4};
+    std::vector<int> col_indices = {0, 1, 1, 2};
+
+    SparseMatrixCSR<float> csr(values, row_offsets, col_indices, 2, 3);
+    EXPECT_EQ(csr.num_rows(), 2);
+    EXPECT_EQ(csr.num_cols(), 3);
+    EXPECT_EQ(csr.nnz(), 4);
+
+    SparseMatrix<float> gpu_matrix = ToSparseMatrix(csr);
+
+    EXPECT_EQ(gpu_matrix.rows(), 2);
+    EXPECT_EQ(gpu_matrix.cols(), 3);
+    EXPECT_EQ(gpu_matrix.nnz(), 4);
+
+    std::vector<float> out_values;
+    std::vector<int> out_row_offsets, out_col_indices;
+    gpu_matrix.copy_to_host(out_values, out_row_offsets, out_col_indices);
+
+    EXPECT_EQ(out_values, values);
+    EXPECT_EQ(out_row_offsets, row_offsets);
+    EXPECT_EQ(out_col_indices, col_indices);
+}
+
+TEST(IntegrationTest, SpmvResultConsistency) {
+    std::vector<float> dense = {
+        4.0f, 1.0f, 0.0f,
+        1.0f, 3.0f, 1.0f,
+        0.0f, 1.0f, 2.0f
+    };
+
+    auto gpu_matrix = SparseMatrix<float>::FromDense(dense.data(), 3, 3, 0.0f);
+    ASSERT_TRUE(gpu_matrix.has_value());
+
+    std::vector<float> x = {1.0f, 2.0f, 3.0f};
+
+    memory::Buffer<float> d_x(3), d_y(3);
+    d_x.copy_from(x.data(), 3);
+
+    spmv(*gpu_matrix, d_x.data(), d_y.data());
+
+    std::vector<float> h_y(3);
+    d_y.copy_to(h_y.data(), 3);
+
+    std::vector<float> expected = {
+        4.0f * 1.0f + 1.0f * 2.0f + 0.0f * 3.0f,
+        1.0f * 1.0f + 3.0f * 2.0f + 1.0f * 3.0f,
+        0.0f * 1.0f + 1.0f * 2.0f + 2.0f * 3.0f
+    };
+
+    EXPECT_TRUE(approx_equal(h_y[0], expected[0]));
+    EXPECT_TRUE(approx_equal(h_y[1], expected[1]));
+    EXPECT_TRUE(approx_equal(h_y[2], expected[2]));
+}
+
+TEST(IntegrationTest, CGSolverWithConvertedMatrix) {
+    std::vector<float> dense = {
+        4.0f, 1.0f,
+        1.0f, 3.0f
+    };
+
+    auto gpu_matrix = SparseMatrix<float>::FromDense(dense.data(), 2, 2);
+    ASSERT_TRUE(gpu_matrix.has_value());
+
+    std::vector<float> b = {1.0f, 2.0f};
+    std::vector<float> x(2, 0.0f);
+
+    SolverConfig<float> config;
+    config.relative_tolerance = 1e-8f;
+    config.max_iterations = 100;
+
+    ConjugateGradient<float> solver(config);
+    auto result = solver.solve(*gpu_matrix, b.data(), x.data());
+
+    EXPECT_TRUE(result.converged);
+    EXPECT_LT(result.iterations, 50);
+
+    memory::Buffer<float> d_x(2), d_ax(2);
+    d_x.copy_from(x.data(), 2);
+    spmv(*gpu_matrix, d_x.data(), d_ax.data());
+    std::vector<float> h_ax(2);
+    d_ax.copy_to(h_ax.data(), 2);
+
+    EXPECT_TRUE(approx_equal(h_ax[0], b[0], 1e-4f));
+    EXPECT_TRUE(approx_equal(h_ax[1], b[1], 1e-4f));
+}
+
+TEST(IntegrationTest, LargeSparseMatrixSpMV) {
+    const int n = 1000;
+    const float sparsity = 0.99f;
+
+    std::vector<float> dense(n * n, 0.0f);
+    for (int i = 0; i < n; ++i) {
+        dense[i * n + i] = 4.0f;
+        if (i > 0) dense[i * n + i - 1] = -1.0f;
+        if (i < n - 1) dense[i * n + i + 1] = -1.0f;
+    }
+
+    auto matrix = SparseMatrix<float>::FromDense(dense.data(), n, n, sparsity);
+    ASSERT_TRUE(matrix.has_value());
+
+    EXPECT_GT(matrix->nnz(), 0);
+    EXPECT_LT(static_cast<float>(matrix->nnz()) / (n * n), 0.1f);
+
+    std::vector<float> x(n, 1.0f);
+    memory::Buffer<float> d_x(n), d_y(n);
+    d_x.copy_from(x.data(), n);
+
+    spmv(*matrix, d_x.data(), d_y.data());
+
+    std::vector<float> h_y(n);
+    d_y.copy_to(h_y.data(), n);
 
     for (int i = 0; i < n; ++i) {
-        dense[i * n + i] = T{4};
-        if (i > 0) dense[i * n + i - 1] = T{-1};
-        if (i < n - 1) dense[i * n + i + 1] = T{-1};
+        float expected = (i > 0 ? -1.0f : 0.0f) + 4.0f + (i < n - 1 ? -1.0f : 0.0f);
+        EXPECT_TRUE(approx_equal(h_y[i], expected, 1e-3f));
+    }
+}
+
+TEST(IntegrationTest, DoublePrecisionSolver) {
+    std::vector<double> dense = {
+        4.0, 1.0,
+        1.0, 3.0
+    };
+
+    auto matrix = SparseMatrix<double>::FromDense(dense.data(), 2, 2);
+    ASSERT_TRUE(matrix.has_value());
+
+    std::vector<double> b = {1.0, 2.0};
+    std::vector<double> x(2, 0.0);
+
+    SolverConfig<double> config;
+    config.relative_tolerance = 1e-10;
+    config.max_iterations = 100;
+
+    ConjugateGradient<double> solver(config);
+    auto result = solver.solve(*matrix, b.data(), x.data());
+
+    EXPECT_TRUE(result.converged);
+    EXPECT_LT(result.iterations, 50);
+
+    EXPECT_TRUE(approx_equal(x[0], 1.0/11.0, 1e-8));
+    EXPECT_TRUE(approx_equal(x[1], 7.0/11.0, 1e-8));
+}
+
+TEST(IntegrationTest, BiCGSTABConvergence) {
+    const int n = 50;
+    std::vector<float> dense(n * n, 0.0f);
+
+    for (int i = 0; i < n; ++i) {
+        dense[i * n + i] = 3.0f;
+        if (i > 0) dense[i * n + i - 1] = -1.0f;
+        if (i < n - 1) dense[i * n + i + 1] = -1.0f;
     }
 
-    auto csr = SparseMatrixCSR<T>::FromDense(dense.data(), n, n);
-    if (!csr) {
-        std::cerr << "Failed to create CSR matrix\n";
-        return false;
-    }
-    std::cout << "  CSR created: " << n << "x" << n << ", nnz=" << csr->nnz() << "\n";
+    auto matrix = SparseMatrix<float>::FromDense(dense.data(), n, n);
+    ASSERT_TRUE(matrix.has_value());
 
-    auto ell = SparseMatrixELL<T>::FromCSR(*csr);
-    std::cout << "  ELL created: max_nnz=" << ell.max_nnz_per_row() << "\n";
+    std::vector<float> b(n, 1.0f);
+    std::vector<float> x(n, 0.0f);
 
-    auto sell = SparseMatrixSELL<T>::FromCSR(*csr, 16);
-    std::cout << "  SELL created: slice_height=16\n";
-
-    auto hyb = SparseMatrixHYB<T>::FromCSR(*csr);
-    std::cout << "  HYB created: ELL=" << hyb.ell_row_count()
-              << ", COO=" << hyb.coo_row_count() << "\n";
-
-    std::vector<T> b(n, T{1});
-    std::vector<T> x(n, T{0});
-    std::vector<T> x_ell(n, T{0});
-    std::vector<T> x_sell(n, T{0});
-    std::vector<T> x_hyb(n, T{0});
-
-    SolverConfig<T> config;
-    config.relative_tolerance = T{1e-8};
+    SolverConfig<float> config;
+    config.relative_tolerance = 1e-8f;
     config.max_iterations = 200;
 
-    SolverWorkspace<T> workspace(n);
-    ConjugateGradient<T> solver(config);
+    BiCGSTAB<float> solver(config);
+    auto result = solver.solve(*matrix, b.data(), x.data());
 
-    auto result = solver.solve(*csr, b.data(), x.data());
-    std::cout << "  CG (CSR): " << (result.converged ? "converged" : "failed")
-              << " in " << result.iterations << " iterations\n";
+    EXPECT_TRUE(result.converged);
+    EXPECT_LT(result.iterations, 100);
+    EXPECT_LT(result.relative_residual, config.relative_tolerance);
 
-    workspace.reset();
-    result = solver.solve(*csr, b.data(), x_ell.data());
-    std::cout << "  CG (ELL): " << (result.converged ? "converged" : "failed")
-              << " in " << result.iterations << " iterations\n";
+    memory::Buffer<float> d_x(n), d_ax(n);
+    d_x.copy_from(x.data(), n);
+    spmv(*matrix, d_x.data(), d_ax.data());
+    std::vector<float> h_ax(n);
+    d_ax.copy_to(h_ax.data(), n);
 
-    workspace.reset();
-    result = solver.solve(*csr, b.data(), x_sell.data());
-    std::cout << "  CG (SELL): " << (result.converged ? "converged" : "failed")
-              << " in " << result.iterations << " iterations\n";
-
-    workspace.reset();
-    result = solver.solve(*csr, b.data(), x_hyb.data());
-    std::cout << "  CG (HYB): " << (result.converged ? "converged" : "failed")
-              << " in " << result.iterations << " iterations\n";
-
-    T max_diff = T{0};
     for (int i = 0; i < n; ++i) {
-        max_diff = std::max(max_diff, std::abs(x[i] - x_ell[i]));
-        max_diff = std::max(max_diff, std::abs(x[i] - x_sell[i]));
-        max_diff = std::max(max_diff, std::abs(x[i] - x_hyb[i]));
+        EXPECT_TRUE(approx_equal(h_ax[i], 1.0f, 1e-3f));
     }
-
-    std::cout << "  Max solution difference: " << max_diff << "\n";
-
-    if (max_diff > T{1e-6}) {
-        std::cerr << "  FAILED: Solutions differ\n";
-        return false;
-    }
-
-    std::cout << "  PASSED\n\n";
-    return true;
 }
 
-template<typename T>
-bool e2e_gmres_benchmark() {
-    std::cout << "=== E2E GMRES Benchmark ===\n";
+TEST(IntegrationTest, GMRESRestart) {
+    const int n = 30;
+    std::vector<float> dense(n * n, 0.0f);
 
-    int sizes[] = {10, 50, 100};
-    SolverConfig<T> config;
-    config.max_iterations = 500;
-
-    for (int n : sizes) {
-        std::vector<T> dense(n * n, T{0});
-
-        for (int i = 0; i < n; ++i) {
-            dense[i * n + i] = T{5};
-            if (i > 0) dense[i * n + i - 1] = T{1};
-            if (i < n - 1) dense[i * n + i + 1] = T{-1};
-        }
-
-        auto csr = SparseMatrixCSR<T>::FromDense(dense.data(), n, n);
-        if (!csr) continue;
-
-        std::vector<T> b(n, T{1});
-        std::vector<T> x(n, T{0});
-
-        auto start = std::chrono::high_resolution_clock::now();
-        GMRES<T> solver(config, 20);
-        auto result = solver.solve(*csr, b.data(), x.data());
-        auto end = std::chrono::high_resolution_clock::now();
-
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-
-        std::cout << "  " << n << "x" << n << ": "
-                  << result.iterations << " iterations, "
-                  << result.relative_residual << " residual, "
-                  << duration.count() / 1000.0 << " ms\n";
-    }
-
-    std::cout << "  PASSED\n\n";
-    return true;
-}
-
-template<typename T>
-bool roofline_e2e() {
-    std::cout << "=== E2E Roofline Analysis ===\n";
-
-    RooflineAnalyzer analyzer;
-    auto peaks = analyzer.device_peaks();
-
-    std::cout << "  Device peaks:\n";
-    std::cout << "    FP32: " << peaks.fp32_peak_gflops << " GFLOPS\n";
-    std::cout << "    Bandwidth: " << peaks.memory_bandwidth_gbps << " GB/s\n";
-
-    int nnz = 10000;
-    int n = 5000;
-    double ai = spmv_arithmetic_intensity<T>(nnz, n);
-    std::cout << "  SpMV AI: " << ai << " FLOPs/byte\n";
-
-    auto classification = analyzer.classify_with_confidence(ai, peaks.fp32_peak_gflops);
-    std::cout << "  Classification: " << RooflineAnalyzer::bound_to_string(classification.bound)
-              << " (" << classification.confidence_percent << "% confidence)\n";
-
-    RooflineAnalysis analysis;
-    analysis.set_device_info(peaks, Precision::FP32, "Test Device");
-
-    auto metrics = analyzer.analyze_kernel("spmv_csr", 2LL * nnz, 0.5, nnz * sizeof(T) * 3, Precision::FP32);
-    analysis.add_kernel(metrics);
-
-    std::string json = analysis.to_json();
-    std::cout << "  JSON export length: " << json.length() << " chars\n";
-    std::cout << "  PASSED\n\n";
-    return true;
-}
-
-template<typename T>
-bool workspace_reuse_test() {
-    std::cout << "=== Workspace Reuse Test ===\n";
-
-    int n = 100;
-    std::vector<T> dense(n * n, T{0});
     for (int i = 0; i < n; ++i) {
-        dense[i * n + i] = T{4};
-        if (i > 0) dense[i * n + i - 1] = T{-1};
-        if (i < n - 1) dense[i * n + i + 1] = T{-1};
+        dense[i * n + i] = 3.0f;
+        if (i > 0) dense[i * n + i - 1] = -1.0f;
+        if (i < n - 1) dense[i * n + i + 1] = -1.0f;
     }
 
-    auto csr = SparseMatrixCSR<T>::FromDense(dense.data(), n, n);
-    if (!csr) return false;
+    auto matrix = SparseMatrix<float>::FromDense(dense.data(), n, n);
+    ASSERT_TRUE(matrix.has_value());
 
-    std::vector<T> b(n, T{1});
-    std::vector<T> x1(n, T{0});
-    std::vector<T> x2(n, T{0});
+    std::vector<float> b(n, 1.0f);
+    std::vector<float> x(n, 0.0f);
 
-    SolverConfig<T> config;
-    config.relative_tolerance = T{1e-8};
+    SolverConfig<float> config;
+    config.relative_tolerance = 1e-8f;
     config.max_iterations = 200;
 
-    SolverWorkspace<T> workspace(n);
-    ConjugateGradient<T> solver(config);
+    GMRESGPU<float> solver(config, 10);
+    auto result = solver.solve(*matrix, b.data(), x.data());
 
-    workspace.reset();
-    auto result1 = solver.solve(*csr, b.data(), x1.data());
+    EXPECT_TRUE(result.converged);
+    EXPECT_LT(result.iterations, 150);
 
-    workspace.reset();
-    auto result2 = solver.solve(*csr, b.data(), x2.data());
+    memory::Buffer<float> d_x(n), d_ax(n);
+    d_x.copy_from(x.data(), n);
+    spmv(*matrix, d_x.data(), d_ax.data());
+    std::vector<float> h_ax(n);
+    d_ax.copy_to(h_ax.data(), n);
 
-    std::cout << "  First solve: " << result1.iterations << " iterations\n";
-    std::cout << "  Second solve: " << result2.iterations << " iterations\n";
-
-    T max_diff = T{0};
     for (int i = 0; i < n; ++i) {
-        max_diff = std::max(max_diff, std::abs(x1[i] - x2[i]));
+        EXPECT_TRUE(approx_equal(h_ax[i], 1.0f, 1e-3f));
     }
-
-    std::cout << "  Solution difference: " << max_diff << "\n";
-    std::cout << "  PASSED\n\n";
-    return true;
 }
 
-template<typename T>
-int run_all() {
-    int passed = 0;
-    int failed = 0;
-
-    if (e2e_cg_pipeline<T>()) ++passed; else ++failed;
-    if (e2e_gmres_benchmark<T>()) ++passed; else ++failed;
-    if (roofline_e2e<T>()) ++passed; else ++failed;
-    if (workspace_reuse_test<T>()) ++passed; else ++failed;
-
-    std::cout << "=== Integration Test Results ===\n";
-    std::cout << "Passed: " << passed << "\n";
-    std::cout << "Failed: " << failed << "\n";
-
-    return failed;
-}
-
-}
-}
-}
-
-int main() {
-    return nova::sparse::test::run_all<double>();
-}
+}  // namespace nova::sparse::test
