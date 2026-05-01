@@ -4,17 +4,17 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.8 Numerical Computing & Performance
+## Current Milestone: v2.9 Architecture Refactor
 
-**Goal:** Add iterative linear solvers (Krylov methods), performance Roofline model, and advanced sparse matrix formats
+**Goal:** Refactor sparse module to use GPU memory (Buffer<T>), integrate cuSPARSE for acceleration, and unify CSR abstractions
 
 **Target features:**
-- Krylov Solvers (CG, GMRES, BiCGSTAB) for iterative linear solving
-- Roofline Performance Model for theoretical vs actual FLOP/s analysis
-- Advanced Sparse Formats (ELL, HYB) with pattern analysis
-- Integration tests, benchmarks, and chaos scenarios
+- Unified SparseMatrix<T> using cuda::memory::Buffer<T>
+- cuSPARSE integration for GPU-accelerated SpMV
+- GPU-accelerated Krylov solvers (CG, GMRESGPU, BiCGSTAB)
+- Backward compatibility with deprecated old API
 
-**Status:** Roadmap defined (4 phases)
+**Status:** Ready to complete (5 phases, audit passed)
 
 ## Completed (v2.6)
 
@@ -67,6 +67,17 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - ✓ Performance benchmarks — Phase 82
 - ✓ NVTX integration with nova_sparse domain — Phase 82
 - ✓ Documentation updates — Phase 82
+
+### Completed (v2.9)
+
+- ✓ SparseMatrix<T> with cuda::memory::Buffer<T> — Phase 83
+- ✓ cuSPARSE integration for GPU SpMV — Phase 84
+- ✓ GPU-accelerated CG solver — Phase 85
+- ✓ GPU-accelerated GMRESGPU solver — Phase 85
+- ✓ GPU-accelerated BiCGSTAB solver — Phase 85
+- ✓ SparseMatrixCSR<T> deprecated with [[deprecated]] — Phase 86
+- ✓ ToSparseMatrix() conversion function — Phase 86
+- ✓ Comprehensive E2E integration tests — Phase 87
 
 **Next milestone:** TBD
 
@@ -191,6 +202,16 @@ A reliable, high-performance CUDA compute library that can be trusted in product
 - ✓ InferenceGraphExecutor with CUDA Graph capture — Phase 74
 - ✓ NVTX domain for inference phases — Phase 74
 - ✓ Integration tests covering all 18 requirements — Phase 74
+
+### Completed (v2.9)
+
+- ✓ SparseMatrix<T> with cuda::memory::Buffer<T> — Phase 83
+- ✓ cuSPARSE integration for GPU SpMV — Phase 84
+- ✓ GPU-accelerated ConjugateGradient solver — Phase 85
+- ✓ GPU-accelerated GMRESGPU solver — Phase 85
+- ✓ GPU-accelerated BiCGSTAB solver — Phase 85
+- ✓ SparseMatrixCSR<T> deprecated with [[deprecated]] — Phase 86
+- ✓ ToSparseMatrix() conversion from legacy CSR — Phase 86
 
 ### Completed (v1.6)
 

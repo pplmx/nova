@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.8
-milestone_name: Numerical Computing & Performance
-status: complete
+milestone: v2.9
+milestone_name: Architecture Refactor
+status: audit_passed
 last_updated: "2026-05-01"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 5
+  completed_phases: 5
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -18,18 +18,20 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining roadmap)
+Phase: All phases complete
 Plan: —
-Status: Defining roadmap
-Last activity: 2026-05-01 — Milestone v2.8 roadmap created
+Status: Audit passed — ready to complete
+Last activity: 2026-05-01 — v2.9 audit complete
 
 ## Phase List
 
 | Phase | Name | Goal | Status | Requirements |
 |-------|------|------|--------|--------------|
-| 80 | Krylov Solver Core + Roofline | CG/GMRES/BiCGSTAB solvers, device peaks, AI | Complete | KRY-01 to KRY-04, RF-01 to RF-03 (7) |
-| 81 | Extended Formats + Roofline Analysis | HYB format, performance classification, JSON | Complete | SPARSE-05, RF-04, RF-05 (3) |
-| 82 | Integration & Production | Memory pool, diagnostics, E2E, benchmarks, NVTX, docs | Complete | KRY-05, KRY-06, INT-01 to INT-04 (6) |
+| 83 | SparseMatrix with Buffer<T> | Unified sparse matrix with GPU memory | Complete | ARCH-01 |
+| 84 | cuSPARSE Integration | GPU SpMV via cuSPARSE | Complete | ARCH-02 |
+| 85 | GPU-Accelerated Krylov | CG/GMRES/BiCGSTAB on GPU | Complete | ARCH-03 |
+| 86 | Backward Compatibility | Deprecate old API, add conversion | Complete | ARCH-04 |
+| 87 | Final Integration Tests | E2E validation | Complete | ARCH-05 |
 
 ## Milestone History
 
@@ -54,6 +56,7 @@ Last activity: 2026-05-01 — Milestone v2.8 roadmap created
 | v2.6 Transformer & Inference Optimization | ✅ Shipped | 2026-04-29 | 18 |
 | v2.7 Comprehensive Testing & Validation | ✅ Shipped | 2026-04-30 | 16 |
 | v2.8 Numerical Computing & Performance | ✅ Shipped | 2026-05-01 | 20 |
+| v2.9 Architecture Refactor | ✅ Audit Passed | 2026-05-01 | 7 |
 
 ---
-*State updated: 2026-05-01 — v2.8 roadmap created*
+*State updated: 2026-05-01 — v2.9 audit passed, ready to complete*

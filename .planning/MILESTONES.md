@@ -388,3 +388,36 @@
 - `cuda/algo/` - Segmented sort, SpMV, sample sort, SSSP
 
 **Next:** TBD
+
+---
+
+## v2.9 Architecture Refactor (Shipped: 2026-05-01)
+
+**Phases completed:** 5 phases, 7 requirements
+
+**Key accomplishments:**
+
+- **Phase 83: SparseMatrix with Buffer<T>** - Unified sparse matrix class using cuda::memory::Buffer<T> for GPU memory
+- **Phase 84: cuSPARSE Integration** - GPU-accelerated SpMV via NVIDIA cuSPARSE library
+- **Phase 85: GPU-Accelerated Krylov Solvers** - CG, GMRESGPU, BiCGSTAB all use GPU operations
+- **Phase 86: Backward Compatibility** - Deprecated SparseMatrixCSR, added ToSparseMatrix conversion
+- **Phase 87: Final Integration Tests** - Comprehensive E2E tests
+
+**Requirements delivered:** 7 total (ARCH-01 to ARCH-05)
+
+**Core features implemented:**
+- SparseMatrix<T> class with RAII GPU memory management
+- CusparseContext singleton for handle management
+- GPU-accelerated spmv() using cuSPARSE
+- GPU-accelerated ConjugateGradient, GMRESGPU, BiCGSTAB solvers
+- [[deprecated]] attribute on SparseMatrixCSR<T>
+- ToSparseMatrix() conversion function
+
+**New files:**
+- `include/cuda/sparse/matrix.hpp` - Unified SparseMatrix<T>
+- `include/cuda/sparse/cusparse_context.hpp` - cuSPARSE handle wrapper
+- `src/cuda/sparse/cusparse_context.cpp`
+- `src/cuda/sparse/sparse_ops.cu` - GPU SpMV implementation
+- `tests/sparse/matrix_test.cpp`, `cusparse_test.cpp`, `krylov_gpu_test.cpp`, `integration_test.cpp`
+
+**Next:** TBD
