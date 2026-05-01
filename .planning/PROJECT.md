@@ -4,17 +4,11 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.10 Sparse Solver Acceleration
+## Current Milestone: v2.11 TBD
 
-**Goal:** Accelerate Krylov solver convergence with preconditioners and sparse matrix ordering
+**Goal:** Next milestone to be determined
 
-**Target features:**
-- Jacobi preconditioner (diagonal scaling)
-- RCM sparse matrix ordering (reduce fill-in)
-- ILU(0)/ILU(k) incomplete factorization
-- Integration with existing CG/GMRESGPU/BiCGSTAB solvers
-
-**Status:** Ready to start (Phase 88+)
+**Status:** Ready to start
 
 ## Completed (v2.6)
 
@@ -78,6 +72,19 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - ✓ SparseMatrixCSR<T> deprecated with [[deprecated]] — Phase 86
 - ✓ ToSparseMatrix() conversion function — Phase 86
 - ✓ Comprehensive E2E integration tests — Phase 87
+
+### Completed (v2.10)
+
+- ✓ Preconditioner base interface — Phase 88
+- ✓ JacobiPreconditioner with weighted diagonal scaling — Phase 88
+- ✓ Unit tests for Jacobi preconditioner — Phase 88
+- ✓ RCM (Reverse Cuthill-McKee) matrix ordering — Phase 89
+- ✓ Unit tests for RCM ordering — Phase 89
+- ✓ ILU(0) preconditioner via cuSPARSE — Phase 90
+- ✓ Unit tests for ILU preconditioner — Phase 90
+- ✓ CG solver with preconditioner support — Phase 91
+- ✓ E2E convergence tests — Phase 91
+- ✓ Performance benchmarks — Phase 92
 
 **Next milestone:** TBD
 
@@ -357,5 +364,6 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state (users, feedback, metrics)
 
 ---
-*Last updated: 2026-05-01 after v2.10 Sparse Solver Acceleration started*
+*Last updated: 2026-05-01 after v2.10 Sparse Solver Acceleration completed*
 *v2.10: Preconditioners, Matrix Ordering, Solver Acceleration*
+*v2.11: TBD*
