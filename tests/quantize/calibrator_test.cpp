@@ -148,6 +148,45 @@ TEST_F(CalibratorTest, ZeroRangeHandling) {
     EXPECT_GE(result.scale, 1e-6f);
 }
 
+TEST_F(CalibratorTest, HistogramCalibratorDefaultConstruction) {
+    HistogramCalibrator calibrator;
+    EXPECT_EQ(calibrator.get_num_bins(), 2048);
+    EXPECT_NEAR(calibrator.get_percentile(), 99.99f, 0.01f);
+}
+
+TEST_F(CalibratorTest, HistogramCalibratorCustomParameters) {
+    HistogramCalibrator calibrator(512, 99.9f, false);
+    EXPECT_EQ(calibrator.get_num_bins(), 512);
+    EXPECT_NEAR(calibrator.get_percentile(), 99.9f, 0.01f);
+}
+
+TEST_F(CalibratorTest, MSECalibratorConstantData) {
+    size_t n = 100;
+    std::vector<float> data(n, 1.0f);
+
+    MSECalibrator calibrator(true);
+    auto result = calibrator.calibrate(data.data(), n);
+
+    EXPECT_GE(result.scale, 1e-6f);
+    EXPECT_TRUE(result.symmetric);
+}
+
+TEST_F(CalibratorTest, PerChannelCalibratorChannelDim) {
+    PerChannelCalibrator calibrator(1, true);
+    EXPECT_EQ(calibrator.get_channel_dim(), 1);
+}
+
+TEST_F(CalibratorTest, PerChannelCalibratorBatched) {
+    size_t n = 512;
+    auto data = create_test_data(-10.0f, 10.0f, n);
+
+    PerChannelCalibrator calibrator(0, true);
+    std::vector<int> shape = {4, 128};
+    auto results = calibrator.calibrate_per_channel(data.data(), shape);
+
+    EXPECT_EQ(results.size(), 4u);
+}
+
 } // namespace test
 } // namespace quantize
 } // namespace nova

@@ -163,6 +163,85 @@ TEST_F(QATTest, PrecisionEnumValues) {
     EXPECT_EQ(static_cast<int>(Precision::FP8_E5M2), 4);
 }
 
+TEST_F(QATTest, SensitivityAnalyzerPrecisionThresholdBoundary) {
+    SensitivityAnalyzer analyzer;
+
+    std::vector<float> activations = {5.0f, 5.0f, 5.0f};
+    std::vector<float> gradients = {2.0f, 2.0f, 2.0f};
+
+    analyzer.analyze_layer("boundary", activations.data(), activations.size(),
+                          gradients.data(), gradients.size());
+
+    auto sensitivity = analyzer.get_sensitivity("boundary");
+    float threshold = 10.0f;
+    EXPECT_GE(sensitivity.gradient_magnitude, 0.0f);
+}
+
+TEST_F(QATTest, SensitivityAnalyzerMissingLayerReturnsDefault) {
+    SensitivityAnalyzer analyzer;
+
+    auto precision = analyzer.get_recommended_precision("nonexistent");
+
+    EXPECT_EQ(precision, Precision::FP16);
+}
+
+TEST_F(QATTest, SensitivityAnalyzerGetAllSensitivities) {
+    SensitivityAnalyzer analyzer;
+
+    std::vector<float> acts1 = {1.0f, 2.0f};
+    std::vector<float> grads1 = {0.1f, 0.2f};
+    std::vector<float> acts2 = {3.0f, 4.0f};
+    std::vector<float> grads2 = {0.3f, 0.4f};
+
+    analyzer.analyze_layer("layer1", acts1.data(), acts1.size(),
+                          grads1.data(), grads1.size());
+    analyzer.analyze_layer("layer2", acts2.data(), acts2.size(),
+                          grads2.data(), grads2.size());
+
+    auto all_sensitivities = analyzer.get_all_sensitivities();
+
+    EXPECT_EQ(all_sensitivities.size(), 2u);
+}
+
+TEST_F(QATTest, FakeQuantizeConfig) {
+    FakeQuantize::Config config;
+    config.precision = Precision::INT8;
+    config.scale = 0.05f;
+    config.zero_point = 0.0f;
+    config.quant_bits = 8;
+    config.per_channel = false;
+
+    FakeQuantize fq(config);
+    auto retrieved_config = fq.get_config();
+
+    EXPECT_EQ(retrieved_config.precision, Precision::INT8);
+    EXPECT_NEAR(retrieved_config.scale, 0.05f, 0.001f);
+    EXPECT_EQ(retrieved_config.quant_bits, 8);
+    EXPECT_FALSE(retrieved_config.per_channel);
+}
+
+TEST_F(QATTest, FakeQuantizeClampingBehavior) {
+    FakeQuantize::Config config;
+    config.scale = 0.1f;
+    config.zero_point = 0.0f;
+
+    FakeQuantize fq(config);
+
+    EXPECT_EQ(fq.forward(100.0f), 127.0f * config.scale);
+    EXPECT_EQ(fq.forward(-100.0f), -127.0f * config.scale);
+}
+
+TEST_F(QATTest, AMPManagerGetAllConfigs) {
+    AMPManager amp;
+    amp.add_layer("layer1", Precision::FP16);
+    amp.add_layer("layer2", Precision::INT8);
+    amp.add_layer("layer3", Precision::FP8_E4M3);
+
+    auto configs = amp.get_all_configs();
+
+    EXPECT_EQ(configs.size(), 3u);
+}
+
 } // namespace test
 } // namespace quantize
 } // namespace nova

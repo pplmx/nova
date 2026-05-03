@@ -124,6 +124,7 @@ add_executable(nova-tests
     quantize/int8_kernels_test.cpp
     quantize/calibrator_test.cpp
     quantize/qat_test.cpp
+    quantize/benchmark_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
