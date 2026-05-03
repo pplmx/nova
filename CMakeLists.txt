@@ -465,6 +465,17 @@ set(OBSERVABILITY_SOURCES
         ${SRC_CUDA_OBSERVABILITY}/occupancy_analyzer.cpp
 )
 
+set(QUANTIZE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/quantize)
+set(SRC_CUDA_QUANTIZE ${CMAKE_SOURCE_DIR}/src/cuda/quantize)
+
+set(QUANTIZE_SOURCES
+        ${SRC_CUDA_QUANTIZE}/fp8_kernels.cu
+        ${SRC_CUDA_QUANTIZE}/fp8_gemm.cu
+        ${SRC_CUDA_QUANTIZE}/int8_kernels.cu
+        ${SRC_CUDA_QUANTIZE}/calibrator.cpp
+        ${SRC_CUDA_QUANTIZE}/qat.cpp
+)
+
 set(ALL_CUDA_SOURCES
         ${DEVICE_SOURCES}
         ${ALGO_SOURCES}
@@ -494,6 +505,7 @@ set(ALL_CUDA_SOURCES
         ${TESTING_SOURCES}
         ${ERROR_SOURCES}
         ${SPARSE_SOURCES}
+        ${QUANTIZE_SOURCES}
 )
 
 add_library(cuda_nccl STATIC ${NCCL_SOURCES})

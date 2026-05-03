@@ -4,11 +4,15 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.11 Performance Tooling
+## Current Milestone: v2.12 Advanced Quantization (SHIPPED)
 
-**Goal:** Comprehensive performance tooling — NVBlox integration, kernel fusion analysis, and memory bandwidth optimization
+**Goal:** FP8 support, CUDA kernels, production calibration, and QAT integration
 
-**Status:** Planning
+**Status:** Complete — archived at `.planning/milestones/v2.12-*`
+
+## Next Milestone: v2.13 (TBD)
+
+Run `/gsd-new-milestone` to start planning
 
 ## Completed (v2.6)
 
@@ -103,7 +107,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 - ✓ Integration tests — Phase 97
 - ✓ PERFORMANCE_TOOLING.md documentation — Phase 97
 
-**Next milestone:** TBD
+**Next milestone:** v2.12 Advanced Quantization
 
 ## Core Value
 
@@ -389,7 +393,18 @@ This document evolves at phase transitions and milestone boundaries.
 - ✓ Dashboard & visualization with fusion impact — Phase 96
 - ✓ Integration tests and documentation — Phase 97
 
+### Completed (v2.12)
+
+- ✓ FP8 types (E4M3, E5M2) with IEEE 754-like semantics — Phase 98
+- ✓ CUDA quantization kernels with vectorization — Phase 99
+- ✓ Production calibration (histogram, minmax, MSE, per-channel) — Phase 100
+- ✓ QAT patterns (FakeQuantize, STE gradients) and AMP manager — Phase 101
+- ✓ Benchmark suite and accuracy comparison tools — Phase 102
+
+### Planned (v2.13)
+
+- [ ] Run `/gsd-new-milestone` to start planning
+
 ---
-*Last updated: 2026-05-02 after v2.11 Performance Tooling completed*
-*v2.10: Preconditioners, Matrix Ordering, Solver Acceleration (COMPLETE)*
-*v2.11: Performance Tooling (COMPLETE)*
+*Last updated: 2026-05-03 after v2.12 Advanced Quantization shipped*
+*v2.12: Advanced Quantization (SHIPPED)*

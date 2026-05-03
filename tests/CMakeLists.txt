@@ -119,6 +119,11 @@ add_executable(nova-tests
     performance/bandwidth_analysis_test.cpp
     performance/dashboard_test.cpp
     performance/integration_test.cpp
+    quantize/fp8_types_test.cpp
+    quantize/fp8_gemm_test.cpp
+    quantize/int8_kernels_test.cpp
+    quantize/calibrator_test.cpp
+    quantize/qat_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -145,6 +150,7 @@ set(CUDA_OBSERVABILITY_DIR ${CMAKE_SOURCE_DIR}/include/cuda/observability)
 set(CUDA_ERROR_DIR ${CMAKE_SOURCE_DIR}/include/cuda/error)
 set(CUDA_TIMEOUT_DIR ${CMAKE_SOURCE_DIR}/include/cuda/timeout)
 set(CUDA_SPARSE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/sparse)
+set(CUDA_QUANTIZE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/quantize)
 set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
 target_link_libraries(nova-tests
@@ -181,6 +187,7 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_OBSERVABILITY_DIR}
     ${CUDA_ERROR_DIR}
     ${CUDA_SPARSE_DIR}
+    ${CUDA_QUANTIZE_DIR}
     ${DISTRIBUTED_TESTS_DIR}
 )
 
