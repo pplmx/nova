@@ -437,6 +437,14 @@ set(MEMORY_OPT_SOURCES
         ${SRC_CUDA_MEMORY_OPT}/memory_optimizer.cpp
 )
 
+set(INFERENCE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/inference)
+set(SRC_CUDA_INFERENCE ${CMAKE_SOURCE_DIR}/src/cuda/inference)
+
+set(INFERENCE_SOURCES
+        ${SRC_CUDA_INFERENCE}/block_manager.cpp
+        ${SRC_CUDA_INFERENCE}/beam_search.cpp
+)
+
 set(TOOLS_DIR ${CMAKE_SOURCE_DIR}/include/cuda/tools)
 set(SRC_CUDA_TOOLS ${CMAKE_SOURCE_DIR}/src/cuda/tools)
 
@@ -501,6 +509,7 @@ set(ALL_CUDA_SOURCES
         ${PERFORMANCE_SOURCES}
         ${FUSION_SOURCES}
         ${MEMORY_OPT_SOURCES}
+        ${INFERENCE_SOURCES}
         ${TOOLS_SOURCES}
         ${OBSERVABILITY_SOURCES}
         ${TESTING_SOURCES}
