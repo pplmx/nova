@@ -92,6 +92,7 @@ add_executable(nova-tests
     inference/block_manager_test.cpp
     inference/block_manager_edge_test.cpp
     inference/beam_search_test.cpp
+    inference/speculative_decoding_test.cpp
     inference/scheduler_test.cpp
     inference/scheduler_edge_test.cpp
     inference/integration_test.cpp

@@ -443,6 +443,7 @@ set(SRC_CUDA_INFERENCE ${CMAKE_SOURCE_DIR}/src/cuda/inference)
 set(INFERENCE_SOURCES
         ${SRC_CUDA_INFERENCE}/block_manager.cpp
         ${SRC_CUDA_INFERENCE}/beam_search.cpp
+        ${SRC_CUDA_INFERENCE}/speculative_decoding.cpp
 )
 
 set(TOOLS_DIR ${CMAKE_SOURCE_DIR}/include/cuda/tools)
