@@ -86,31 +86,31 @@
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| SPEC-01 | TBD | — |
-| SPEC-02 | TBD | — |
-| SPEC-03 | TBD | — |
-| SPEC-04 | TBD | — |
-| SPEC-05 | TBD | — |
-| SPEC-06 | TBD | — |
-| SPEC-07 | TBD | — |
-| SPEC-08 | TBD | — |
-| SPEC-09 | TBD | — |
-| BEAM-01 | TBD | — |
-| BEAM-02 | TBD | — |
-| BEAM-03 | TBD | — |
-| BEAM-04 | TBD | — |
-| BEAM-05 | TBD | — |
-| BEAM-06 | TBD | — |
-| BEAM-07 | TBD | — |
-| BEAM-08 | TBD | — |
-| KV-01 | TBD | — |
-| KV-02 | TBD | — |
-| KV-03 | TBD | — |
-| KV-04 | TBD | — |
-| KV-05 | TBD | — |
-| KV-06 | TBD | — |
-| KV-07 | TBD | — |
-| KV-08 | TBD | — |
+| SPEC-01 | Phase 105 | Pending |
+| SPEC-02 | Phase 105 | Pending |
+| SPEC-03 | Phase 105 | Pending |
+| SPEC-04 | Phase 105 | Pending |
+| SPEC-05 | Phase 105 | Pending |
+| SPEC-06 | Phase 105 | Pending |
+| SPEC-07 | Phase 105 | Pending |
+| SPEC-08 | Phase 105 | Pending |
+| SPEC-09 | Phase 105 | Pending |
+| BEAM-01 | Phase 104 | Pending |
+| BEAM-02 | Phase 104 | Pending |
+| BEAM-03 | Phase 104 | Pending |
+| BEAM-04 | Phase 104 | Pending |
+| BEAM-05 | Phase 104 | Pending |
+| BEAM-06 | Phase 104 | Pending |
+| BEAM-07 | Phase 106 | Pending |
+| BEAM-08 | Phase 104 | Pending |
+| KV-01 | Phase 103 | Pending |
+| KV-02 | Phase 103 | Pending |
+| KV-03 | Phase 103 | Pending |
+| KV-04 | Phase 103 | Pending |
+| KV-05 | Phase 106 | Pending |
+| KV-06 | Phase 106 | Pending |
+| KV-07 | Phase 103 | Pending |
+| KV-08 | Phase 103 | Pending |
 
 ---
 

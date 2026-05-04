@@ -5,7 +5,7 @@ milestone_name: Transformer Optimization
 status: planning
 last_updated: "2026-05-05"
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   current_phase: 103
   total_plans: 0
@@ -19,14 +19,19 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 103 — KV Cache Foundation (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-05 — Milestone v2.13 started
+Status: Planning
+Last activity: 2026-05-05 — v2.13 roadmap created
 
 ## Phase List
 
-*(to be populated by roadmap)*
+| Phase | Name | Status | Requirements |
+|-------|------|--------|--------------|
+| 103 | KV Cache Foundation | Not started | KV-01, KV-02, KV-03, KV-04, KV-07, KV-08 |
+| 104 | Beam Search Core | Not started | BEAM-01, BEAM-02, BEAM-03, BEAM-04, BEAM-05, BEAM-06, BEAM-08 |
+| 105 | Speculative Decoding | Not started | SPEC-01, SPEC-02, SPEC-03, SPEC-04, SPEC-05, SPEC-06, SPEC-07, SPEC-08, SPEC-09 |
+| 106 | Integration & CUDA Graph | Not started | BEAM-07, KV-05, KV-06 |
 
 ## Milestone History
 
@@ -55,8 +60,8 @@ Last activity: 2026-05-05 — Milestone v2.13 started
 | v2.10 Sparse Solver Acceleration | ✅ Shipped | 2026-05-01 | 11 |
 | v2.11 Performance Tooling | ✅ Shipped | 2026-05-02 | 14 |
 | v2.12 Advanced Quantization | ✅ Shipped | 2026-05-03 | 14 |
-| v2.13 Transformer Optimization | 🔄 Active | 2026-05-05 | — |
+| **v2.13 Transformer Optimization** | 🔄 Active | 2026-05-05 | 25 |
 
 ---
 
-*State updated: 2026-05-05 — v2.13 Transformer Optimization started*
+*State updated: 2026-05-05 — v2.13 roadmap created*
