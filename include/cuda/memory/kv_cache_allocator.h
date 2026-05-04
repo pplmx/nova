@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cuda/memory/buffer.h"
+#include "cuda/stream/stream.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -42,6 +43,8 @@ struct KVCacheAllocatorConfig {
     int sink_eviction_bonus = 1000;
     bool enable_l2_persistence = false;
     int l2_persistence_scope = 0;
+    bool enable_dynamic_block_sizing = true;
+    std::vector<int> available_block_sizes = {16, 32, 64};
 };
 
 struct KVCacheStats {
@@ -130,6 +133,23 @@ public:
     void demote_from_sink(int block_idx);
     bool is_sink_block(int block_idx) const;
     const std::vector<KVCacheBlock*>& get_sink_blocks() const { return sink_blocks_; }
+
+    int select_optimal_block_size(int num_tokens) const;
+    std::vector<KVCacheBlock*> allocate_with_dynamic_size(
+        int64_t sequence_id,
+        int num_tokens
+    );
+
+    struct ChunkedPrefill {
+        memory::Buffer<float> embedding;
+        int offset;
+        int length;
+    };
+    void prefill_chunk(
+        int64_t sequence_id,
+        const ChunkedPrefill& chunk,
+        const stream::Stream& stream
+    );
 
 private:
     void allocate_blocks_internal(int num_blocks);
@@ -729,6 +749,79 @@ void KVCacheAllocator::demote_from_sink(int block_idx) {
 
 bool KVCacheAllocator::is_sink_block(int block_idx) const {
     return blocks_[block_idx].is_attention_sink;
+}
+
+int KVCacheAllocator::select_optimal_block_size(int num_tokens) const {
+    if (!config_.enable_dynamic_block_sizing) {
+        return config_.block_size_tokens;
+    }
+
+    int best_size = config_.available_block_sizes.back();
+    for (int size : config_.available_block_sizes) {
+        if (size >= num_tokens) {
+            best_size = size;
+            break;
+        }
+    }
+    return best_size;
+}
+
+std::vector<KVCacheBlock*> KVCacheAllocator::allocate_with_dynamic_size(
+    int64_t sequence_id,
+    int num_tokens
+) {
+    int block_size = select_optimal_block_size(num_tokens);
+    int num_blocks = (num_tokens + block_size - 1) / block_size;
+
+    std::unique_lock lock(mutex_);
+
+    if (static_cast<int>(free_list_.size()) < num_blocks) {
+        evict(num_blocks - free_list_.size());
+    }
+
+    std::vector<KVCacheBlock*> result;
+    for (int i = 0; i < num_blocks; ++i) {
+        const int block_idx = free_list_.back();
+        free_list_.pop_back();
+
+        KVCacheBlock& block = blocks_[block_idx];
+        block.in_use = true;
+        block.sequence_id = sequence_id;
+        block.last_access = ++access_counter_;
+        block.num_tokens = block_size;
+        block.ref_count = 1;
+
+        result.push_back(&block);
+        sequence_blocks_[sequence_id].push_back(block_idx);
+
+        stats_.allocated_blocks++;
+        stats_.free_blocks--;
+    }
+
+    stats_.allocation_requests++;
+    return result;
+}
+
+void KVCacheAllocator::prefill_chunk(
+    int64_t sequence_id,
+    const ChunkedPrefill& chunk,
+    const stream::Stream& stream
+) {
+    std::unique_lock lock(mutex_);
+
+    auto it = sequence_blocks_.find(sequence_id);
+    if (it == sequence_blocks_.end()) {
+        auto blocks = allocate_with_dynamic_size(sequence_id, chunk.length);
+        (void)blocks;
+        (void)stream;
+    } else {
+        int needed = (chunk.length + config_.block_size_tokens - 1) /
+                     config_.block_size_tokens;
+        int current = static_cast<int>(it->second.size());
+        if (needed > current) {
+            allocate(sequence_id, (needed - current) * config_.block_size_tokens);
+        }
+    }
 }
 
 }  // namespace cuda::memory
