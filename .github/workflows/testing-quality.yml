@@ -23,7 +23,7 @@ jobs:
       image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
       options: --gpus all
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -52,7 +52,7 @@ jobs:
       image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
       options: --gpus all
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -81,7 +81,7 @@ jobs:
       image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
       options: --gpus all
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -118,7 +118,7 @@ jobs:
       image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
       options: --gpus all
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
@@ -162,7 +162,7 @@ jobs:
     name: Fuzz Corpus Baseline
     runs-on: [self-hosted]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check Baseline Exists
         run: |
