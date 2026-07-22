@@ -2,6 +2,8 @@
 
 #include <cuda_runtime.h>
 
+#include "cuda/device/error.h"
+
 namespace cuda::algo::spmv {
 
 static SpMVConfig g_config;
@@ -70,6 +72,7 @@ void multiply_csr(const T* values, const int* row_offsets, const int* col_indice
 
     spmv_csr_kernel<T><<<num_blocks, block_size, 0, stream>>>(
         values, row_offsets, col_indices, x, y, num_rows);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 template <typename T>
@@ -80,6 +83,7 @@ void multiply_csc(const T* values, const int* col_offsets, const int* row_indice
 
     spmv_csc_kernel<T><<<num_blocks, block_size, 0, stream>>>(
         values, col_offsets, row_indices, x, y, num_cols);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 template <typename T>
