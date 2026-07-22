@@ -50,25 +50,30 @@ void StreamingCacheManager::evict_importance_weighted(int num_blocks) {
         return;
     }
 
-    // Collect sequence IDs while holding lock
-    std::vector<int64_t> sequences_to_evict;
+    // Snapshot (seq_id, importance) under the lock so the sort + eviction loop below
+    // doesn't race with concurrent update_importance() / sync_prefetch() calls.
+    // importance_weights_ is the only field protected by prefetch_mutex_; touching it
+    // outside the lock was the previous (racy) behavior.
+    std::vector<std::pair<int64_t, float>> snapshot;
     {
         std::lock_guard<std::mutex> lock(prefetch_mutex_);
+        snapshot.reserve(importance_weights_.size());
         for (const auto& [seq_id, importance] : importance_weights_) {
-            sequences_to_evict.emplace_back(seq_id);
+            snapshot.emplace_back(seq_id, importance);
         }
     }
 
-    // Sort by importance (ascending) - lowest importance evicted first
-    std::sort(sequences_to_evict.begin(), sequences_to_evict.end(),
-        [this](int64_t a, int64_t b) {
-            return importance_weights_[a] < importance_weights_[b];
+    // Sort by importance (ascending) - lowest importance evicted first.
+    // Uses the snapshot, not the live map, so it is race-free.
+    std::sort(snapshot.begin(), snapshot.end(),
+        [](const std::pair<int64_t, float>& a, const std::pair<int64_t, float>& b) {
+            return a.second < b.second;
         });
 
     // Evict sequences until we've freed enough blocks
     // Each sequence may occupy multiple blocks, so we track total evicted
     int evicted = 0;
-    for (const int64_t seq_id : sequences_to_evict) {
+    for (const auto& [seq_id, importance] : snapshot) {
         if (evicted >= num_blocks) break;
 
         auto blocks = allocator_->get_blocks(seq_id);
