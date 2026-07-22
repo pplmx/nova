@@ -20,17 +20,6 @@ SegmentedSortConfig get_config() {
     return g_config;
 }
 
-namespace {
-    template <typename T>
-    struct SegmentComparator {
-        const int* segments;
-        SegmentComparator(const int* segs) : segments(segs) {}
-        __device__ bool operator()(int a, int b) const {
-            return segments[a] < segments[b];
-        }
-    };
-}
-
 template <typename T>
 void sort_by_key(const T* keys, const int* segment_ids, T* out_keys, int* out_segments,
                  size_t count, size_t num_segments, cudaStream_t stream) {
