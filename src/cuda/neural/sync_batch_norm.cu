@@ -4,6 +4,8 @@
 #include "cuda/distributed/reduce.h"
 #include "cuda/mesh/device_mesh.h"
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
 
@@ -296,25 +298,25 @@ SyncBatchNorm::SyncBatchNorm(int num_features, float eps, float momentum)
       training_(true),
       initialized_(false) {
 
-    cudaMalloc(&running_mean_, num_features * sizeof(float));
-    cudaMalloc(&running_var_, num_features * sizeof(float));
-    cudaMalloc(&gamma_, num_features * sizeof(float));
-    cudaMalloc(&beta_, num_features * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&running_mean_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&running_var_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&gamma_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&beta_, num_features * sizeof(float)));
 
-    cudaMalloc(&saved_mean_, num_features * sizeof(float));
-    cudaMalloc(&saved_var_, num_features * sizeof(float));
-    cudaMalloc(&saved_input_, num_features * sizeof(float));
-    cudaMalloc(&saved_output_, num_features * sizeof(float));
-    cudaMalloc(&normalized_, num_features * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&saved_mean_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&saved_var_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&saved_input_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&saved_output_, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&normalized_, num_features * sizeof(float)));
 
     float* h_data = new float[num_features];
     for (int i = 0; i < num_features; ++i) h_data[i] = 0.0f;
-    cudaMemcpy(running_mean_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(running_var_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(beta_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(running_mean_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(running_var_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(beta_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
 
     for (int i = 0; i < num_features; ++i) h_data[i] = 1.0f;
-    cudaMemcpy(gamma_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(gamma_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
     delete[] h_data;
 }
 
