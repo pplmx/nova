@@ -5,6 +5,8 @@
 
 #include "cuda/pipeline/activation_buffer.h"
 
+#include "cuda/device/error.h"
+
 namespace cuda::pipeline {
 
 ActivationBuffer::ActivationBuffer(int device, size_t capacity)
@@ -12,10 +14,10 @@ ActivationBuffer::ActivationBuffer(int device, size_t capacity)
       capacity_(capacity),
       ping_is_active_(true) {
 
-    cudaSetDevice(device_);
+    CUDA_CHECK(cudaSetDevice(device_));
 
-    cudaMalloc(&ping_, capacity_);
-    cudaMalloc(&pong_, capacity_);
+    CUDA_CHECK(cudaMalloc(&ping_, capacity_));
+    CUDA_CHECK(cudaMalloc(&pong_, capacity_));
 }
 
 ActivationBuffer::~ActivationBuffer() {
