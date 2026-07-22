@@ -9,10 +9,7 @@ namespace cuda::algo::sample_sort::test {
 
 class SampleSortTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        CUDA_CHECK(cudaSetDevice(0));
-        CUDA_CHECK(cudaDeviceSynchronize());
-    }
+    void SetUp() override {}
     void TearDown() override {}
 };
 
