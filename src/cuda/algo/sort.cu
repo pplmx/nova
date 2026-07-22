@@ -39,17 +39,19 @@ void radix_sort_pair(Key* keys, Value* values, size_t count, Order order, cudaSt
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
 
+    // Query required temp storage (passes nullptr buffer; CUB just records the size).
     cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, keys, keys, values, values, count, 0, sizeof(Key) * 8, stream);
 
-    CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+    // RAII wrapper so the scratch buffer is freed on any exception path.
+    cuda::memory::unique_ptr<unsigned char> temp_storage(
+        temp_storage_bytes > 0 ? temp_storage_bytes : 1);
+    d_temp_storage = temp_storage_bytes > 0 ? reinterpret_cast<void*>(temp_storage.get()) : nullptr;
 
     if (order == Order::Descending) {
         cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, keys, keys, values, values, count, 0, sizeof(Key) * 8, stream);
     } else {
         cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, keys, keys, values, values, count, 0, sizeof(Key) * 8, stream);
     }
-
-    CUDA_CHECK(cudaFree(d_temp_storage));
 }
 
 template <typename Key>
@@ -57,17 +59,19 @@ void radix_sort_keys(Key* keys, size_t count, Order order, cudaStream_t stream) 
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
 
+    // Query required temp storage (passes nullptr buffer; CUB just records the size).
     cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, keys, keys, count, 0, sizeof(Key) * 8, stream);
 
-    CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+    // RAII wrapper so the scratch buffer is freed on any exception path.
+    cuda::memory::unique_ptr<unsigned char> temp_storage(
+        temp_storage_bytes > 0 ? temp_storage_bytes : 1);
+    d_temp_storage = temp_storage_bytes > 0 ? reinterpret_cast<void*>(temp_storage.get()) : nullptr;
 
     if (order == Order::Descending) {
         cub::DeviceRadixSort::SortKeysDescending(d_temp_storage, temp_storage_bytes, keys, keys, count, 0, sizeof(Key) * 8, stream);
     } else {
         cub::DeviceRadixSort::SortKeys(d_temp_storage, temp_storage_bytes, keys, keys, count, 0, sizeof(Key) * 8, stream);
     }
-
-    CUDA_CHECK(cudaFree(d_temp_storage));
 }
 
 template <typename Key, typename Value>
