@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "cuda/device/error.h"
+#include "cuda/memory/unique_ptr.h"
 
 namespace cuda::sort {
 
@@ -181,19 +182,22 @@ template <typename T>
 BinarySearchResult<T> binary_search(const T* sorted_data, size_t count, const T& target, cudaStream_t stream) {
     BinarySearchResult<T> result;
 
-    size_t* d_result_index;
-    int* d_found;
+    // RAII wrappers guarantee the scratch buffers are freed even if any cuda
+    // call below throws (CUDA_CHECK) — the previous raw cudaMalloc/cudaFree
+    // pair leaked on the exception path between them.
+    cuda::memory::unique_ptr<size_t> d_result_index(1);
+    cuda::memory::unique_ptr<int> d_found(1);
 
-    CUDA_CHECK(cudaMalloc(&d_result_index, sizeof(size_t)));
-    CUDA_CHECK(cudaMalloc(&d_found, sizeof(int)));
-
-    detail::binary_search_kernel<<<1, 1, 0, stream>>>(sorted_data, count, target, d_result_index, d_found);
+    detail::binary_search_kernel<<<1, 1, 0, stream>>>(sorted_data, count, target,
+                                                      d_result_index.get(), d_found.get());
 
     size_t h_index;
     int h_found;
 
-    CUDA_CHECK(cudaMemcpyAsync(&h_index, d_result_index, sizeof(size_t), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaMemcpyAsync(&h_found, d_found, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(&h_index, d_result_index.get(), sizeof(size_t),
+                               cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(&h_found, d_found.get(), sizeof(int),
+                               cudaMemcpyDeviceToHost, stream));
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -201,14 +205,12 @@ BinarySearchResult<T> binary_search(const T* sorted_data, size_t count, const T&
 
     if (h_found && h_index < count) {
         T found_value;
-        CUDA_CHECK(cudaMemcpy(&found_value, sorted_data + h_index, sizeof(T), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(&found_value, sorted_data + h_index, sizeof(T),
+                              cudaMemcpyDeviceToHost));
         result.status = (found_value == target) ? SearchResult::Found : SearchResult::NotFound;
     } else {
         result.status = SearchResult::NotFound;
     }
-
-    CUDA_CHECK(cudaFree(d_result_index));
-    CUDA_CHECK(cudaFree(d_found));
 
     return result;
 }
