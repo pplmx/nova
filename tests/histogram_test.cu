@@ -20,6 +20,9 @@ protected:
     static constexpr int NUM_BINS = 256;
 
     void SetUp() override {
+        CUDA_CHECK(cudaSetDevice(0));
+        CUDA_CHECK(cudaDeviceSynchronize());
+
         pixelCount_ = width_ * height_;
         size_ = pixelCount_ * 3;
         h_input_.resize(size_);

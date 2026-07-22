@@ -19,6 +19,9 @@ protected:
     uint8_t *d_output_ = nullptr;
 
     void SetUp() override {
+        CUDA_CHECK(cudaSetDevice(0));
+        CUDA_CHECK(cudaDeviceSynchronize());
+
         size_ = width_ * height_ * 3;
         h_input_.resize(size_);
         h_output_.resize(size_);

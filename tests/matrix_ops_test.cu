@@ -20,6 +20,9 @@ protected:
     float *d_c_ = nullptr;
 
     void SetUp() override {
+        CUDA_CHECK(cudaSetDevice(0));
+        CUDA_CHECK(cudaDeviceSynchronize());
+
         size_ = rows_ * cols_;
         h_a_.resize(size_);
         h_b_.resize(size_);

@@ -14,6 +14,9 @@
 class BrightnessTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        CUDA_CHECK(cudaSetDevice(0));
+        CUDA_CHECK(cudaDeviceSynchronize());
+
         width_ = 64;
         height_ = 64;
         size_ = width_ * height_ * 3;
