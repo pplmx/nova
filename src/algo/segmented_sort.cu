@@ -6,6 +6,8 @@
 #include <thrust/gather.h>
 #include <thrust/functional.h>
 
+#include "cuda/memory/unique_ptr.h"
+
 namespace cuda::algo::segmented {
 
 static SegmentedSortConfig g_config;
@@ -32,22 +34,25 @@ namespace {
 template <typename T>
 void sort_by_key(const T* keys, const int* segment_ids, T* out_keys, int* out_segments,
                  size_t count, size_t num_segments, cudaStream_t stream) {
-    T* d_keys_sorted;
-    T* d_keys_original;
-    int* d_segments_original;
-    int* d_indices;
-    cudaMalloc(&d_keys_sorted, count * sizeof(T));
-    cudaMalloc(&d_keys_original, count * sizeof(T));
-    cudaMalloc(&d_segments_original, count * sizeof(int));
-    cudaMalloc(&d_indices, count * sizeof(int));
-    cudaMemcpy(d_keys_original, keys, count * sizeof(T), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_segments_original, segment_ids, count * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_keys_sorted, keys, count * sizeof(T), cudaMemcpyHostToDevice);
+    // RAII wrappers ensure the scratch buffers are freed even if any of the
+    // cudaMemcpy calls below throw. The previous code used raw cudaMalloc
+    // without CUDA_CHECK, so a partial failure leaked the earlier allocations.
+    cuda::memory::unique_ptr<T> d_keys_sorted(count);
+    cuda::memory::unique_ptr<T> d_keys_original(count);
+    cuda::memory::unique_ptr<int> d_segments_original(count);
+    cuda::memory::unique_ptr<int> d_indices(count);
 
-    thrust::device_ptr<int> d_indices_ptr(d_indices);
+    CUDA_CHECK(cudaMemcpy(d_keys_original.get(), keys, count * sizeof(T),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_segments_original.get(), segment_ids, count * sizeof(int),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_keys_sorted.get(), keys, count * sizeof(T),
+                          cudaMemcpyHostToDevice));
+
+    thrust::device_ptr<int> d_indices_ptr(d_indices.get());
     thrust::sequence(d_indices_ptr, d_indices_ptr + count);
 
-    thrust::device_ptr<T> d_keys_sorted_ptr(d_keys_sorted);
+    thrust::device_ptr<T> d_keys_sorted_ptr(d_keys_sorted.get());
 
     if (g_config.stable) {
         thrust::stable_sort_by_key(d_keys_sorted_ptr, d_keys_sorted_ptr + count, d_indices_ptr);
@@ -58,14 +63,9 @@ void sort_by_key(const T* keys, const int* segment_ids, T* out_keys, int* out_se
     thrust::device_ptr<T> d_out_keys_ptr(out_keys);
     thrust::device_ptr<int> d_out_segments_ptr(out_segments);
     thrust::gather(d_indices_ptr, d_indices_ptr + count,
-                   thrust::device_ptr<const T>(d_keys_original), d_out_keys_ptr);
+                   thrust::device_ptr<const T>(d_keys_original.get()), d_out_keys_ptr);
     thrust::gather(d_indices_ptr, d_indices_ptr + count,
-                   thrust::device_ptr<const int>(d_segments_original), d_out_segments_ptr);
-
-    cudaFree(d_keys_sorted);
-    cudaFree(d_keys_original);
-    cudaFree(d_segments_original);
-    cudaFree(d_indices);
+                   thrust::device_ptr<const int>(d_segments_original.get()), d_out_segments_ptr);
 }
 
 template <typename T>

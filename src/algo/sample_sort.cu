@@ -5,6 +5,8 @@
 #include <thrust/sort.h>
 #include <thrust/functional.h>
 
+#include "cuda/memory/unique_ptr.h"
+
 namespace cuda::algo::sample_sort {
 
 static SampleSortConfig g_config;
@@ -21,11 +23,13 @@ template <typename T>
 SortResult<T> sort(const T* input, size_t count, Order order, cudaStream_t stream) {
     SortResult<T> result;
 
-    T* d_output;
-    cudaMalloc(&d_output, count * sizeof(T));
-    cudaMemcpyAsync(d_output, input, count * sizeof(T), cudaMemcpyHostToDevice, stream);
+    // RAII wrapper ensures d_output is freed even if any of the cuda calls below throw.
+    cuda::memory::unique_ptr<T> d_output(count);
 
-    thrust::device_ptr<T> d_ptr(d_output);
+    CUDA_CHECK(cudaMemcpyAsync(d_output.get(), input, count * sizeof(T),
+                               cudaMemcpyHostToDevice, stream));
+
+    thrust::device_ptr<T> d_ptr(d_output.get());
     if (order == Order::Ascending) {
         thrust::sort(d_ptr, d_ptr + count);
     } else {
@@ -33,8 +37,8 @@ SortResult<T> sort(const T* input, size_t count, Order order, cudaStream_t strea
     }
 
     result.data = cuda::memory::Buffer<T>(count);
-    cudaMemcpy(result.data.data(), d_output, count * sizeof(T), cudaMemcpyDeviceToHost);
-    cudaFree(d_output);
+    CUDA_CHECK(cudaMemcpy(result.data.data(), d_output.get(), count * sizeof(T),
+                          cudaMemcpyDeviceToHost));
     result.actual_count = count;
 
     return result;
@@ -50,13 +54,14 @@ SortResult<T> sort_large_dataset(const T* input, size_t count,
 
     SortResult<T> result;
 
-    T* d_output;
-    cudaMalloc(&d_output, count * sizeof(T));
-    cudaMemcpyAsync(d_output, input, count * sizeof(T), cudaMemcpyHostToDevice, stream);
+    cuda::memory::unique_ptr<T> d_output(count);
+
+    CUDA_CHECK(cudaMemcpyAsync(d_output.get(), input, count * sizeof(T),
+                               cudaMemcpyHostToDevice, stream));
 
     size_t num_samples = count / sample_rate;
 
-    thrust::device_ptr<T> d_ptr(d_output);
+    thrust::device_ptr<T> d_ptr(d_output.get());
     if (order == Order::Ascending) {
         thrust::sort(d_ptr, d_ptr + count);
     } else {
@@ -64,8 +69,8 @@ SortResult<T> sort_large_dataset(const T* input, size_t count,
     }
 
     result.data = cuda::memory::Buffer<T>(count);
-    cudaMemcpy(result.data.data(), d_output, count * sizeof(T), cudaMemcpyDeviceToHost);
-    cudaFree(d_output);
+    CUDA_CHECK(cudaMemcpy(result.data.data(), d_output.get(), count * sizeof(T),
+                          cudaMemcpyDeviceToHost));
     result.actual_count = count;
 
     return result;
@@ -73,19 +78,20 @@ SortResult<T> sort_large_dataset(const T* input, size_t count,
 
 template <typename T>
 void sort_inplace(T* data, size_t count, Order order, cudaStream_t stream) {
-    T* d_data;
-    cudaMalloc(&d_data, count * sizeof(T));
-    cudaMemcpyAsync(d_data, data, count * sizeof(T), cudaMemcpyHostToDevice, stream);
+    cuda::memory::unique_ptr<T> d_data(count);
 
-    thrust::device_ptr<T> d_ptr(d_data);
+    CUDA_CHECK(cudaMemcpyAsync(d_data.get(), data, count * sizeof(T),
+                               cudaMemcpyHostToDevice, stream));
+
+    thrust::device_ptr<T> d_ptr(d_data.get());
     if (order == Order::Ascending) {
         thrust::sort(d_ptr, d_ptr + count);
     } else {
         thrust::sort(d_ptr, d_ptr + count, thrust::greater<T>());
     }
 
-    cudaMemcpy(data, d_data, count * sizeof(T), cudaMemcpyDeviceToHost);
-    cudaFree(d_data);
+    CUDA_CHECK(cudaMemcpy(data, d_data.get(), count * sizeof(T),
+                          cudaMemcpyDeviceToHost));
 }
 
 template SortResult<int> sort<int>(const int*, size_t, Order, cudaStream_t);
