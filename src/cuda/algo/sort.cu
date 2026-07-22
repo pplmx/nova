@@ -78,46 +78,101 @@ TopKResult<Key> select_top_k(const Key* keys, const Value* values, size_t count,
     result.values = memory::Buffer<Key>(actual_k);
     result.actual_k = actual_k;
 
-    memory::Buffer<Key> keys_copy(count);
-    memory::Buffer<size_t> indices(actual_k);
+    if (actual_k == 0 || count == 0) {
+        return result;
+    }
+
+    // Sort the full (keys, indices) pair array using CUB, then take the first K entries.
+    // Working buffers:
+    //   sorted_keys   : count Key elements (overwritten in-place by CUB)
+    //   sorted_indices: count size_t elements (overwritten in-place by CUB)
     memory::Buffer<Key> sorted_keys(count);
+    memory::Buffer<size_t> sorted_indices(count);
 
-    CUDA_CHECK(cudaMemcpyAsync(keys_copy.data(), keys, count * sizeof(Key), cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(sorted_keys.data(), keys_copy.data(), count * sizeof(Key), cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(result.keys.data(), sorted_keys.data(), actual_k * sizeof(Key), cudaMemcpyDeviceToDevice, stream));
+    // Copy input keys into the working buffer (in-place CUB sort needs the buffer to hold the input).
+    CUDA_CHECK(cudaMemcpyAsync(
+        sorted_keys.data(), keys, count * sizeof(Key), cudaMemcpyDeviceToDevice, stream));
 
+    // Initialize indices to [0, 1, ..., count-1]. CUB's SortPairs needs the indices buffer
+    // filled with 0..count-1 so that after sorting, sorted_indices[i] tells us the original
+    // position of the i-th sorted key. Use raw malloc to avoid <vector> dependency in this TU.
+    size_t* h_identity = static_cast<size_t*>(malloc(count * sizeof(size_t)));
+    for (size_t i = 0; i < count; ++i) {
+        h_identity[i] = i;
+    }
+    sorted_indices.copy_from(h_identity, count);
+    free(h_identity);
+
+    // First call: query required temp storage.
     void* d_temp_storage = nullptr;
     size_t temp_storage_bytes = 0;
-
     if (order == Order::Descending) {
-        cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, result.keys.data(), result.keys.data(), indices.data(), indices.data(), actual_k);
+        cub::DeviceRadixSort::SortPairsDescending(
+            d_temp_storage, temp_storage_bytes,
+            sorted_keys.data(), sorted_keys.data(),
+            sorted_indices.data(), sorted_indices.data(),
+            count, 0, sizeof(Key) * 8, stream);
     } else {
-        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, result.keys.data(), result.keys.data(), indices.data(), indices.data(), actual_k);
+        cub::DeviceRadixSort::SortPairs(
+            d_temp_storage, temp_storage_bytes,
+            sorted_keys.data(), sorted_keys.data(),
+            sorted_indices.data(), sorted_indices.data(),
+            count, 0, sizeof(Key) * 8, stream);
     }
 
-    CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-
-    if (order == Order::Descending) {
-        cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, result.keys.data(), result.keys.data(), indices.data(), indices.data(), actual_k);
-    } else {
-        cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, result.keys.data(), result.keys.data(), indices.data(), indices.data(), actual_k);
+    if (temp_storage_bytes > 0) {
+        CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
     }
 
-    CUDA_CHECK(cudaFree(d_temp_storage));
+    // Second call: perform the sort.
+    if (order == Order::Descending) {
+        cub::DeviceRadixSort::SortPairsDescending(
+            d_temp_storage, temp_storage_bytes,
+            sorted_keys.data(), sorted_keys.data(),
+            sorted_indices.data(), sorted_indices.data(),
+            count, 0, sizeof(Key) * 8, stream);
+    } else {
+        cub::DeviceRadixSort::SortPairs(
+            d_temp_storage, temp_storage_bytes,
+            sorted_keys.data(), sorted_keys.data(),
+            sorted_indices.data(), sorted_indices.data(),
+            count, 0, sizeof(Key) * 8, stream);
+    }
 
+    // Take the first K sorted keys.
+    CUDA_CHECK(cudaMemcpyAsync(
+        result.keys.data(), sorted_keys.data(),
+        actual_k * sizeof(Key), cudaMemcpyDeviceToDevice, stream));
+
+    // Gather the corresponding values back to host, then copy to result buffer.
+    // For very large K this becomes a host-device roundtrip; for correctness over a
+    // small K (the common case) this is simple and reliable. A device-side gather
+    // kernel could replace it later if perf matters.
     size_t* h_indices = static_cast<size_t*>(malloc(actual_k * sizeof(size_t)));
+    sorted_indices.copy_to(h_indices, actual_k);
+
+    // Copy the full values array once, then gather the K needed entries into h_values.
+    // A device-side gather kernel could replace this host roundtrip later.
+    Value* h_all_values = static_cast<Value*>(malloc(count * sizeof(Value)));
+    CUDA_CHECK(cudaMemcpyAsync(
+        h_all_values, values, count * sizeof(Value),
+        cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
     Key* h_values = static_cast<Key*>(malloc(actual_k * sizeof(Key)));
-
-    indices.copy_to(h_indices, actual_k);
-
     for (size_t i = 0; i < actual_k; ++i) {
         const size_t idx = h_indices[i];
-        h_values[i] = (actual_k <= count && idx < count) ? static_cast<Key>(values[idx]) : Key{};
+        h_values[i] = (idx < count) ? static_cast<Key>(h_all_values[idx]) : Key{};
     }
     result.values.copy_from(h_values, actual_k);
 
     free(h_indices);
+    free(h_all_values);
     free(h_values);
+
+    if (d_temp_storage != nullptr) {
+        CUDA_CHECK(cudaFree(d_temp_storage));
+    }
 
     return result;
 }
