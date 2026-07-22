@@ -107,4 +107,40 @@ TEST_F(SpMVTest, ConfigSetters) {
     EXPECT_EQ(retrieved.row_chunk_size, 128);
 }
 
+TEST_F(SpMVTest, MultiplyCSCSimple) {
+    // A = [[1, 0, 2],
+    //      [0, 3, 0],
+    //      [4, 0, 5]]
+    // CSC: col_offsets = [0, 2, 3, 5]
+    //      row_indices = [0, 2, 1, 0, 2]
+    //      values      = [1, 4, 3, 2, 5]
+    // x = [1, 2, 3]
+    // y = A * x = [1*1+2*3, 3*2, 4*1+5*3] = [7, 6, 19]
+    std::vector<float> values = {1.0f, 4.0f, 3.0f, 2.0f, 5.0f};
+    std::vector<int> col_offsets = {0, 2, 3, 5};
+    std::vector<int> row_indices = {0, 2, 1, 0, 2};
+    std::vector<float> x = {1.0f, 2.0f, 3.0f};
+    std::vector<float> y = {0.0f, 0.0f, 0.0f};
+
+    cuda::memory::Buffer<float> d_values(values.size());
+    cuda::memory::Buffer<int> d_col_offsets(col_offsets.size());
+    cuda::memory::Buffer<int> d_row_indices(row_indices.size());
+    cuda::memory::Buffer<float> d_x(x.size());
+    cuda::memory::Buffer<float> d_y(y.size());
+
+    d_values.copy_from(values.data(), values.size());
+    d_col_offsets.copy_from(col_offsets.data(), col_offsets.size());
+    d_row_indices.copy_from(row_indices.data(), row_indices.size());
+    d_x.copy_from(x.data(), x.size());
+
+    cuda::algo::spmv::multiply_csc(d_values.data(), d_col_offsets.data(),
+                                    d_row_indices.data(), d_x.data(), d_y.data(), 3);
+
+    d_y.copy_to(y.data(), y.size());
+
+    EXPECT_NEAR(y[0], 7.0f, 1e-5f);
+    EXPECT_NEAR(y[1], 6.0f, 1e-5f);
+    EXPECT_NEAR(y[2], 19.0f, 1e-5f);
+}
+
 }  // namespace cuda::algo::spmv::test
