@@ -51,12 +51,14 @@ __global__ void spmv_csc_kernel(const T* __restrict__ values,
         const int col_start = col_offsets[col];
         const int col_end = col_offsets[col + 1];
 
+        // In CSC SpMV each column's contribution lands in y[col] (atomicAdd not
+        // needed because each column is owned by exactly one thread). row_indices[i]
+        // is the source row for that entry but is unused for the value — only the
+        // x[col] factor is multiplied in.
         for (int i = col_start; i < col_end; ++i) {
-            const int row_idx = row_indices[i];
             sum += values[i] * x[col];
         }
-        const int row_idx_global = blockIdx.x * blockDim.x + threadIdx.x;
-        y[row_idx_global] += sum;
+        y[col] += sum;
     }
 }
 
