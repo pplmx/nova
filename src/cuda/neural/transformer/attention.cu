@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "cuda/device/error.h"
+
 namespace cuda::neural::transformer {
 
 namespace {
@@ -92,7 +94,7 @@ void MultiHeadAttention::forward(
     size_t needed = qkv_size * 3 + attn_size + output_size;
     if (needed > buffer_size_) {
         if (d_qkv_buffer_) cudaFree(d_qkv_buffer_);
-        cudaMalloc(&d_qkv_buffer_, needed * sizeof(float));
+        CUDA_CHECK(cudaMalloc(&d_qkv_buffer_, needed * sizeof(float)));
         buffer_size_ = needed;
         d_attn_weights_ = d_qkv_buffer_ + qkv_size;
         d_output_buffer_ = d_attn_weights_ + attn_size;
@@ -183,9 +185,10 @@ void PositionalEncoding::compute_sinusoidal_encoding(int seq_len) {
     }
 
     if (d_encoding_buffer_) cudaFree(d_encoding_buffer_);
-    cudaMalloc(&d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float));
-    cudaMemcpy(d_encoding_buffer_, h_encoding_buffer_.data(),
-               seq_len * config_.embed_dim * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMalloc(&d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_encoding_buffer_, h_encoding_buffer_.data(),
+                          seq_len * config_.embed_dim * sizeof(float),
+                          cudaMemcpyHostToDevice));
     buffer_size_ = seq_len * config_.embed_dim;
 }
 
