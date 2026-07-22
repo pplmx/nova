@@ -1,4 +1,5 @@
 #include <cuda/performance/fusion/kernel_fusion_analyzer.h>
+#include <cuda/performance/fusion/fusion_patterns.h>
 
 #include <algorithm>
 #include <cmath>
@@ -6,28 +7,11 @@
 namespace cuda::performance::fusion {
 
 std::vector<FusionPattern> KernelFusionAnalyzer::get_known_patterns() {
-    return {
-        {"matmul_bias_act_relu", {OpType::Matmul, OpType::ElementWise, OpType::Activation},
-         "Matmul → bias → ReLU fusion", 1.5},
-        {"matmul_bias_act_gelu", {OpType::Matmul, OpType::ElementWise, OpType::Activation},
-         "Matmul → bias → GELU fusion", 1.4},
-        {"matmul_bias_act_silu", {OpType::Matmul, OpType::ElementWise, OpType::Activation},
-         "Matmul → bias → SiLU fusion", 1.4},
-        {"conv_bias_act_relu", {OpType::Conv, OpType::ElementWise, OpType::Activation},
-         "Convolution → bias → ReLU fusion", 1.6},
-        {"conv_bias_act_gelu", {OpType::Conv, OpType::ElementWise, OpType::Activation},
-         "Convolution → bias → GELU fusion", 1.5},
-        {"relu_pool", {OpType::Activation, OpType::Pooling},
-         "ReLU → pooling fusion", 1.2},
-        {"elementwise_chain", {OpType::ElementWise, OpType::ElementWise, OpType::ElementWise},
-         "Element-wise operation chain fusion", 1.3},
-        {"reduction_norm", {OpType::Reduction, OpType::LayerNorm},
-         "Reduction → normalization fusion", 1.1},
-        {"softmax_dropout", {OpType::Softmax, OpType::Dropout},
-         "Softmax → dropout fusion", 1.2},
-        {"matmul_bias", {OpType::Matmul, OpType::ElementWise},
-         "Matmul → bias fusion", 1.2}
-    };
+    // Delegate to the single source of truth in fusion_patterns.cpp so the two
+    // definitions can't drift apart. Caller gets a copy (FusionPattern is a
+    // small POD-ish struct) so KernelFusionAnalyzer can still own its
+    // patterns_ member safely.
+    return FusionPatterns::all();
 }
 
 KernelFusionAnalyzer::KernelFusionAnalyzer() {
