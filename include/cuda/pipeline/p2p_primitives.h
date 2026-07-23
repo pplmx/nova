@@ -92,6 +92,8 @@ private:
     int src_device_;
     int dst_device_;
     bool peer_access_;
+    void* dst_ptr_ = nullptr;
+    size_t bytes_ = 0;
     cudaEvent_t send_event_;
     cudaEvent_t recv_event_;
 };
