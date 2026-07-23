@@ -1,6 +1,7 @@
 #include "cuda/tools/bank_conflict_analyzer.h"
 #include "cuda/tools/timeline_visualizer.h"
 #include "cuda/performance/device_info.h"
+#include "cuda/device/error.h"
 
 #include <algorithm>
 #include <sstream>
@@ -119,9 +120,9 @@ void TimelineVisualizer::begin_event(const std::string& name) {
     if (!enabled_) return;
 
     cudaEvent_t start, end;
-    cudaEventCreate(&start);
-    cudaEventCreate(&end);
-    cudaEventRecord(start);
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&end));
+    CUDA_CHECK(cudaEventRecord(start));
 
     start_events_[name] = start;
     end_events_[name] = end;
@@ -140,11 +141,11 @@ void TimelineVisualizer::end_event(const std::string& name) {
     auto it = start_events_.find(name);
     if (it == start_events_.end()) return;
 
-    cudaEventRecord(end_events_[name]);
-    cudaEventSynchronize(end_events_[name]);
+    CUDA_CHECK(cudaEventRecord(end_events_[name]));
+    CUDA_CHECK(cudaEventSynchronize(end_events_[name]));
 
     float duration;
-    cudaEventElapsedTime(&duration, it->second, end_events_[name]);
+    CUDA_CHECK(cudaEventElapsedTime(&duration, it->second, end_events_[name]));
 
     KernelEvent event;
     event.name = name;
