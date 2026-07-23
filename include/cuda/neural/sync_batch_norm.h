@@ -41,6 +41,7 @@ public:
     );
 
     void backward(
+        const float* input,
         const float* d_output,
         float* d_input,
         float* d_gamma,
@@ -59,6 +60,8 @@ public:
     float* mutable_running_var() { return running_var_; }
     float* mutable_gamma() { return gamma_; }
     float* mutable_beta() { return beta_; }
+    float* mutable_saved_mean() { return saved_mean_; }
+    float* mutable_saved_var() { return saved_var_; }
 
     int num_features() const { return num_features_; }
     float eps() const { return eps_; }

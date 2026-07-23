@@ -171,6 +171,7 @@ template <typename T>
 __global__ void backward_dvar_kernel(
     const T* d_x_norm,
     const T* centered,
+    const T* variance,
     T* d_var,
     int batch_size,
     int num_features,
@@ -188,7 +189,7 @@ __global__ void backward_dvar_kernel(
             sum += d_x_norm[idx] * centered[idx];
         }
     }
-    T var_eps = sqrt(d_var[feature] + eps);
+    T var_eps = sqrtf(variance[feature] + eps);
     d_var[feature] = sum * (-0.5f) * powf(var_eps, -3.0f);
 }
 
@@ -196,12 +197,14 @@ template <typename T>
 __global__ void backward_dmean_kernel(
     const T* d_x_norm,
     const T* d_var,
+    const T* variance,
     const T* centered,
     T* d_mean,
     int batch_size,
     int num_features,
     int spatial_size,
-    T inv_n
+    T inv_n,
+    T eps
 ) {
     int feature = blockIdx.x * blockDim.x + threadIdx.x;
     if (feature >= num_features) return;
@@ -215,8 +218,9 @@ __global__ void backward_dmean_kernel(
             sum_centered += centered[idx];
         }
     }
-    d_mean[feature] = sum_dxnorm * (-1.0f / sqrtf(d_var[feature] + 1e-5f)) +
-                      sum_centered * (-2.0f / (inv_n * (d_var[feature] + 1e-5f)));
+    T inv_var_eps = 1.0f / sqrtf(variance[feature] + eps);
+    d_mean[feature] = sum_dxnorm * (-inv_var_eps) +
+                      d_var[feature] * (-2.0f * inv_n) * sum_centered;
 }
 
 template <typename T>
@@ -287,6 +291,42 @@ __global__ void backward_dbeta_kernel(
         }
     }
     d_beta[feature] = sum;
+}
+
+template <typename T>
+__global__ void compute_centered_kernel(
+    const T* input,
+    const T* mean,
+    T* centered,
+    int batch_size,
+    int num_features,
+    int spatial_size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int n = batch_size * num_features * spatial_size;
+    if (idx >= n) return;
+
+    int feature = (idx / spatial_size) % num_features;
+    centered[idx] = input[idx] - mean[feature];
+}
+
+template <typename T>
+__global__ void compute_normalized_kernel(
+    const T* centered,
+    const T* variance,
+    T* normalized,
+    int batch_size,
+    int num_features,
+    int spatial_size,
+    T eps
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int n = batch_size * num_features * spatial_size;
+    if (idx >= n) return;
+
+    int feature = (idx / spatial_size) % num_features;
+    T std = sqrtf(variance[feature] + eps);
+    normalized[idx] = centered[idx] / std;
 }
 
 } // anonymous namespace
@@ -413,6 +453,7 @@ void SyncBatchNorm::forward_inference(
 }
 
 void SyncBatchNorm::backward(
+    const float* input,
     const float* d_output,
     float* d_input,
     float* d_gamma,
@@ -429,23 +470,33 @@ void SyncBatchNorm::backward(
     float* d_x_norm;
     float* centered_input;
     float* normalized_tmp;
+    float* d_var;
+    float* d_mean;
     CUDA_CHECK(cudaMalloc(&d_x_norm, n * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&centered_input, n * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&normalized_tmp, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_var, num_features_ * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_mean, num_features_ * sizeof(float)));
+
+    compute_centered_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
+        input, saved_mean_, centered_input,
+        batch_size, num_features_, spatial_size);
+
+    compute_normalized_kernel<float><<<grid_size, block_size, 0, stream>>>(
+        centered_input, saved_var_, normalized_tmp,
+        batch_size, num_features_, spatial_size, eps_);
 
     backward_dxnorm_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         d_output, gamma_, d_x_norm,
         batch_size, num_features_, spatial_size);
 
-    float* d_var = saved_var_;
     backward_dvar_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        d_x_norm, centered_input, d_var,
+        d_x_norm, centered_input, saved_var_, d_var,
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
-    float* d_mean = saved_mean_;
     backward_dmean_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        d_x_norm, d_var, centered_input, d_mean,
-        batch_size, num_features_, spatial_size, inv_n);
+        d_x_norm, d_var, saved_var_, centered_input, d_mean,
+        batch_size, num_features_, spatial_size, inv_n, eps_);
 
     backward_dinput_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         d_x_norm, centered_input, d_var, d_mean, d_input,
@@ -476,6 +527,8 @@ void SyncBatchNorm::backward(
     CUDA_CHECK(cudaFree(d_x_norm));
     CUDA_CHECK(cudaFree(centered_input));
     CUDA_CHECK(cudaFree(normalized_tmp));
+    CUDA_CHECK(cudaFree(d_var));
+    CUDA_CHECK(cudaFree(d_mean));
 }
 
 void sync_batch_norm_forward_training(
@@ -542,6 +595,11 @@ void sync_batch_norm_backward(
     float eps,
     cudaStream_t stream
 ) {
+    SyncBatchNorm bn(num_features, eps);
+    CUDA_CHECK(cudaMemcpy(bn.mutable_saved_mean(), saved_mean, num_features * sizeof(float), cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(bn.mutable_saved_var(), saved_var, num_features * sizeof(float), cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(bn.mutable_gamma(), gamma, num_features * sizeof(float), cudaMemcpyDeviceToDevice));
+    bn.backward(input, d_output, d_input, d_gamma, d_beta, batch_size, spatial_size, stream);
 }
 
 } // namespace cuda::neural
