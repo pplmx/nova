@@ -170,7 +170,7 @@ void MeshBarrier::synchronize_devices(const std::vector<int>& devices) {
     for (int i = 0; i < n; ++i) {
         int device = devices[i];
         CUDA_CHECK(cudaSetDevice(device));
-        cudaEventDestroy(local_events[i]);
+        CUDA_CHECK(cudaEventDestroy(local_events[i]));
     }
 
     barriering_.store(false, std::memory_order_release);
