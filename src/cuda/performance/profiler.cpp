@@ -1,5 +1,7 @@
 #include "cuda/performance/profiler.h"
 
+#include "cuda/device/error.h"
+
 #include <fstream>
 #include <mutex>
 #include <iomanip>
@@ -12,15 +14,19 @@ ScopedTimer::ScopedTimer(const char* name, Profiler& profiler)
 
     if (!profiler_.is_enabled()) return;
 
-    cudaEventCreate(&start_);
-    cudaEventCreate(&stop_);
-    cudaEventRecord(start_, 0);
+    CUDA_CHECK(cudaEventCreate(&start_));
+    CUDA_CHECK(cudaEventCreate(&stop_));
+    CUDA_CHECK(cudaEventRecord(start_, 0));
     valid_ = true;
 }
 
 ScopedTimer::~ScopedTimer() {
     if (!valid_) return;
 
+    // Not using CUDA_CHECK here: throwing in a destructor is undefined behavior
+    // (C++11 destructors default to noexcept). Event cleanup failures are
+    // non-critical — the process is likely already in error state if these
+    // fail.
     cudaEventRecord(stop_, 0);
     cudaEventSynchronize(stop_);
 
@@ -44,9 +50,9 @@ void Profiler::start_timer(const char* name) {
     std::lock_guard lock(mutex_);
 
     ActiveTimer timer;
-    cudaEventCreate(&timer.start);
-    cudaEventCreate(&timer.stop);
-    cudaEventRecord(timer.start, 0);
+    CUDA_CHECK(cudaEventCreate(&timer.start));
+    CUDA_CHECK(cudaEventCreate(&timer.stop));
+    CUDA_CHECK(cudaEventRecord(timer.start, 0));
     timer.cpu_start = std::chrono::steady_clock::now();
 
     active_timers_[name] = std::move(timer);
@@ -61,16 +67,16 @@ void Profiler::stop_timer(const char* name) {
     if (it == active_timers_.end()) return;
 
     auto& timer = it->second;
-    cudaEventRecord(timer.stop, 0);
-    cudaEventSynchronize(timer.stop);
+    CUDA_CHECK(cudaEventRecord(timer.stop, 0));
+    CUDA_CHECK(cudaEventSynchronize(timer.stop));
 
     float time_ms = 0.0f;
-    cudaEventElapsedTime(&time_ms, timer.start, timer.stop);
+    CUDA_CHECK(cudaEventElapsedTime(&time_ms, timer.start, timer.stop));
 
     record_kernel(name, time_ms);
 
-    cudaEventDestroy(timer.start);
-    cudaEventDestroy(timer.stop);
+    CUDA_CHECK(cudaEventDestroy(timer.start));
+    CUDA_CHECK(cudaEventDestroy(timer.stop));
     active_timers_.erase(it);
 }
 

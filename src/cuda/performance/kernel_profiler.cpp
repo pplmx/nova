@@ -1,7 +1,8 @@
 #include <cuda/performance/kernel_profiler.h>
 
-#include <cuda_runtime.h>
+#include "cuda/device/error.h"
 
+#include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
 
@@ -22,9 +23,9 @@ void KernelProfiler::record_start(const std::string& kernel_name, cudaStream_t s
     std::lock_guard<std::mutex> lock(mutex_);
     auto record = get_or_create_record(kernel_name);
     if (record && !record->start_event) {
-        cudaEventCreate(&record->start_event);
-        cudaEventCreate(&record->stop_event);
-        cudaEventRecord(record->start_event, stream);
+        CUDA_CHECK(cudaEventCreate(&record->start_event));
+        CUDA_CHECK(cudaEventCreate(&record->stop_event));
+        CUDA_CHECK(cudaEventRecord(record->start_event, stream));
     }
 }
 
@@ -36,11 +37,11 @@ void KernelProfiler::record_end(const std::string& kernel_name, cudaStream_t str
     if (it != records_.end() && it->second) {
         auto& record = it->second;
         if (record->start_event && !record->completed) {
-            cudaEventRecord(record->stop_event, stream);
-            cudaEventSynchronize(record->stop_event);
+            CUDA_CHECK(cudaEventRecord(record->stop_event, stream));
+            CUDA_CHECK(cudaEventSynchronize(record->stop_event));
 
             float elapsed_ms = 0.0f;
-            cudaEventElapsedTime(&elapsed_ms, record->start_event, record->stop_event);
+            CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, record->start_event, record->stop_event));
             record->latency_ns = static_cast<uint64_t>(elapsed_ms * 1e6);
             record->completed = true;
 
@@ -89,8 +90,8 @@ bool KernelProfiler::is_enabled() const {
 void KernelProfiler::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [name, record] : records_) {
-        if (record->start_event) cudaEventDestroy(record->start_event);
-        if (record->stop_event) cudaEventDestroy(record->stop_event);
+        if (record->start_event) CUDA_CHECK(cudaEventDestroy(record->start_event));
+        if (record->stop_event) CUDA_CHECK(cudaEventDestroy(record->stop_event));
     }
     records_.clear();
 }

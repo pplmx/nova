@@ -1,5 +1,7 @@
 #include <cuda/performance/nvblox_metrics.h>
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 
 #include <cmath>
@@ -43,14 +45,14 @@ void NVBloxMetricsCollector::add_sample(const std::string& name, double value) {
     uint64_t timestamp = 0;
     cudaEvent_t start, stop;
     if (cudaEventCreate(&start) == cudaSuccess && cudaEventCreate(&stop) == cudaSuccess) {
-        cudaEventRecord(start);
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
+        CUDA_CHECK(cudaEventRecord(start));
+        CUDA_CHECK(cudaEventRecord(stop));
+        CUDA_CHECK(cudaEventSynchronize(stop));
         float dummy_time_ms = 0.0f;
-        cudaEventElapsedTime(&dummy_time_ms, start, stop);
+        CUDA_CHECK(cudaEventElapsedTime(&dummy_time_ms, start, stop));
         timestamp = static_cast<uint64_t>(dummy_time_ms * 1e6);
-        cudaEventDestroy(start);
-        cudaEventDestroy(stop);
+        CUDA_CHECK(cudaEventDestroy(start));
+        CUDA_CHECK(cudaEventDestroy(stop));
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
