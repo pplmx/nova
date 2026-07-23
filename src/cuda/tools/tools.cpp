@@ -266,10 +266,10 @@ void TimelineVisualizer::export_json(const std::string& filepath) {
 
 void TimelineVisualizer::clear() {
     for (auto& [name, event] : start_events_) {
-        cudaEventDestroy(event);
+        CUDA_CHECK(cudaEventDestroy(event));
     }
     for (auto& [name, event] : end_events_) {
-        cudaEventDestroy(event);
+        CUDA_CHECK(cudaEventDestroy(event));
     }
     start_events_.clear();
     end_events_.clear();
