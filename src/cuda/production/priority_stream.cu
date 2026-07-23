@@ -1,4 +1,5 @@
 #include "cuda/production/priority_stream.h"
+#include "cuda/device/error.h"
 
 namespace cuda::production {
 
@@ -56,7 +57,7 @@ PriorityStream PriorityStreamPool::acquire(StreamPriority priority) {
                        : (priority == StreamPriority::High) ? MAX_PRIORITY
                                                             : 0;
 
-    cudaStreamCreateWithPriority(&new_stream, cudaStreamNonBlocking, cuda_priority);
+    CUDA_CHECK(cudaStreamCreateWithPriority(&new_stream, cudaStreamNonBlocking, cuda_priority));
 
     return PriorityStream(new_stream, priority);
 }
@@ -73,10 +74,10 @@ void PriorityStreamPool::release(PriorityStream stream) {
                                                             : normal_priority_pool_;
 
     if (pool.size() < pool_size_ * 2) {
-        cudaStreamSynchronize(stream.get());
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
         pool.push_back(stream);
     } else {
-        cudaStreamDestroy(stream.get());
+        CUDA_CHECK(cudaStreamDestroy(stream.get()));
     }
 }
 
@@ -101,17 +102,19 @@ void PriorityStreamPool::cleanup() {
 
     for (auto& stream : low_priority_pool_) {
         if (stream) {
-            cudaStreamDestroy(stream.get());
+            // cleanup() is a public method that can be called at any time
+            // (not just from destructor), so CUDA_CHECK is safe here
+            CUDA_CHECK(cudaStreamDestroy(stream.get()));
         }
     }
     for (auto& stream : normal_priority_pool_) {
         if (stream) {
-            cudaStreamDestroy(stream.get());
+            CUDA_CHECK(cudaStreamDestroy(stream.get()));
         }
     }
     for (auto& stream : high_priority_pool_) {
         if (stream) {
-            cudaStreamDestroy(stream.get());
+            CUDA_CHECK(cudaStreamDestroy(stream.get()));
         }
     }
 
