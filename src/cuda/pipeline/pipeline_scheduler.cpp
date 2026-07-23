@@ -4,6 +4,7 @@
  */
 
 #include "cuda/pipeline/pipeline_scheduler.h"
+#include "cuda/device/error.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,10 +22,11 @@ PipelineScheduler::PipelineScheduler(
       microbatch_size_(microbatch_size),
       schedule_type_(ScheduleType::OneForwardOneBackward) {
 
-    cudaEventCreate(&completion_event_);
+    CUDA_CHECK(cudaEventCreate(&completion_event_));
 }
 
 PipelineScheduler::~PipelineScheduler() {
+    // Not using CUDA_CHECK here: throwing in a destructor is undefined behavior
     cudaEventDestroy(completion_event_);
 }
 
@@ -46,13 +48,13 @@ void PipelineScheduler::run() {
     } else {
         schedule_interleaved();
     }
-    cudaEventRecord(completion_event_, 0);
+    CUDA_CHECK(cudaEventRecord(completion_event_, 0));
     completed_ = true;
 }
 
 void PipelineScheduler::wait() {
     if (completed_) {
-        cudaEventSynchronize(completion_event_);
+        CUDA_CHECK(cudaEventSynchronize(completion_event_));
     }
 }
 
