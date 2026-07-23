@@ -300,7 +300,7 @@ void build_histogram(
         d_data = d_data_alloc;
     }
 
-    cudaMemset(histogram, 0, num_bins * sizeof(uint32_t));
+    CUDA_CHECK(cudaMemset(histogram, 0, num_bins * sizeof(uint32_t)));
 
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
@@ -345,8 +345,14 @@ void compute_minmax(
     const float* d_data = data;
     float* d_data_alloc = nullptr;
     if (data_needs_copy) {
-        cudaMalloc(&d_data_alloc, n * sizeof(float));
-        cudaMemcpy(d_data_alloc, data, n * sizeof(float), cudaMemcpyHostToDevice);
+        cudaError_t err = cudaMalloc(&d_data_alloc, n * sizeof(float));
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+        err = cudaMemcpy(d_data_alloc, data, n * sizeof(float), cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
         d_data = d_data_alloc;
     }
 
@@ -372,8 +378,8 @@ void compute_minmax(
 
     std::vector<float> h_block_mins(grid_size);
     std::vector<float> h_block_maxs(grid_size);
-    cudaMemcpy(h_block_mins.data(), d_block_mins, grid_size * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_block_maxs.data(), d_block_maxs, grid_size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_block_mins.data(), d_block_mins, grid_size * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_block_maxs.data(), d_block_maxs, grid_size * sizeof(float), cudaMemcpyDeviceToHost));
 
     float local_min = FLT_MAX;
     float local_max = -FLT_MAX;
@@ -391,20 +397,16 @@ void compute_minmax(
         *min_val = local_min;
         *max_val = local_max;
     } else {
-        cudaMemcpy(min_val, &local_min, sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(max_val, &local_max, sizeof(float), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(min_val, &local_min, sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(max_val, &local_max, sizeof(float), cudaMemcpyHostToDevice));
     }
 
     if (d_data_alloc) {
-        if (stream == 0) {
-            cudaDeviceSynchronize();
-        } else {
-            cudaStreamSynchronize(stream);
-        }
-        cudaFree(d_data_alloc);
+        CUDA_CHECK(cudaStreamSynchronize(stream == 0 ? 0 : stream));
+        CUDA_CHECK(cudaFree(d_data_alloc));
     }
-    cudaFree(d_block_mins);
-    cudaFree(d_block_maxs);
+    CUDA_CHECK(cudaFree(d_block_mins));
+    CUDA_CHECK(cudaFree(d_block_maxs));
 }
 
 } // namespace cuda
