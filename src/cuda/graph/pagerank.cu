@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace cuda::graph {
 
@@ -155,13 +156,14 @@ void pagerank_iteration(
     int* d_out_degrees;
     CUDA_CHECK(cudaMalloc(&d_out_degrees, graph.num_vertices * sizeof(int)));
 
+    std::vector<int> host_degrees(graph.num_vertices);
+    for (int v = 0; v < graph.num_vertices; ++v) {
+        host_degrees[v] = graph.degree(v);
+    }
+    CUDA_CHECK(cudaMemcpy(d_out_degrees, host_degrees.data(), graph.num_vertices * sizeof(int), cudaMemcpyHostToDevice));
+
     int block_size = 256;
     int grid_size = (graph.num_vertices + block_size - 1) / block_size;
-
-    for (int v = 0; v < graph.num_vertices; ++v) {
-        d_out_degrees[v] = graph.degree(v);
-    }
-    CUDA_CHECK(cudaMemcpy(d_out_degrees, d_out_degrees, graph.num_vertices * sizeof(int), cudaMemcpyHostToDevice));
 
     float teleport = (1.0f - damping) / static_cast<float>(graph.num_vertices);
 
@@ -186,7 +188,7 @@ void pagerank_iteration(
     );
     CUDA_CHECK(cudaGetLastError());
 
-    cudaFree(d_out_degrees);
+    CUDA_CHECK(cudaFree(d_out_degrees));
 }
 
 float compute_pagerank_delta(
@@ -248,8 +250,8 @@ PageRankResult pagerank(
     result.iterations = iter + 1;
     result.download();
 
-    cudaFree(d_prev);
-    cudaFree(d_next);
+    CUDA_CHECK(cudaFree(d_prev));
+    CUDA_CHECK(cudaFree(d_next));
 
     return result;
 }
