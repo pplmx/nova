@@ -1,4 +1,5 @@
 #include "cuda/topology/topology_map.h"
+#include "cuda/device/error.h"
 
 #include <algorithm>
 #include <array>
@@ -285,27 +286,27 @@ CollectiveProfiler::profile_allreduce(const void* send_buf,
     result.algorithm = CollectiveAlgorithm::Ring;
 
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
 
-    cudaEventRecord(start, stream);
+    CUDA_CHECK(cudaEventRecord(start, stream));
 
 #if NOVA_NCCL_ENABLED && NOVA_MPI_ENABLED
     NCCL_CHECK(ncclAllReduce(send_buf, recv_buf, count, ncclFloat, ncclSum,
                              NCCL_COMM_NULL, stream));
 #endif
 
-    cudaEventRecord(stop, stream);
-    cudaEventSynchronize(stop);
+    CUDA_CHECK(cudaEventRecord(stop, stream));
+    CUDA_CHECK(cudaEventSynchronize(stop));
 
     float ms = 0.0f;
-    cudaEventElapsedTime(&ms, start, stop);
+    CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
 
     result.latency_us = ms * 1000.0;
     result.bandwidth_gbps = (count * sizeof(float)) / (ms * 1e-3) / 1e9;
 
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
 
     return result;
 }
