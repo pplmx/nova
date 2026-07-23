@@ -1,5 +1,7 @@
 #include "cuda/observability/kernel_stats.h"
 
+#include "cuda/device/error.h"
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -81,12 +83,14 @@ ScopedKernelTiming::ScopedKernelTiming(const char* name,
                                        size_t blocks,
                                        size_t threads_per_block)
     : name_(name), collector_(collector), blocks_(blocks), threads_per_block_(threads_per_block) {
-    cudaEventCreate(&start_);
-    cudaEventCreate(&end_);
-    cudaEventRecord(start_, collector.stream());
+    CUDA_CHECK(cudaEventCreate(&start_));
+    CUDA_CHECK(cudaEventCreate(&end_));
+    CUDA_CHECK(cudaEventRecord(start_, collector.stream()));
 }
 
 ScopedKernelTiming::~ScopedKernelTiming() {
+    // Not using CUDA_CHECK here: throwing in a destructor is undefined
+    // behavior (C++11 destructors default to noexcept).
     cudaEventRecord(end_, collector_.stream());
     cudaStreamSynchronize(collector_.stream());
     collector_.record_kernel(name_, start_, end_, blocks_, threads_per_block_);

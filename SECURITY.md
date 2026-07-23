@@ -2,23 +2,36 @@
 
 ## Supported Versions
 
-<!--
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
--->
+The Nova project is a pre-release CUDA library (v0.1.0). All security vulnerabilities should be reported and treated with high priority.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| 0.1.x   | :white_check_mark: |
+| < 0.1   | :x:                |
 
 ## Reporting a Vulnerability
 
-<!--
-Use this section to tell people how to report a vulnerability.
+Please report security vulnerabilities via the project's GitHub issue tracker:
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
--->
+https://github.com/pplmx/nova/issues
+
+Please include the following in your report:
+
+- A description of the vulnerability
+- Steps to reproduce or proof-of-concept code
+- Potential impact assessment
+- Any suggested mitigations
+
+## Response Process
+
+- Reports are reviewed within 48 hours.
+- If a vulnerability is confirmed, a patch will be developed in a private branch.
+- A security advisory will be published on the GitHub repository.
+- Users will be notified via the advisory system and encouraged to upgrade.
+
+## Scope
+
+This policy covers the Nova CUDA library source code in this repository. It does not cover:
+
+- Vulnerabilities in third-party dependencies (e.g., CUDA runtime, cuBLAS)
+- Issues in forks or modified versions of this code
