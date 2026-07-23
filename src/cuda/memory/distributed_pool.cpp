@@ -88,15 +88,15 @@ size_t DistributedMemoryPool::query_device_free_memory(int device_id) const {
 
     // Save current device so we can restore it after querying
     int current_device = 0;
-    cudaGetDevice(&current_device);
+    CUDA_CHECK(cudaGetDevice(&current_device));
 
     // Switch to target device to query memory
     // This is a blocking operation but necessary for accurate memory queries
-    cudaSetDevice(device_id);
-    cudaMemGetInfo(&free_mem, &total_mem);
+    CUDA_CHECK(cudaSetDevice(device_id));
+    CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
 
     // Restore device state for caller
-    cudaSetDevice(current_device);
+    CUDA_CHECK(cudaSetDevice(current_device));
 
     return total_mem;
 }
