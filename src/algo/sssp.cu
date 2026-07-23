@@ -1,5 +1,7 @@
 #include "cuda/algo/sssp.h"
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 #include <thrust/device_ptr.h>
 #include <thrust/fill.h>
@@ -73,8 +75,8 @@ void delta_stepping(const graph::CSRGraph& graph, int source, Weight* distances,
     int* d_frontier_next = frontier_next.data();
     int* d_bucket = bucket.data();
 
-    cudaMemset(d_frontier_current, 0, sizeof(int));
-    cudaMemcpy(d_frontier_current, &source, sizeof(int), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemset(d_frontier_current, 0, sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_frontier_current, &source, sizeof(int), cudaMemcpyHostToDevice));
 
     int current_frontier_size = 1;
     int iterations = 0;
