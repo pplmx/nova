@@ -28,6 +28,7 @@
 
 #include <cuda_runtime.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -170,7 +171,7 @@ private:
 
     int device_count_ = 0;
     PeerCapabilityMap peer_capabilities_;
-    bool initialized_ = false;
+    std::atomic<bool> initialized_{false};
 };
 
 /**

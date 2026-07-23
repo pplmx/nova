@@ -62,9 +62,9 @@ bool PeerCapabilityMap::can_access(int src, int dst) const {
     return matrix_[src][dst];
 }
 
-// ============================================================================
+// ===========================================================================
 // DeviceMesh Implementation
-// ============================================================================
+// ===========================================================================
 
 DeviceMesh& DeviceMesh::instance() {
     static DeviceMesh instance;
@@ -77,8 +77,15 @@ DeviceMesh::DeviceMesh()
 }
 
 void DeviceMesh::initialize() {
-    if (initialized_) {
-        return;  // Idempotent
+    // Thread-safe check-and-set using atomic CAS to prevent race condition
+    // when multiple threads call initialize() concurrently. Without this,
+    // two threads could both see initialized_ == false and proceed to
+    // initialize, causing data races on device_count_ and peer_capabilities_.
+    bool expected = false;
+    if (!initialized_.compare_exchange_strong(expected, true,
+                                               std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+        return;  // Another thread already initialized
     }
 
     // Query device count
@@ -95,8 +102,6 @@ void DeviceMesh::initialize() {
 
     // Initialize peer capability map
     peer_capabilities_.initialize(device_count_);
-
-    initialized_ = true;
 }
 
 std::vector<PeerInfo> DeviceMesh::get_mesh_devices() const {
