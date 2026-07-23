@@ -1,4 +1,5 @@
 #include "cuda/production/error_injection.h"
+#include "cuda/device/error.h"
 
 #include "cuda/stream/stream.h"
 #include <thread>
@@ -106,8 +107,19 @@ ScopedErrorInjection::ScopedErrorInjection(ErrorInjector& injector,
 
 ScopedErrorInjection::~ScopedErrorInjection() {
     if (was_injected_) {
-        throw device::CudaException(injector_.get_error(target_), __FILE__, __LINE__);
+        // Destructor cannot throw (noexcept). Store the error so the
+        // caller can check it via get_injected_error() instead of
+        // throwing during destruction.
+        injected_error_ = injector_.get_error(target_);
     }
+}
+
+cudaError_t ScopedErrorInjection::get_injected_error() const {
+    return was_injected_ ? injected_error_ : cudaSuccess;
+}
+
+bool ScopedErrorInjection::was_injected() const {
+    return was_injected_;
 }
 
 MemoryPressureTest::MemoryPressureTest(size_t limit_bytes) : limit_bytes_(limit_bytes) {}
@@ -151,12 +163,11 @@ bool run_memory_pressure_test(const StressTestConfig& config) {
 
         void* ptr = nullptr;
         cudaError_t err = cudaMalloc(&ptr, config.allocation_size);
-
         if (err == cudaSuccess && pressure.allocate(config.allocation_size)) {
             allocations.push_back(ptr);
         } else {
             if (ptr) {
-                cudaFree(ptr);
+                CUDA_CHECK(cudaFree(ptr));
             }
         }
     }
@@ -164,7 +175,7 @@ bool run_memory_pressure_test(const StressTestConfig& config) {
     bool success = !allocations.empty();
 
     for (auto ptr : allocations) {
-        cudaFree(ptr);
+        CUDA_CHECK(cudaFree(ptr));
     }
 
     return success;
@@ -181,8 +192,8 @@ bool run_concurrent_stream_test(const StressTestConfig& config) {
     std::vector<int*> d_data(streams.size(), nullptr);
 
     for (size_t i = 0; i < streams.size(); ++i) {
-        cudaMalloc(&d_data[i], config.allocation_size);
-        cudaMemset(d_data[i], 0, config.allocation_size);
+        CUDA_CHECK(cudaMalloc(&d_data[i], config.allocation_size));
+        CUDA_CHECK(cudaMemset(d_data[i], 0, config.allocation_size));
     }
 
     for (auto& stream : streams) {
@@ -191,7 +202,7 @@ bool run_concurrent_stream_test(const StressTestConfig& config) {
 
     for (size_t i = 0; i < streams.size(); ++i) {
         if (d_data[i]) {
-            cudaFree(d_data[i]);
+            CUDA_CHECK(cudaFree(d_data[i]));
         }
     }
 

@@ -58,6 +58,9 @@ class ScopedErrorInjection {
 public:
     ScopedErrorInjection(ErrorInjector& injector, ErrorTarget target, cudaError_t error);
     ~ScopedErrorInjection();
+    // Destructor cannot throw. Use these to retrieve the injected error.
+    [[nodiscard]] cudaError_t get_injected_error() const;
+    [[nodiscard]] bool was_injected() const;
 
     ScopedErrorInjection(const ScopedErrorInjection&) = delete;
     ScopedErrorInjection& operator=(const ScopedErrorInjection&) = delete;
@@ -66,6 +69,7 @@ private:
     ErrorInjector& injector_;
     ErrorTarget target_;
     bool was_injected_{false};
+    cudaError_t injected_error_{cudaSuccess};
 };
 
 class MemoryPressureTest {
