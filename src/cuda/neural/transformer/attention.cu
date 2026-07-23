@@ -146,12 +146,12 @@ void PositionalEncoding::forward(
     }
 
     int num_elements = batch_size * seq_len * config_.embed_dim;
-    cudaMemcpyAsync(output, input, num_elements * sizeof(float),
-                    cudaMemcpyDeviceToDevice, stream);
+    CUDA_CHECK(cudaMemcpyAsync(output, input, num_elements * sizeof(float),
+                    cudaMemcpyDeviceToDevice, stream));
 
     if (d_encoding_buffer_) {
-        cudaMemcpyAsync(output, d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float),
-                        cudaMemcpyDeviceToDevice, stream);
+        CUDA_CHECK(cudaMemcpyAsync(output, d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float),
+                        cudaMemcpyDeviceToDevice, stream));
     }
 }
 
@@ -161,8 +161,8 @@ void PositionalEncoding::get_encoding(float* output, int seq_len, cudaStream_t s
     }
 
     if (d_encoding_buffer_) {
-        cudaMemcpyAsync(output, d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float),
-                        cudaMemcpyDeviceToDevice, stream);
+        CUDA_CHECK(cudaMemcpyAsync(output, d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float),
+                        cudaMemcpyDeviceToDevice, stream));
     }
 }
 
