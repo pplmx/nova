@@ -19,6 +19,7 @@ public:
     virtual void remove(const std::string& path) = 0;
     virtual std::vector<std::string> list(const std::string& dir) const = 0;
     virtual void create_directory(const std::string& path) = 0;
+    virtual std::string resolve_path(const std::string& path) const = 0;
 };
 
 class FileStorageBackend : public StorageBackend {
@@ -31,6 +32,7 @@ public:
     void remove(const std::string& path) override;
     std::vector<std::string> list(const std::string& dir) const override;
     void create_directory(const std::string& path) override;
+    std::string resolve_path(const std::string& path) const override;
 
 private:
     struct Impl;

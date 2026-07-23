@@ -17,14 +17,24 @@ struct FileStorageBackend::Impl {
     std::string base_path;
 
     std::string resolve_path(const std::string& path) const {
-        if (path.empty() || path[0] == '/') {
-            return base_path + path;
+        fs::path p = fs::path(path);
+        if (p.is_absolute()) {
+            throw std::invalid_argument("Absolute paths are not allowed: " + path);
         }
-        return base_path + "/" + path;
+        std::string normalized = path;
+        if (normalized.find("..") != std::string::npos) {
+            throw std::invalid_argument("Path traversal is not allowed: " + path);
+        }
+        if (path.empty()) {
+            return base_path;
+        }
+        return (fs::path(base_path) / path).string();
     }
 
     void atomic_write(const std::string& full_path, const void* data, size_t size) {
-        std::string temp_path = full_path + ".tmp." + std::to_string(getpid());
+        auto now = std::chrono::steady_clock::now();
+        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        std::string temp_path = full_path + ".tmp." + std::to_string(getpid()) + "." + std::to_string(ns);
         std::ofstream ofs(temp_path, std::ios::binary);
         if (!ofs) {
             throw std::runtime_error("Failed to open file for writing: " + temp_path);
@@ -90,6 +100,10 @@ std::vector<std::string> FileStorageBackend::list(const std::string& dir) const 
 
 void FileStorageBackend::create_directory(const std::string& path) {
     fs::create_directories(impl_->resolve_path(path));
+}
+
+std::string FileStorageBackend::resolve_path(const std::string& path) const {
+    return impl_->resolve_path(path);
 }
 
 struct CheckpointManager::Impl {
@@ -221,7 +235,11 @@ void CheckpointManager::save_checkpoint(
         offset += tensor.size_bytes;
     }
 
-    impl.backend->write(ckpt_dir + "/model.bin", model_file.data(), model_file.size());
+    size_t model_total_size = model_file.size();
+    std::vector<char> model_blob(sizeof(size_t) + model_file.size());
+    std::memcpy(model_blob.data(), &model_total_size, sizeof(size_t));
+    std::memcpy(model_blob.data() + sizeof(size_t), model_file.data(), model_file.size());
+    impl.backend->write(ckpt_dir + "/model.bin", model_blob.data(), model_blob.size());
 
     offset = 0;
     std::vector<char> optimizer_file;
@@ -252,7 +270,11 @@ void CheckpointManager::save_checkpoint(
         offset += tensor.size_bytes;
     }
 
-    impl.backend->write(ckpt_dir + "/optimizer.bin", optimizer_file.data(), optimizer_file.size());
+    size_t optimizer_total_size = optimizer_file.size();
+    std::vector<char> optimizer_blob(sizeof(size_t) + optimizer_file.size());
+    std::memcpy(optimizer_blob.data(), &optimizer_total_size, sizeof(size_t));
+    std::memcpy(optimizer_blob.data() + sizeof(size_t), optimizer_file.data(), optimizer_file.size());
+    impl.backend->write(ckpt_dir + "/optimizer.bin", optimizer_blob.data(), optimizer_blob.size());
 
     impl.last_checkpoint_step = step;
     impl.latest_checkpoint_path = ckpt_dir;
@@ -273,11 +295,26 @@ bool CheckpointManager::load_checkpoint(
     }
 
     std::vector<char> model_file;
-    size_t model_size = 0;
-    impl.backend->read(path + "/model.bin", &model_size, sizeof(size_t));
+    {
+        size_t model_size = 0;
+        std::ifstream ifs(impl.backend->resolve_path(path + "/model.bin"), std::ios::binary);
+        if (ifs) {
+            ifs.seekg(0, std::ios::end);
+            model_file.resize(ifs.tellg());
+            ifs.seekg(0);
+            ifs.read(model_file.data(), model_file.size());
+        }
+    }
 
-    size_t offset = 0;
-    while (offset < model_size) {
+    if (model_file.size() < sizeof(size_t)) {
+        return false;
+    }
+
+    size_t data_size;
+    std::memcpy(&data_size, model_file.data(), sizeof(size_t));
+    size_t offset = sizeof(size_t);
+    size_t model_end = sizeof(size_t) + data_size;
+    while (offset < model_end) {
         size_t name_size;
         std::memcpy(&name_size, model_file.data() + offset, sizeof(size_t));
         offset += sizeof(size_t);
@@ -310,11 +347,25 @@ bool CheckpointManager::load_checkpoint(
     }
 
     std::vector<char> optimizer_file;
-    size_t optimizer_size = 0;
-    impl.backend->read(path + "/optimizer.bin", &optimizer_size, sizeof(size_t));
+    {
+        std::ifstream ifs(impl.backend->resolve_path(path + "/optimizer.bin"), std::ios::binary);
+        if (ifs) {
+            ifs.seekg(0, std::ios::end);
+            optimizer_file.resize(ifs.tellg());
+            ifs.seekg(0);
+            ifs.read(optimizer_file.data(), optimizer_file.size());
+        }
+    }
 
-    offset = 0;
-    while (offset < optimizer_size) {
+    if (optimizer_file.size() < sizeof(size_t)) {
+        return false;
+    }
+
+    size_t opt_data_size;
+    std::memcpy(&opt_data_size, optimizer_file.data(), sizeof(size_t));
+    offset = sizeof(size_t);
+    size_t opt_end = sizeof(size_t) + opt_data_size;
+    while (offset < opt_end) {
         size_t name_size;
         std::memcpy(&name_size, optimizer_file.data() + offset, sizeof(size_t));
         offset += sizeof(size_t);
