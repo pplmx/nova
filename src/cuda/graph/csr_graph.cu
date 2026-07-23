@@ -51,6 +51,12 @@ void CSRGraph::upload() {
 }
 
 void CSRGraph::free_device() {
+    // Using unchecked cudaFree: free_device() is called from clear() which
+    // is called from the destructor. Throwing here would be undefined
+    // behavior in a noexcept destruction context. cudaFree on invalid
+    // pointers returns a non-fatal error, so silent failure is acceptable
+    // during cleanup. Users needing error handling should check
+    // cudaGetLastError() after calling free_device() directly.
     if (d_row_offsets) {
         cudaFree(d_row_offsets);
         d_row_offsets = nullptr;
