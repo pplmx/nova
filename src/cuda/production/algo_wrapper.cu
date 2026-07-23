@@ -1,5 +1,7 @@
 #include "cuda/production/algo_wrapper.h"
 
+#include "cuda/device/error.h"
+
 namespace cuda::production {
 
 template <typename T>
@@ -20,13 +22,13 @@ void GraphReduceWrapper<T>::capture(cuda::stream::Stream& stream) {
     }
 
     T* d_out = nullptr;
-    cudaMalloc(&d_out, sizeof(T));
+    CUDA_CHECK(cudaMalloc(&d_out, sizeof(T)));
     set_value_kernel<<<1, 1, 0, stream_handle>>>(d_out, T{}, 1);
 
     (void)executor_.end_capture();
     executor_.instantiate();
 
-    cudaFree(d_out);
+    CUDA_CHECK(cudaFree(d_out));
 }
 
 template <typename T>

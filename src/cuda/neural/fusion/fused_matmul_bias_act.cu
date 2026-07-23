@@ -2,6 +2,8 @@
 #include "cuda/neural/fusion/kernel_fusion.h"
 #include "cuda/neural/matmul.h"
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cublasLt.h>
@@ -43,7 +45,7 @@ FusedMatmulBiasAct::FusedMatmulBiasAct(const MatmulBiasActConfig& config)
     }
 
     if (config_.max_workspace_bytes > 0) {
-        cudaMalloc(&workspace_, config_.max_workspace_bytes);
+        CUDA_CHECK(cudaMalloc(&workspace_, config_.max_workspace_bytes));
     }
 }
 

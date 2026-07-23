@@ -1,5 +1,7 @@
 #include "cuda/neural/fusion/kernel_fusion.h"
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 #include <cmath>
 #include <algorithm>
@@ -220,7 +222,7 @@ void FusedLayerNormSoftmax::forward(
     cudaStream_t stream
 ) {
     float* row_sum;
-    cudaMalloc(&row_sum, batch_size * seq_len * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&row_sum, batch_size * seq_len * sizeof(float)));
 
     dim3 block(256);
     dim3 grid(batch_size, seq_len);
@@ -235,7 +237,7 @@ void FusedLayerNormSoftmax::forward(
         input, gamma, beta, output, row_sum,
         batch_size, seq_len, hidden_size_, eps_);
 
-    cudaFree(row_sum);
+    CUDA_CHECK(cudaFree(row_sum));
 }
 
 bool should_use_fused_kernel(const std::string& op, int batch_size, int num_features) {

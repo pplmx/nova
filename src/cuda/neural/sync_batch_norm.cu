@@ -429,9 +429,9 @@ void SyncBatchNorm::backward(
     float* d_x_norm;
     float* centered_input;
     float* normalized_tmp;
-    cudaMalloc(&d_x_norm, n * sizeof(float));
-    cudaMalloc(&centered_input, n * sizeof(float));
-    cudaMalloc(&normalized_tmp, n * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_x_norm, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&centered_input, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&normalized_tmp, n * sizeof(float)));
 
     backward_dxnorm_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         d_output, gamma_, d_x_norm,
@@ -473,9 +473,9 @@ void SyncBatchNorm::backward(
         );
     }
 
-    cudaFree(d_x_norm);
-    cudaFree(centered_input);
-    cudaFree(normalized_tmp);
+    CUDA_CHECK(cudaFree(d_x_norm));
+    CUDA_CHECK(cudaFree(centered_input));
+    CUDA_CHECK(cudaFree(normalized_tmp));
 }
 
 void sync_batch_norm_forward_training(
@@ -496,8 +496,8 @@ void sync_batch_norm_forward_training(
 ) {
     SyncBatchNorm bn(num_features, eps, momentum);
     bn.mutable_gamma();
-    cudaMemcpy(bn.mutable_gamma(), gamma, num_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(bn.mutable_beta(), beta, num_features * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(bn.mutable_gamma(), gamma, num_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(bn.mutable_beta(), beta, num_features * sizeof(float), cudaMemcpyHostToDevice));
 
     bn.forward_training(input, output, batch_size, spatial_size, stream);
 }

@@ -1,4 +1,5 @@
 #include <cuda/quantize/int8_kernels.hpp>
+#include "cuda/device/error.h"
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cfloat>
@@ -288,8 +289,14 @@ void build_histogram(
     const float* d_data = data;
     float* d_data_alloc = nullptr;
     if (data_needs_copy) {
-        cudaMalloc(&d_data_alloc, n * sizeof(float));
-        cudaMemcpy(d_data_alloc, data, n * sizeof(float), cudaMemcpyHostToDevice);
+        cudaError_t err = cudaMalloc(&d_data_alloc, n * sizeof(float));
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+        err = cudaMemcpy(d_data_alloc, data, n * sizeof(float), cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
         d_data = d_data_alloc;
     }
 
@@ -345,8 +352,16 @@ void compute_minmax(
 
     float* d_block_mins;
     float* d_block_maxs;
-    cudaMalloc(&d_block_mins, grid_size * sizeof(float));
-    cudaMalloc(&d_block_maxs, grid_size * sizeof(float));
+    {
+        cudaError_t err = cudaMalloc(&d_block_mins, grid_size * sizeof(float));
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+        err = cudaMalloc(&d_block_maxs, grid_size * sizeof(float));
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+    }
 
     detail::compute_minmax_kernel<<<grid_size, block_size, 0, stream>>>(
         d_data, n, d_block_mins, d_block_maxs);

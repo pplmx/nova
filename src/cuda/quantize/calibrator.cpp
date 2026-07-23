@@ -1,6 +1,7 @@
 #include <cuda/quantize/calibrator.hpp>
 #include <cuda/quantize/int8_kernels.hpp>
 #include <cuda/quantize/fp8_types.hpp>
+#include "cuda/device/error.h"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -75,14 +76,27 @@ CalibrationResult HistogramCalibrator::calibrate(
     max_val_ = d_max;
 
     uint32_t* d_hist;
-    cudaMalloc(&d_hist, num_bins_ * sizeof(uint32_t));
+    {
+        cudaError_t err = cudaMalloc(&d_hist, num_bins_ * sizeof(uint32_t));
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+    }
     cudaMemset(d_hist, 0, num_bins_ * sizeof(uint32_t));
 
     cuda::build_histogram(data, d_hist, n, min_val_, max_val_, num_bins_, stream);
     cudaStreamSynchronize(stream);
 
-    cudaMemcpy(histogram_.data(), d_hist, num_bins_ * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    cudaFree(d_hist);
+    {
+        cudaError_t err = cudaMemcpy(histogram_.data(), d_hist, num_bins_ * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+        err = cudaFree(d_hist);
+        if (err != cudaSuccess) {
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
+    }
 
     float threshold = find_threshold_percentile(percentile_);
 
