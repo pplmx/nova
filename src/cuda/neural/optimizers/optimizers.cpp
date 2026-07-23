@@ -1,5 +1,7 @@
 #include "cuda/neural/optimizers/optimizers.h"
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -38,8 +40,8 @@ void AdamWOptimizer::step(
     std::vector<float> h_grads(num_elements);
     std::vector<float> h_params(num_elements);
 
-    cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_params.data(), params, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_params.data(), params, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
 
     for (size_t i = 0; i < num_elements; ++i) {
         float grad = h_grads[i];
@@ -57,7 +59,7 @@ void AdamWOptimizer::step(
         h_params[i] = param - lr_t * update;
     }
 
-    cudaMemcpy(params, h_params.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(params, h_params.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice));
 }
 
 void AdamWOptimizer::set_learning_rate(float lr) {
@@ -108,8 +110,8 @@ void LAMBOptimizer::step(
     std::vector<float> h_grads(num_elements);
     std::vector<float> h_params(num_elements);
 
-    cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_params.data(), params, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_params.data(), params, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
 
     float rtw = 0.0f;
     if (config_.use_layer_adaptation && layer_norm_1 && layer_norm_2) {
@@ -147,7 +149,7 @@ void LAMBOptimizer::step(
         h_params[i] = param - lr * r * rtw * update;
     }
 
-    cudaMemcpy(params, h_params.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(params, h_params.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice));
 }
 
 void LAMBOptimizer::set_learning_rate(float lr) {
@@ -172,13 +174,13 @@ float clip_gradients(
     if (norm > config.max_norm) {
         float scale = config.max_norm / norm;
         std::vector<float> h_grads(num_elements);
-        cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
 
         for (size_t i = 0; i < num_elements; ++i) {
             h_grads[i] *= scale;
         }
 
-        cudaMemcpy(grads, h_grads.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(grads, h_grads.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice));
     }
 
     return norm;
@@ -193,7 +195,7 @@ float compute_gradient_norm(
     if (norm_type == GradientClipConfig::NormType::Inf) {
         float max_val = 0.0f;
         std::vector<float> h_grads(num_elements);
-        cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
 
         for (size_t i = 0; i < num_elements; ++i) {
             max_val = std::max(max_val, std::abs(h_grads[i]));
@@ -203,7 +205,7 @@ float compute_gradient_norm(
 
     float sum_squares = 0.0f;
     std::vector<float> h_grads(num_elements);
-    cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
 
     for (size_t i = 0; i < num_elements; ++i) {
         sum_squares += h_grads[i] * h_grads[i];
