@@ -1,4 +1,5 @@
 #include "cuda/multinode/multi_node_context.h"
+#include "cuda/device/error.h"
 
 #include <cstdio>
 #include <cstring>
@@ -120,7 +121,7 @@ void HierarchicalAllReduce::all_reduce(const void* send_buf,
                                  static_cast<ncclComm_t>(local_comm_),
                                  local_stream_));
 
-        cudaStreamSynchronize(local_stream_);
+        CUDA_CHECK(cudaStreamSynchronize(local_stream_));
 
         NCCL_CHECK(ncclAllReduce(recv_buf, recv_buf, count,
                                  static_cast<ncclDataType_t>(dtype),
@@ -140,7 +141,7 @@ void HierarchicalAllReduce::all_reduce(const void* send_buf,
 void HierarchicalAllReduce::synchronize() {
 #if NOVA_NCCL_ENABLED
     if (global_stream_) {
-        cudaStreamSynchronize(global_stream_);
+        CUDA_CHECK(cudaStreamSynchronize(global_stream_));
     }
 #endif
 }
@@ -155,7 +156,7 @@ HierarchicalBarrier::HierarchicalBarrier(void* local_comm,
 void HierarchicalBarrier::wait() {
 #if NOVA_NCCL_ENABLED
     if (stream_) {
-        cudaStreamSynchronize(stream_);
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
     if (global_comm_) {
         int dummy = 0;
@@ -167,7 +168,7 @@ void HierarchicalBarrier::wait() {
 void HierarchicalBarrier::synchronize() {
 #if NOVA_NCCL_ENABLED
     if (stream_) {
-        cudaStreamSynchronize(stream_);
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
 #endif
 }
