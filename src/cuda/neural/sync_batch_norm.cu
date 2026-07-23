@@ -336,7 +336,16 @@ SyncBatchNorm::SyncBatchNorm(int num_features, float eps, float momentum)
       eps_(eps),
       momentum_(momentum),
       training_(true),
-      initialized_(false) {
+      initialized_(false),
+      running_mean_(nullptr),
+      running_var_(nullptr),
+      gamma_(nullptr),
+      beta_(nullptr),
+      saved_mean_(nullptr),
+      saved_var_(nullptr),
+      saved_input_(nullptr),
+      normalized_(nullptr),
+      saved_output_(nullptr) {
 
     CUDA_CHECK(cudaMalloc(&running_mean_, num_features * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&running_var_, num_features * sizeof(float)));
@@ -350,26 +359,33 @@ SyncBatchNorm::SyncBatchNorm(int num_features, float eps, float momentum)
     CUDA_CHECK(cudaMalloc(&normalized_, num_features * sizeof(float)));
 
     float* h_data = new float[num_features];
-    for (int i = 0; i < num_features; ++i) h_data[i] = 0.0f;
-    CUDA_CHECK(cudaMemcpy(running_mean_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(running_var_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(beta_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+    try {
+        for (int i = 0; i < num_features; ++i) h_data[i] = 0.0f;
+        CUDA_CHECK(cudaMemcpy(running_mean_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(running_var_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(beta_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
 
-    for (int i = 0; i < num_features; ++i) h_data[i] = 1.0f;
-    CUDA_CHECK(cudaMemcpy(gamma_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+        for (int i = 0; i < num_features; ++i) h_data[i] = 1.0f;
+        CUDA_CHECK(cudaMemcpy(gamma_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+    } catch (...) {
+        delete[] h_data;
+        throw;
+    }
     delete[] h_data;
 }
 
 SyncBatchNorm::~SyncBatchNorm() {
-    cudaFree(running_mean_);
-    cudaFree(running_var_);
-    cudaFree(gamma_);
-    cudaFree(beta_);
-    cudaFree(saved_mean_);
-    cudaFree(saved_var_);
-    cudaFree(saved_input_);
-    cudaFree(saved_output_);
-    cudaFree(normalized_);
+    // Not using CUDA_CHECK here: throwing in a destructor is undefined
+    // behavior (C++11 destructors default to noexcept).
+    if (running_mean_) cudaFree(running_mean_);
+    if (running_var_) cudaFree(running_var_);
+    if (gamma_) cudaFree(gamma_);
+    if (beta_) cudaFree(beta_);
+    if (saved_mean_) cudaFree(saved_mean_);
+    if (saved_var_) cudaFree(saved_var_);
+    if (saved_input_) cudaFree(saved_input_);
+    if (saved_output_) cudaFree(saved_output_);
+    if (normalized_) cudaFree(normalized_);
 }
 
 void SyncBatchNorm::set_training(bool training) {
@@ -548,7 +564,6 @@ void sync_batch_norm_forward_training(
     cudaStream_t stream
 ) {
     SyncBatchNorm bn(num_features, eps, momentum);
-    bn.mutable_gamma();
     CUDA_CHECK(cudaMemcpy(bn.mutable_gamma(), gamma, num_features * sizeof(float), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(bn.mutable_beta(), beta, num_features * sizeof(float), cudaMemcpyHostToDevice));
 
