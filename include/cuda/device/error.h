@@ -63,31 +63,35 @@ namespace cuda::device {
     };
 
 #define CUDA_CONTEXT(op, dims, device) \
-    cuda::device::OperationContext{#op, dims, device}
+    ::cuda::device::OperationContext{#op, dims, device}
 
 #define CUDA_VALIDATE_SIZE(size, max_size, operation)                                     \
     do {                                                                                \
         if ((size) > (max_size)) {                                                      \
-            throw cuda::device::CudaExceptionWithContext(                                \
+            throw ::cuda::device::CudaExceptionWithContext(                                \
                 cudaErrorLaunchFailure, __FILE__, __LINE__,                              \
-                cuda::device::OperationContext{#operation, static_cast<size_t>(size), 0}); \
+                ::cuda::device::OperationContext{#operation, static_cast<size_t>(size), 0}); \
         }                                                                               \
     } while (0)
 
+#ifndef CUDA_CHECK
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
         cudaError_t err = call;                                                 \
         if (err != cudaSuccess) {                                               \
-            throw cuda::device::CudaException(err, __FILE__, __LINE__);         \
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);     \
         }                                                                       \
     } while (0)
+#endif
 
+#ifndef CUBLAS_CHECK
 #define CUBLAS_CHECK(call)                                                   \
     do {                                                                     \
         cublasStatus_t status = call;                                        \
         if (status != CUBLAS_STATUS_SUCCESS) {                               \
-            throw cuda::device::CublasException(status, __FILE__, __LINE__); \
+            throw ::cuda::device::CublasException(status, __FILE__, __LINE__); \
         }                                                                    \
     } while (0)
+#endif
 
 }  // namespace cuda::device

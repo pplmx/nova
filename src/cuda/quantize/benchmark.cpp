@@ -4,6 +4,7 @@
 #include <cuda/quantize/fp8_kernels.hpp>
 #include <cuda/quantize/fp8_gemm.hpp>
 #include <cuda/quantize/calibrator.hpp>
+#include "cuda/device/error.h"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <numeric>
@@ -24,25 +25,25 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_quantization(
     result.num_samples = config_.benchmark_runs;
 
     float* d_data;
-    cudaMalloc(&d_data, data.size() * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_data, data.size() * sizeof(float)));
 
     std::vector<FP8E4M3> quantized(data.size());
     float* d_quantized;
-    cudaMalloc(&d_quantized, data.size() * sizeof(FP8E4M3));
+    CUDA_CHECK(cudaMalloc(&d_quantized, data.size() * sizeof(FP8E4M3)));
 
-    cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice));
 
     for (int i = 0; i < config_.warmup_runs; ++i) {
         nova::quantize::cuda::quantize_f32_to_fp8e4m3(d_data, reinterpret_cast<FP8E4M3*>(d_quantized), data.size(), stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < config_.benchmark_runs; ++i) {
         nova::quantize::cuda::quantize_f32_to_fp8e4m3(d_data, reinterpret_cast<FP8E4M3*>(d_quantized), data.size(), stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -51,7 +52,7 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_quantization(
     result.throughput_gbps = total_bytes / duration.count();
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
-    cudaMemcpy(quantized.data(), d_quantized, data.size() * sizeof(FP8E4M3), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(quantized.data(), d_quantized, data.size() * sizeof(FP8E4M3), cudaMemcpyDeviceToHost));
 
     std::vector<float> recovered(data.size());
     for (size_t i = 0; i < data.size(); ++i) {
@@ -60,8 +61,8 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_quantization(
 
     result.relative_error = compute_l2_error(data, recovered) / data.size();
 
-    cudaFree(d_data);
-    cudaFree(d_quantized);
+    CUDA_CHECK(cudaFree(d_data));
+    CUDA_CHECK(cudaFree(d_quantized));
 
     results_.push_back(result);
     return result;
@@ -76,25 +77,25 @@ BenchmarkResult QuantizationBenchmark::benchmark_int8_quantization(
     result.num_samples = config_.benchmark_runs;
 
     float* d_data;
-    cudaMalloc(&d_data, data.size() * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_data, data.size() * sizeof(float)));
     int8_t* d_quantized;
-    cudaMalloc(&d_quantized, data.size() * sizeof(int8_t));
+    CUDA_CHECK(cudaMalloc(&d_quantized, data.size() * sizeof(int8_t)));
 
-    cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice));
 
     cuda::QuantizationParams params(0.1f);
 
     for (int i = 0; i < config_.warmup_runs; ++i) {
         cuda::quantize_f32_to_int8(d_data, d_quantized, data.size(), params, stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < config_.benchmark_runs; ++i) {
         cuda::quantize_f32_to_int8(d_data, d_quantized, data.size(), params, stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -103,8 +104,8 @@ BenchmarkResult QuantizationBenchmark::benchmark_int8_quantization(
     result.throughput_gbps = total_bytes / duration.count();
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
-    cudaFree(d_data);
-    cudaFree(d_quantized);
+    CUDA_CHECK(cudaFree(d_data));
+    CUDA_CHECK(cudaFree(d_quantized));
 
     results_.push_back(result);
     return result;
@@ -123,12 +124,12 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_gemm(
     std::vector<float> c(m * n);
 
     float* d_a, *d_b, *d_c;
-    cudaMalloc(&d_a, m * k * sizeof(FP8E4M3));
-    cudaMalloc(&d_b, k * n * sizeof(FP8E4M3));
-    cudaMalloc(&d_c, m * n * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_a, m * k * sizeof(FP8E4M3)));
+    CUDA_CHECK(cudaMalloc(&d_b, k * n * sizeof(FP8E4M3)));
+    CUDA_CHECK(cudaMalloc(&d_c, m * n * sizeof(float)));
 
-    cudaMemcpy(d_a, a.data(), m * k * sizeof(FP8E4M3), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, b.data(), k * n * sizeof(FP8E4M3), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_a, a.data(), m * k * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, b.data(), k * n * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
 
     FP8GEMM::Config gemm_config;
 
@@ -138,7 +139,7 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_gemm(
             reinterpret_cast<const FP8E4M3*>(d_b),
             d_c, m, k, n, gemm_config, stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -148,7 +149,7 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_gemm(
             reinterpret_cast<const FP8E4M3*>(d_b),
             d_c, m, k, n, gemm_config, stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -158,9 +159,9 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_gemm(
     result.throughput_gbps = total_flops / duration.count();
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_c);
+    CUDA_CHECK(cudaFree(d_a));
+    CUDA_CHECK(cudaFree(d_b));
+    CUDA_CHECK(cudaFree(d_c));
 
     return result;
 }
@@ -175,27 +176,27 @@ BenchmarkResult QuantizationBenchmark::benchmark_calibration(
     result.num_samples = config_.benchmark_runs;
 
     float* d_data;
-    cudaMalloc(&d_data, data.size() * sizeof(float));
-    cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMalloc(&d_data, data.size() * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice));
 
     for (int i = 0; i < config_.warmup_runs; ++i) {
         calibrator.calibrate(d_data, data.size(), stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto start = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < config_.benchmark_runs; ++i) {
         calibrator.calibrate(d_data, data.size(), stream_);
     }
-    cudaStreamSynchronize(stream_);
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
-    cudaFree(d_data);
+    CUDA_CHECK(cudaFree(d_data));
 
     return result;
 }
@@ -347,42 +348,42 @@ BenchmarkResult benchmark_fp8_gemm_throughput(
     std::vector<float> c(m * n, 0.0f);
 
     float* d_a, *d_b, *d_c;
-    cudaMalloc(&d_a, m * k * sizeof(FP8E4M3));
-    cudaMalloc(&d_b, k * n * sizeof(FP8E4M3));
-    cudaMalloc(&d_c, m * n * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_a, m * k * sizeof(FP8E4M3)));
+    CUDA_CHECK(cudaMalloc(&d_b, k * n * sizeof(FP8E4M3)));
+    CUDA_CHECK(cudaMalloc(&d_c, m * n * sizeof(float)));
 
-    cudaMemcpy(d_a, a.data(), m * k * sizeof(FP8E4M3), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, b.data(), k * n * sizeof(FP8E4M3), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_a, a.data(), m * k * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, b.data(), k * n * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
 
     cudaEvent_t start, end;
-    cudaEventCreate(&start);
-    cudaEventCreate(&end);
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&end));
 
     FP8GEMM::Config config;
 
-    cudaEventRecord(start);
+    CUDA_CHECK(cudaEventRecord(start));
     for (int i = 0; i < num_runs; ++i) {
         FP8GEMM::forward(
             reinterpret_cast<const FP8E4M3*>(d_a),
             reinterpret_cast<const FP8E4M3*>(d_b),
             d_c, m, k, n, config, 0);
     }
-    cudaEventRecord(end);
-    cudaEventSynchronize(end);
+    CUDA_CHECK(cudaEventRecord(end));
+    CUDA_CHECK(cudaEventSynchronize(end));
 
     float ms;
-    cudaEventElapsedTime(&ms, start, end);
+    CUDA_CHECK(cudaEventElapsedTime(&ms, start, end));
 
     size_t flops = 2ULL * m * k * n;
     float total_flops = static_cast<float>(flops) * num_runs * 1e9f;
     result.throughput_gbps = total_flops / (ms * 1e6f);
     result.latency_us = ms * 1000.0f / num_runs;
 
-    cudaEventDestroy(start);
-    cudaEventDestroy(end);
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_c);
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(end));
+    CUDA_CHECK(cudaFree(d_a));
+    CUDA_CHECK(cudaFree(d_b));
+    CUDA_CHECK(cudaFree(d_c));
 
     return result;
 }
