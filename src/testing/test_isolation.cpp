@@ -1,4 +1,5 @@
 #include "cuda/testing/test_isolation.h"
+#include "cuda/device/error.h"
 
 #include <cuda_runtime.h>
 #include <map>
@@ -12,8 +13,10 @@ static std::mutex g_mutex;
 class CUDATestIsolationContext : public TestIsolationContext {
 public:
     void reset_cuda_context() override {
+        // cudaDeviceReset is intentionally unchecked: it can fail if
+        // the context is already invalid, but we want to proceed anyway
         cudaDeviceReset();
-        cudaSetDevice(0);
+        CUDA_CHECK(cudaSetDevice(0));
     }
 
     void reset_singletons() override {
@@ -21,7 +24,7 @@ public:
     }
 
     void synchronize() override {
-        cudaDeviceSynchronize();
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
 
     bool is_isolated() const override {
@@ -35,7 +38,7 @@ std::unique_ptr<TestIsolationContext> TestIsolationContext::create() {
 
 void TestIsolationContext::reset_all() {
     cudaDeviceReset();
-    cudaSetDevice(0);
+    CUDA_CHECK(cudaSetDevice(0));
 }
 
 void TestIsolationContext::execute_isolated(std::function<void()> fn) {
@@ -63,27 +66,30 @@ void reset_all_singletons() {
 }
 
 void reset_all_cuda_state() {
+    // Intentionally unchecked: used during test teardown when the context
+    // may already be invalid. Silent failure is acceptable here.
     cudaDeviceReset();
 }
 
 CUDAContextGuard::CUDAContextGuard()
     : device_(0), shmem_config_(cudaSharedMemBankSizeDefault) {
-
-    cudaGetDevice(&device_);
-
-    cudaDeviceGetSharedMemConfig(&shmem_config_);
+    CUDA_CHECK(cudaGetDevice(&device_));
+    CUDA_CHECK(cudaDeviceGetSharedMemConfig(&shmem_config_));
 }
 
 CUDAContextGuard::~CUDAContextGuard() {
+    // Destructor: cannot throw (noexcept). These calls restore the
+    // previous device/shared memory config during test teardown.
     cudaSetDevice(device_);
     cudaDeviceSetSharedMemConfig(shmem_config_);
 }
 
 void CUDAContextGuard::reset() {
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 cudaError_t CUDAContextGuard::sync() const {
+    // Returns error code for the caller to handle
     return cudaDeviceSynchronize();
 }
 
