@@ -17,16 +17,14 @@ MinMaxCalibrator::MinMaxCalibrator(bool symmetric)
 CalibrationResult MinMaxCalibrator::calibrate(
     const float* data, size_t n,
     cudaStream_t stream) {
-
     float d_min = 0.0f, d_max = 0.0f;
     cuda::compute_minmax(data, n, &d_min, &d_max, stream);
-    cudaStreamSynchronize(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     min_val_ = d_min;
     max_val_ = d_max;
 
     float scale, zero_point;
-
     if (symmetric_) {
         float abs_max = std::max(std::abs(min_val_), std::abs(max_val_));
         scale = abs_max / 127.0f;
@@ -67,10 +65,9 @@ HistogramCalibrator::HistogramCalibrator(
 CalibrationResult HistogramCalibrator::calibrate(
     const float* data, size_t n,
     cudaStream_t stream) {
-
     float d_min, d_max;
     cuda::compute_minmax(data, n, &d_min, &d_max, stream);
-    cudaStreamSynchronize(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     min_val_ = d_min;
     max_val_ = d_max;
@@ -82,10 +79,10 @@ CalibrationResult HistogramCalibrator::calibrate(
             throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
         }
     }
-    cudaMemset(d_hist, 0, num_bins_ * sizeof(uint32_t));
+    CUDA_CHECK(cudaMemset(d_hist, 0, num_bins_ * sizeof(uint32_t)));
 
     cuda::build_histogram(data, d_hist, n, min_val_, max_val_, num_bins_, stream);
-    cudaStreamSynchronize(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     {
         cudaError_t err = cudaMemcpy(histogram_.data(), d_hist, num_bins_ * sizeof(uint32_t), cudaMemcpyDeviceToHost);
@@ -161,10 +158,9 @@ MSECalibrator::MSECalibrator(bool symmetric)
 CalibrationResult MSECalibrator::calibrate(
     const float* data, size_t n,
     cudaStream_t stream) {
-
     float d_min, d_max;
     cuda::compute_minmax(data, n, &d_min, &d_max, stream);
-    cudaStreamSynchronize(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     min_val_ = d_min;
     max_val_ = d_max;
@@ -215,13 +211,11 @@ PerChannelCalibrator::PerChannelCalibrator(int channel_dim, bool symmetric)
 CalibrationResult PerChannelCalibrator::calibrate(
     const float* data, size_t n,
     cudaStream_t stream) {
-
     float d_min, d_max;
     cuda::compute_minmax(data, n, &d_min, &d_max, stream);
-    cudaStreamSynchronize(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     float scale, zero_point;
-
     if (symmetric_) {
         float abs_max = std::max(std::abs(d_min), std::abs(d_max));
         scale = abs_max / 127.0f;
@@ -239,7 +233,6 @@ CalibrationResult PerChannelCalibrator::calibrate(
 std::vector<CalibrationResult> PerChannelCalibrator::calibrate_per_channel(
     const float* data, const std::vector<int>& shape,
     cudaStream_t stream) {
-
     channel_results_.clear();
 
     int num_channels = shape[channel_dim_];
