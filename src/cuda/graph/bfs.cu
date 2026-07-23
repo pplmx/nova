@@ -25,7 +25,6 @@ BFSResult::BFSResult(int num_vertices)
       d_visited(nullptr),
       visited_count(0),
       max_distance(0) {
-
     distances = new int[num_vertices];
     visited = new bool[num_vertices];
     CUDA_CHECK(cudaMalloc(&d_distances, num_vertices * sizeof(int)));
@@ -39,7 +38,6 @@ BFSResult::~BFSResult() {
 void BFSResult::init_source(int source) {
     std::fill(distances, distances + num_vertices, -1);
     std::fill(visited, visited + num_vertices, false);
-
     distances[source] = 0;
     visited[source] = true;
 }
@@ -57,7 +55,6 @@ void BFSResult::download() {
 void BFSResult::clear() {
     delete[] distances;
     delete[] visited;
-
     if (d_distances) {
         cudaFree(d_distances);
         d_distances = nullptr;
@@ -66,7 +63,6 @@ void BFSResult::clear() {
         cudaFree(d_visited);
         d_visited = nullptr;
     }
-
     distances = nullptr;
     visited = nullptr;
 }
@@ -95,7 +91,6 @@ __global__ void bfs_frontier_kernel(
     if (distances[v] == current_level) {
         int start = row_offsets[v];
         int end = row_offsets[v + 1];
-
         for (int i = start; i < end; ++i) {
             int neighbor = columns[i];
             if (!visited[neighbor]) {
@@ -168,9 +163,8 @@ BFSResult bfs(
 
         current_level++;
         if (current_level > graph.num_vertices) break;
-
         if (stream) {
-            cudaStreamSynchronize(stream);
+            CUDA_CHECK(cudaStreamSynchronize(stream));
         }
     }
 
@@ -188,9 +182,8 @@ BFSResult bfs(
         }
     }
 
-    cudaFree(d_distances);
-    cudaFree(d_visited);
-
+    CUDA_CHECK(cudaFree(d_distances));
+    CUDA_CHECK(cudaFree(d_visited));
     return result;
 }
 
