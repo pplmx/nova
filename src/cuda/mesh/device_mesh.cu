@@ -17,7 +17,7 @@ namespace cuda::mesh {
     do {                                                                          \
         cudaError_t err = call;                                                   \
         if (err != cudaSuccess) {                                                 \
-            throw cuda::device::CudaException(err, __FILE__, __LINE__);           \
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);       \
         }                                                                         \
     } while (0)
 
