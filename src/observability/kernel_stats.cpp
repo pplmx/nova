@@ -14,7 +14,7 @@ void KernelStatsCollector::record_kernel(const char* name,
                                          size_t blocks,
                                          size_t threads_per_block) {
     float elapsed_us = 0;
-    cudaEventElapsedTime(&elapsed_us, start, end);
+    CUDA_CHECK(cudaEventElapsedTime(&elapsed_us, start, end));
     elapsed_us *= 1000.0;
 
     bool found = false;
@@ -90,7 +90,8 @@ ScopedKernelTiming::ScopedKernelTiming(const char* name,
 
 ScopedKernelTiming::~ScopedKernelTiming() {
     // Not using CUDA_CHECK here: throwing in a destructor is undefined
-    // behavior (C++11 destructors default to noexcept).
+    // behavior (C++11 destructors default to noexcept). Event cleanup
+    // failures are non-critical during teardown.
     cudaEventRecord(end_, collector_.stream());
     cudaStreamSynchronize(collector_.stream());
     collector_.record_kernel(name_, start_, end_, blocks_, threads_per_block_);
@@ -108,9 +109,9 @@ OccupancyMetrics measure_occupancy(const void* kernel_func,
     }
 
     int old_device;
-    cudaGetDevice(&old_device);
+    CUDA_CHECK(cudaGetDevice(&old_device));
     if (device >= 0) {
-        cudaSetDevice(device);
+        CUDA_CHECK(cudaSetDevice(device));
     }
 
     int num_blocks = 0;
@@ -141,11 +142,11 @@ OccupancyMetrics measure_occupancy(const void* kernel_func,
             metrics.max_blocks_per_sm = static_cast<size_t>(active_blocks_per_sm);
             int threads_per_block = block_size;
             int max_blocks;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &max_blocks,
                 kernel_func,
                 threads_per_block,
-                dynamic_smem);
+                dynamic_smem));
 
             int max_threads_per_sm = prop.maxThreadsPerMultiProcessor;
             int threads_per_block_for_occupancy = threads_per_block * max_blocks;
@@ -154,7 +155,7 @@ OccupancyMetrics measure_occupancy(const void* kernel_func,
         }
     }
 
-    cudaSetDevice(old_device);
+    CUDA_CHECK(cudaSetDevice(old_device));
     return metrics;
 }
 
