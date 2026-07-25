@@ -90,6 +90,11 @@ help:
 	@echo "    make test               Run tests (16 parallel)"
 	@echo "    make test-ninja         Run tests (Ninja build)"
 	@echo ""
+	@echo "Quality Targets:"
+	@echo "    make lint               Run clang-tidy static analysis"
+	@echo "    make fmt-check          Check formatting with clang-format"
+	@echo "    make sanitize           Build & test with ASan+UBSan"
+	@echo ""
 	@echo "Options:"
 	@echo "    NOVA_ENABLE_NCCL=OFF     Disable NCCL (no GPU required)"
 	@echo "    NOVA_ENABLE_MPI=OFF      Disable MPI (single node only)"
@@ -99,3 +104,26 @@ help:
 	@echo "    make build-ninja"
 	@echo "    make test-ninja"
 	@echo ""
+
+# Run clang-tidy static analysis
+lint:
+	@cmake -G Ninja -B build-tidy \
+		-DCMAKE_CXX_CLANG_TIDY="clang-tidy;--config-file=.clang-tidy" \
+		-DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+	@cmake --build build-tidy --parallel
+
+# Check code formatting
+fmt-check:
+	@find src/ include/ tests/ benchmark/ -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.cu' -o -name '*.cuh' \
+		| xargs clang-format --dry-run --Werror --style=file && echo "Format: OK"
+
+# Build and test with AddressSanitizer + UndefinedBehaviorSanitizer
+sanitize:
+	@cmake -G Ninja -B build-san \
+		-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+		-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+		-DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+	@cmake --build build-san --parallel
+	@ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+		UBSAN_OPTIONS=print_stacktrace=1 \
+		ctest --test-dir build-san --output-on-failure -j8

@@ -14,6 +14,88 @@ env:
 
 jobs:
   # -------------------------------------------------------------------------
+  # Static Analysis (clang-tidy)
+  # -------------------------------------------------------------------------
+  static-analysis:
+    name: Static Analysis
+    runs-on: [self-hosted, gpu]
+    container:
+      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      options: --gpus all
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build clang-tidy gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }}
+
+      - name: Configure with clang-tidy
+        run: |
+          cmake -G Ninja -B build-tidy \
+            -DCMAKE_C_COMPILER=gcc-${{ env.GCC_VERSION }} \
+            -DCMAKE_CXX_COMPILER=g++-${{ env.GCC_VERSION }} \
+            -DCMAKE_CXX_CLANG_TIDY="clang-tidy;--config-file=${{ github.workspace }}/.clang-tidy" \
+            -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+
+      - name: Build (clang-tidy runs during compilation)
+        run: cmake --build build-tidy --parallel
+
+  # -------------------------------------------------------------------------
+  # Format Check (clang-format)
+  # -------------------------------------------------------------------------
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          apt-get update
+          apt-get install -y clang-format
+
+      - name: Check formatting
+        run: |
+          find src/ include/ tests/ benchmark/ -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.cu' -o -name '*.cuh' \
+            | xargs clang-format --dry-run --Werror --style=file
+
+  # -------------------------------------------------------------------------
+  # Sanitizer Build (ASan + UBSan)
+  # -------------------------------------------------------------------------
+  sanitizers:
+    name: Sanitizers (ASan+UBSan)
+    runs-on: [self-hosted, gpu]
+    container:
+      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      options: --gpus all
+    env:
+      ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }}
+
+      - name: Configure with sanitizers
+        run: |
+          cmake -G Ninja -B build-san \
+            -DCMAKE_C_COMPILER=gcc-${{ env.GCC_VERSION }} \
+            -DCMAKE_CXX_COMPILER=g++-${{ env.GCC_VERSION }} \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+
+      - name: Build
+        run: cmake --build build-san --parallel
+
+      - name: Test with sanitizers
+        run: ctest --test-dir build-san --output-on-failure -j8
+
+  # -------------------------------------------------------------------------
   # Unit Tests
   # -------------------------------------------------------------------------
   unit-tests:
@@ -193,7 +275,7 @@ jobs:
   # -------------------------------------------------------------------------
   summary:
     name: Integration Summary
-    needs: [unit-tests, property-tests, fuzz-tests, coverage, fuzz-corpus-baseline]
+    needs: [static-analysis, format-check, sanitizers, unit-tests, property-tests, fuzz-tests, coverage, fuzz-corpus-baseline]
     runs-on: ubuntu-latest
     steps:
       - name: Summary
@@ -202,13 +284,19 @@ jobs:
           echo ""
           echo "| Job | Status |"
           echo "|-----|--------|"
+          echo "| Static Analysis (clang-tidy) | ${{ needs.static-analysis.result }} |"
+          echo "| Format Check (clang-format) | ${{ needs.format-check.result }} |"
+          echo "| Sanitizers (ASan+UBSan) | ${{ needs.sanitizers.result }} |"
           echo "| Unit Tests | ${{ needs.unit-tests.result }} |"
           echo "| Property Tests | ${{ needs.property-tests.result }} |"
           echo "| Fuzz Tests | ${{ needs.fuzz-tests.result }} |"
           echo "| Coverage | ${{ needs.coverage.result }} |"
           echo "| Fuzz Corpus Baseline | ${{ needs.fuzz-corpus-baseline.result }} |"
           echo ""
-          if ${{ needs.unit-tests.result == 'success' }} && \
+          if ${{ needs.static-analysis.result == 'success' }} && \
+             ${{ needs.format-check.result == 'success' }} && \
+             ${{ needs.sanitizers.result == 'success' }} && \
+             ${{ needs.unit-tests.result == 'success' }} && \
              ${{ needs.property-tests.result == 'success' }} && \
              ${{ needs.fuzz-tests.result == 'success' }} && \
              ${{ needs.coverage.result == 'success' }} && \
