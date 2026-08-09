@@ -90,7 +90,7 @@ void delta_stepping(const graph::CSRGraph& graph, int source, Weight* distances,
             d_frontier_current, current_frontier_size,
             delta);
 
-        cudaStreamSynchronize(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
 
         thrust::device_ptr<Weight> d_dist(distances);
         thrust::copy(thrust::seq, d_dist, d_dist + current_frontier_size, d_frontier_next);
