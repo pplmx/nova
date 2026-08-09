@@ -92,7 +92,9 @@ TEST_F(PreconditionerBenchmarkTest, ConvergenceOnLargerMatrix) {
     std::vector<double> x_exact(n, 1.0);
     std::vector<double> h_b(n);
 
-    spmv(A, x_exact.data(), h_b.data());
+    // Use the host-vector spmv overload (the pointer overload is the device
+    // variant and would fault on host pointers in cusparse).
+    spmv(A, x_exact, h_b);
     d_b.copy_from(h_b.data(), n);
 
     std::vector<double> x(n, 0.0);

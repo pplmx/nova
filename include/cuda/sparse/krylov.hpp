@@ -318,124 +318,137 @@ public:
             return result;
         }
 
+        // Running approximate solution, seeded from the caller's initial guess.
         std::vector<T> h_x(n);
         for (int i = 0; i < n; ++i) {
             h_x[i] = x[i];
         }
 
-        std::vector<T> r(n), v(n);
-        std::vector<T> w(n);
+        const int m = restart_;
+        if (m <= 0) {
+            result.error_code = SolverError::INVALID_MATRIX;
+            return result;
+        }
 
-        std::vector<T> cos_sin(restart_);
-        std::vector<T> s(restart_ + 1), cs(restart_), sn(restart_);
+        std::vector<T> r(n), vj(n), w(n);
 
-        spmv(A, h_x, v);
+        // r = b - A*x0
+        spmv(A, h_x, w);
         for (int i = 0; i < n; ++i) {
-            r[i] = h_b[i] - v[i];
+            r[i] = h_b[i] - w[i];
         }
 
         T beta = detail::norm2(r.data(), n);
+        result.relative_residual = beta / b_norm;
+        result.residual_history.push_back(result.relative_residual);
+        result.residual_norm = beta;
+
+        if (result.relative_residual < this->config_.relative_tolerance) {
+            result.converged = true;
+            result.iterations = 0;
+            result.error_code = SolverError::SUCCESS;
+            return result;
+        }
 
         int total_iterations = 0;
 
-        for (int outer = 0; outer < this->config_.max_iterations / restart_; ++outer) {
-            T* V = new T[(restart_ + 1) * n];
-            T* H = new T[(restart_ + 1) * restart_];
-
-            for (int i = 0; i < (restart_ + 1) * restart_; ++i) {
-                H[i] = T{0};
-            }
-
-            for (int i = 0; i < (restart_ + 1) * n; ++i) {
-                V[i] = T{0};
-            }
+        for (int outer = 0; outer * m < this->config_.max_iterations; ++outer) {
+            // Arnoldi basis: V is (m+1) x n, H is (m+1) x m (column-major rows).
+            std::vector<T> V((m + 1) * n, T{0});
+            std::vector<T> H((m + 1) * m, T{0});
 
             for (int i = 0; i < n; ++i) {
                 V[i] = r[i] / beta;
             }
 
-            s[0] = beta;
-            for (int i = 1; i <= restart_; ++i) {
-                s[i] = T{0};
-            }
+            std::vector<T> g(m + 1, T{0});
+            std::vector<T> cs(m, T{0}), sn(m, T{0});
+            g[0] = beta;
 
-            for (int j = 0; j < restart_ && total_iterations < this->config_.max_iterations; ++j) {
+            for (int j = 0; j < m && total_iterations < this->config_.max_iterations; ++j) {
                 for (int i = 0; i < n; ++i) {
-                    v[i] = V[j * n + i];
+                    vj[i] = V[j * n + i];
                 }
+                spmv(A, vj, w);  // w = A v_j
 
-                spmv(A, v, w);
-
-                T h_ij = T{0};
-                for (int i = 0; i < n; ++i) {
-                    h_ij += w[i] * V[j * n + i];
-                    H[j * restart_ + j] = h_ij;
-                }
-
-                for (int i = 0; i < n; ++i) {
-                    w[i] -= h_ij * V[j * n + i];
-                }
-
-                for (int k = 0; k < j; ++k) {
-                    T h_kj = H[k * restart_ + j];
-                    for (int i = 0; i < n; ++i) {
-                        w[i] -= h_kj * V[k * n + i];
+                // Arnoldi / modified Gram-Schmidt with one reorthogonalization
+                // pass (robust against floating-point loss of orthogonality).
+                for (int pass = 0; pass < 2; ++pass) {
+                    for (int i = 0; i <= j; ++i) {
+                        T hij = detail::dot_product(w.data(), V.data() + i * n, n);
+                        H[i * m + j] += hij;
+                        for (int k = 0; k < n; ++k) {
+                            w[k] -= hij * V[i * n + k];
+                        }
                     }
-                    H[k * restart_ + j] = h_ij - h_kj * (H[k * restart_ + j] / h_ij) * h_ij;
                 }
 
-                h_ij = detail::norm2(w.data(), n);
+                T h_j1j = detail::norm2(w.data(), n);
+                H[(j + 1) * m + j] = h_j1j;
 
-                bool breakdown = h_ij < std::numeric_limits<T>::epsilon();
-                if (breakdown) {
-                    h_ij = T{1};
-                    result.error_code = SolverError::BREAKDOWN;
+                if (h_j1j > std::numeric_limits<T>::epsilon()) {
+                    for (int i = 0; i < n; ++i) {
+                        V[(j + 1) * n + i] = w[i] / h_j1j;
+                    }
+                }
+                // h_j1j == 0 is the "happy breakdown": the Krylov space is
+                // invariant, and the current H[0..j][0..j] + g solve exactly.
+
+                // Apply prior Givens rotations to column j.
+                for (int i = 0; i < j; ++i) {
+                    T tmp = cs[i] * H[i * m + j] + sn[i] * H[(i + 1) * m + j];
+                    H[(i + 1) * m + j] = -sn[i] * H[i * m + j] + cs[i] * H[(i + 1) * m + j];
+                    H[i * m + j] = tmp;
                 }
 
-                for (int i = 0; i < n; ++i) {
-                    V[(j + 1) * n + i] = w[i] / h_ij;
+                // New Givens rotation zeroing H[j+1][j].
+                T hj = H[j * m + j];
+                T hnext = H[(j + 1) * m + j];
+                T denom = std::sqrt(hj * hj + hnext * hnext);
+                T c, s;
+                if (denom > std::numeric_limits<T>::epsilon()) {
+                    c = hj / denom;
+                    s = hnext / denom;
+                } else {
+                    c = T{1};
+                    s = T{0};
                 }
-
-                H[(j + 1) * restart_ + j] = h_ij;
-
-                for (int k = 0; k < j; ++k) {
-                    T c = cs[k];
-                    T s_k = sn[k];
-                    T h_kj = H[k * restart_ + j];
-                    T h_k1j = H[(k + 1) * restart_ + j];
-                    H[k * restart_ + j] = c * h_kj + s_k * h_k1j;
-                    H[(k + 1) * restart_ + j] = -s_k * h_kj + c * h_k1j;
+                {
+                    T tmp = c * H[j * m + j] + s * H[(j + 1) * m + j];
+                    H[(j + 1) * m + j] = -s * H[j * m + j] + c * H[(j + 1) * m + j];
+                    H[j * m + j] = tmp;
                 }
-
-                T c = s[j] / std::sqrt(s[j] * s[j] + h_ij * h_ij);
-                T s_k = h_ij / std::sqrt(s[j] * s[j] + h_ij * h_ij);
+                {
+                    T gtmp = c * g[j] + s * g[j + 1];
+                    g[j + 1] = -s * g[j] + c * g[j + 1];
+                    g[j] = gtmp;
+                }
                 cs[j] = c;
-                sn[j] = s_k;
-                H[j * restart_ + j] = c * h_ij;
-                s[j] = c * s[j];
-                s[j + 1] = -s_k * s[j + 1];
-
-                T residual = std::abs(s[j + 1]);
-                result.residual_history.push_back(residual);
-                result.relative_residual = residual / b_norm;
-
-                if (this->config_.verbose) {
-                    std::printf("GMRES iter %d: residual = %.6e, relative = %.6e\n",
-                               total_iterations, residual, result.relative_residual);
-                }
+                sn[j] = s;
 
                 ++total_iterations;
+                result.relative_residual = std::abs(g[j + 1]) / b_norm;
+                result.residual_history.push_back(result.relative_residual);
+                result.residual_norm = std::abs(g[j + 1]);
+
+                if (this->config_.verbose) {
+                    std::printf("GMRES iter %d: relative residual = %.6e\n",
+                               total_iterations, result.relative_residual);
+                }
 
                 if (result.relative_residual < this->config_.relative_tolerance) {
-                    std::vector<T> y(restart_, T{0});
+                    // Solve upper-triangular H[0..j][0..j] y = g[0..j].
+                    std::vector<T> y(j + 1, T{0});
                     for (int k = j; k >= 0; --k) {
-                        y[k] = s[k];
+                        T sum = g[k];
                         for (int i = k + 1; i <= j; ++i) {
-                            y[k] -= H[k * restart_ + i] * y[i];
+                            sum -= H[k * m + i] * y[i];
                         }
-                        y[k] /= H[k * restart_ + k];
+                        y[k] = sum / H[k * m + k];
                     }
-
+                    for (int i = 0; i < n; ++i) {
+                        x[i] = h_x[i];
+                    }
                     for (int k = 0; k <= j; ++k) {
                         for (int i = 0; i < n; ++i) {
                             x[i] += y[k] * V[k * n + i];
@@ -444,61 +457,54 @@ public:
 
                     result.converged = true;
                     result.iterations = total_iterations;
-                    result.residual_norm = residual;
                     result.error_code = SolverError::SUCCESS;
-
-                    delete[] V;
-                    delete[] H;
-                    for (int i = 0; i < n; ++i) {
-                        x[i] = h_x[i];
-                    }
                     return result;
                 }
             }
 
-            std::vector<T> y(restart_, T{0});
-            for (int k = restart_ - 1; k >= 0; --k) {
-                y[k] = s[k];
-                for (int i = k + 1; i < restart_; ++i) {
-                    y[k] -= H[k * restart_ + i] * y[i];
+            // Restart: solve the full m x m system, update the running solution.
+            std::vector<T> y(m, T{0});
+            for (int k = m - 1; k >= 0; --k) {
+                T sum = g[k];
+                for (int i = k + 1; i < m; ++i) {
+                    sum -= H[k * m + i] * y[i];
                 }
-                if (std::abs(H[k * restart_ + k]) > std::numeric_limits<T>::epsilon()) {
-                    y[k] /= H[k * restart_ + k];
+                if (std::abs(H[k * m + k]) > std::numeric_limits<T>::epsilon()) {
+                    y[k] = sum / H[k * m + k];
+                } else {
+                    y[k] = T{0};
                 }
             }
-
-            for (int k = 0; k < restart_; ++k) {
+            for (int k = 0; k < m; ++k) {
                 for (int i = 0; i < n; ++i) {
                     h_x[i] += y[k] * V[k * n + i];
                 }
             }
 
-            spmv(A, h_x, v);
+            // r = b - A*x
+            spmv(A, h_x, w);
             for (int i = 0; i < n; ++i) {
-                r[i] = h_b[i] - v[i];
+                r[i] = h_b[i] - w[i];
             }
             beta = detail::norm2(r.data(), n);
-
             result.relative_residual = beta / b_norm;
+            result.residual_history.push_back(result.relative_residual);
+            result.residual_norm = beta;
 
             if (this->config_.verbose) {
-                std::printf("GMRES restart %d: residual = %.6e, relative = %.6e\n",
-                           outer, beta, result.relative_residual);
+                std::printf("GMRES restart %d: relative residual = %.6e\n",
+                           outer, result.relative_residual);
             }
 
             if (result.relative_residual < this->config_.relative_tolerance) {
+                for (int i = 0; i < n; ++i) {
+                    x[i] = h_x[i];
+                }
                 result.converged = true;
                 result.iterations = total_iterations;
-                result.residual_norm = beta;
                 result.error_code = SolverError::SUCCESS;
-
-                delete[] V;
-                delete[] H;
                 return result;
             }
-
-            delete[] V;
-            delete[] H;
 
             if (total_iterations >= this->config_.max_iterations) {
                 break;
@@ -506,7 +512,9 @@ public:
         }
 
         result.iterations = total_iterations;
-        result.residual_norm = beta;
+        result.residual_norm = result.residual_history.empty()
+                                   ? T{0}
+                                   : result.residual_history.back();
         result.error_code = SolverError::MAX_ITERATIONS;
         for (int i = 0; i < n; ++i) {
             x[i] = h_x[i];

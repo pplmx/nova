@@ -118,7 +118,9 @@ TEST_F(PreconditionedSolverTest, CGPreconditionerSolutionQuality) {
     memory::Buffer<double> d_b(A.cols());
     std::vector<double> h_b(A.cols());
 
-    spmv(A, x_exact.data(), h_b.data());
+    // Use the host-vector spmv overload: the pointer overload is the device
+    // variant, and passing host .data() pointers to it faults in cusparse.
+    spmv(A, x_exact, h_b);
     d_b.copy_from(h_b.data(), A.cols());
 
     ConjugateGradient<double> cg;
