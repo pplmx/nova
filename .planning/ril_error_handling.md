@@ -90,3 +90,21 @@ However, several files still contained unchecked CUDA runtime calls that could s
 Unknown machines in `recommend_tp_degree()` previously read an uninitialized `device_count` if `cudaGetDeviceCount` failed silently; now it throws a clear `CudaException` instead of returning a garbage TP degree.
 
 Note: destructor/teardown paths (e.g. `cudaEventDestroy` in `kernel_stats.cpp`, `profiler.cpp`, `csr_graph.cu::free_device`) keep unchecked calls **intentionally** because throwing from a `noexcept` destructor is undefined behavior. These are documented as-is and are not regressions.
+
+## Session 2026-08-09 — Round 2/3 sweep
+
+### Change records
+- `fix(neural)` tensor_parallel_matmul: CUDA_CHECK on stream create/sync/destroy + cudaGetDeviceCount (commit 241bcbd)
+- `fix(observability)` occupancy_analyzer: fixed uninitialized `active_blocks` read in `recommend()`; only compute expected_occupancy when the occupancy query succeeds (commit b96b2ed)
+- `fix(neural)` tensor_parallel_profile: CUDA_CHECK on cudaGetDeviceCount/cudaSetDevice/cudaMemGetInfo (5 functions) (commit f4291cb)
+- `fix(pipeline)` pipeline_comm: CUDA_CHECK on cudaGetDeviceCount in ctor (commit 4ab02f3)
+- `fix(memory_error)` memory_error_handler: skip device on failed cudaSetDevice/cudaMemGetInfo in health monitor (commit 61db97a)
+- `fix(algo)` sssp.delta_stepping: CUDA_CHECK on cudaStreamSynchronize (commit 4303fb0)
+
+All verified via full cuda_impl build/link with nvcc 12.9 (no GPU available; CUDA-dependent tests cannot run in this env).
+
+### Issue (evidence-backed, hypothesis — NOT fixed this turn)
+- **delta_stepping algorithm is incomplete/incorrect** when `use_delta_stepping` is enabled.
+  - Evidence: `src/algo/sssp.cu` ~lines 84-104. `current_frontier_size` is reset to `0` at the end of every loop iteration and never assigned from `next_frontier_size`; `next_frontier_size` is declared but never written (host compiler/nvcc warning #177-D "declared but never referenced"). The relax kernel is launched as `<<<1, current_frontier_size>>>` (single block, starts size 1), so the loop terminates after one pass and never expands the frontier.
+  - Impact: returns grossly wrong shortest paths when delta-stepping is selected. Default `use_delta_stepping=false` routes through the correct `bellman_ford`, so this path is latent.
+  - Status: active hypothesis (algorithm correctness, category=10). Requires a correct delta-stepping implementation; **not rewritten this turn** because it cannot be verified without a CUDA GPU, and a buggy rewrite would be worse than the documented current state. Revisit in a GPU-capable environment.
