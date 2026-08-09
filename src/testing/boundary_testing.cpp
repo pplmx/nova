@@ -41,7 +41,7 @@ std::vector<BoundaryCondition> BoundaryConditionTest::get_compute_boundaries() {
         {"max_threads_per_block", CUDA_MAX_THREADS_PER_BLOCK, true, "Max threads per block"},
         {"warp_size", CUDA_WARP_SIZE, true, "Warp size boundary"},
         {"max_blocks_per_sm", CUDA_MAX_BLOCKS_PER_SM, true, "Max blocks per SM"},
-        {"oversubscribed_grid", 65535 * 65535, false, "Oversubscribed grid"},
+        {"oversubscribed_grid", 65535ULL * 65535, false, "Oversubscribed grid"},
     };
 }
 

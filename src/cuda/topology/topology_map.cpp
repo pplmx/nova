@@ -165,7 +165,6 @@ NcclTopologyContext::compute_communicator_configs(
         node_group[all_nodes[i].hostname] = static_cast<int>(i);
     }
 
-    int color = node_group[local_topology_.hostname];
     for (size_t i = 0; i < all_nodes.size(); ++i) {
         CommunicatorConfig cfg;
         cfg.color = node_group[all_nodes[i].hostname];

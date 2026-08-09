@@ -146,7 +146,7 @@ enum class WorkloadProfile {
 struct PoolTuningConfig {
     WorkloadProfile profile = WorkloadProfile::Training;
     size_t initial_pool_size = 256 * 1024 * 1024;
-    size_t max_pool_size = 2 * 1024 * 1024 * 1024;
+    size_t max_pool_size = 2ULL * 1024 * 1024 * 1024;
     float growth_factor = 1.5f;
     float shrink_threshold = 0.3f;
     int samples_for_adaptation = 100;

@@ -296,7 +296,6 @@ bool CheckpointManager::load_checkpoint(
 
     std::vector<char> model_file;
     {
-        size_t model_size = 0;
         std::ifstream ifs(impl.backend->resolve_path(path + "/model.bin"), std::ios::binary);
         if (ifs) {
             ifs.seekg(0, std::ios::end);

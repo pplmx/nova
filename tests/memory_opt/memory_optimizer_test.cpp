@@ -83,6 +83,29 @@ TEST_F(MemoryOptimizerTest, AdaptiveMemoryPoolTunerSuggestSize) {
     EXPECT_LE(suggested, config.max_pool_size);
 }
 
+TEST_F(MemoryOptimizerTest, AdaptiveMemoryPoolTunerDefaultMaxPoolCapIsFinite) {
+    auto& tuner = AdaptiveMemoryPoolTuner::instance();
+    tuner.reset_stats();
+
+    // Use the structurally default config. With a correct default max_pool_size
+    // (2 GiB), the cap must remain a finite, sane bound that actually throttles
+    // the suggested pool size regardless of sustained allocation pressure.
+    PoolTuningConfig config;
+    EXPECT_EQ(config.max_pool_size, 2ULL * 1024 * 1024 * 1024);
+    tuner.set_config(config);
+
+    // Simulate heavy sustained allocation pressure so the suggested size would
+    // grow far past the cap; it must never exceed the configured maximum.
+    for (int i = 0; i < 100; ++i) {
+        tuner.record_allocation(256ULL * 1024 * 1024);
+    }
+    tuner.record_allocation_failure();  // force the grow path
+
+    size_t suggested = tuner.suggest_pool_size();
+    EXPECT_LE(suggested, config.max_pool_size);
+    EXPECT_LE(suggested, 2ULL * 1024 * 1024 * 1024);
+}
+
 TEST_F(MemoryOptimizerTest, AdaptiveMemoryPoolTunerShouldGrow) {
     auto& tuner = AdaptiveMemoryPoolTuner::instance();
     tuner.reset_stats();

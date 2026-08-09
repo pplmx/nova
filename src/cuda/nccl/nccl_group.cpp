@@ -158,7 +158,7 @@ NcclResult NcclGroupHandle::execute_internal() {
     ncclGroupEnd();
     executed_ = true;
 
-    NcclResult result{.code = ncclSuccess};
+    NcclResult result{.code = ncclSuccess, .error_message = ""};
     for (auto& op : operations_) {
         auto op_result = op();
         if (!op_result.ok() && result.ok()) {

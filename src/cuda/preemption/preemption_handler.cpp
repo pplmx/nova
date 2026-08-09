@@ -245,17 +245,14 @@ ResumeValidator::ValidationResult ResumeValidator::validate_checkpoint(
     }
 
     std::string line;
-    int version = 0, step = 0;
-    int64_t timestamp = 0;
-    size_t model_count = 0, optimizer_count = 0;
+    int step = 0;
 
-    std::getline(manifest_file, line);
-    version = std::stoi(line);
+    // Manifest layout: line 1 is checkpoint version (metadata only), line 2 is
+    // the training step used below. Remaining fields are informational
+    // model/optimizer metadata and are not part of validation.
+    std::getline(manifest_file, line);  // skip version
     std::getline(manifest_file, line);
     step = std::stoi(line);
-    std::getline(manifest_file, line);
-    std::getline(manifest_file, line);
-    std::getline(manifest_file, line);
 
     manifest_file.close();
 
