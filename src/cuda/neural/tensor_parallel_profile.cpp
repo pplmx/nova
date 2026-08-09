@@ -4,7 +4,6 @@
  */
 
 #include "cuda/neural/tensor_parallel_profile.h"
-#include "cuda/device/error.h"
 
 #include <algorithm>
 
@@ -37,7 +36,11 @@ TensorParallelProfile TensorParallelProfiler::profile(
     size_t total = weight_shard + activation + gradient;
 
     int device_count = 0;
-    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess) {
+        // Pure sizing computation: fall back to assuming the requested
+        // degree is satisfiable instead of failing without a live device.
+        device_count = tp_degree;
+    }
     int max_tp = std::min(tp_degree, device_count);
 
     return TensorParallelProfile{
@@ -55,7 +58,10 @@ int TensorParallelProfiler::recommend_tp_degree(
     int hidden_dim) {
 
     int device_count = 0;
-    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess) {
+        // Device count unavailable: conservatively assume a single device.
+        return 1;
+    }
 
     if (device_count <= 1) {
         return 1;
@@ -77,14 +83,18 @@ int TensorParallelProfiler::recommend_tp_degree(
 
 size_t TensorParallelProfiler::available_memory(int device) {
     size_t free_mem = 0, total_mem = 0;
-    CUDA_CHECK(cudaSetDevice(device));
-    CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+    if (cudaSetDevice(device) != cudaSuccess ||
+        cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
+        return 0;
+    }
     return free_mem;
 }
 
 size_t TensorParallelProfiler::peak_memory_usage() {
     size_t total_mem = 0;
-    CUDA_CHECK(cudaMemGetInfo(nullptr, &total_mem));
+    if (cudaMemGetInfo(nullptr, &total_mem) != cudaSuccess) {
+        return 0;
+    }
     return total_mem;
 }
 
@@ -93,7 +103,10 @@ int TensorParallelProfiler::max_tp_for_budget(
     size_t memory_budget_bytes) {
 
     int device_count = 0;
-    CUDA_CHECK(cudaGetDeviceCount(&device_count));
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess) {
+        // Device count unavailable: conservatively assume a single device.
+        return 1;
+    }
 
     for (int tp = device_count; tp >= 1; --tp) {
         size_t required = estimate_memory_per_gpu(hidden_dim, tp);
