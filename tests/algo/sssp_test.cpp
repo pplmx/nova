@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include "cuda/algo/sssp.h"
@@ -40,9 +41,9 @@ TEST_F(SSSPTest, BellmanFordSimple) {
     std::vector<int> col_indices = {1, 2, 0, 3, 2};
 
     graph::CSRGraph graph(num_vertices, num_edges);
-    graph.row_offsets = row_offsets.data();
-    graph.columns = col_indices.data();
-    graph.weights = values.data();
+    std::copy(row_offsets.begin(), row_offsets.end(), graph.row_offsets);
+    std::copy(col_indices.begin(), col_indices.end(), graph.columns);
+    std::copy(values.begin(), values.end(), graph.weights);
 
     cuda::memory::Buffer<float> distances(num_vertices);
 
@@ -65,9 +66,9 @@ TEST_F(SSSPTest, DeltaSteppingSimple) {
     std::vector<int> col_indices = {1, 2, 0};
 
     graph::CSRGraph graph(num_vertices, num_edges);
-    graph.row_offsets = row_offsets.data();
-    graph.columns = col_indices.data();
-    graph.weights = values.data();
+    std::copy(row_offsets.begin(), row_offsets.end(), graph.row_offsets);
+    std::copy(col_indices.begin(), col_indices.end(), graph.columns);
+    std::copy(values.begin(), values.end(), graph.weights);
 
     cuda::memory::Buffer<float> distances(num_vertices);
 
@@ -82,7 +83,7 @@ TEST_F(SSSPTest, DeltaSteppingSimple) {
 }
 
 TEST_F(SSSPTest, DeltaSteppingLongerPaths) {
-    constexpr int num_vertices = 5;
+    constexpr int num_vertices = 6;
     constexpr int num_edges = 6;
 
     std::vector<float> values = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
@@ -90,9 +91,9 @@ TEST_F(SSSPTest, DeltaSteppingLongerPaths) {
     std::vector<int> col_indices = {1, 2, 0, 3, 2, 4};
 
     graph::CSRGraph graph(num_vertices, num_edges);
-    graph.row_offsets = row_offsets.data();
-    graph.columns = col_indices.data();
-    graph.weights = values.data();
+    std::copy(row_offsets.begin(), row_offsets.end(), graph.row_offsets);
+    std::copy(col_indices.begin(), col_indices.end(), graph.columns);
+    std::copy(values.begin(), values.end(), graph.weights);
 
     auto distances = cuda::algo::sssp::compute_distances<float>(graph, 0, 1.0f);
 
@@ -112,9 +113,9 @@ TEST_F(SSSPTest, ComputeDistances) {
     std::vector<int> col_indices = {1};
 
     graph::CSRGraph graph(num_vertices, num_edges);
-    graph.row_offsets = row_offsets.data();
-    graph.columns = col_indices.data();
-    graph.weights = values.data();
+    std::copy(row_offsets.begin(), row_offsets.end(), graph.row_offsets);
+    std::copy(col_indices.begin(), col_indices.end(), graph.columns);
+    std::copy(values.begin(), values.end(), graph.weights);
 
     auto distances = cuda::algo::sssp::compute_distances<float>(graph, 0, 1.0f);
 
