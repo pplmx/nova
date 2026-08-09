@@ -14,11 +14,11 @@ HealthMetrics HealthMonitor::get_health_snapshot() {
     metrics.device_id = static_cast<uint32_t>(device_id);
 
     size_t free_mem = 0, total_mem = 0;
-    cudaMemGetInfo(&free_mem, &total_mem);
-
-    metrics.memory_used_mb = static_cast<float>((total_mem - free_mem) / (1024 * 1024));
-    metrics.memory_total_mb = static_cast<float>(total_mem / (1024 * 1024));
-    metrics.memory_used_mb = metrics.memory_total_mb - metrics.memory_used_mb;
+    if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess) {
+        metrics.memory_used_mb = static_cast<float>((total_mem - free_mem) / (1024 * 1024));
+        metrics.memory_total_mb = static_cast<float>(total_mem / (1024 * 1024));
+        metrics.memory_used_mb = metrics.memory_total_mb - metrics.memory_used_mb;
+    }
 
     cudaDeviceProp prop;
     if (cudaGetDeviceProperties(&prop, metrics.device_id) == cudaSuccess) {
@@ -38,10 +38,10 @@ MemorySnapshot HealthMonitor::get_memory_snapshot() {
     MemorySnapshot snapshot{};
 
     size_t free_mem = 0, total_mem = 0;
-    cudaMemGetInfo(&free_mem, &total_mem);
-
-    snapshot.reserved_bytes = total_mem;
-    snapshot.allocated_bytes = total_mem - free_mem;
+    if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess) {
+        snapshot.reserved_bytes = total_mem;
+        snapshot.allocated_bytes = total_mem - free_mem;
+    }
 
     return snapshot;
 }
