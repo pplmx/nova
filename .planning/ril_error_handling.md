@@ -132,3 +132,23 @@ All verified via full cuda_impl + nova-tests build/link with nvcc 12.9.
 ### Verified-pre-existing failures (not regressions; reproduced identically at HEAD)
 - `RetryTest::CircuitBreakerTransitionsToHalfOpenAfterTimeout` and `CircuitBreakerClosesAfterSuccessesInHalfOpen` fail identically at HEAD (timing-sensitive circuit-breaker transition tests in unrelated code).
 - `ErrorHandlingTest::InvalidSizeTrows`/`BufferVoidInvalidSizeTrows`, `ErrorInjectionTest::*`, `JacobiPreconditionerTest::*` fail due to missing CUDA driver (GPU-dependent).
+
+## Session 2026-08-09 — Round 6 sweep
+
+### Change records
+- `fix(memory_opt)` PoolTuningConfig default `max_pool_size` int-overflow (commit 7cf4cfe)
+  - Evidence: `2 * 1024 * 1024 * 1024` = 2^31 overflows signed int to -2147483648, becoming a near-2^64 size_t. The intended 2 GiB cap was effectively unbounded, so AdaptiveMemoryPoolTuner could suggest pool sizes far beyond any sane bound.
+  - The bug was masked because AdaptiveMemoryPoolTunerSuggestSize explicitly reassigned `max_pool_size` with a correct `2ULL` literal, never exercising the broken default.
+  - Fix: `2ULL * 1024 * 1024 * 1024`. Added regression test `AdaptiveMemoryPoolTunerDefaultMaxPoolCapIsFinite` (uses the structurally-default config under pressure; fails against the previous default, passes now).
+- `fix(testing)` boundary_testing oversubscribed_grid `65535 * 65535` int-overflow → `65535ULL * 65535` (commit 7cf4cfe)
+- `fix(maintainability)` removed dead locals: preemption_handler validate_checkpoint (version/timestamp/model_count/optimizer_count set-but-unused), checkpoint_manager load_checkpoint (model_size), topology_map compute_communicator_configs (color) (commit 7cf4cfe)
+- `fix(build)` nccl_group explicit `.error_message = ""` to silence missing-field-initializer (default std::string unchanged; no behavior change) (commit 7cf4cfe)
+
+### Verification
+- Incremental + fresh clean rebuild (gcc 13 / nvcc 12.9) succeeds; `-Wall -Wextra -Woverflow` warnings gone for all changed files.
+- 115 host-runnable tests pass (timeout/retry/degradation/regression/memory-opt/fusion-policy etc.). CUDA-gated tests still fail identically in this env due to absent GPU driver (pre-existing, not regressions).
+
+### Carried-forward issues (still active; require GPU to verify)
+- delta_stepping converges after a single pass (algorithm correctness, category 10) — see earlier sessions.
+- FusedMatmulBiasAct::forward() redundant CUDA-fusion branches — see Round 4.
+- Note: `buffer-inl.h` redefines `CUDA_CHECK` (throws std::runtime_error) while `cuda/device/error.h` defines the guarded `CUDA_CHECK` (throws CudaException); the redefinition is noisy and include-order-dependent. Not changed this round (requires a design decision about the intended exception contract); recorded for a future sweep.
