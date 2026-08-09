@@ -4,6 +4,7 @@
  */
 
 #include "cuda/pipeline/pipeline_comm.h"
+#include "cuda/device/error.h"
 
 #if NOVA_NCCL_ENABLED
 #include <nccl.h>
@@ -20,8 +21,8 @@ PipelineCommunicators::PipelineCommunicators(
       supports_split_(false) {
 
 #if NOVA_NCCL_ENABLED
-    int device_count;
-    cudaGetDeviceCount(&device_count);
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
 
     if (device_count >= tp_degree_ * dp_degree_) {
         tp_comms_.resize(tp_degree_);
