@@ -48,6 +48,11 @@ bool MemorySafetyValidator::check_uninitialized(const void* ptr, size_t size) {
 
     validation_count_++;
 
+    if (ptr == nullptr) {
+        error_count_++;
+        return false;
+    }
+
     const uint8_t* bytes = static_cast<const uint8_t*>(ptr);
     for (size_t i = 0; i < size; ++i) {
         if (bytes[i] == POISON_BYTE) {
@@ -93,13 +98,14 @@ MemoryPoisonGuard::MemoryPoisonGuard(const void* ptr, size_t size)
 }
 
 MemoryPoisonGuard::~MemoryPoisonGuard() {
-    if (!is_poisoned_) {
+    if (!is_poisoned_ && ptr_ != nullptr) {
         uint8_t* bytes = const_cast<uint8_t*>(static_cast<const uint8_t*>(ptr_));
         std::memset(bytes, POISON_BYTE, size_);
     }
 }
 
 bool MemoryPoisonGuard::is_poisoned() const {
+    if (ptr_ == nullptr) return false;
     const uint8_t* bytes = static_cast<const uint8_t*>(ptr_);
     for (size_t i = 0; i < size_; ++i) {
         if (bytes[i] == POISON_BYTE) {
