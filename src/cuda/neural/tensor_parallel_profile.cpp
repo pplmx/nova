@@ -4,6 +4,7 @@
  */
 
 #include "cuda/neural/tensor_parallel_profile.h"
+#include "cuda/device/error.h"
 
 #include <algorithm>
 
@@ -35,8 +36,8 @@ TensorParallelProfile TensorParallelProfiler::profile(
     size_t weight_shard = qkv_weight + mlp_weight;
     size_t total = weight_shard + activation + gradient;
 
-    int device_count;
-    cudaGetDeviceCount(&device_count);
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
     int max_tp = std::min(tp_degree, device_count);
 
     return TensorParallelProfile{
@@ -53,8 +54,8 @@ int TensorParallelProfiler::recommend_tp_degree(
     int seq,
     int hidden_dim) {
 
-    int device_count;
-    cudaGetDeviceCount(&device_count);
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
 
     if (device_count <= 1) {
         return 1;
@@ -75,15 +76,15 @@ int TensorParallelProfiler::recommend_tp_degree(
 }
 
 size_t TensorParallelProfiler::available_memory(int device) {
-    size_t free_mem, total_mem;
-    cudaSetDevice(device);
-    cudaMemGetInfo(&free_mem, &total_mem);
+    size_t free_mem = 0, total_mem = 0;
+    CUDA_CHECK(cudaSetDevice(device));
+    CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
     return free_mem;
 }
 
 size_t TensorParallelProfiler::peak_memory_usage() {
-    size_t total_mem;
-    cudaMemGetInfo(nullptr, &total_mem);
+    size_t total_mem = 0;
+    CUDA_CHECK(cudaMemGetInfo(nullptr, &total_mem));
     return total_mem;
 }
 
@@ -91,8 +92,8 @@ int TensorParallelProfiler::max_tp_for_budget(
     int hidden_dim,
     size_t memory_budget_bytes) {
 
-    int device_count;
-    cudaGetDeviceCount(&device_count);
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
 
     for (int tp = device_count; tp >= 1; --tp) {
         size_t required = estimate_memory_per_gpu(hidden_dim, tp);
