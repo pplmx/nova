@@ -152,3 +152,20 @@ All verified via full cuda_impl + nova-tests build/link with nvcc 12.9.
 - delta_stepping converges after a single pass (algorithm correctness, category 10) — see earlier sessions.
 - FusedMatmulBiasAct::forward() redundant CUDA-fusion branches — see Round 4.
 - Note: `buffer-inl.h` redefines `CUDA_CHECK` (throws std::runtime_error) while `cuda/device/error.h` defines the guarded `CUDA_CHECK` (throws CudaException); the redefinition is noisy and include-order-dependent. Not changed this round (requires a design decision about the intended exception contract); recorded for a future sweep.
+
+## Session 2026-08-09 — Round 7 sweep
+
+### Change records
+- `fix(memory)` decoupled buffer-inl.h's local `CUDA_CHECK` from the canonical `cuda/device/error.h` one (commit ad484b3)
+  - Evidence: buffer-inl.h defined a global `CUDA_CHECK` (throws std::runtime_error) unconditionally, colliding with the guarded canonical `CUDA_CHECK` (throws CudaException). Every TU including both emitted "CUDA_CHECK redefined" warnings and the winning definition depended on include order.
+  - Fix: renamed the buffer-local macro to `NOVA_CUDA_MEM_CHECK`. The rename exposed a latent layering gap - segmented_sort.cu, algo/reduce.cu, sparse/sparse_ops.cu, matrix/mult.cu, sequence_parallel.h, kv_cache_allocator.h, and several test files used `CUDA_CHECK` while depending on buffer-inl.h to supply it transitively. Added explicit `#include "cuda/device/error.h"` to each so all `CUDA_CHECK` uses now resolve to the canonical CudaException macro (CudaException derives from std::runtime_error, so catch sites stay compatible).
+- `fix(maintainability)` removed unused local in test_warp_boundaries (commit ad484b3)
+- `fix(test)` memory_optimizer_test now asserts detect_workload_profile() classifies a 5 MiB sample as Inference (returned profile was previously unasserted) (commit ad484b3)
+
+### Verification
+- Clean full rebuild (gcc 13 / nvcc 12.9) succeeds with zero CUDA_CHECK-redefinition warnings.
+- Host-runnable tests pass; BufferTest/MemoryPool failures remain only where a CUDA driver is required (pre-existing environmental).
+
+### Carried-forward issues (unchanged; active)
+- delta_stepping single-pass convergence (algorithm correctness, category 10) - requires GPU to verify.
+- FusedMatmulBiasAct::forward() redundant CUDA-fusion branches - requires GPU to verify.
