@@ -895,12 +895,15 @@ inline void KVCacheAllocator::prefill_chunk(
             );
             if (tokens_in_block <= 0) break;
 
+            // chunk.embedding is a device Buffer<float>, so this is a
+            // device-to-device copy; labeling it HostToDevice made cudaMemcpy
+            // read the device source through the host path (error/corruption).
             const float* src = embedding_data + (chunk.offset + token_offset) * elements_per_token;
             CUDA_CHECK(cudaMemcpyAsync(
                 block->data,
                 src,
                 tokens_in_block * bytes_per_token,
-                cudaMemcpyHostToDevice,
+                cudaMemcpyDeviceToDevice,
                 stream.get()
             ));
             token_offset += tokens_in_block;

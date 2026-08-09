@@ -144,12 +144,22 @@ void cholesky_decomposition(const float* A, size_t n, CholeskyResult& result) {
     result.is_positive_definite = (h_info == 0);
 
     if (result.is_positive_definite) {
+        // Acopy is device memory; the previous code indexed Acopy.data() from
+        // the CPU to zero the strict upper triangle, which writes device memory
+        // from the host (SIGSEGV / corruption). Zero it on a host staging copy
+        // and upload back before producing the final L factor.
+        std::vector<float> h_acopy(n * n);
+        CUDA_CHECK(cudaMemcpy(h_acopy.data(), Acopy.data(), n * n * sizeof(float),
+                              cudaMemcpyDeviceToHost));
         for (size_t i = 0; i < n; ++i) {
             for (size_t j = i + 1; j < n; ++j) {
-                Acopy.data()[i * n + j] = 0;
+                h_acopy[i * n + j] = 0;
             }
         }
-        CUDA_CHECK(cudaMemcpy(result.L.data(), Acopy.data(), n * n * sizeof(float), cudaMemcpyDeviceToDevice));
+        CUDA_CHECK(cudaMemcpy(Acopy.data(), h_acopy.data(), n * n * sizeof(float),
+                              cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(result.L.data(), Acopy.data(), n * n * sizeof(float),
+                              cudaMemcpyDeviceToDevice));
     }
 }
 

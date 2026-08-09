@@ -7,6 +7,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <vector>
 
 #include "cuda/nccl/nccl_context.h"
 #include "cuda/nccl/nccl_all_reduce.h"
@@ -71,10 +72,11 @@ TEST_F(NcclCollectivesTest, AllReduceSum) {
     cuda::memory::Buffer<float> recv(1024);
 
     // Initialize with values
-    float* send_ptr = send.data();
+    std::vector<float> h_send(1024);
     for (size_t i = 0; i < 1024; ++i) {
-        send_ptr[i] = static_cast<float>(i + 1);
+        h_send[i] = static_cast<float>(i + 1);
     }
+    send.copy_from(h_send.data(), 1024);
 
     // Perform all-reduce
     cudaStream_t stream;
@@ -92,9 +94,10 @@ TEST_F(NcclCollectivesTest, AllReduceSum) {
 
     // Each element should be the sum across GPUs
     // In single-GPU test, result is just the input
-    float* recv_ptr = recv.data();
+    std::vector<float> h_recv(1024);
+    recv.copy_to(h_recv.data(), 1024);
     for (size_t i = 0; i < 1024; ++i) {
-        EXPECT_FLOAT_EQ(recv_ptr[i], static_cast<float>(i + 1));
+        EXPECT_FLOAT_EQ(h_recv[i], static_cast<float>(i + 1));
     }
 }
 
@@ -102,10 +105,11 @@ TEST_F(NcclCollectivesTest, AllReduceInPlace) {
     NcclAllReduce reduce(*context_);
 
     cuda::memory::Buffer<float> data(1024);
-    float* data_ptr = data.data();
+    std::vector<float> h_data(1024);
     for (size_t i = 0; i < 1024; ++i) {
-        data_ptr[i] = static_cast<float>(i + 1);
+        h_data[i] = static_cast<float>(i + 1);
     }
+    data.copy_from(h_data.data(), 1024);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -131,12 +135,9 @@ TEST_F(NcclCollectivesTest, BroadcastFromRoot) {
     cuda::memory::Buffer<float> root_data(1024);
     cuda::memory::Buffer<float> recv_data(1024);
 
-    // Initialize root data
-    float* root_ptr = root_data.data();
-    float* recv_ptr = recv_data.data();
-    for (size_t i = 0; i < 1024; ++i) {
-        root_ptr[i] = 42.0f;
-    }
+    // Initialize root data (stage on the host; Buffer.data() is device memory)
+    std::vector<float> h_root(1024, 42.0f);
+    root_data.copy_from(h_root.data(), 1024);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -152,8 +153,10 @@ TEST_F(NcclCollectivesTest, BroadcastFromRoot) {
     EXPECT_TRUE(result.ok()) << result.error_message;
 
     // All elements should be 42.0
+    std::vector<float> h_recv(1024);
+    recv_data.copy_to(h_recv.data(), 1024);
     for (size_t i = 0; i < 1024; ++i) {
-        EXPECT_FLOAT_EQ(recv_ptr[i], 42.0f);
+        EXPECT_FLOAT_EQ(h_recv[i], 42.0f);
     }
 }
 
@@ -236,10 +239,11 @@ TEST_F(NcclCollectivesTest, AllGatherBasic) {
     cuda::memory::Buffer<float> send(send_count);
     cuda::memory::Buffer<float> recv(recv_count);
 
-    float* send_ptr = send.data();
+    std::vector<float> h_send(send_count);
     for (size_t i = 0; i < send_count; ++i) {
-        send_ptr[i] = static_cast<float>(i + 1);
+        h_send[i] = static_cast<float>(i + 1);
     }
+    send.copy_from(h_send.data(), send_count);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -275,10 +279,11 @@ TEST_F(NcclCollectivesTest, ReduceScatterBasic) {
     cuda::memory::Buffer<float> send(send_count);
     cuda::memory::Buffer<float> recv(recv_count);
 
-    float* send_ptr = send.data();
+    std::vector<float> h_send(send_count);
     for (size_t i = 0; i < send_count; ++i) {
-        send_ptr[i] = 1.0f;
+        h_send[i] = 1.0f;
     }
+    send.copy_from(h_send.data(), send_count);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -313,10 +318,8 @@ TEST_F(NcclCollectivesTest, GroupHandleBatched) {
 
         cuda::memory::Buffer<float> send1(1024);
         cuda::memory::Buffer<float> recv1(1024);
-        float* send1_ptr = send1.data();
-        for (size_t i = 0; i < 1024; ++i) {
-            send1_ptr[i] = 1.0f;
-        }
+        std::vector<float> h_send1(1024, 1.0f);
+        send1.copy_from(h_send1.data(), 1024);
 
         group.add_all_reduce(send1.data(), recv1.data(), 1024, ncclFloat32, ncclSum);
         EXPECT_EQ(group.operation_count(), 1u);
@@ -334,9 +337,8 @@ TEST_F(NcclCollectivesTest, GroupHandleExplicitExecute) {
 
         cuda::memory::Buffer<float> send(1024);
         cuda::memory::Buffer<float> recv(1024);
-        for (size_t i = 0; i < 1024; ++i) {
-            send.data()[i] = 1.0f;
-        }
+        std::vector<float> h_send(1024, 1.0f);
+        send.copy_from(h_send.data(), 1024);
 
         group.add_all_reduce(send.data(), recv.data(), 1024, ncclFloat32, ncclSum);
         auto result = group.execute();
