@@ -6,7 +6,13 @@ namespace cuda::memory_opt::test {
 
 class MemoryOptimizerEdgeCaseTest : public ::testing::Test {
 protected:
-    void SetUp() override {}
+    void SetUp() override {
+        // The manager and tuner are process-wide singletons. Reset their
+        // counters between tests so cumulative stats from a previous test
+        // never leak into (and break) the exact expectations of the next.
+        MemoryOptimizationManager::instance().reset_stats();
+        AdaptiveMemoryPoolTuner::instance().reset_stats();
+    }
     void TearDown() override {}
 };
 
@@ -162,7 +168,9 @@ TEST_F(MemoryOptimizerEdgeCaseTest, GradientAccumulatorReset) {
     GradientAccumulator accum(4);
 
     std::vector<float> grad(512, 0.5f);
-    accum.add_gradient(0, grad.data(), grad.size());
+    for (int step = 0; step < 4; ++step) {
+        accum.add_gradient(step, grad.data(), grad.size());
+    }
     EXPECT_TRUE(accum.is_ready_to_apply());
 
     accum.reset();

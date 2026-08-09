@@ -141,7 +141,6 @@ void GradientAccumulator::add_gradient(int step, const float* gradient, size_t s
         reset();
         current_step_ = step;
         accumulated_gradients_.resize(size, 0.0f);
-        has_gradients_ = true;
     }
 
     if (accumulated_gradients_.size() != size) {
@@ -151,6 +150,12 @@ void GradientAccumulator::add_gradient(int step, const float* gradient, size_t s
     for (size_t i = 0; i < size; ++i) {
         accumulated_gradients_[i] += gradient[i];
     }
+
+    // Gradient data is present from this call onwards. This must be set
+    // regardless of whether step==current_step_ (e.g. the very first call
+    // with step 0), otherwise the first accumulated microbatch would never
+    // mark the accumulator as holding data.
+    has_gradients_ = true;
 }
 
 void GradientAccumulator::get_accumulated_gradient(float* output) {
@@ -414,7 +419,13 @@ bool AdaptiveMemoryPoolTuner::is_adaptive_enabled() const {
 
 WorkloadProfile AdaptiveMemoryPoolTuner::detect_workload_profile() const {
     std::lock_guard<std::mutex> lock(mutex_);
+    return detect_workload_profile_locked();
+}
 
+// Caller must hold mutex_. Kept separate from detect_workload_profile() so
+// get_stats() can reuse the logic without recursively locking the same
+// non-recursive std::mutex (which would self-deadlock).
+WorkloadProfile AdaptiveMemoryPoolTuner::detect_workload_profile_locked() const {
     if (allocation_samples_.empty()) {
         return WorkloadProfile::Training;
     }
@@ -462,7 +473,7 @@ AdaptiveMemoryPoolTuner::TuningStats AdaptiveMemoryPoolTuner::get_stats() const 
     stats.peak_usage = peak_usage_;
     stats.current_usage = current_usage_;
     stats.num_failures = num_failures_;
-    stats.detected_profile = detect_workload_profile();
+    stats.detected_profile = detect_workload_profile_locked();
 
     if (!allocation_samples_.empty()) {
         stats.average_allocation_size = static_cast<float>(

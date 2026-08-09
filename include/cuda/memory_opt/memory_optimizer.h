@@ -187,6 +187,9 @@ public:
     TuningStats get_stats() const;
     void reset_stats();
 
+    /** @brief Compute workload profile assuming mutex_ is already held. */
+    WorkloadProfile detect_workload_profile_locked() const;
+
 private:
     AdaptiveMemoryPoolTuner();
 
