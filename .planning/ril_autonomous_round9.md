@@ -102,3 +102,11 @@ suite crashed early or because prior rounds ran GPU-less.
   stream set on the shared g_cublas_handle persists across tests). (issue, category 8)
 - Inference KV-cache OOM when neighbors consume GPU memory (environmental; pass when free).
 - MemoryNodeTest.ScopedGraphBuffer needs CUDA graph memory pools (design).
+
+- RCMReorderer: three real defects fixed (commit 4b48a03):
+  (1) permutation inverted (perm[i]=level_order[i] vs old->new that
+  apply_permutation consumes) -> reordered matrix scrambled, bandwidth never
+  reduced; (2) apply_permutation wrote into all-zero row]) offsets -> every row
+  overwrote at offset 0; (3) disconnected graphs read level_order out of bounds
+  (single BFS component). Tests switched to a tridiagonal band-1 path (dense
+  band-5 where RCM can't reduce was the wrong premise). RCMReordererTest 14/14.
