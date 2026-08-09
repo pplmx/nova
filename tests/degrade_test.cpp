@@ -3,7 +3,16 @@
 
 using namespace nova::error;
 
-class DegradationTest : public ::testing::Test {};
+class DegradationTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // The manager is a process-wide singleton. Reset it before each
+        // test so callbacks (which may capture stack locals by reference),
+        // thresholds, and precision state from a previous test never leak
+        // into - and crash - the current one.
+        degradation_manager::instance().reset();
+    }
+};
 
 TEST_F(DegradationTest, DegradeReturnsNextPrecision) {
     EXPECT_EQ(degrade(precision_level::high), precision_level::medium);

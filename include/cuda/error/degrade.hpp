@@ -237,6 +237,17 @@ public:
      * @return true if quality scores indicate degradation needed
      */
     [[nodiscard]] bool should_degrade(std::string_view operation) const;
+    /**
+     * @brief Reset all tracked state back to defaults.
+     *
+     * Clears the registered callback, restores default quality thresholds,
+     * and forgets every operation's current precision. This lets a
+     * long-running process (or a test runner) isolate one usage of the
+     * manager from another, instead of leaking a previously-installed
+     * callback (which may capture references to already-destroyed objects)
+     * and stale precision/threshold state across scopes.
+     */
+    void reset();
 
 private:
     degradation_manager() = default;

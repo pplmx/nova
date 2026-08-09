@@ -12,6 +12,12 @@ degradation_manager& degradation_manager::instance() {
 void degradation_manager::set_callback(degradation_callback cb) {
     callback_ = std::move(cb);
 }
+void degradation_manager::reset() {
+    callback_ = nullptr;
+    threshold_ = quality_threshold{};
+    precision_by_op_.clear();
+}
+
 
 void degradation_manager::set_threshold(quality_threshold threshold) {
     threshold_ = threshold;
