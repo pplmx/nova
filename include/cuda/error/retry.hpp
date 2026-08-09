@@ -72,7 +72,7 @@ struct circuit_breaker_config {
     int failure_threshold{5};
 
     /** @brief Time before attempting half-open (30 seconds) */
-    std::chrono::seconds reset_timeout{30};
+    std::chrono::milliseconds reset_timeout{30000};
 
     /** @brief Successes needed in half-open to close (3) */
     int half_open_success_threshold{3};
