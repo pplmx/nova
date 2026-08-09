@@ -41,7 +41,7 @@ FusedMatmulBiasAct::FusedMatmulBiasAct(const MatmulBiasActConfig& config)
     cuda_fusion_available_ = (err == cudaSuccess);
 
     if (config_.use_cuda_fusion && cuda_fusion_available_) {
-        cublasLtCreate(&lt_handle_);
+        CUBLAS_CHECK(cublasLtCreate(&lt_handle_));
     }
 
     if (config_.max_workspace_bytes > 0) {
@@ -94,10 +94,10 @@ void FusedMatmulBiasAct::forward_fallback(
     const float beta = 0.0f;
 
     if (stream) {
-        cublasSetStream(handle, stream);
+        CUBLAS_CHECK(cublasSetStream(handle, stream));
     }
 
-    cublasSgemm(
+    CUBLAS_CHECK(cublasSgemm(
         handle,
         CUBLAS_OP_N,
         CUBLAS_OP_N,
@@ -107,7 +107,7 @@ void FusedMatmulBiasAct::forward_fallback(
         A, k,
         &beta,
         C, n
-    );
+    ));
 
     int num_elements = m * n;
     int block_size = 256;
