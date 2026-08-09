@@ -79,3 +79,14 @@ However, several files still contained unchecked CUDA runtime calls that could s
 - `nova-tests --gtest_filter='*Fusion*'` (non-GPU tests) — PASS
 - `nova-tests --gtest_filter='*SyncBatchNorm*'` — Pre-existing failures (CUDA OOM, same before and after changes)
 - `nova-tests --gtest_filter='*INT8*:*Calibrat*'` — All skipped (CUDA not available)
+
+### Files Modified (Round 2: 2026-08-09)
+
+7. `src/cuda/neural/tensor_parallel_matmul.cpp` (in `cuda::neural` namespace — safe, nested inside `cuda`)
+   - Added `#include "cuda/device/error.h"`
+   - `TensorParallelMatmul::matmul()`: `cudaStreamCreate` / `cudaStreamSynchronize` / `cudaStreamDestroy` → `CUDA_CHECK(...)`
+   - `recommend_tp_degree()`: `cudaGetDeviceCount(&device_count)` → `CUDA_CHECK(cudaGetDeviceCount(&device_count))`, initializing `device_count = 0` instead of leaving it uninitialized on failure.
+
+Unknown machines in `recommend_tp_degree()` previously read an uninitialized `device_count` if `cudaGetDeviceCount` failed silently; now it throws a clear `CudaException` instead of returning a garbage TP degree.
+
+Note: destructor/teardown paths (e.g. `cudaEventDestroy` in `kernel_stats.cpp`, `profiler.cpp`, `csr_graph.cu::free_device`) keep unchecked calls **intentionally** because throwing from a `noexcept` destructor is undefined behavior. These are documented as-is and are not regressions.

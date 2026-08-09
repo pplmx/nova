@@ -5,6 +5,7 @@
 
 #include "cuda/neural/tensor_parallel_matmul.h"
 #include "cuda/neural/matmul.h"
+#include "cuda/device/error.h"
 
 #include <algorithm>
 
@@ -25,13 +26,13 @@ void TensorParallelMatmul::matmul(
     int n,
     int k) {
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    cudaStream_t stream{};
+    CUDA_CHECK(cudaStreamCreate(&stream));
 
     matmul_async(A, B, C, m, n, k, stream);
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
 void TensorParallelMatmul::matmul_async(
@@ -106,8 +107,8 @@ TensorParallelStrategy TensorParallelMatmul::strategy() const {
 }
 
 int recommend_tp_degree(int m, int n, int k) {
-    int device_count;
-    cudaGetDeviceCount(&device_count);
+    int device_count = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&device_count));
 
     constexpr size_t MIN_MEMORY_PER_GPU = 256 * 1024 * 1024;  // 256 MB minimum
     constexpr size_t BYTES_PER_ELEMENT = sizeof(float);
