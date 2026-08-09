@@ -41,8 +41,10 @@ public:
      * @brief Construct a timeout context
      * @param parent Parent context (nullptr for root)
      * @param timeout Additional timeout allowance
+     * @param name Operation name used when registering with the manager
      */
-    timeout_context(timeout_context* parent, std::chrono::milliseconds timeout);
+    timeout_context(timeout_context* parent, std::chrono::milliseconds timeout,
+                    std::string_view name = "child");
     ~timeout_context();
 
     timeout_context(const timeout_context&) = delete;

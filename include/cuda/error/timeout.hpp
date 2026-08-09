@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -277,6 +278,16 @@ public:
     /** @brief Get count of currently active tracked operations */
     [[nodiscard]] size_t active_count() const;
 
+    /**
+     * @brief Reset all tracked state back to defaults.
+     *
+     * Removes every active operation, clears the timeout callback, and stops
+     * any running watchdog thread. Intended for test isolation and graceful
+     * teardown between logical units, so state from one usage (including
+     * callbacks capturing now-destroyed objects) never leaks into another.
+     */
+    void reset();
+
 private:
     timeout_manager();
     ~timeout_manager();
@@ -291,6 +302,7 @@ private:
     timeout_callback callback_;
     bool watchdog_running_{false};
     std::vector<std::jthread> watchdog_threads_;
+    std::atomic<int64_t> watchdog_interval_ms_{100};
     size_t max_concurrent_{10000};
 };
 

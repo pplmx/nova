@@ -2,13 +2,14 @@
 
 namespace nova::error {
 
-timeout_context::timeout_context(timeout_context* parent, std::chrono::milliseconds timeout)
+timeout_context::timeout_context(timeout_context* parent, std::chrono::milliseconds timeout,
+                                   std::string_view name)
     : parent_(parent) {
     if (parent && timeout == std::chrono::milliseconds::zero()) {
         auto remaining = timeout_manager::instance().get_remaining(parent->id_);
-        id_ = timeout_manager::instance().start_operation("child", remaining);
+        id_ = timeout_manager::instance().start_operation(name, remaining);
     } else {
-        id_ = timeout_manager::instance().start_operation("child", timeout);
+        id_ = timeout_manager::instance().start_operation(name, timeout);
     }
 }
 
@@ -34,10 +35,7 @@ void timeout_context::set_deadline_callback(timeout_callback cb) {
 }
 
 scoped_timeout::scoped_timeout(std::string_view name, std::chrono::milliseconds timeout)
-    : ctx_(nullptr, timeout) {
-    auto id = timeout_manager::instance().start_operation(name, timeout);
-    static_cast<void>(id);
-}
+    : ctx_(nullptr, timeout, name) {}
 
 scoped_timeout::~scoped_timeout() = default;
 

@@ -6,20 +6,27 @@
 
 using namespace nova::error;
 
-class TimeoutPropagationTest : public ::testing::Test {};
+class TimeoutPropagationTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // Isolate each test from the shared singleton: drop operations and
+        // callback state left behind by a previous case.
+        timeout_manager::instance().reset();
+    }
+};
 
 TEST_F(TimeoutPropagationTest, ChildInheritsParentDeadline) {
-    auto parent_id = timeout_manager::instance().start_operation("parent", std::chrono::milliseconds{100});
+    // The child must be handed the parent context to inherit its deadline; a
+    // zero timeout then means "use the parent's remaining budget".
+    timeout_context parent(nullptr, std::chrono::milliseconds{100});
 
     std::this_thread::sleep_for(std::chrono::milliseconds{30});
 
-    timeout_context child(nullptr, std::chrono::milliseconds{0});
+    timeout_context child(&parent, std::chrono::milliseconds{0});
     auto remaining = child.remaining();
 
     EXPECT_LT(remaining.count(), 100);
     EXPECT_GT(remaining.count(), 0);
-
-    timeout_manager::instance().end_operation(parent_id);
 }
 
 TEST_F(TimeoutPropagationTest, ExplicitChildTimeoutOverridesParent) {
@@ -41,8 +48,13 @@ TEST_F(TimeoutPropagationTest, CallbackInvokedOnTimeout) {
         callback_invoked = true;
     });
 
+    // Callbacks are only delivered by the watchdog loop, so enable it.
+    auto config = timeout_config{};
+    config.watchdog_interval = std::chrono::milliseconds{10};
+    manager.set_config(config);
+
     auto id = manager.start_operation("test", std::chrono::milliseconds{5});
-    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    std::this_thread::sleep_for(std::chrono::milliseconds{30});
 
     EXPECT_TRUE(callback_invoked);
     manager.end_operation(id);

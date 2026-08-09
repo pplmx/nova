@@ -111,6 +111,7 @@ void timeout_manager::set_config(const timeout_config& config) {
     std::lock_guard<std::mutex> lock(mutex_);
     default_timeout_ = config.default_timeout;
     max_concurrent_ = config.max_concurrent_operations;
+    watchdog_interval_ms_ = config.watchdog_interval.count();
 
     if (config.watchdog_enabled && watchdog_threads_.empty()) {
         watchdog_running_ = true;
@@ -134,10 +135,27 @@ size_t timeout_manager::active_count() const {
     return operations_.size();
 }
 
+void timeout_manager::reset() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        watchdog_running_ = false;
+        operations_.clear();
+        callback_ = nullptr;
+    }
+    // Joining the watchdog threads (cleared from the vector) ensures a
+    // previously-started thread observes watchdog_running_ == false and
+    // exits before reset() returns.
+    watchdog_threads_.clear();
+}
+
 void timeout_manager::watchdog_loop() {
     while (watchdog_running_) {
         check_timeouts();
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        auto interval = std::chrono::milliseconds(watchdog_interval_ms_.load());
+        if (interval.count() <= 0) {
+            interval = std::chrono::milliseconds{1};
+        }
+        std::this_thread::sleep_for(interval);
     }
 }
 
