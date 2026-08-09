@@ -123,3 +123,12 @@ All verified via full cuda_impl + nova-tests build/link with nvcc 12.9.
 ### Issue (evidence-backed, hypothesis — NOT fixed this turn)
 - **FusedMatmulBiasAct::forward() has redundant branches.** In `src/cuda/neural/fusion/fused_matmul_bias_act.cu` (~line 70), both the `use_cuda_fusion && cuda_fusion_available_` branch and the `else` branch call `forward_fallback(...)` identically. The CUDA-fusion toggle therefore has no effect on the forward path; a genuinely different fused path appears to be missing. Requires a real fused-kernel implementation to verify; deferred (not speculative).
 - Latent issue carried forward: `delta_stepping` converges after a single pass (see earlier session entry) — deferring to GPU-capable environment.
+
+## Session 2026-08-09 — Round 5 sweep
+
+### Change records
+- `fix(comm)` nova::comm::HealthMonitor monitor thread: invoke error_callback outside state_mutex to prevent self-deadlock when a callback calls register_comm/unregister_comm (commit 69907c2)
+
+### Verified-pre-existing failures (not regressions; reproduced identically at HEAD)
+- `RetryTest::CircuitBreakerTransitionsToHalfOpenAfterTimeout` and `CircuitBreakerClosesAfterSuccessesInHalfOpen` fail identically at HEAD (timing-sensitive circuit-breaker transition tests in unrelated code).
+- `ErrorHandlingTest::InvalidSizeTrows`/`BufferVoidInvalidSizeTrows`, `ErrorInjectionTest::*`, `JacobiPreconditionerTest::*` fail due to missing CUDA driver (GPU-dependent).
