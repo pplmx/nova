@@ -219,8 +219,12 @@ int MpiContext::get_local_device_id() const {
         return local_rank_;
     }
 
-    int device_count;
-    cudaGetDeviceCount(&device_count);
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
+        // Cannot determine device count: fall back to device 0 instead of
+        // reading an uninitialized count / dividing by zero.
+        return 0;
+    }
     return local_rank_ % device_count;
 }
 
