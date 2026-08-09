@@ -96,16 +96,17 @@ OccupancyRecommendation OccupancyAnalyzer::recommend(const void* kernel_func,
     if (err == cudaSuccess) {
         rec.recommended_grid_size = num_blocks * sm_count_;
 
-        int active_blocks;
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        int active_blocks = 0;
+        cudaError_t occ_err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
             &active_blocks,
             kernel_func,
             rec.recommended_block_size,
             dynamic_smem);
-
-        int max_threads = rec.recommended_block_size * active_blocks;
-        rec.expected_occupancy =
-            static_cast<double>(max_threads) / max_threads_per_sm_;
+        if (occ_err == cudaSuccess) {
+            int max_threads = rec.recommended_block_size * active_blocks;
+            rec.expected_occupancy =
+                static_cast<double>(max_threads) / max_threads_per_sm_;
+        }
     }
 
     cudaSetDevice(old_device);
