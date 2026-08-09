@@ -7,6 +7,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
+#include <vector>
 
 #if NOVA_NCCL_ENABLED
 #include <nccl.h>
@@ -52,8 +53,16 @@ void HealthMonitor::start() {
     impl_->running.store(true);
     impl_->monitor_thread = std::thread([this]() {
         while (impl_->running.load()) {
+            // Collect callback invocations under the lock, then invoke them
+            // after releasing it. Calling a user-supplied error_callback while
+            // holding state_mutex could self-deadlock if that callback calls
+            // register_comm()/unregister_comm() (which take a unique lock on
+            // the same mutex).
+            ErrorCallback callback;
+            std::vector<CommError> to_report;
             {
                 std::shared_lock lock(impl_->state_mutex);
+                callback = impl_->error_callback;
                 for (auto& [comm_id, state] : impl_->comm_states) {
                     cudaError_t result = cudaStreamQuery(state.stream);
                     if (result == cudaErrorNotReady) {
@@ -61,7 +70,7 @@ void HealthMonitor::start() {
                         auto elapsed = std::chrono::steady_clock::now() - state.last_check;
                         if (elapsed > impl_->timeout_threshold &&
                             state.consecutive_not_ready >= impl_->stall_confirmations_required) {
-                            if (!state.is_stalled && impl_->error_callback) {
+                            if (!state.is_stalled && callback) {
                                 state.is_healthy = false;
                                 state.is_stalled = true;
 
@@ -74,7 +83,7 @@ void HealthMonitor::start() {
                                 error.device_id = 0;
                                 error.stream = state.stream;
                                 error.timestamp = std::chrono::steady_clock::now();
-                                impl_->error_callback(error);
+                                to_report.push_back(std::move(error));
                             }
                         }
                     } else if (result == cudaSuccess) {
@@ -83,6 +92,11 @@ void HealthMonitor::start() {
                         state.is_stalled = false;
                         state.consecutive_not_ready = 0;
                     }
+                }
+            }
+            for (const auto& error : to_report) {
+                if (callback) {
+                    callback(error);
                 }
             }
             std::this_thread::sleep_for(impl_->check_interval);
