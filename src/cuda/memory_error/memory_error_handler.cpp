@@ -52,10 +52,17 @@ void DeviceHealthMonitor::start_monitoring() {
                 DeviceHealth health;
                 health.device_id = i;
 
-                cudaSetDevice(i);
+                cudaError_t set_err = cudaSetDevice(i);
+                if (set_err != cudaSuccess) {
+                    std::this_thread::sleep_for(impl_->check_interval);
+                    continue;
+                }
 
                 size_t free_mem = 0, total_mem = 0;
-                cudaMemGetInfo(&free_mem, &total_mem);
+                if (cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
+                    std::this_thread::sleep_for(impl_->check_interval);
+                    continue;
+                }
 
                 health.memory_used = total_mem - free_mem;
                 health.memory_total = total_mem;
