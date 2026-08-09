@@ -115,16 +115,37 @@ ReorderingResult RCMReorderer<T>::reorder(const SparseMatrix<T>& A, bool in_plac
     int start = find_starting_node(A);
     std::vector<int> level_order = bfs_level_order(A, start);
 
-    result.permutation.resize(n);
+    // A single BFS only reaches the start node's connected component. For
+    // disconnected graphs the remaining nodes were previously read out of
+    // bounds (level_order[i] for i >= size), yielding a garbage permutation.
+    // Continue BFS from each unvisited node so the permutation covers 0..n-1.
+    std::vector<char> visited(n, 0);
+    for (int v : level_order) {
+        visited[v] = 1;
+    }
     for (int i = 0; i < n; ++i) {
-        result.permutation[i] = level_order[i];
+        if (!visited[i]) {
+            for (int v : bfs_level_order(A, i)) {
+                if (!visited[v]) {
+                    level_order.push_back(v);
+                    visited[v] = 1;
+                }
+            }
+        }
     }
 
-    std::vector<int> inv_perm(n);
+    result.permutation.resize(n);
+    result.inverse_permutation.resize(n);
+    // `permutation` maps OLD vertex -> NEW position (what apply_permutation
+    // consumes: new_row = permutation[old_i], new_col = permutation[old_col]).
+    // The previous code set permutation[i] = level_order[i], which is the
+    // inverse mapping and scrambled the reordered matrix (bandwidth never
+    // reduced). level_order[i] IS the old vertex at new position i, and its new
+    // position i is the inverse.
     for (int i = 0; i < n; ++i) {
-        inv_perm[result.permutation[i]] = i;
+        result.inverse_permutation[i] = level_order[i];
+        result.permutation[level_order[i]] = i;
     }
-    result.inverse_permutation = inv_perm;
 
     auto reordered_matrix = apply_reordering(A, result);
 
@@ -268,8 +289,22 @@ void RCMReorderer<T>::apply_permutation(std::vector<T>& values,
     const int n = static_cast<int>(row_offsets.size()) - 1;
     int nnz = static_cast<int>(values.size());
 
+    // Compute the new row-offset table with a prefix sum over the permuted row
+    // lengths BEFORE writing values. The previous implementation read
+    // new_row_offsets[] inside the fill loop while it was still all zeros, so
+    // every row wrote at offset 0 and overwrote the previous row - the
+    // "reordered" CSR was garbage and never actually reduced bandwidth.
+    std::vector<int> new_row_lengths(n, 0);
+    for (int i = 0; i < n; ++i) {
+        new_row_lengths[perm[i]] = row_offsets[i + 1] - row_offsets[i];
+    }
+
+    std::vector<int> new_row_offsets(n + 1, 0);
+    for (int i = 0; i < n; ++i) {
+        new_row_offsets[i + 1] = new_row_offsets[i] + new_row_lengths[i];
+    }
+
     std::vector<T> new_values(nnz);
-    std::vector<int> new_row_offsets(n + 1);
     std::vector<int> new_col_indices(nnz);
 
     for (int i = 0; i < n; ++i) {
@@ -277,23 +312,10 @@ void RCMReorderer<T>::apply_permutation(std::vector<T>& values,
         int old_row_start = row_offsets[i];
         int old_row_end = row_offsets[i + 1];
         int new_row_start = new_row_offsets[new_row];
-        int nnz_in_row = old_row_end - old_row_start;
 
-        for (int k = 0; k < nnz_in_row; ++k) {
-            new_values[new_row_start + k] = values[old_row_start + k];
-            new_col_indices[new_row_start + k] = perm[col_indices[old_row_start + k]];
-        }
-    }
-
-    for (int i = 0; i < n; ++i) {
-        new_row_offsets[i] = row_offsets[perm[i]];
-    }
-    new_row_offsets[n] = nnz;
-
-    for (int i = 1; i <= n; ++i) {
-        if (new_row_offsets[i] < new_row_offsets[i - 1]) {
-            new_row_offsets[i] = new_row_offsets[i - 1] +
-                (row_offsets[perm[i]] - row_offsets[perm[i - 1]]);
+        for (int k = old_row_start; k < old_row_end; ++k) {
+            new_values[new_row_start + (k - old_row_start)] = values[k];
+            new_col_indices[new_row_start + (k - old_row_start)] = perm[col_indices[k]];
         }
     }
 
