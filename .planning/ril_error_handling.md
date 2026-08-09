@@ -110,3 +110,16 @@ All verified via full cuda_impl build/link with nvcc 12.9 (no GPU available; CUD
   - Evidence: `src/algo/sssp.cu` ~lines 84-104. `current_frontier_size` is reset to `0` at the end of every loop iteration and never assigned from `next_frontier_size`; `next_frontier_size` is declared but never written (host compiler/nvcc warning #177-D "declared but never referenced"). The relax kernel is launched as `<<<1, current_frontier_size>>>` (single block, starts size 1), so the loop terminates after one pass and never expands the frontier.
   - Impact: returns grossly wrong shortest paths when delta-stepping is selected. Default `use_delta_stepping=false` routes through the correct `bellman_ford`, so this path is latent.
   - Status: active hypothesis (algorithm correctness, category=10). Requires a correct delta-stepping implementation; **not rewritten this turn** because it cannot be verified without a CUDA GPU, and a buggy rewrite would be worse than the documented current state. Revisit in a GPU-capable environment.
+
+## Session 2026-08-09 — Round 4 sweep
+
+### Change records
+- `fix(mpi)` mpi_context.get_local_device_id: guard cudaGetDeviceCount; return device 0 when count unavailable/non-positive instead of uninitialized-read + divide-by-zero (commit 3b0036d)
+- `fix(production)` HealthMonitor: only populate memory fields when cudaMemGetInfo succeeds; no fabricated zero-memory snapshots (commit 737f622)
+- `fix(neural)` FusedMatmulBiasAct: CUBLAS_CHECK on cublasLtCreate / cublasSetStream / cublasSgemm (commit 6e88988)
+
+All verified via full cuda_impl + nova-tests build/link with nvcc 12.9.
+
+### Issue (evidence-backed, hypothesis — NOT fixed this turn)
+- **FusedMatmulBiasAct::forward() has redundant branches.** In `src/cuda/neural/fusion/fused_matmul_bias_act.cu` (~line 70), both the `use_cuda_fusion && cuda_fusion_available_` branch and the `else` branch call `forward_fallback(...)` identically. The CUDA-fusion toggle therefore has no effect on the forward path; a genuinely different fused path appears to be missing. Requires a real fused-kernel implementation to verify; deferred (not speculative).
+- Latent issue carried forward: `delta_stepping` converges after a single pass (see earlier session entry) — deferring to GPU-capable environment.
