@@ -49,7 +49,9 @@ private:
         std::atomic<size_t> count{0};
     };
 
-    InjectionConfig configs_[5];
+    // mutable so const queries (should_inject) may record an injection decision
+    // in the per-target counter.
+    mutable InjectionConfig configs_[5];
     std::atomic<bool> enabled_{true};
     mutable std::mt19937 rng_{std::random_device{}()};
 };

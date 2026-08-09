@@ -23,11 +23,13 @@ BandwidthResult BandwidthTracker::measure_transfer(MemoryTransferType type,
         if (cudaMallocHost(&h_ptr, size_bytes) != cudaSuccess) {
             return result;
         }
-        if (type == MemoryTransferType::HostToDevice) {
-            if (cudaMalloc(&d_ptr, size_bytes) != cudaSuccess) {
-                CUDA_CHECK(cudaFreeHost(h_ptr));
-                return result;
-            }
+        // HostToDevice and DeviceToHost both need a device-side buffer as
+        // source (DtH) or destination (HtD). Previously only HtD allocated
+        // d_ptr, so measure_device_to_host() copied from a null d_ptr and
+        // failed with cudaErrorInvalidValue.
+        if (cudaMalloc(&d_ptr, size_bytes) != cudaSuccess) {
+            CUDA_CHECK(cudaFreeHost(h_ptr));
+            return result;
         }
     }
 

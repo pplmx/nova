@@ -27,14 +27,14 @@ struct BeamSearchConfig {
 };
 
 struct BeamHypothesis {
-    int64_t sequence_id;
+    int64_t sequence_id = -1;
     std::vector<int> tokens;
-    float score;
-    float log_prob;
-    int length;
-    bool finished;
-    int parent_beam;
-    int64_t kv_source_sequence;
+    float score = 0.0f;
+    float log_prob = 0.0f;
+    int length = 0;
+    bool finished = false;
+    int parent_beam = -1;
+    int64_t kv_source_sequence = -1;
 };
 
 struct BeamSearchTraceEntry {

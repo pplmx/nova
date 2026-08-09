@@ -11,6 +11,31 @@ namespace {
 
 MultiNodeContext* global_instance = nullptr;
 
+// Byte size of one element for the ncclDataType_t enum values used across the
+// codebase. Used by the single-rank/null-comm fallback to copy the right
+// number of bytes (the previous copy used `count` bytes, truncating non-char
+// buffers).
+size_t nccl_type_size(int dtype) {
+    switch (dtype) {
+        case 1:  // ncclInt32
+        case 3:  // ncclFloat32
+        case 7:  // ncclUint32
+            return 4;
+        case 2:  // ncclHalf
+            return 2;
+        case 4:  // ncclFloat64
+        case 5:  // ncclInt64
+        case 6:  // ncclUint64
+            return 8;
+        case 0:  // ncclChar
+        case 8:  // ncclInt8
+        case 9:  // ncclUint8
+            return 1;
+        default:
+            return 4;
+    }
+}
+
 }
 
 MultiNodeContext& MultiNodeContext::get_instance() {
@@ -128,12 +153,17 @@ void HierarchicalAllReduce::all_reduce(const void* send_buf,
                                  static_cast<ncclRedOp_t>(op),
                                  static_cast<ncclComm_t>(global_comm_),
                                  global_stream_));
+        return;
+    }
+    // Null comms (e.g. single-rank or test stubs): all_reduce is the identity,
+    // so fall back to a local copy of the correct element count.
+    if (send_buf != recv_buf && count > 0) {
+        std::memcpy(recv_buf, send_buf, count * nccl_type_size(dtype));
     }
 #else
     if (send_buf != recv_buf && count > 0) {
-        std::memcpy(recv_buf, send_buf, count);
+        std::memcpy(recv_buf, send_buf, count * nccl_type_size(dtype));
     }
-    (void)dtype;
     (void)op;
 #endif
 }

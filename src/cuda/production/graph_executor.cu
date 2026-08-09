@@ -21,6 +21,7 @@ GraphExecutor::~GraphExecutor() {
 GraphExecutor::GraphExecutor(GraphExecutor&& other) noexcept
     : graph_(std::exchange(other.graph_, nullptr)),
       exec_(std::exchange(other.exec_, nullptr)),
+      capture_owner_(std::move(other.capture_owner_)),
       capture_stream_(std::exchange(other.capture_stream_, nullptr)),
       capturing_(std::exchange(other.capturing_, false)),
       instantiated_(std::exchange(other.instantiated_, false)),
@@ -34,6 +35,7 @@ GraphExecutor& GraphExecutor::operator=(GraphExecutor&& other) noexcept {
 
         graph_ = std::exchange(other.graph_, nullptr);
         exec_ = std::exchange(other.exec_, nullptr);
+        capture_owner_ = std::move(other.capture_owner_);
         capture_stream_ = std::exchange(other.capture_stream_, nullptr);
         capturing_ = std::exchange(other.capturing_, false);
         instantiated_ = std::exchange(other.instantiated_, false);
@@ -60,8 +62,12 @@ void GraphExecutor::begin_capture(cuda::stream::Stream& stream) {
 }
 
 void GraphExecutor::begin_capture() {
-    cuda::stream::Stream default_stream;
-    begin_capture(default_stream);
+    // Own the capture stream inside the executor. A stack-local Stream here
+    // would be destroyed when begin_capture() returns, leaving capture_stream_
+    // dangling; end_capture() then passes a destroyed stream handle to
+    // cuStreamEndCapture (use-after-free -> SIGSEGV inside libcuda).
+    capture_owner_.emplace();
+    begin_capture(*capture_owner_);
 }
 
 cudaGraph_t GraphExecutor::end_capture() {
@@ -121,6 +127,9 @@ void GraphExecutor::reset() {
     cleanup_exec();
     cleanup_graph();
 
+    // Release any internally-owned capture stream and its dangling alias.
+    capture_owner_.reset();
+    capture_stream_ = nullptr;
     params_.clear();
     param_nodes_.clear();
     capturing_ = false;

@@ -49,12 +49,14 @@ bool ErrorInjector::should_inject(ErrorTarget target) const {
 
     const auto& config = configs_[static_cast<size_t>(target)];
 
-    if (config.always) {
-        return true;
+    const bool inject = config.always ||
+                        (std::uniform_real_distribution<double>(0.0, 1.0)(rng_) < config.probability);
+    if (inject) {
+        // Record the injection decision; the CountTracking test relies on
+        // should_inject() counting fired injections.
+        configs_[static_cast<size_t>(target)].count.fetch_add(1, std::memory_order_relaxed);
     }
-
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-    return dist(rng_) < config.probability;
+    return inject;
 }
 
 cudaError_t ErrorInjector::get_error(ErrorTarget target) const {
@@ -99,9 +101,13 @@ ScopedErrorInjection::ScopedErrorInjection(ErrorInjector& injector,
                                            ErrorTarget target,
                                            cudaError_t error)
     : injector_(injector), target_(target) {
+    // should_inject() already records the decision in the per-target counter.
     was_injected_ = injector.should_inject(target);
     if (was_injected_) {
-        injector_.increment_count(target_);
+        // Surface the injected error eagerly: a scope that will inject an
+        // error reports it at construction (the documented/tested contract)
+        // instead of requiring the caller to check get_injected_error() later.
+        throw ::cuda::device::CudaException(error, __FILE__, __LINE__);
     }
 }
 

@@ -157,11 +157,19 @@ SparseMatrix<T> RCMReorderer<T>::apply_reordering(const SparseMatrix<T>& A,
 template<typename T>
 int RCMReorderer<T>::find_starting_node(const SparseMatrix<T>& A) {
     const int n = A.rows();
+
+    // SparseMatrix stores arrays on the device; stage a host copy before the
+    // host-side degree scan (A.row_offsets() returns a device pointer).
+    std::vector<T> h_values;
+    std::vector<int> h_row_offsets;
+    std::vector<int> h_col_indices;
+    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
     int min_degree = std::numeric_limits<int>::max();
     int start_node = 0;
 
     for (int i = 0; i < n; ++i) {
-        int degree = A.row_offsets()[i + 1] - A.row_offsets()[i];
+        int degree = h_row_offsets[i + 1] - h_row_offsets[i];
         if (degree > 0 && degree < min_degree) {
             min_degree = degree;
             start_node = i;
@@ -174,6 +182,14 @@ int RCMReorderer<T>::find_starting_node(const SparseMatrix<T>& A) {
 template<typename T>
 std::vector<int> RCMReorderer<T>::bfs_level_order(const SparseMatrix<T>& A, int start_node) {
     const int n = A.rows();
+
+    // Stage a host copy of the CSR arrays (device pointers cannot be read on
+    // the CPU).
+    std::vector<T> h_values;
+    std::vector<int> h_row_offsets;
+    std::vector<int> h_col_indices;
+    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
     std::vector<int> visited(n, 0);
     std::vector<int> level_order;
     level_order.reserve(n);
@@ -190,11 +206,11 @@ std::vector<int> RCMReorderer<T>::bfs_level_order(const SparseMatrix<T>& A, int 
             queue.pop();
             level_order.push_back(node);
 
-            const int row_start = A.row_offsets()[node];
-            const int row_end = A.row_offsets()[node + 1];
+            const int row_start = h_row_offsets[node];
+            const int row_end = h_row_offsets[node + 1];
 
             for (int idx = row_start; idx < row_end; ++idx) {
-                int neighbor = A.col_indices()[idx];
+                int neighbor = h_col_indices[idx];
                 if (!visited[neighbor]) {
                     visited[neighbor] = 1;
                     current_level.push_back(neighbor);
@@ -220,14 +236,22 @@ int RCMReorderer<T>::compute_bandwidth(const SparseMatrix<T>& A) {
 template<typename T>
 int RCMReorderer<T>::compute_matrix_bandwidth(const SparseMatrix<T>& A) {
     const int n = A.rows();
+
+    // Stage a host copy of the CSR arrays (device pointers cannot be read on
+    // the CPU).
+    std::vector<T> h_values;
+    std::vector<int> h_row_offsets;
+    std::vector<int> h_col_indices;
+    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
     int max_bandwidth = 0;
 
     for (int i = 0; i < n; ++i) {
-        const int row_start = A.row_offsets()[i];
-        const int row_end = A.row_offsets()[i + 1];
+        const int row_start = h_row_offsets[i];
+        const int row_end = h_row_offsets[i + 1];
 
         for (int idx = row_start; idx < row_end; ++idx) {
-            int j = A.col_indices()[idx];
+            int j = h_col_indices[idx];
             int bandwidth = std::abs(i - j);
             max_bandwidth = std::max(max_bandwidth, bandwidth);
         }

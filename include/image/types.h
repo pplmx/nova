@@ -23,7 +23,7 @@ public:
     using PixelType = uint8_t;
 
 private:
-    PixelType* d_data_;
+    PixelType* d_data_ = nullptr;
     ImageDimensions dims_;
     struct Deleter {
         void operator()(PixelType* p) const {
@@ -69,7 +69,7 @@ public:
     using PixelType = float;
 
 private:
-    PixelType* d_data_;
+    PixelType* d_data_ = nullptr;
     ImageDimensions dims_;
     struct Deleter {
         void operator()(PixelType* p) const {

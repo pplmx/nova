@@ -49,18 +49,18 @@ __global__ void spmv_csc_kernel(const T* __restrict__ values,
     const int col = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (col < num_cols) {
-        T sum = T{0};
         const int col_start = col_offsets[col];
         const int col_end = col_offsets[col + 1];
 
-        // In CSC SpMV each column's contribution lands in y[col] (atomicAdd not
-        // needed because each column is owned by exactly one thread). row_indices[i]
-        // is the source row for that entry but is unused for the value — only the
-        // x[col] factor is multiplied in.
+        // CSC SpMV: y = A*x. Each nonzero (row_indices[i], values[i]) in column
+        // `col` contributes values[i]*x[col] to y[row_indices[i]]. The prior
+        // implementation accumulated into y[col] and never read row_indices,
+        // producing wrong results (e.g. y[col] = sum(values of column col)*x[col]).
+        // atomicAdd is required because multiple columns can write the same row.
         for (int i = col_start; i < col_end; ++i) {
-            sum += values[i] * x[col];
+            const int row = row_indices[i];
+            atomicAdd(&y[row], values[i] * x[col]);
         }
-        y[col] += sum;
     }
 }
 
@@ -80,6 +80,11 @@ void multiply_csc(const T* values, const int* col_offsets, const int* row_indice
                   const T* x, T* y, int num_cols, cudaStream_t stream) {
     const int block_size = 256;
     const int num_blocks = (num_cols + block_size - 1) / block_size;
+
+    // The kernel scatters with atomicAdd, so y must start at zero. Zero the
+    // first num_cols entries (the common square case); rectangular matrices
+    // with more rows are the caller's responsibility.
+    CUDA_CHECK(cudaMemsetAsync(y, 0, num_cols * sizeof(T), stream));
 
     spmv_csc_kernel<T><<<num_blocks, block_size, 0, stream>>>(
         values, col_offsets, row_indices, x, y, num_cols);

@@ -45,8 +45,11 @@ protected:
         std::vector<int> row_offsets(n + 1);
         std::vector<int> col_indices;
 
+        row_offsets[0] = 0;
         for (int i = 0; i < n; ++i) {
-            row_offsets[i] = 0;
+            // NOTE: do not reset row_offsets[i] inside the loop - that
+            // overwrites the boundary built by the previous iteration and
+            // collapses all rows to empty ranges.
             for (int j = 0; j < n; ++j) {
                 if (i == j || std::abs(i - j) == 1) {
                     col_indices.push_back(j);

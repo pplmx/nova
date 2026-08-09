@@ -37,7 +37,13 @@ __global__ void apply_bias_kernel_row(T* data, const T* bias, int rows, int cols
 
 FusedMatmulBiasAct::FusedMatmulBiasAct(const MatmulBiasActConfig& config)
     : config_(config) {
-    cudaError_t err = cudaGetDevice(nullptr);
+    // Passing a valid out-pointer: cudaGetDevice(nullptr) returns
+    // cudaErrorInvalidValue AND leaves a sticky last-error that breaks the
+    // CUDA error state for every subsequent cudaGetLastError() check in the
+    // process (observed poisoning FusedMatmulBiasAct tests and cascading into
+    // later suites). We only want a driver-availability probe here.
+    int device_id = -1;
+    cudaError_t err = cudaGetDevice(&device_id);
     cuda_fusion_available_ = (err == cudaSuccess);
 
     if (config_.use_cuda_fusion && cuda_fusion_available_) {

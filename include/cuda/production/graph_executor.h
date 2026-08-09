@@ -81,6 +81,10 @@ private:
     cudaGraph_t graph_{nullptr};
     cudaGraphExec_t exec_{nullptr};
 
+    // Owns the stream created by the no-arg begin_capture() so capture_stream_
+    // never dangles. Captures begun with an explicit caller-provided stream do
+    // not populate this.
+    std::optional<cuda::stream::Stream> capture_owner_;
     cudaStream_t capture_stream_{nullptr};
     bool capturing_ = false;
     bool instantiated_ = false;

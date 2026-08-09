@@ -71,7 +71,7 @@ TEST_F(RadixSortTest, AscendingSort) {
     h_keys_ = {5, 2, 8, 1, 9, 3, 7, 4, 6, 0};
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
 
-    radix_sort_keys(d_keys_.data(), d_keys_.size(), Order::Ascending);
+    radix_sort_keys(d_keys_.data(), h_keys_.size(), Order::Ascending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
 
@@ -82,7 +82,7 @@ TEST_F(RadixSortTest, DescendingSort) {
     h_keys_ = {5, 2, 8, 1, 9, 3, 7, 4, 6, 0};
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
 
-    radix_sort_keys(d_keys_.data(), d_keys_.size(), Order::Descending);
+    radix_sort_keys(d_keys_.data(), h_keys_.size(), Order::Descending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
 
@@ -93,7 +93,7 @@ TEST_F(RadixSortTest, AlreadySorted) {
     h_keys_ = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
 
-    radix_sort_keys(d_keys_.data(), d_keys_.size(), Order::Ascending);
+    radix_sort_keys(d_keys_.data(), h_keys_.size(), Order::Ascending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
 
@@ -104,7 +104,7 @@ TEST_F(RadixSortTest, ReverseSorted) {
     h_keys_ = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
 
-    radix_sort_keys(d_keys_.data(), d_keys_.size(), Order::Ascending);
+    radix_sort_keys(d_keys_.data(), h_keys_.size(), Order::Ascending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
 
@@ -126,7 +126,7 @@ TEST_F(RadixSortTest, Duplicates) {
     h_keys_ = {3, 1, 4, 1, 5, 9, 2, 6, 3, 3};
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
 
-    radix_sort_keys(d_keys_.data(), d_keys_.size(), Order::Ascending);
+    radix_sort_keys(d_keys_.data(), h_keys_.size(), Order::Ascending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
 
@@ -137,7 +137,7 @@ TEST_F(RadixSortTest, AllSame) {
     h_keys_ = std::vector<int>(100, 42);
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
 
-    radix_sort_keys(d_keys_.data(), d_keys_.size(), Order::Ascending);
+    radix_sort_keys(d_keys_.data(), h_keys_.size(), Order::Ascending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
 
@@ -180,7 +180,7 @@ TEST_F(KeyValueSortTest, SortPairsAscending) {
     d_keys_.copy_from(h_keys_.data(), h_keys_.size());
     d_values_.copy_from(h_values_.data(), h_values_.size());
 
-    radix_sort_pair(d_keys_.data(), d_values_.data(), d_keys_.size(), Order::Ascending);
+    radix_sort_pair(d_keys_.data(), d_values_.data(), h_keys_.size(), Order::Ascending);
 
     d_keys_.copy_to(h_keys_.data(), h_keys_.size());
     d_values_.copy_to(h_values_.data(), h_values_.size());

@@ -75,11 +75,18 @@ TEST_F(GraphExecutorTest, CaptureAndLaunch) {
     cuda::production::GraphExecutor executor;
     cuda::stream::Stream stream;
 
-    executor.begin_capture(stream);
-
+    // Memory allocation is NOT capturable: cudaMalloc inside cudaStreamBeginCapture
+    // records "operation not permitted during stream capture" and corrupts the
+    // capture, making end_capture() fail. Allocate before capture, free after.
     int* d_data = nullptr;
     cudaMalloc(&d_data, sizeof(int));
-    cudaMemset(d_data, 0, sizeof(int));
+
+    executor.begin_capture(stream);
+
+    // Use an async (capturable) op on the capture stream. Blocking cudaMemset
+    // issues to the default stream and is neither captured nor allowed to
+    // synchronize during a thread-local capture of another stream.
+    cudaMemsetAsync(d_data, 0, sizeof(int), stream.get());
 
     executor.end_capture();
     executor.instantiate();
@@ -96,15 +103,19 @@ TEST_F(GraphExecutorTest, ScopedCaptureRAII) {
     cuda::production::GraphExecutor executor;
     cuda::stream::Stream stream;
 
+    // Same as CaptureAndLaunch: cudaMalloc/cudaFree are not permitted inside an
+    // active graph capture, so keep allocation outside the captured work.
+    int* d_data = nullptr;
+    cudaMalloc(&d_data, sizeof(int));
+
     {
         cuda::production::ScopedCapture capture(executor, stream.get());
-        int* d_data = nullptr;
-        cudaMalloc(&d_data, sizeof(int));
-        cudaMemset(d_data, 0, sizeof(int));
-        cudaFree(d_data);
+        // Capturable async op on the capture stream (see CaptureAndLaunch).
+        cudaMemsetAsync(d_data, 0, sizeof(int), stream.get());
     }
 
     EXPECT_TRUE(executor.is_instantiated());
+    cudaFree(d_data);
 }
 
 TEST_F(GraphExecutorTest, UpdateParam) {
@@ -214,8 +225,11 @@ TEST_F(MemoryNodeTest, TotalAllocatedTracking) {
     cuda::production::GraphMemoryManager manager;
 
     executor.begin_capture();
-    manager.add_device_allocation(executor, executor.end_capture(), 1024);
-    manager.add_device_allocation(executor, executor.end_capture(), 2048);
+    // End the capture once and add both allocations to the same graph. Calling
+    // end_capture() a second time throws (the executor is no longer capturing).
+    cudaGraph_t graph = executor.end_capture();
+    manager.add_device_allocation(executor, graph, 1024);
+    manager.add_device_allocation(executor, graph, 2048);
 
     EXPECT_GE(manager.total_allocated(), 1024u + 2048u);
 

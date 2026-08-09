@@ -53,9 +53,16 @@ bool MemorySafetyValidator::check_uninitialized(const void* ptr, size_t size) {
         return false;
     }
 
-    const uint8_t* bytes = static_cast<const uint8_t*>(ptr);
+    // `ptr` is GPU memory: scanning it directly from the CPU segfaults. Stage a
+    // host copy and inspect that. If the memory cannot be read back, treat the
+    // region as unsafe rather than crashing.
+    std::vector<uint8_t> host_buf(size);
+    if (cudaMemcpy(host_buf.data(), ptr, size, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        error_count_++;
+        return false;
+    }
     for (size_t i = 0; i < size; ++i) {
-        if (bytes[i] == POISON_BYTE) {
+        if (host_buf[i] == POISON_BYTE) {
             error_count_++;
             return false;
         }

@@ -22,6 +22,7 @@
 
 #include "cuda/sparse/matrix.hpp"
 #include "cuda/memory/buffer.h"
+#include "cuda/device/error.h"
 #include <memory>
 #include <stdexcept>
 #include <cmath>
@@ -80,14 +81,22 @@ public:
         diagonal_.resize(n);
         std::vector<T> h_diagonal(n);
 
+        // SparseMatrix stores its arrays in device memory; the accessors return
+        // device pointers, so reading them on the CPU segfaults. Stage host
+        // copies first (same pattern as the ILU preconditioner).
+        std::vector<T> h_values;
+        std::vector<int> h_row_offsets;
+        std::vector<int> h_col_indices;
+        A.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
         for (int i = 0; i < n; ++i) {
-            const int row_start = A.row_offsets()[i];
-            const int row_end = A.row_offsets()[i + 1];
+            const int row_start = h_row_offsets[i];
+            const int row_end = h_row_offsets[i + 1];
             T diag_val = T{0};
 
             for (int idx = row_start; idx < row_end; ++idx) {
-                if (A.col_indices()[idx] == i) {
-                    diag_val = A.values()[idx];
+                if (h_col_indices[idx] == i) {
+                    diag_val = h_values[idx];
                     break;
                 }
             }
@@ -106,11 +115,14 @@ public:
 
     void apply(const T* in, T* out) override {
         const int n = diagonal_.size();
-        std::vector<T> h_in(n), h_out(n);
-        std::copy(in, in + n, h_in.begin());
+        // in/out are HOST buffers, but diagonal_ lives on the device; stage a
+        // host copy before the CPU math (reading diagonal_.data() directly
+        // dereferences device memory).
+        std::vector<T> h_diag(n), h_out(n);
+        diagonal_.copy_to(h_diag.data(), n);
 
         for (int i = 0; i < n; ++i) {
-            h_out[i] = omega_ * diagonal_.data()[i] * h_in[i];
+            h_out[i] = omega_ * h_diag[i] * in[i];
         }
 
         std::copy(h_out.begin(), h_out.end(), out);
@@ -120,11 +132,12 @@ public:
         const int n = diagonal_.size();
         out.resize(n);
 
-        std::vector<T> h_in(n), h_out(n);
+        std::vector<T> h_in(n), h_diag(n), h_out(n);
         in.copy_to(h_in.data(), n);
+        diagonal_.copy_to(h_diag.data(), n);
 
         for (int i = 0; i < n; ++i) {
-            h_out[i] = omega_ * diagonal_.data()[i] * h_in[i];
+            h_out[i] = omega_ * h_diag[i] * h_in[i];
         }
 
         out.copy_from(h_out.data(), n);

@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <cuda/neural/transformer/attention.h>
+#include <cuda/memory/buffer.h>
+#include <cuda/memory/buffer-inl.h>
 
 namespace cuda::neural::transformer::test {
 
@@ -52,8 +54,12 @@ TEST_F(MultiHeadAttentionTest, ForwardSelfAttention) {
     int seq_len = 4;
     int hidden_dim = 64;
 
-    std::vector<float> input(batch_size * seq_len * hidden_dim, 0.1f);
-    std::vector<float> output(batch_size * seq_len * hidden_dim, 0.0f);
+    // forward() operates on device pointers (device-to-device copies), so the
+    // test must pass GPU buffers, not host std::vector storage.
+    cuda::memory::Buffer<float> input(batch_size * seq_len * hidden_dim);
+    cuda::memory::Buffer<float> output(batch_size * seq_len * hidden_dim);
+    input.fill(0.1f);
+    output.fill(0.0f);
 
     attn.forward_self_attention(
         input.data(), output.data(),
@@ -126,7 +132,8 @@ TEST_F(PositionalEncodingTest, GetEncoding) {
 
     PositionalEncoding pos_enc(config);
 
-    std::vector<float> encoding(16 * 32);
+    // get_encoding copies device-to-device into `output`, so it must be a GPU buffer.
+    cuda::memory::Buffer<float> encoding(16 * 32);
     pos_enc.get_encoding(encoding.data(), 16, stream_);
 
     cudaStreamSynchronize(stream_);
@@ -144,8 +151,11 @@ TEST_F(PositionalEncodingTest, Forward) {
     int batch_size = 2;
     int seq_len = 8;
 
-    std::vector<float> input(batch_size * seq_len * 16, 0.5f);
-    std::vector<float> output(batch_size * seq_len * 16, 0.0f);
+    // forward() copies device-to-device, so input/output must be GPU buffers.
+    cuda::memory::Buffer<float> input(batch_size * seq_len * 16);
+    cuda::memory::Buffer<float> output(batch_size * seq_len * 16);
+    input.fill(0.5f);
+    output.fill(0.0f);
 
     pos_enc.forward(input.data(), output.data(), batch_size, seq_len, stream_);
 

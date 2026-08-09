@@ -10,13 +10,17 @@
 #include <stdexcept>
 #include <vector>
 
+#include "cuda/device/error.h"
+
 namespace cuda::memory {
 namespace detail {
     inline void cuda_check_impl(cudaError_t err, const char* file, int line) {
         if (err != cudaSuccess) {
-            throw std::runtime_error(
-                std::string("CUDA error at ") + file + ":" + std::to_string(line) +
-                " - " + cudaGetErrorString(err));
+            // Align with the canonical CUDA error contract: callers and tests
+            // expect cuda::device::CudaException (which derives from
+            // std::runtime_error, so existing catch(std::runtime_error) sites
+            // remain source-compatible) and can inspect .error().
+            throw ::cuda::device::CudaException(err, file, line);
         }
     }
 }
@@ -24,9 +28,8 @@ namespace detail {
 
 // Deliberately named NOVA_CUDA_MEM_CHECK (not CUDA_CHECK) to avoid colliding
 // with the canonical CUDA_CHECK in cuda/device/error.h (which throws
-// CudaException). This module operates at the raw cuda_memory layer and throws
-// std::runtime_error via its own checker; a distinct name keeps the two
-// contracts independent of include order and silences redefinition warnings.
+// CudaException) on the same exception contract, while keeping the macro name
+// independent of include order and silencing redefinition warnings.
 #define NOVA_CUDA_MEM_CHECK(call) cuda::memory::detail::cuda_check_impl(call, __FILE__, __LINE__)
 
 namespace cuda::memory {

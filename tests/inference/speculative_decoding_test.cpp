@@ -168,14 +168,13 @@ TEST_F(SpeculativeDecodingTest, AcceptanceRatioEpsilonGuard) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = 0.0f;
-        target_data[i] = 0.0f;
-    }
-    draft_data[0] = 0.0f;
-    target_data[0] = 0.5f;
+    // Stage on the host and upload: the previous code wrote to
+    // Buffer::data() (device memory) directly from the CPU, which segfaults.
+    std::vector<float> h_draft(vocab_size, 0.0f);
+    std::vector<float> h_target(vocab_size, 0.0f);
+    h_target[0] = 0.5f;
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {0, 1};
 
@@ -197,14 +196,12 @@ TEST_F(SpeculativeDecodingTest, AcceptanceRatioFullAccept) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = -100.0f;
-        target_data[i] = -100.0f;
-    }
-    draft_data[5] = 1.0f;
-    target_data[5] = 1.0f;
+    std::vector<float> h_draft(vocab_size, -100.0f);
+    std::vector<float> h_target(vocab_size, -100.0f);
+    h_draft[5] = 1.0f;
+    h_target[5] = 1.0f;
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {5};
 
@@ -227,14 +224,13 @@ TEST_F(SpeculativeDecodingTest, AcceptanceRatioFullReject) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = -100.0f;
-        target_data[i] = -100.0f;
-    }
-    draft_data[10] = 1.0f;
-    target_data[10] = 0.0f;
+    std::vector<float> h_draft(vocab_size, -100.0f);
+    std::vector<float> h_target(vocab_size, -100.0f);
+    h_draft[10] = 1.0f;
+    h_target[11] = 1.0f;  // target probability peaks at a different token, so
+                          // token 10 must be rejected (acceptance ratio ~0).
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {10};
 
@@ -250,16 +246,17 @@ TEST_F(SpeculativeDecodingTest, LogProbabilityTracking) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = -10.0f;
-        target_data[i] = -10.0f;
-    }
-    draft_data[7] = 0.0f;
-    target_data[7] = 0.0f;
-    draft_data[8] = 0.0f;
-    target_data[8] = -1.0f;
+    std::vector<float> h_draft(vocab_size, -10.0f);
+    std::vector<float> h_target(vocab_size, -10.0f);
+    h_draft[7] = 0.0f;
+    h_target[7] = 0.0f;
+    h_draft[8] = 0.0f;
+    // target[8] must match draft so both tokens are accepted under the default
+    // 0.8 acceptance threshold (target=-1 here gives a ~0.54 ratio -> reject,
+    // contradicting the num_accepted==2 assertion).
+    h_target[8] = 0.0f;
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {7, 8};
 
@@ -282,16 +279,14 @@ TEST_F(SpeculativeDecodingTest, LogProbabilityTrackingMixed) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = -10.0f;
-        target_data[i] = -10.0f;
-    }
-    draft_data[1] = 0.0f;
-    target_data[1] = 0.0f;
-    draft_data[2] = 0.0f;
-    target_data[2] = -100.0f;
+    std::vector<float> h_draft(vocab_size, -10.0f);
+    std::vector<float> h_target(vocab_size, -10.0f);
+    h_draft[1] = 0.0f;
+    h_target[1] = 0.0f;
+    h_draft[2] = 0.0f;
+    h_target[2] = -100.0f;
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {1, 2};
 
@@ -307,14 +302,12 @@ TEST_F(SpeculativeDecodingTest, KLDivergenceComputation) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = -10.0f;
-        target_data[i] = -10.0f;
-    }
-    draft_data[3] = 0.0f;
-    target_data[3] = 0.0f;
+    std::vector<float> h_draft(vocab_size, -10.0f);
+    std::vector<float> h_target(vocab_size, -10.0f);
+    h_draft[3] = 0.0f;
+    h_target[3] = 0.0f;
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {3};
 
@@ -383,10 +376,13 @@ TEST_F(SpeculativeDecodingTest, TemperatureZeroSampling) {
     stream::Stream stream;
 
     auto forward_fn = [](memory::Buffer<float>& logits, const std::vector<int64_t>&, bool, const stream::Stream&) {
-        auto* data = static_cast<float*>(logits.data());
+        // Stage on the host and upload: logits is a device buffer, so writing
+        // logits.data() from the CPU segfaults.
+        std::vector<float> h(128);
         for (int i = 0; i < 128; ++i) {
-            data[i] = static_cast<float>(i);
+            h[i] = static_cast<float>(i);
         }
+        logits.copy_from(h.data(), 128);
     };
 
     auto draft_tokens = spec_runner->generate_draft_tokens(embeddings, 32, stream, forward_fn);
@@ -409,10 +405,8 @@ TEST_F(SpeculativeDecodingTest, TemperaturePositiveSampling) {
     stream::Stream stream;
 
     auto forward_fn = [](memory::Buffer<float>& logits, const std::vector<int64_t>&, bool, const stream::Stream&) {
-        auto* data = static_cast<float*>(logits.data());
-        for (int i = 0; i < 128; ++i) {
-            data[i] = 1.0f;
-        }
+        std::vector<float> h(128, 1.0f);
+        logits.copy_from(h.data(), 128);
     };
 
     auto draft_tokens = spec_runner->generate_draft_tokens(embeddings, 32, stream, forward_fn);
@@ -428,12 +422,11 @@ TEST_F(SpeculativeDecodingTest, VerifyOutOfBoundsToken) {
     memory::Buffer<float> draft_logits(vocab_size);
     memory::Buffer<float> target_logits(vocab_size);
 
-    auto* draft_data = static_cast<float*>(draft_logits.data());
-    auto* target_data = static_cast<float*>(target_logits.data());
-    for (int i = 0; i < vocab_size; ++i) {
-        draft_data[i] = 0.0f;
-        target_data[i] = 0.0f;
-    }
+    // Stage on the host and upload (device writes from the CPU segfault).
+    std::vector<float> h_draft(vocab_size, 0.0f);
+    std::vector<float> h_target(vocab_size, 0.0f);
+    draft_logits.copy_from(h_draft.data(), vocab_size);
+    target_logits.copy_from(h_target.data(), vocab_size);
 
     std::vector<int> draft_tokens = {999};
 

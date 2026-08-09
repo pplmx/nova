@@ -54,7 +54,10 @@ TEST_F(SSSPTest, BellmanFordSimple) {
 
     EXPECT_EQ(result[0], 0.0f);
     EXPECT_EQ(result[1], 1.0f);
-    EXPECT_LE(result[2], 3.0f);
+    // Vertex 2 is only reachable via edge 0->2 with weight 4 (the 2 self-loop
+    // cannot lower it), so the true shortest distance is 4, not <= 3.
+    EXPECT_EQ(result[2], 4.0f);
+    EXPECT_EQ(result[3], 6.0f);
 }
 
 TEST_F(SSSPTest, DeltaSteppingSimple) {
@@ -79,7 +82,8 @@ TEST_F(SSSPTest, DeltaSteppingSimple) {
 
     EXPECT_EQ(result[0], 0.0f);
     EXPECT_EQ(result[1], 1.0f);
-    EXPECT_EQ(result[2], 1.0f);
+    // Path is 0 -> 1 -> 2 (each weight 1), so d[2] = 2, not 1.
+    EXPECT_EQ(result[2], 2.0f);
 }
 
 TEST_F(SSSPTest, DeltaSteppingLongerPaths) {
@@ -101,7 +105,9 @@ TEST_F(SSSPTest, DeltaSteppingLongerPaths) {
     cudaMemcpy(result.data(), distances.data(), num_vertices * sizeof(float), cudaMemcpyDeviceToHost);
 
     EXPECT_EQ(result[0], 0.0f);
-    EXPECT_EQ(result[1], 5.0f);
+    // Vertex 1 is reached by the single edge 0->1 (weight 1); the asserted
+    // value of 5 contradicted the graph data.
+    EXPECT_EQ(result[1], 1.0f);
 }
 
 TEST_F(SSSPTest, ComputeDistances) {

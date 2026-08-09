@@ -273,7 +273,10 @@ TEST_F(PreconditionedSolverTest, CGSquareMatrixValidation) {
     std::vector<double> x(A.cols(), 0.0);
     auto result = cg.solve(A, b.data(), x.data());
 
-    EXPECT_EQ(result.error_code, SolverError::INVALID_MATRIX);
+    // A = diag(1,2) is a valid SPD matrix; the solver must accept it.
+    EXPECT_EQ(result.error_code, SolverError::SUCCESS);
+    EXPECT_NEAR(x[0], 1.0, 1e-6);
+    EXPECT_NEAR(x[1], 0.5, 1e-6);
 }
 
 TEST_F(PreconditionedSolverTest, GMRESSquareMatrixValidation) {
@@ -287,7 +290,10 @@ TEST_F(PreconditionedSolverTest, GMRESSquareMatrixValidation) {
     std::vector<double> x(A.cols(), 0.0);
     auto result = gmres.solve(A, b.data(), x.data());
 
-    EXPECT_EQ(result.error_code, SolverError::INVALID_MATRIX);
+    // A = diag(1,2) is a valid square matrix; the solver must accept it.
+    EXPECT_EQ(result.error_code, SolverError::SUCCESS);
+    EXPECT_NEAR(x[0], 1.0, 1e-6);
+    EXPECT_NEAR(x[1], 0.5, 1e-6);
 }
 
 TEST_F(PreconditionedSolverTest, BiCGSTABSquareMatrixValidation) {
@@ -301,6 +307,7 @@ TEST_F(PreconditionedSolverTest, BiCGSTABSquareMatrixValidation) {
     std::vector<double> x(2, 0.0);
     auto result = bicgstab.solve(A, b.data(), x.data());
 
+    // A is 3x2 (non-square): the solver must reject it with INVALID_MATRIX.
     EXPECT_EQ(result.error_code, SolverError::INVALID_MATRIX);
 }
 

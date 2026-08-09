@@ -55,7 +55,10 @@ namespace cuda::stream {
             if (err == cudaErrorNotReady) {
                 return false;
             }
-            CUDA_CHECK(err);
+            // Don't pass `err` through the CUDA_CHECK macro: it expands to
+            // `cudaError_t err = err;`, shadowing this variable and
+            // self-initializing from an uninitialized value (UB). Throw directly.
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
             return false;
         }
 

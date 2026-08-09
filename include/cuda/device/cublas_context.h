@@ -3,19 +3,16 @@
 #include <cublas_v2.h>
 #include <stdexcept>
 
+#include "cuda/device/error.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 
 namespace cuda::device {
 
-#define CUBLAS_CHECK(call) \
-    do { \
-        cublasStatus_t status = call; \
-        if (status != CUBLAS_STATUS_SUCCESS) { \
-            throw std::runtime_error("CUBLAS error"); \
-        } \
-    } while (0)
-
+    // Uses the canonical (guarded) CUBLAS_CHECK from cuda/device/error.h,
+    // which throws cuda::device::CublasException (an std::runtime_error
+    // subtype), instead of a local redefinition whose winner depended on
+    // include order.
     class CublasContext {
     public:
         CublasContext() { CUBLAS_CHECK(cublasCreate(&handle_)); }

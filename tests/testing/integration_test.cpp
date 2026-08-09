@@ -10,7 +10,7 @@
 
 namespace cuda::testing::test {
 
-class IntegrationTest : public ::testing::Test {
+class ProfilingIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {}
     void TearDown() override {
@@ -18,7 +18,7 @@ protected:
     }
 };
 
-TEST_F(IntegrationTest, E2ERobustnessWithProfiling) {
+TEST_F(ProfilingIntegrationTest, E2ERobustnessWithProfiling) {
     auto result = run_e2e_robustness_with_profiling();
 
     EXPECT_TRUE(result.robust) << "E2E robustness test failed for: "
@@ -26,14 +26,14 @@ TEST_F(IntegrationTest, E2ERobustnessWithProfiling) {
     EXPECT_GE(result.tests_passed, 0u);
 }
 
-TEST_F(IntegrationTest, MemorySafetyValidation) {
+TEST_F(ProfilingIntegrationTest, MemorySafetyValidation) {
     auto result = validate_all_algorithm_memory_safety();
 
     EXPECT_TRUE(result.all_safe);
     EXPECT_GE(result.algorithms_validated, 0u);
 }
 
-TEST_F(IntegrationTest, TimelineExportWithMemoryTest) {
+TEST_F(ProfilingIntegrationTest, TimelineExportWithMemoryTest) {
     NOVA_TIMELINE_SCOPED("integration_test", "test");
 
     void* ptr = nullptr;
@@ -49,7 +49,7 @@ TEST_F(IntegrationTest, TimelineExportWithMemoryTest) {
     std::remove("/tmp/integration_trace.json");
 }
 
-TEST_F(IntegrationTest, BoundaryTestsWithBandwidth) {
+TEST_F(ProfilingIntegrationTest, BoundaryTestsWithBandwidth) {
     auto bw_result = cuda::observability::BandwidthTracker().measure_device_to_device(1024);
 
     EXPECT_GT(bw_result.bandwidth_gbps, 0.0);
@@ -58,7 +58,7 @@ TEST_F(IntegrationTest, BoundaryTestsWithBandwidth) {
     EXPECT_TRUE(is_memory_aligned(reinterpret_cast<const void*>(256)));
 }
 
-TEST_F(IntegrationTest, FPDeterminismWithIntegration) {
+TEST_F(ProfilingIntegrationTest, FPDeterminismWithIntegration) {
     FPDeterminismControl::instance().set_level(DeterminismLevel::RunToRun);
 
     EXPECT_EQ(FPDeterminismControl::instance().level(),
@@ -71,7 +71,7 @@ TEST_F(IntegrationTest, FPDeterminismWithIntegration) {
     FPDeterminismControl::instance().reset();
 }
 
-TEST_F(IntegrationTest, IntegrationTestRunner) {
+TEST_F(ProfilingIntegrationTest, IntegrationTestRunner) {
     IntegrationTestRunner runner;
 
     int counter = 0;
@@ -102,7 +102,7 @@ TEST_F(IntegrationTest, IntegrationTestRunner) {
     EXPECT_EQ(passed, 2);
 }
 
-TEST_F(IntegrationTest, MemorySafetyWithTimeline) {
+TEST_F(ProfilingIntegrationTest, MemorySafetyWithTimeline) {
     MemorySafetyValidator::instance().enable();
 
     void* ptr = nullptr;

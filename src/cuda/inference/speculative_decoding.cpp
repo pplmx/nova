@@ -171,10 +171,14 @@ std::vector<int> SpeculativeDecodingRunner::generate_draft_tokens(
         std::vector<int64_t> seq_ids = {seq_id};
         forward_fn(logits, seq_ids, false, stream);
 
-        const float* logits_data = static_cast<const float*>(logits.data());
+        // sample_from_logits is a host function; the draft logits live on the
+        // device, so stage a host copy before sampling (reading Buffer::data()
+        // on the CPU would dereference device memory and segfault).
+        std::vector<float> h_logits(vocab_size);
+        logits.copy_to(h_logits.data(), vocab_size);
         uint64_t seed = static_cast<uint64_t>(step) * 1000 + rng();
 
-        int token = sample_from_logits(logits_data, vocab_size, temperature, seed);
+        int token = sample_from_logits(h_logits.data(), vocab_size, temperature, seed);
         draft_tokens.push_back(token);
 
         block_manager_->append_tokens(seq_id, 1);
@@ -199,23 +203,39 @@ VerificationResult SpeculativeDecodingRunner::verify_draft_tokens(
     result.num_accepted = 0;
     result.kl_divergence = 0.0f;
 
-    const float* draft_data = static_cast<const float*>(draft_logits.data());
-    const float* target_data = static_cast<const float*>(target_logits.data());
-
     const int vocab_size = config_.vocab_size > 0 ? config_.vocab_size : 32000;
+
+    // Use the actual logits buffer size: callers may pass buffers smaller than
+    // config_.vocab_size (which defaults to a large value), and reading or
+    // copying beyond the buffer is out-of-bounds.
+    const size_t n = std::min(static_cast<size_t>(vocab_size),
+                              std::min(draft_logits.size(), target_logits.size()));
+
+    // The logits live on the device; stage host copies before the softmax
+    // math below (reading Buffer::data() from the CPU segfaults).
+    std::vector<float> h_draft(n);
+    std::vector<float> h_target(n);
+    draft_logits.copy_to(h_draft.data(), n);
+    target_logits.copy_to(h_target.data(), n);
+    const float* draft_data = h_draft.data();
+    const float* target_data = h_target.data();
+
+    if (n == 0) {
+        return result;
+    }
 
     float max_draft = draft_data[0];
     float max_target = target_data[0];
-    for (int i = 1; i < vocab_size; ++i) {
+    for (size_t i = 1; i < n; ++i) {
         max_draft = std::max(max_draft, draft_data[i]);
         max_target = std::max(max_target, target_data[i]);
     }
 
     float draft_sum = 0.0f;
     float target_sum = 0.0f;
-    std::vector<float> draft_exp(vocab_size);
-    std::vector<float> target_exp(vocab_size);
-    for (int i = 0; i < vocab_size; ++i) {
+    std::vector<float> draft_exp(n);
+    std::vector<float> target_exp(n);
+    for (size_t i = 0; i < n; ++i) {
         draft_exp[i] = std::exp(draft_data[i] - max_draft);
         target_exp[i] = std::exp(target_data[i] - max_target);
         draft_sum += draft_exp[i];
@@ -224,7 +244,7 @@ VerificationResult SpeculativeDecodingRunner::verify_draft_tokens(
 
     for (size_t i = 0; i < draft_tokens.size(); ++i) {
         int token_id = draft_tokens[i];
-        if (token_id < 0 || token_id >= vocab_size) {
+        if (token_id < 0 || static_cast<size_t>(token_id) >= n) {
             continue;
         }
 
