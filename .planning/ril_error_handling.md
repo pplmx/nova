@@ -96,7 +96,9 @@ Note: destructor/teardown paths (e.g. `cudaEventDestroy` in `kernel_stats.cpp`, 
 ### Change records
 - `fix(neural)` tensor_parallel_matmul: CUDA_CHECK on stream create/sync/destroy + cudaGetDeviceCount (commit 241bcbd)
 - `fix(observability)` occupancy_analyzer: fixed uninitialized `active_blocks` read in `recommend()`; only compute expected_occupancy when the occupancy query succeeds (commit b96b2ed)
-- `fix(neural)` tensor_parallel_profile: CUDA_CHECK on cudaGetDeviceCount/cudaSetDevice/cudaMemGetInfo (5 functions) (commit f4291cb)
+- `fix(neural)` tensor_parallel_profile: device queries wrapped; then corrected (326ec13) to graceful fallback (no-throw) after it broke the GPU-less sizing-contract tests.
+  - Original CUDA_CHECK approach (f4291cb) threw in GPU-less builds and broke TensorParallelProfile tests; corrected (326ec13) because `profile()` is a pure sizing computation whose tests run without a live driver.
+  - Final behavior: device_count/free_mem/total_mem are deterministic (no uninitialized reads); on device-query failure `profile()` assumes the requested degree, `recommend_tp_degree`/`max_tp_for_budget` return 1, memory queries return 0.
 - `fix(pipeline)` pipeline_comm: CUDA_CHECK on cudaGetDeviceCount in ctor (commit 4ab02f3)
 - `fix(memory_error)` memory_error_handler: skip device on failed cudaSetDevice/cudaMemGetInfo in health monitor (commit 61db97a)
 - `fix(algo)` sssp.delta_stepping: CUDA_CHECK on cudaStreamSynchronize (commit 4303fb0)
