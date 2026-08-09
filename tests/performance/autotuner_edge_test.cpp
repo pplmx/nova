@@ -18,6 +18,7 @@ TEST_F(AutotunerEdgeCaseTest, EmptyBlockSizes) {
     AutotuneConfig config;
     config.block_sizes = {};
     config.grid_sizes = {1, 2, 4};
+    config.config_path = "/tmp/autotuner_edge.json";
 
     Autotuner tuner(config);
     tuner.set_block_sizes({});
@@ -30,6 +31,7 @@ TEST_F(AutotunerEdgeCaseTest, EmptyGridSizes) {
     AutotuneConfig config;
     config.block_sizes = {64, 128, 256};
     config.grid_sizes = {};
+    config.config_path = "/tmp/autotuner_edge.json";
 
     Autotuner tuner(config);
     tuner.set_grid_sizes({});
@@ -42,6 +44,7 @@ TEST_F(AutotunerEdgeCaseTest, ZeroWarmupIterations) {
     AutotuneConfig config;
     config.warmup_iterations = 0;
     config.measure_iterations = 1;
+    config.config_path = "/tmp/autotuner_edge.json";
 
     Autotuner tuner(config);
     tuner.set_warmup_iterations(0);
@@ -54,6 +57,7 @@ TEST_F(AutotunerEdgeCaseTest, ZeroMeasureIterations) {
     AutotuneConfig config;
     config.warmup_iterations = 1;
     config.measure_iterations = 0;
+    config.config_path = "/tmp/autotuner_edge.json";
 
     Autotuner tuner(config);
     tuner.set_measure_iterations(0);
@@ -77,10 +81,14 @@ TEST_F(AutotunerEdgeCaseTest, MultipleDeviceIDs) {
     AutotuneConfig config0;
     config0.device_id = 0;
     config0.kernel_name = "test_kernel";
+    // Use a temp path so the destructor (which persists the cache) never
+    // truncates/overwrites the tracked autotune_config.json in the repo.
+    config0.config_path = "/tmp/autotuner_multidevice.json";
 
     AutotuneConfig config1;
     config1.device_id = 1;
     config1.kernel_name = "test_kernel";
+    config1.config_path = "/tmp/autotuner_multidevice.json";
 
     Autotuner tuner0(config0);
     Autotuner tuner1(config1);

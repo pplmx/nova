@@ -29,6 +29,7 @@ TEST_F(AutotunerTest, BasicAutotuning) {
     config.grid_sizes = {1, 2, 4};
     config.warmup_iterations = 2;
     config.measure_iterations = 5;
+    config.config_path = "/tmp/autotuner_basic.json";
 
     Autotuner tuner(config);
 
@@ -55,6 +56,7 @@ TEST_F(AutotunerTest, BasicAutotuning) {
 
 TEST_F(AutotunerTest, ConfigSetters) {
     AutotuneConfig config;
+    config.config_path = "/tmp/autotuner_configsetters.json";
     Autotuner tuner(config);
 
     tuner.set_block_sizes({128, 256, 512});
@@ -65,7 +67,7 @@ TEST_F(AutotunerTest, ConfigSetters) {
 
 TEST_F(AutotunerTest, CacheOperations) {
     AutotuneConfig config;
-    config.config_path = "test_autotune_cache.json";
+    config.config_path = "/tmp/autotuner_cache.json";
     Autotuner tuner(config);
 
     AutotuneResult expected;
