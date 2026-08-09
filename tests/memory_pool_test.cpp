@@ -5,6 +5,7 @@
 #include "cuda/memory/unique_ptr.h"
 #include <vector>
 #include <numeric>
+#include "cuda/device/error.h"
 
 namespace {
 

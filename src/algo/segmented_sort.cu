@@ -7,6 +7,7 @@
 #include <thrust/functional.h>
 
 #include "cuda/memory/unique_ptr.h"
+#include "cuda/device/error.h"
 
 namespace cuda::algo::segmented {
 

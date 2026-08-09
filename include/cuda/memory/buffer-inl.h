@@ -22,7 +22,12 @@ namespace detail {
 }
 }
 
-#define CUDA_CHECK(call) cuda::memory::detail::cuda_check_impl(call, __FILE__, __LINE__)
+// Deliberately named NOVA_CUDA_MEM_CHECK (not CUDA_CHECK) to avoid colliding
+// with the canonical CUDA_CHECK in cuda/device/error.h (which throws
+// CudaException). This module operates at the raw cuda_memory layer and throws
+// std::runtime_error via its own checker; a distinct name keeps the two
+// contracts independent of include order and silences redefinition warnings.
+#define NOVA_CUDA_MEM_CHECK(call) cuda::memory::detail::cuda_check_impl(call, __FILE__, __LINE__)
 
 namespace cuda::memory {
 
@@ -32,7 +37,7 @@ Buffer<T>::Buffer() = default;
 template <typename T>
 Buffer<T>::Buffer(size_t count)
     : size_(count) {
-    CUDA_CHECK(cudaMalloc(&data_, count * sizeof(T)));
+    NOVA_CUDA_MEM_CHECK(cudaMalloc(&data_, count * sizeof(T)));
 }
 
 template <typename T>
@@ -66,12 +71,12 @@ Buffer<T>& Buffer<T>::operator=(Buffer<T>&& other) noexcept {
 
 template <typename T>
 void Buffer<T>::copy_from(const T* host_data, size_t count) {
-    CUDA_CHECK(cudaMemcpy(data_, host_data, count * sizeof(T), cudaMemcpyHostToDevice));
+    NOVA_CUDA_MEM_CHECK(cudaMemcpy(data_, host_data, count * sizeof(T), cudaMemcpyHostToDevice));
 }
 
 template <typename T>
 void Buffer<T>::copy_to(T* host_data, size_t count) const {
-    CUDA_CHECK(cudaMemcpy(host_data, data_, count * sizeof(T), cudaMemcpyDeviceToHost));
+    NOVA_CUDA_MEM_CHECK(cudaMemcpy(host_data, data_, count * sizeof(T), cudaMemcpyDeviceToHost));
 }
 
 template <typename T>
@@ -96,7 +101,7 @@ void Buffer<T>::resize(size_t new_size) {
     }
     size_ = new_size;
     if (size_ > 0) {
-        CUDA_CHECK(cudaMalloc(&data_, size_ * sizeof(T)));
+        NOVA_CUDA_MEM_CHECK(cudaMalloc(&data_, size_ * sizeof(T)));
     } else {
         data_ = nullptr;
     }
@@ -107,7 +112,7 @@ class Buffer<void> {
 public:
     explicit Buffer(size_t size)
         : size_(size) {
-        CUDA_CHECK(cudaMalloc(&data_, size_));
+        NOVA_CUDA_MEM_CHECK(cudaMalloc(&data_, size_));
     }
 
     Buffer()
@@ -155,8 +160,8 @@ public:
         return ptr;
     }
 
-    void copy_from(const void* host_data, size_t bytes) { CUDA_CHECK(cudaMemcpy(data_, host_data, bytes, cudaMemcpyHostToDevice)); }
-    void copy_to(void* host_data, size_t bytes) const { CUDA_CHECK(cudaMemcpy(host_data, data_, bytes, cudaMemcpyDeviceToHost)); }
+    void copy_from(const void* host_data, size_t bytes) { NOVA_CUDA_MEM_CHECK(cudaMemcpy(data_, host_data, bytes, cudaMemcpyHostToDevice)); }
+    void copy_to(void* host_data, size_t bytes) const { NOVA_CUDA_MEM_CHECK(cudaMemcpy(host_data, data_, bytes, cudaMemcpyDeviceToHost)); }
 
 private:
     void* data_ = nullptr;

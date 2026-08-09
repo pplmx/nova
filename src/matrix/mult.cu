@@ -8,6 +8,7 @@
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 #include "matrix/mult.h"
+#include "cuda/device/error.h"
 
 // Function to perform matrix multiplication on the GPU using cuBLAS
 // This function transfers the input matrices from the host (CPU) to the device (GPU),

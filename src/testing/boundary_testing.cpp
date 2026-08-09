@@ -109,7 +109,6 @@ std::vector<BoundaryConditionTest::TestResult> test_alignment_boundaries() {
 }
 
 std::vector<BoundaryConditionTest::TestResult> test_warp_boundaries() {
-    BoundaryConditionTest test;
     std::vector<BoundaryConditionTest::TestResult> results;
 
     BoundaryConditionTest::TestResult r1;

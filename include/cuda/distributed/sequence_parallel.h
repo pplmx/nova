@@ -8,6 +8,7 @@
 
 #if defined(NOVA_NCCL_ENABLED)
 #include <nccl.h>
+#include "cuda/device/error.h"
 #endif
 
 namespace cuda::distributed {

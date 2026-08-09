@@ -13,6 +13,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
+#include "cuda/device/error.h"
 
 namespace cuda::memory {
 

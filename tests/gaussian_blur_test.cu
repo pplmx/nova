@@ -11,6 +11,7 @@
 #include "cuda/memory/buffer-inl.h"
 #include "image/gaussian_blur.h"
 #include "test_patterns.cuh"
+#include "cuda/device/error.h"
 
 using cuda::memory::Buffer;
 

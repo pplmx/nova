@@ -5,6 +5,7 @@
 #include "cuda/device/reduce_kernels.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
+#include "cuda/device/error.h"
 
 namespace cuda::algo {
 

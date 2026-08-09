@@ -123,6 +123,9 @@ TEST_F(MemoryOptimizerTest, AdaptiveMemoryPoolTunerProfileDetection) {
     tuner.record_allocation(5 * 1024 * 1024);
     auto profile = tuner.detect_workload_profile();
 
+    // 5 MiB sits below the 10 MiB threshold, so it must classify as Inference.
+    EXPECT_EQ(profile, WorkloadProfile::Inference);
+
     tuner.set_workload_profile(WorkloadProfile::Training);
     auto config = tuner.get_config();
     EXPECT_EQ(config.profile, WorkloadProfile::Training);

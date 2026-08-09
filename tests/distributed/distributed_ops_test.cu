@@ -26,6 +26,7 @@
 
 #include <thread>
 #include <vector>
+#include "cuda/device/error.h"
 
 using namespace cuda::distributed;
 using namespace cuda::mesh;
