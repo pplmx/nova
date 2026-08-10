@@ -61,6 +61,12 @@ private:
     );
 
     MatmulBiasActConfig config_;
+    // Private cuBLAS handle used when the caller did not inject one via
+    // config_.handle. Never fall back to cuda::neural's global handle: setting
+    // a stream on that shared handle permanently rebinds it, and once the
+    // caller's stream is destroyed the global handle dangles and every later
+    // cublasSgemm via cuda::neural::matmul fails with EXECUTION_FAILED.
+    cublasHandle_t owned_handle_ = nullptr;
     cublasLtHandle_t lt_handle_ = nullptr;
     bool cuda_fusion_available_ = false;
     float* workspace_ = nullptr;

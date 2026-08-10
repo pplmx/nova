@@ -50,12 +50,21 @@ FusedMatmulBiasAct::FusedMatmulBiasAct(const MatmulBiasActConfig& config)
         CUBLAS_CHECK(cublasLtCreate(&lt_handle_));
     }
 
+    // Own a private handle unless the caller injected one; see the member
+    // comment in the header for why we never touch the global handle.
+    if (!config_.handle) {
+        CUBLAS_CHECK(cublasCreate(&owned_handle_));
+    }
+
     if (config_.max_workspace_bytes > 0) {
         CUDA_CHECK(cudaMalloc(&workspace_, config_.max_workspace_bytes));
     }
 }
 
 FusedMatmulBiasAct::~FusedMatmulBiasAct() {
+    if (owned_handle_) {
+        cublasDestroy(owned_handle_);
+    }
     if (lt_handle_) {
         cublasLtDestroy(lt_handle_);
     }
@@ -91,10 +100,7 @@ void FusedMatmulBiasAct::forward_fallback(
     int k,
     cudaStream_t stream
 ) {
-    cublasHandle_t handle = config_.handle;
-    if (!handle) {
-        handle = cuda::neural::get_cublas_handle();
-    }
+    cublasHandle_t handle = config_.handle ? config_.handle : owned_handle_;
 
     const float alpha = 1.0f;
     const float beta = 0.0f;
