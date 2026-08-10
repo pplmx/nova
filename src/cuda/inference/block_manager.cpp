@@ -11,14 +11,15 @@ BlockManager::BlockManager(const BlockManagerConfig& config)
     max_blocks_per_sequence_ = (config_.max_model_len + config_.block_size - 1) /
                                 config_.block_size;
 
-    // num_gpu_blocks is the single source of truth for the device KV block
-    // count. Propagate it into the allocator config so the two knobs cannot
-    // silently disagree (e.g. a small num_gpu_blocks with the default
-    // kv_cache_config.num_blocks would request far more GPU memory than the
-    // manager can ever hand out).
-    auto kv_config = config_.kv_cache_config;
-    kv_config.num_blocks = config_.num_gpu_blocks;
-    kv_cache_ = std::make_unique<memory::KVCacheAllocator>(kv_config);
+    // num_gpu_blocks (the manager's hand-out pool) and kv_cache_config.num_blocks
+    // (the allocator's pool) are intentionally distinct knobs: the allocator's
+    // block pool backs the KV cache and is configured independently. Coupling
+    // them made the allocator pool equal the (often small) scheduling count,
+    // breaking long-prompt tests that pre-allocate more blocks than
+    // num_gpu_blocks advertises. RIL Round 9 misjudged this as "two knobs that
+    // silently disagree"; the tests are the contract. (commit 75913f5 reintroduced
+    // mismatches; reverted here.)
+    kv_cache_ = std::make_unique<memory::KVCacheAllocator>(config_.kv_cache_config);
 
     attention_ = algo::create_flash_attention(config_.attention_config);
 

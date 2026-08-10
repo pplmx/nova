@@ -27,7 +27,12 @@ TEST_F(FragmentationTest, AnalyzeFragmentation) {
 }
 
 TEST_F(FragmentationTest, NeedsCompactionThreshold) {
-    EXPECT_FALSE(allocator->needs_compaction(30.0f));
+    // analyze_fragmentation().ratio is the FREE percentage (pinned by
+    // FragmentationReportEmptyPool/FullPool), and needs_compaction(t) triggers
+    // when free% > t (pinned by NeedsCompactionBelowThreshold/AboveThreshold and
+    // NeedsCompactionEdgeCases). A fresh allocator is 100% free, so it reports
+    // "needs compaction" for any threshold below 100.
+    EXPECT_TRUE(allocator->needs_compaction(30.0f));
 
     EXPECT_TRUE(allocator->needs_compaction(0.0f));
 }

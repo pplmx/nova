@@ -11,6 +11,14 @@ protected:
         config.max_model_len = 2048;
         config.block_size = 16;
         config.num_gpu_blocks = 256;
+        // Lightweight KV pool: these tests exercise scheduling/beam logic, not
+        // KV capacity. The default pool is ~64GB per BlockManager, so holding
+        // more than one manager (as KVBlockForkingForBeamHypotheses does) OOMs
+        // on anything but a very quiet 80GB GPU.
+        config.kv_cache_config.num_heads = 4;
+        config.kv_cache_config.head_dim = 64;
+        config.kv_cache_config.num_layers = 2;
+        config.kv_cache_config.num_blocks = 256;
         block_manager = std::make_unique<BlockManager>(config);
 
         BeamSearchConfig beam_config;
@@ -112,8 +120,10 @@ TEST_F(BeamSearchTest, LengthNormalizedScoring) {
     hyp2.score = 0.0f;
 
     beam_manager->get_config();
-    EXPECT_NEAR(hyp1.log_prob / std::pow(3, 0.7f), -3.21f, 0.1f);
-    EXPECT_NEAR(hyp2.log_prob / std::pow(2, 0.7f), -2.74f, 0.1f);
+    // -6 / 3^0.7 = -2.7808 and -4 / 2^0.7 = -2.4623 (the previous expected
+    // values -3.21 / -2.74 were arithmetically off).
+    EXPECT_NEAR(hyp1.log_prob / std::pow(3, 0.7f), -2.7808f, 0.1f);
+    EXPECT_NEAR(hyp2.log_prob / std::pow(2, 0.7f), -2.4623f, 0.1f);
 }
 
 TEST_F(BeamSearchTest, LengthNormalizedScoringLongSequence) {
@@ -138,6 +148,10 @@ TEST_F(BeamSearchTest, KVBlockForkingForBeamHypotheses) {
     bm_config.max_model_len = 2048;
     bm_config.block_size = 16;
     bm_config.num_gpu_blocks = 256;
+    bm_config.kv_cache_config.num_heads = 4;
+    bm_config.kv_cache_config.head_dim = 64;
+    bm_config.kv_cache_config.num_layers = 2;
+    bm_config.kv_cache_config.num_blocks = 256;
     auto bm = std::make_unique<BlockManager>(bm_config);
 
     BeamSearchConfig config;
@@ -170,11 +184,13 @@ TEST_F(BeamSearchTest, ScoreRebasingForLongSequences) {
     float max_log_prob = std::max(hyp1.log_prob, hyp2.log_prob);
     float rebase_factor = max_log_prob;
 
+    // Rebase shifts scores down by the max so the best hypothesis becomes 0 and
+    // the others remain <= 0; they cannot become non-negative.
     float rebased_hyp1 = hyp1.log_prob - rebase_factor;
     float rebased_hyp2 = hyp2.log_prob - rebase_factor;
 
-    EXPECT_GE(rebased_hyp1, 0.0f);
-    EXPECT_GE(rebased_hyp2, 0.0f);
+    EXPECT_LT(rebased_hyp1, 0.0f);
+    EXPECT_EQ(rebased_hyp2, 0.0f);
     EXPECT_GT(rebased_hyp2, rebased_hyp1);
 }
 

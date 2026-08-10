@@ -42,7 +42,10 @@ TEST_F(TimelineTest, MultipleNestedEvents) {
     NOVA_TIMELINE_END("inner2", "test");
     NOVA_TIMELINE_END("outer", "test");
 
-    EXPECT_EQ(TimelineExporter::instance().event_count(), 4);
+    // One event per opened/closed scope (outer, inner1, inner2) - consistent
+    // with ManualBeginEndEvents where one begin/end pair records exactly one
+    // event.
+    EXPECT_EQ(TimelineExporter::instance().event_count(), 3);
 }
 
 TEST_F(TimelineTest, RecordInstantEvent) {
@@ -83,8 +86,9 @@ TEST_F(TimelineTest, ExportEmptyTimeline) {
     std::string content((std::istreambuf_iterator<char>(file)),
                         std::istreambuf_iterator<char>());
 
-    EXPECT_TRUE(content.find("\"traceEvents\": []") != std::string::npos ||
-                content.find("\"traceEvents\":[\n]") != std::string::npos);
+    // The exporter emits "\"traceEvents\": [\n" then entries then "],".
+    EXPECT_TRUE(content.find("\"traceEvents\": [\n]") != std::string::npos ||
+                content.find("\"traceEvents\": []") != std::string::npos);
 
     std::filesystem::remove(test_file);
 }

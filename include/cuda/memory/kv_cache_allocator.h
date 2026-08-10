@@ -648,13 +648,23 @@ inline std::vector<int64_t> KVCacheAllocator::find_sequences_with_prefix(
     if (ref_it == sequence_blocks_.end()) return result;
 
     for (const auto& [seq_id, blocks] : sequence_blocks_) {
-        if (seq_id != reference_sequence_id &&
-            blocks.size() >= ref_it->second.size()) {
-            bool match = true;
-            for (size_t i = 0; i < ref_it->second.size() && match; ++i) {
-                if (blocks[i] != ref_it->second[i]) match = false;
-            }
-            if (match) result.push_back(seq_id);
+        if (seq_id == reference_sequence_id) {
+            continue;
+        }
+        // Prefix sharing is a min-length prefix match: a sequence that forks
+        // only part of the reference's prefix (e.g. a 1-block fork of a 2-block
+        // sequence) still shares that prefix. The previous `blocks.size() >=
+        // reference.size()` gate excluded exactly those shorter forks.
+        const size_t m = std::min(blocks.size(), ref_it->second.size());
+        if (m == 0) {
+            continue;
+        }
+        bool match = true;
+        for (size_t i = 0; i < m && match; ++i) {
+            if (blocks[i] != ref_it->second[i]) match = false;
+        }
+        if (match) {
+            result.push_back(seq_id);
         }
     }
 
