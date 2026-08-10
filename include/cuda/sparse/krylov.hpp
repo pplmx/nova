@@ -773,20 +773,33 @@ public:
         result.residual_history.reserve(this->config_.max_iterations);
 
         for (int iter = 0; iter < this->config_.max_iterations; ++iter) {
+            // v = A * p
             d_p.copy_from(h_p.data(), n);
             d_temp.fill(T{0});
             spmv(A, d_p.data(), d_temp.data());
             d_temp.copy_to(h_temp.data(), n);
-
-            T p_Ap = detail::dot_product(h_p.data(), h_temp.data(), n);
 
             if (std::abs(r_r_tilde) < std::numeric_limits<T>::epsilon()) {
                 result.error_code = SolverError::BREAKDOWN;
                 break;
             }
 
-            T alpha = r_r_tilde / p_Ap;
+            // alpha = <rhat, r> / <rhat, A p>  (NOT <p, A p>: for rhat != p
+            // these differ and using <p, A p> breaks the iteration after the
+            // first step).
+            T rhat_v = detail::dot_product(h_r_tilde.data(), h_temp.data(), n);
 
+            // Guard the actual denominator of alpha: when A p is (numerically)
+            // orthogonal to rhat, alpha diverges and the iterate is silently
+            // corrupted instead of failing loudly.
+            if (std::abs(rhat_v) < std::numeric_limits<T>::epsilon()) {
+                result.error_code = SolverError::BREAKDOWN;
+                break;
+            }
+
+            T alpha = r_r_tilde / rhat_v;
+
+            // s = r - alpha * v
             for (int i = 0; i < n; ++i) {
                 h_s[i] = h_r[i] - alpha * h_temp[i];
             }
@@ -814,6 +827,7 @@ public:
                 return result;
             }
 
+            // t = A * s
             d_s.copy_from(h_s.data(), n);
             d_temp.fill(T{0});
             spmv(A, d_s.data(), d_temp.data());
@@ -829,8 +843,9 @@ public:
 
             T omega = t_s / t_t;
 
+            // x += alpha * p + omega * s ;  r = s - omega * t
             for (int i = 0; i < n; ++i) {
-                h_x[i] += omega * h_s[i];
+                h_x[i] += alpha * h_p[i] + omega * h_s[i];
                 h_r[i] = h_s[i] - omega * h_t[i];
             }
 
@@ -865,8 +880,9 @@ public:
 
             r_r_tilde = r_new_r_tilde;
 
+            // p = r + beta * (p - omega * v)   (v = A p from this iteration)
             for (int i = 0; i < n; ++i) {
-                h_p[i] = h_r[i] + beta * (h_p[i] - omega * h_t[i]);
+                h_p[i] = h_r[i] + beta * (h_p[i] - omega * h_temp[i]);
             }
         }
 
