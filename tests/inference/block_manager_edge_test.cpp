@@ -366,19 +366,28 @@ TEST_F(DynamicBlockSizingTest, BlockSize16) {
     config.block_size = 16;
     config.num_gpu_blocks = 512;
     config.max_model_len = 8192;
+    // Keep the KV allocator pool small: with the default num_blocks=4096 the
+    // allocator pre-allocates the whole KV cache up front (16 MB/block at
+    // block_size_tokens=16 -> 64 GB), which OOMs on anything but a very large
+    // GPU. num_gpu_blocks (manager hand-out pool) and kv_cache_config.num_blocks
+    // (allocator pool) are independent knobs since Round 11's decoupling.
+    config.kv_cache_config.block_size_tokens = 16;
+    config.kv_cache_config.num_blocks = 256;
 
     auto manager = std::make_unique<BlockManager>(config);
 
     auto* seq = manager->create_sequence(1, 64);
     ASSERT_NE(seq, nullptr);
+    // block_table is reserved for the full max_tokens up front: ceil(64/16) = 4.
+    EXPECT_EQ(seq->block_table.size(), 4);
 
     manager->append_tokens(1, 16);
     EXPECT_EQ(seq->num_tokens, 16);
-    EXPECT_EQ(seq->block_table.size(), 1);
+    EXPECT_EQ(seq->block_table.size(), 4);
 
     manager->append_tokens(1, 16);
     EXPECT_EQ(seq->num_tokens, 32);
-    EXPECT_EQ(seq->block_table.size(), 2);
+    EXPECT_EQ(seq->block_table.size(), 4);
 }
 
 TEST_F(DynamicBlockSizingTest, BlockSize32) {
@@ -387,15 +396,20 @@ TEST_F(DynamicBlockSizingTest, BlockSize32) {
     config.num_gpu_blocks = 512;
     config.max_model_len = 8192;
     config.kv_cache_config.block_size_tokens = 32;
+    // 32 MB/block at block_size_tokens=32: a small allocator pool avoids the
+    // 128 GB up-front KV cache allocation the 4096-block default would make.
+    config.kv_cache_config.num_blocks = 128;
 
     auto manager = std::make_unique<BlockManager>(config);
 
     auto* seq = manager->create_sequence(1, 64);
     ASSERT_NE(seq, nullptr);
+    // Reserved for max_tokens up front: ceil(64/32) = 2.
+    EXPECT_EQ(seq->block_table.size(), 2);
 
     manager->append_tokens(1, 32);
     EXPECT_EQ(seq->num_tokens, 32);
-    EXPECT_EQ(seq->block_table.size(), 1);
+    EXPECT_EQ(seq->block_table.size(), 2);
 
     manager->append_tokens(1, 32);
     EXPECT_EQ(seq->num_tokens, 64);
@@ -408,15 +422,20 @@ TEST_F(DynamicBlockSizingTest, BlockSize64) {
     config.num_gpu_blocks = 512;
     config.max_model_len = 8192;
     config.kv_cache_config.block_size_tokens = 64;
+    // 64 MB/block at block_size_tokens=64: cap the allocator pool so the
+    // default 4096 blocks would not attempt a 256 GB up-front allocation.
+    config.kv_cache_config.num_blocks = 64;
 
     auto manager = std::make_unique<BlockManager>(config);
 
     auto* seq = manager->create_sequence(1, 128);
     ASSERT_NE(seq, nullptr);
+    // Reserved for max_tokens up front: ceil(128/64) = 2.
+    EXPECT_EQ(seq->block_table.size(), 2);
 
     manager->append_tokens(1, 64);
     EXPECT_EQ(seq->num_tokens, 64);
-    EXPECT_EQ(seq->block_table.size(), 1);
+    EXPECT_EQ(seq->block_table.size(), 2);
 
     manager->append_tokens(1, 64);
     EXPECT_EQ(seq->num_tokens, 128);
@@ -427,6 +446,9 @@ TEST_F(DynamicBlockSizingTest, BlockSizeBoundaryAlignment) {
     BlockManagerConfig config;
     config.block_size = 16;
     config.num_gpu_blocks = 256;
+    // Small allocator pool (see BlockSize16): 16 MB/block * 256 = 4 GB instead
+    // of the 64 GB the 4096-block default would reserve up front.
+    config.kv_cache_config.num_blocks = 256;
 
     auto manager = std::make_unique<BlockManager>(config);
 
@@ -444,12 +466,14 @@ TEST_F(DynamicBlockSizingTest, ForwardBatchWithDifferentBlockSizes) {
     BlockManagerConfig config16;
     config16.block_size = 16;
     config16.num_gpu_blocks = 256;
+    config16.kv_cache_config.num_blocks = 128;
     auto manager16 = std::make_unique<BlockManager>(config16);
 
     BlockManagerConfig config32;
     config32.block_size = 32;
     config32.num_gpu_blocks = 256;
     config32.kv_cache_config.block_size_tokens = 32;
+    config32.kv_cache_config.num_blocks = 64;
     auto manager32 = std::make_unique<BlockManager>(config32);
 
     manager16->create_sequence(1, 64);
@@ -499,11 +523,15 @@ TEST_F(ChunkedPrefillTest, MultipleChunkAdditions) {
     config.block_size = 16;
     config.num_gpu_blocks = 2048;
     config.max_model_len = 8192;
+    // Small allocator pool: 16 MB/block * 128 = 2 GB vs 64 GB at the default.
+    config.kv_cache_config.num_blocks = 128;
 
     auto manager = std::make_unique<BlockManager>(config);
 
     auto* seq = manager->create_sequence(1, 512);
     ASSERT_NE(seq, nullptr);
+    // Reserved for max_tokens up front: ceil(512/16) = 32.
+    EXPECT_EQ(seq->block_table.size(), 32);
 
     constexpr int chunk_size = 64;
     for (int i = 0; i < 4; ++i) {
@@ -511,7 +539,7 @@ TEST_F(ChunkedPrefillTest, MultipleChunkAdditions) {
     }
 
     EXPECT_EQ(seq->num_tokens, 256);
-    EXPECT_EQ(seq->block_table.size(), 16);
+    EXPECT_EQ(seq->block_table.size(), 32);
 }
 
 TEST_F(ChunkedPrefillTest, LongSequenceWithBlockGrowth) {
@@ -519,16 +547,20 @@ TEST_F(ChunkedPrefillTest, LongSequenceWithBlockGrowth) {
     config.block_size = 16;
     config.num_gpu_blocks = 256;
     config.max_model_len = 8192;
+    config.kv_cache_config.num_blocks = 256;
 
     auto manager = std::make_unique<BlockManager>(config);
 
     auto* seq = manager->create_sequence(1, 512);
     ASSERT_NE(seq, nullptr);
 
+    // block_table is reserved for the full max_tokens at creation, so appends
+    // up to max_tokens must not grow it beyond the reservation.
     const int initial_blocks = seq->block_table.size();
+    EXPECT_EQ(initial_blocks, 512 / config.block_size);
 
     manager->append_tokens(1, 256);
-    EXPECT_GT(seq->block_table.size(), initial_blocks);
+    EXPECT_EQ(seq->block_table.size(), initial_blocks);
     EXPECT_EQ(seq->num_tokens, 256);
 }
 
