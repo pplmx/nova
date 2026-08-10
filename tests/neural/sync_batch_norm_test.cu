@@ -3,6 +3,9 @@
 #include "cuda/neural/sync_batch_norm.h"
 #include "cuda/mesh/device_mesh.h"
 #include "cuda/device/error.h"
+#include <cmath>
+#include <random>
+#include <vector>
 
 namespace cuda::neural {
 
@@ -39,6 +42,10 @@ TEST_F(SyncBatchNormTest, ModeSwitching) {
 
 TEST_F(SyncBatchNormTest, SingleGPU_ForwardTraining) {
     auto& mesh = mesh::DeviceMesh::instance();
+    // DeviceMesh reports device_count() == 0 until initialize() is called; the
+    // mesh tests initialize it in their own SetUp, but this suite runs earlier
+    // in the process, so without this the tests skipped even on a real GPU.
+    mesh.initialize();
     if (mesh.device_count() < 1) {
         GTEST_SKIP() << "No CUDA devices available";
     }
@@ -81,6 +88,7 @@ TEST_F(SyncBatchNormTest, SingleGPU_ForwardTraining) {
 
 TEST_F(SyncBatchNormTest, SingleGPU_ForwardInference) {
     auto& mesh = mesh::DeviceMesh::instance();
+    mesh.initialize();
     if (mesh.device_count() < 1) {
         GTEST_SKIP() << "No CUDA devices available";
     }
@@ -153,6 +161,7 @@ TEST_F(SyncBatchNormTest, GammaBetaInitialization) {
 
 TEST_F(SyncBatchNormTest, SingleGPU_Backward) {
     auto& mesh = mesh::DeviceMesh::instance();
+    mesh.initialize();
     if (mesh.device_count() < 1) {
         GTEST_SKIP() << "No CUDA devices available";
     }
@@ -216,6 +225,133 @@ TEST_F(SyncBatchNormTest, SingleGPU_Backward) {
     CUDA_CHECK(cudaFree(d_d_input));
     CUDA_CHECK(cudaFree(d_d_gamma));
     CUDA_CHECK(cudaFree(d_d_beta));
+}
+
+// Verifies backward() gradients against an independent CPU reference of the
+// batch-normalization backward pass. The previous GPU implementation computed
+// dx's denominator from the variance gradient (sqrtf(d_var)) which is NaN for
+// negative d_var, so every output gradient was NaN.
+TEST_F(SyncBatchNormTest, BackwardMatchesCPUReference) {
+    auto& mesh = mesh::DeviceMesh::instance();
+    mesh.initialize();
+    if (mesh.device_count() < 1) {
+        GTEST_SKIP() << "No CUDA devices available";
+    }
+
+    const int batch_size = 3;
+    const int num_features = 8;
+    const int spatial_size = 5;
+    const int n = batch_size * num_features * spatial_size;
+    const float eps = 1e-5f;
+    const int count_per_feature = batch_size * spatial_size;
+    const float inv_n = 1.0f / static_cast<float>(count_per_feature);
+
+    std::mt19937 rng(12345);
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    std::vector<float> input(n);
+    std::vector<float> d_output(n);
+    std::vector<float> gamma(num_features);
+    for (int i = 0; i < n; ++i) {
+        input[i] = dist(rng);
+        d_output[i] = dist(rng) * 0.1f;
+    }
+    for (int c = 0; c < num_features; ++c) gamma[c] = 0.5f + 0.1f * static_cast<float>(c);
+
+    // ---- CPU reference ----
+    auto idx_of = [&](int b, int c, int s) { return (b * num_features + c) * spatial_size + s; };
+    std::vector<float> ref_mean(num_features), ref_var(num_features);
+    for (int c = 0; c < num_features; ++c) {
+        float s = 0.0f;
+        for (int b = 0; b < batch_size; ++b)
+            for (int sp = 0; sp < spatial_size; ++sp) s += input[idx_of(b, c, sp)];
+        ref_mean[c] = s * inv_n;
+        float v = 0.0f;
+        for (int b = 0; b < batch_size; ++b)
+            for (int sp = 0; sp < spatial_size; ++sp) {
+                float d = input[idx_of(b, c, sp)] - ref_mean[c];
+                v += d * d;
+            }
+        ref_var[c] = v * inv_n;
+    }
+
+    std::vector<float> ref_d_input(n, 0.0f);
+    std::vector<float> ref_d_gamma(num_features, 0.0f);
+    std::vector<float> ref_d_beta(num_features, 0.0f);
+
+    for (int c = 0; c < num_features; ++c) {
+        float inv_sigma = 1.0f / std::sqrt(ref_var[c] + eps);
+        float sigma3 = inv_sigma * inv_sigma * inv_sigma;
+
+        float dvar = 0.0f, sum_dxhat = 0.0f, sum_dy = 0.0f, sum_dy_xhat = 0.0f, sum_centered = 0.0f;
+        std::vector<float> dxhat(count_per_feature), centered(count_per_feature);
+        int k = 0;
+        for (int b = 0; b < batch_size; ++b)
+            for (int sp = 0; sp < spatial_size; ++sp, ++k) {
+                int idx = idx_of(b, c, sp);
+                centered[k] = input[idx] - ref_mean[c];
+                dxhat[k] = d_output[idx] * gamma[c];
+                sum_dxhat += dxhat[k];
+                sum_dy += d_output[idx];
+                sum_dy_xhat += d_output[idx] * centered[k] * inv_sigma;
+                sum_centered += centered[k];
+                dvar += dxhat[k] * centered[k];
+            }
+        dvar *= -0.5f * sigma3;
+        float dmean = sum_dxhat * (-inv_sigma) + dvar * (-2.0f * inv_n) * sum_centered;
+
+        ref_d_gamma[c] = sum_dy_xhat;
+        ref_d_beta[c] = sum_dy;
+        for (int k = 0; k < count_per_feature; ++k) {
+            int b = k / spatial_size, sp = k % spatial_size;
+            ref_d_input[idx_of(b, c, sp)] =
+                dxhat[k] * inv_sigma + dvar * (2.0f * centered[k] * inv_n) + dmean * inv_n;
+        }
+    }
+
+    // ---- GPU ----
+    float *d_input, *d_output_dev, *d_result, *d_d_input, *d_d_gamma, *d_d_beta, *d_gamma;
+    CUDA_CHECK(cudaMalloc(&d_input, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_output_dev, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_result, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_d_input, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_d_gamma, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_d_beta, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_gamma, num_features * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_input, input.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_output_dev, d_output.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_gamma, gamma.data(), num_features * sizeof(float), cudaMemcpyHostToDevice));
+
+    SyncBatchNorm bn(num_features, eps);
+    CUDA_CHECK(cudaMemcpy(bn.mutable_gamma(), d_gamma, num_features * sizeof(float), cudaMemcpyDeviceToDevice));
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
+    bn.forward_training(d_input, d_result, batch_size, spatial_size, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    bn.backward(d_input, d_output_dev, d_d_input, d_d_gamma, d_d_beta, batch_size, spatial_size, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    std::vector<float> gpu_d_input(n), gpu_d_gamma(num_features), gpu_d_beta(num_features);
+    CUDA_CHECK(cudaMemcpy(gpu_d_input.data(), d_d_input, n * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_d_gamma.data(), d_d_gamma, num_features * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_d_beta.data(), d_d_beta, num_features * sizeof(float), cudaMemcpyDeviceToHost));
+
+    for (int c = 0; c < num_features; ++c) {
+        EXPECT_NEAR(gpu_d_gamma[c], ref_d_gamma[c], 1e-3f) << "d_gamma[" << c << "]";
+        EXPECT_NEAR(gpu_d_beta[c], ref_d_beta[c], 1e-3f) << "d_beta[" << c << "]";
+    }
+    for (int i = 0; i < n; ++i) {
+        EXPECT_NEAR(gpu_d_input[i], ref_d_input[i], 1e-3f) << "d_input[" << i << "]";
+    }
+
+    CUDA_CHECK(cudaStreamDestroy(stream));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output_dev));
+    CUDA_CHECK(cudaFree(d_result));
+    CUDA_CHECK(cudaFree(d_d_input));
+    CUDA_CHECK(cudaFree(d_d_gamma));
+    CUDA_CHECK(cudaFree(d_d_beta));
+    CUDA_CHECK(cudaFree(d_gamma));
 }
 
 } // namespace cuda::neural

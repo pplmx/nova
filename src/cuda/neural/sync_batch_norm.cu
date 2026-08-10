@@ -228,6 +228,7 @@ template <typename T>
 __global__ void backward_dinput_kernel(
     const T* d_x_norm,
     const T* centered,
+    const T* variance,
     const T* d_var,
     const T* d_mean,
     T* d_input,
@@ -242,9 +243,12 @@ __global__ void backward_dinput_kernel(
     if (idx >= n) return;
 
     int feature = (idx / spatial_size) % num_features;
-    T var_eps = sqrtf(d_var[feature] + eps);
+    // Denominator must be the standard deviation of the batch (sqrt of the
+    // batch variance), NOT d_var — the variance gradient can be negative, so
+    // sqrtf(d_var + eps) produced NaN for every element.
+    T inv_var_eps = 1.0f / sqrtf(variance[feature] + eps);
 
-    T dx_norm_term = d_x_norm[idx] / var_eps;
+    T dx_norm_term = d_x_norm[idx] * inv_var_eps;
     T dvar_term = d_var[feature] * 2.0f * centered[idx] * inv_n;
     T dmean_term = d_mean[feature] * inv_n;
 
@@ -513,7 +517,7 @@ void SyncBatchNorm::backward(
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
     backward_dinput_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
-        d_x_norm.get(), centered_input.get(), d_var.get(), d_mean.get(), d_input,
+        d_x_norm.get(), centered_input.get(), saved_var_, d_var.get(), d_mean.get(), d_input,
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
     backward_dgamma_kernel<float><<<grid_size, block_size, 0, stream>>>(
