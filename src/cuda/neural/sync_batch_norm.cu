@@ -2,6 +2,7 @@
 
 #include "cuda/device/reduce_kernels.h"
 #include "cuda/distributed/reduce.h"
+#include "cuda/memory/unique_ptr.h"
 #include "cuda/mesh/device_mesh.h"
 
 #include "cuda/device/error.h"
@@ -483,43 +484,40 @@ void SyncBatchNorm::backward(
     int grid_size = (num_features_ + block_size - 1) / block_size;
     float inv_n = 1.0f / static_cast<float>(batch_size * spatial_size);
 
-    float* d_x_norm;
-    float* centered_input;
-    float* normalized_tmp;
-    float* d_var;
-    float* d_mean;
-    CUDA_CHECK(cudaMalloc(&d_x_norm, n * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&centered_input, n * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&normalized_tmp, n * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_var, num_features_ * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_mean, num_features_ * sizeof(float)));
+    // RAII device buffers: the previous raw cudaMalloc/cudaFree pair leaked all
+    // already-allocated buffers if any intermediate CUDA_CHECK threw.
+    cuda::memory::unique_ptr<float> d_x_norm(n);
+    cuda::memory::unique_ptr<float> centered_input(n);
+    cuda::memory::unique_ptr<float> normalized_tmp(n);
+    cuda::memory::unique_ptr<float> d_var(num_features_);
+    cuda::memory::unique_ptr<float> d_mean(num_features_);
 
     compute_centered_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
-        input, saved_mean_, centered_input,
+        input, saved_mean_, centered_input.get(),
         batch_size, num_features_, spatial_size);
 
     compute_normalized_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        centered_input, saved_var_, normalized_tmp,
+        centered_input.get(), saved_var_, normalized_tmp.get(),
         batch_size, num_features_, spatial_size, eps_);
 
     backward_dxnorm_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
-        d_output, gamma_, d_x_norm,
+        d_output, gamma_, d_x_norm.get(),
         batch_size, num_features_, spatial_size);
 
     backward_dvar_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        d_x_norm, centered_input, saved_var_, d_var,
+        d_x_norm.get(), centered_input.get(), saved_var_, d_var.get(),
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
     backward_dmean_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        d_x_norm, d_var, saved_var_, centered_input, d_mean,
+        d_x_norm.get(), d_var.get(), saved_var_, centered_input.get(), d_mean.get(),
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
     backward_dinput_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
-        d_x_norm, centered_input, d_var, d_mean, d_input,
+        d_x_norm.get(), centered_input.get(), d_var.get(), d_mean.get(), d_input,
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
     backward_dgamma_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        d_output, normalized_tmp, d_gamma,
+        d_output, normalized_tmp.get(), d_gamma,
         batch_size, num_features_, spatial_size);
 
     backward_dbeta_kernel<float><<<grid_size, block_size, 0, stream>>>(
@@ -539,12 +537,6 @@ void SyncBatchNorm::backward(
             stream
         );
     }
-
-    CUDA_CHECK(cudaFree(d_x_norm));
-    CUDA_CHECK(cudaFree(centered_input));
-    CUDA_CHECK(cudaFree(normalized_tmp));
-    CUDA_CHECK(cudaFree(d_var));
-    CUDA_CHECK(cudaFree(d_mean));
 }
 
 void sync_batch_norm_forward_training(
