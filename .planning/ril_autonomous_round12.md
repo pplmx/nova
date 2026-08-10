@@ -72,5 +72,21 @@
 - SegmentedSortTest.SortByKeyBasic × 1: full-process-only thrust `cudaErrorInvalidDevice`
   (passes standalone + many prefixes); suspected thrust plan-cache staleness after a
   `cudaDeviceReset()` earlier in the process; left documented.
+
+## Post-verification addenda (same continuation)
+- `fix(neural): RAII temp buffers in SyncBatchNorm::backward` — the five function-local
+  device buffers used raw cudaMalloc/cudaFree (leak-on-exception); converted to
+  `cuda::memory::unique_ptr`. This was the still-live item in `.planning/codebase/CONCERNS.md`;
+  its other SyncBatchNorm finding (empty backward) is STALE — both the class method and the
+  free `sync_batch_norm_backward()` are fully implemented.
+- `chore: fix invalid .clang-format BinPackParameters value` — `OnePerLine` is not a valid
+  value for the boolean `BinPackParameters`, so clang-format refused to load the config
+  (broke any format gate). Corrected to `false` (matches adjacent `BinPackArguments`).
+- PositionalEncodingTest.GetEncoding sticky error: traced to `MultiHeadAttentionTest.ForwardSelfAttention`
+  leaving a stale async error between tests (persists with CUDA_LAUNCH_BLOCKING and under
+  compute-sanitizer; the failing test's own cudaGetLastError check passes). No reproducible
+  product bug; left as documented flake rather than chasing further. Final full-suite numbers
+  remain 1410 pass / 4 fail on GPU 2 (the 4 are: this flake, MemoryNode design decision ×2,
+  SegmentedSort full-process env issue).
 - "FULL SUITE EXIT" reports in earlier rounds' command logs were `tail`'s exit code,
   not the test binary's — prior "exit 0 despite failures" readings were an artifact.
