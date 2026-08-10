@@ -153,7 +153,17 @@ TEST_F(FlashAttentionTest, CausalMasking) {
     std::vector<float> h_data(total_elements, 1.0f);
     query.copy_from(h_data.data(), total_elements);
     key.copy_from(h_data.data(), total_elements);
-    value.copy_from(h_data.data(), total_elements);
+    // Values vary by position (value[s] = s) so the causal mask (which removes
+    // future values) changes the output; with uniform Q=K=V=1.0 both variants
+    // reduce to the all-ones vector and can never differ.
+    std::vector<float> h_value(total_elements, 0.0f);
+    for (int s = 0; s < config.seq_len; ++s) {
+        for (size_t x = 0; x < config.num_heads * config.head_dim; ++x) {
+            h_value[static_cast<size_t>(s) * config.num_heads * config.head_dim + x] =
+                static_cast<float>(s);
+        }
+    }
+    value.copy_from(h_value.data(), total_elements);
 
     flash_attn_causal->forward(output_causal, softmax_lse, query, key, value, *stream_);
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
