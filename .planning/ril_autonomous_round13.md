@@ -58,15 +58,42 @@ singleton (matching the NcclContext pattern). Verified: suite exits EXIT=0.
   not changed (evidence-driven).
 - `timeout_manager` dtor (thread join only), `DeviceMesh` dtor (no CUDA calls) — safe.
 
+## Late discovery: 3 more "silent" skips unmasked a REAL product bug (SyncBatchNorm backward)
+
+- `SyncBatchNormTest`'s three GPU tests called `DeviceMesh::device_count()` without
+  `initialize()` first, so they always skipped ("No CUDA devices available") whenever
+  the suite reached them before any mesh test initialised the singleton (which is the
+  full-suite order). Fix: call `mesh.initialize()` before the check. The tests now run.
+- Running them exposed a real correctness bug (previously invisible because of the
+  skip): `backward_dinput_kernel` computed its denominator from the variance
+  **gradient** — `sqrtf(d_var[feature] + eps)` — and `d_var` is often negative, so every
+  `d_input` gradient was NaN. The kernel never even received the batch variance.
+  Fixed to consume `saved_var_` and use the standard BN backward decomposition
+  (`dx = dxhat·inv_std + dvar·2·centered/N + dmean/N`; the dvar/dmean terms were already
+  correct). Added `BackwardMatchesCPUReference` verifying d_input/d_gamma/d_beta against
+  an independent CPU reference (<1e-3).
+
 ## Misc
 - Removed leftover `DEBUG: Calling free`/`free completed` stderr prints in
   `KVCacheAllocatorTest`.
 - R12's SegmentedSort notes ("thrust plan-cache staleness") superseded by the real
   root cause above (UB test poisoners). The product's `segmented_sort.cu` itself was
   never at fault.
+- Noted for future rounds: `scheduler_edge_test.cpp:264` skips "Non-continuous batching
+  mode not fully implemented - step() does not move pending requests", a half-implemented
+  mode guarded by a skip; `nova::sparse::detail::CusparseContext` dtor runs
+  `cusparseDestroy` at exit (latent exit-crash class, no evidence yet).
 
 ## Full-suite verification (GPU 2)
-- Final: **1415 pass / 0 fail / 33 skip / 1 disabled, EXIT=0**.
+- Final (before SyncBatchNorm round): **1415 pass / 0 fail / 33 skip / 1 disabled, EXIT=0**.
+- After the SyncBatchNorm un-skip: 3 more tests run (ForwardTraining/Inference/Backward/
+  BackwardMatchesCPUReference); final numbers re-verified in the last full run.
 - Targeted: `BufferTest.*:SegmentedSort` 16/16, `UniquePtrTest.*:SegmentedSort` 11/11,
   `ErrorHandlingTest.*:SegmentedSort` 3/3, `MemoryNodeTest.*:SegmentedSort` 9/9,
-  `AsyncErrorTrackerTest.*` 8/8, `PositionalEncodingTest.*:MultiHeadAttentionTest.*` 9/9.
+  `AsyncErrorTrackerTest.*` 8/8, `PositionalEncodingTest.*:MultiHeadAttentionTest.*` 9/9,
+  `SyncBatchNormTest.*` 8/8.
+
+## Commits
+- `fix(distributed): never destroy MeshStreams singleton from a static destructor`
+- `test: remove UB freed-pointer reads and order-dependent CUDA-error tests that poisoned the suite`
+- `fix(neural): correct SyncBatchNorm backward d_input NaN and un-skip its GPU tests`
