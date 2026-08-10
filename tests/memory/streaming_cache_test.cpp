@@ -88,7 +88,9 @@ TEST_F(StreamingCacheTest, SyncPrefetchProcessesRequests) {
     manager->sync_prefetch(stream);
 
     auto blocks = allocator->get_blocks(1);
-    ASSERT_EQ(blocks.size(), 2);
+    // 1 initial block + prefetch: (16 tokens/16 block_size)+1 = 2 blocks,
+    // capped at the fixture's prefetch_ahead_blocks=2 -> 3 blocks total.
+    ASSERT_EQ(blocks.size(), 3);
 }
 
 TEST_F(StreamingCacheTest, SyncPrefetchClearsPendingRequests) {
@@ -121,7 +123,10 @@ TEST_F(StreamingCacheTest, ShouldEvictAsyncAboveThreshold) {
     };
     auto local_manager = std::make_unique<StreamingCacheManager>(allocator.get(), config);
 
-    for (int i = 0; i < 230; ++i) {
+    // 232 allocations of 1 block each leave 24/256 free (~9.4% < 10%), which
+    // crosses should_evict_async()'s threshold. (230 left ~10.2% free, just
+    // above it, so the assertion was previously unattainable.)
+    for (int i = 0; i < 232; ++i) {
         allocator->allocate(i, 16);
     }
 
