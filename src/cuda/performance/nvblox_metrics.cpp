@@ -133,6 +133,11 @@ std::string NVBloxMetricsCollector::to_csv() const {
 
 void NVBloxMetricsCollector::reset() {
     std::lock_guard<std::mutex> lock(mutex_);
+    // reset() restores the collector to a fresh state: clear the registered
+    // metric registry as well, otherwise registered_metric_count() keeps
+    // accumulating across reset() calls (the collector is a process-wide
+    // singleton, so stale registrations leak across test suites and sessions).
+    registered_metrics_.clear();
     metric_samples_.clear();
     kernel_metrics_.clear();
 }
