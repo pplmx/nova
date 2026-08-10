@@ -73,6 +73,26 @@
   (passes standalone + many prefixes); suspected thrust plan-cache staleness after a
   `cudaDeviceReset()` earlier in the process; left documented.
 
+## Resolved-from-prior-rounds (consistency closeout)
+- R9 "DistributedMatmul shared-cuBLAS-handle cascade" → RESOLVED (this round: FusedMatmulBiasAct
+  was rebinding the shared global handle's stream; fixed in fix(neural) d..14).
+- R9 "Inference KV-cache OOM" → RESOLVED (KV tests now small allocator pools).
+- R9 "PreconditionedSolverTest/preconditioner_benchmark nondeterministic failures; host b/x
+  rows/cols sizing" → RESOLVED in practice: GMRES (R10) + BiCGSTAB (R12) rewrites fixed the
+  underlying nondeterminism; all 48 preconditioner tests pass on GPU 2. The only non-square
+  case sizes b by cols, but the solver rejects non-square before reading b — benign.
+- R11 "sigma end-of-run SIGSEGV" / "DistributedMatmul (shared cuBLAS handle + timing)" /
+  "KV-OOM blob" → RESOLVED (see above).
+- CONCERNS.md "SyncBatchNorm backward empty" → STALE: both SyncBatchNorm::backward and the free
+  sync_batch_norm_backward() are fully implemented; the live item there (raw cudaMalloc temp
+  buffers in backward) was fixed this round with RAII.
+
+## Additional in-continuation fix (matmul_batch)
+- fix(neural): matmul_batch passed the address of single A/B/C pointers to cublasSgemmBatched
+  (which expects arrays of batch_count device pointers) → OOB pointer reads for batch > 1 /
+  wrong benchmark numbers. Rewrote as cublasSgemmStridedBatched matching the callers'
+  contiguous stacked layout; added MatmulTest.MatmulBatchMatchesPerSliceMatmul (verified 5/5).
+
 ## Post-verification addenda (same continuation)
 - `fix(neural): RAII temp buffers in SyncBatchNorm::backward` — the five function-local
   device buffers used raw cudaMalloc/cudaFree (leak-on-exception); converted to
