@@ -280,31 +280,33 @@ TEST_F(DistributedMatmulTest, SingleGpuFallback_AlphaBeta) {
 // ============================================================================
 
 TEST_F(DistributedMatmulTest, MultiGpu_RowPartition) {
-    // This test documents the expected row partition behavior
-    // Skipped because multi-GPU requires multi-process execution
+    // This test documents the row partition behavior.
+    // Skipped because multi-GPU requires multi-process execution.
+    //
+    // The expected row counts are derived from the actual number of visible
+    // GPUs rather than a fixed environment, so the test holds for any device
+    // count (e.g. under CUDA_VISIBLE_DEVICES or a 1-GPU CI runner). It asserts
+    // the invariants the partitioning scheme must satisfy: every row in
+    // [0, m) is assigned to exactly one rank, partitions are contiguous, and
+    // the union covers all m rows.
 
     int device_count = DeviceMesh::instance().device_count();
     SCOPED_TRACE("Multi-GPU row partition behavior documented");
+    ASSERT_GE(device_count, 1);
 
-    // For 8 GPUs and m=96 rows:
-    // Each GPU gets 96/8 = 12 rows
-    // GPU 0: rows [0, 12)
-    // GPU 1: rows [12, 24)
-    // ...
-    // GPU 7: rows [84, 96)
-
-    EXPECT_EQ(device_count, 8);  // Expected for this test environment
-
-    // Document expected partitions
     const int m = 96;
     int rows_per_gpu = m / device_count;
-    EXPECT_EQ(rows_per_gpu, 12);
+    ASSERT_GT(rows_per_gpu, 0) << "m must be >= device_count for a non-trivial split";
 
+    int covered = 0;
     for (int rank = 0; rank < device_count; ++rank) {
         int start_row = rank * rows_per_gpu;
         int local_m = (rank == device_count - 1) ? (m - start_row) : rows_per_gpu;
-        EXPECT_EQ(local_m, 12);
+        EXPECT_EQ(start_row, covered) << "partition gap or overlap at rank " << rank;
+        EXPECT_GT(local_m, 0) << "rank " << rank << " got an empty partition";
+        covered += local_m;
     }
+    EXPECT_EQ(covered, m);
 }
 
 TEST_F(DistributedMatmulTest, MultiGpu_RequiresMultiProcess) {
