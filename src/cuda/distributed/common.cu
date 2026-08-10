@@ -13,8 +13,19 @@
 namespace cuda::distributed {
 
 MeshStreams& MeshStreams::instance() {
-    static MeshStreams instance;
-    return instance;
+    // Heap-allocated singleton that is intentionally never destroyed.
+    //
+    // A function-local static's destructor runs at process exit, and the
+    // destructor here calls cudaEventDestroy/cudaStreamDestroy. Driving libcuda
+    // during __run_exit_handlers, after the per-thread driver context is already
+    // being torn down, makes cuEventDestroy SEGV inside the driver — observed as
+    // an "end-of-run SIGSEGV" (EXIT=139) after an otherwise fully-green suite,
+    // exactly like the NcclContext singleton fixed in the same way.
+    //
+    // The CUDA driver reclaims all GPU resources when the process exits, so
+    // orderly teardown at exit is unnecessary.
+    static MeshStreams* instance = new MeshStreams();
+    return *instance;
 }
 
 MeshStreams::~MeshStreams() {
