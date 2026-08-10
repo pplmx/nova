@@ -86,6 +86,10 @@ protected:
     void SetUp() override {
         cudaGetDevice(&device_);
         cudaStreamCreate(&stream_);
+        // This fixture asserts cudaGetLastError()==cudaSuccess after its own
+        // async work (e.g. GetEncoding). Drain any stale sticky error left by an
+        // earlier test so the assertion only reflects THIS test's operations.
+        (void)cudaGetLastError();
     }
 
     void TearDown() override {

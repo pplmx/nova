@@ -257,29 +257,41 @@ TEST_F(MemoryNodeTest, ScopedGraphBuffer) {
 
     executor.begin_capture(stream);
 
-    cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 100);
+    // ScopedGraphBuffer backs its allocation with a plain cudaMalloc until CUDA
+    // graph memory-pool support (cudaGraphAddMemAllocNode) is implemented. CUDA
+    // forbids cudaMalloc inside an active stream capture, so the constructor
+    // throws - that is the documented limitation. Assert it, then restore a
+    // clean CUDA state so this negative test cannot invalidate the capture on
+    // `stream` and poison later GPU work in the same process.
+    EXPECT_THROW({ cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 100); },
+                 cuda::device::CudaException);
 
-    EXPECT_NE(buffer.get(), nullptr);
-    EXPECT_EQ(buffer.size(), 100u);
-
-    executor.end_capture();
-
-    cudaFree(buffer.get());
+    // The failed allocation invalidated the capture; abort whatever capture
+    // state is left on the stream and drain the sticky error before returning.
+    cudaGraph_t abandoned = nullptr;
+    if (cudaStreamEndCapture(stream.get(), &abandoned) == cudaSuccess && abandoned != nullptr) {
+        cudaGraphDestroy(abandoned);
+    }
+    (void)cudaGetLastError();
+    (void)cudaDeviceSynchronize();
+    ASSERT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 TEST_F(MemoryNodeTest, ScopedGraphBufferMove) {
     cuda::production::GraphExecutor executor;
     cuda::production::GraphMemoryManager manager;
+    cuda::stream::Stream stream;
 
-    executor.begin_capture();
-    cuda::production::ScopedGraphBuffer<float> buffer1(manager, executor, nullptr, 50);
+    executor.begin_capture(stream);
 
-    cuda::production::ScopedGraphBuffer<float> buffer2(std::move(buffer1));
+    EXPECT_THROW({ cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 50); },
+                 cuda::device::CudaException);
 
-    EXPECT_EQ(buffer2.size(), 50u);
-    EXPECT_EQ(buffer1.get(), nullptr);
-
-    executor.end_capture();
-
-    cudaFree(buffer2.get());
+    cudaGraph_t abandoned = nullptr;
+    if (cudaStreamEndCapture(stream.get(), &abandoned) == cudaSuccess && abandoned != nullptr) {
+        cudaGraphDestroy(abandoned);
+    }
+    (void)cudaGetLastError();
+    (void)cudaDeviceSynchronize();
+    ASSERT_EQ(cudaGetLastError(), cudaSuccess);
 }

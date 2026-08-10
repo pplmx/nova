@@ -63,14 +63,8 @@ TEST_F(KVCacheAllocatorTest, AllocationDeallocation) {
     EXPECT_EQ(stats.free_blocks, 126);
 
     try {
-        fprintf(stderr, "DEBUG: Calling free(1)\n");
-        fflush(stderr);
         allocator->free(1);
-        fprintf(stderr, "DEBUG: free completed\n");
-        fflush(stderr);
     } catch (const std::exception& e) {
-        fprintf(stderr, "DEBUG: Caught exception in free: %s\n", e.what());
-        fflush(stderr);
         GTEST_SKIP() << "KVCacheAllocator::free failed: " << e.what();
     }
 

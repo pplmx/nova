@@ -118,17 +118,25 @@ TEST_F(BufferTest, Release) {
 }
 
 TEST_F(BufferTest, DestructorFrees) {
-    int* ptr = nullptr;
+    // Verify the destructor releases device memory via cudaMemGetInfo accounting
+    // instead of dereferencing the freed pointer. Reading through a freed device
+    // pointer is undefined behaviour; on some drivers it even leaves the CUDA
+    // context in a faulted state that breaks later thrust/cub dispatch.
+    size_t free_before = 0, total = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
+
     {
         cuda::memory::Buffer<int> buffer(100);
-        ptr = buffer.data();
+        size_t free_in_use = 0;
+        ASSERT_EQ(cudaMemGetInfo(&free_in_use, &total), cudaSuccess);
+        EXPECT_LT(free_in_use, free_before)
+            << "Allocating the buffer must consume device memory";
     }
 
-    void* dummy = nullptr;
-    cudaError_t err = cudaMemcpy(&dummy, ptr, sizeof(void*), cudaMemcpyDeviceToHost);
-    if (err == cudaSuccess) {
-        GTEST_FAIL() << "Memory should have been freed";
-    }
+    size_t free_after = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
+    EXPECT_GE(free_after, free_before)
+        << "Destructor must release the buffer's device memory";
 }
 
 TEST_F(BufferTest, VoidBufferConstruction) {
@@ -452,17 +460,23 @@ TEST_F(UniquePtrTest, BoolOperator) {
 }
 
 TEST_F(UniquePtrTest, DestructorFrees) {
-    int* tracking_ptr = nullptr;
+    // Verify the destructor releases device memory via cudaMemGetInfo accounting
+    // instead of dereferencing the freed pointer (UB that can fault the driver).
+    size_t free_before = 0, total = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
+
     {
         cuda::memory::unique_ptr<int> ptr(100);
-        tracking_ptr = ptr.get();
+        size_t free_in_use = 0;
+        ASSERT_EQ(cudaMemGetInfo(&free_in_use, &total), cudaSuccess);
+        EXPECT_LT(free_in_use, free_before)
+            << "Allocating the unique_ptr must consume device memory";
     }
 
-    void* dummy = nullptr;
-    cudaError_t err = cudaMemcpy(&dummy, tracking_ptr, sizeof(void*), cudaMemcpyDeviceToHost);
-    if (err == cudaSuccess) {
-        GTEST_FAIL() << "Memory should have been freed";
-    }
+    size_t free_after = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
+    EXPECT_GE(free_after, free_before)
+        << "Destructor must release the unique_ptr's device memory";
 }
 
 class ErrorHandlingTest : public ::testing::Test {
@@ -476,12 +490,21 @@ TEST_F(ErrorHandlingTest, InvalidSizeTrows) {
     EXPECT_THROW({
         cuda::memory::Buffer<void> buffer(SIZE_MAX);
     }, cuda::device::CudaException);
+    // A failed giant allocation can leave a sticky CUDA error that later tests
+    // observe; drain the device error state so this negative test cannot poison
+    // subsequent thrust/cub dispatch in the same process.
+    (void) cudaGetLastError();
+    (void) cudaDeviceSynchronize();
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 TEST_F(ErrorHandlingTest, BufferVoidInvalidSizeTrows) {
     EXPECT_THROW({
         cuda::memory::Buffer<void> buffer(static_cast<size_t>(-1));
     }, cuda::device::CudaException);
+    (void) cudaGetLastError();
+    (void) cudaDeviceSynchronize();
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 class ScopedMemoryPoolTest : public ::testing::Test {

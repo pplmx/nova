@@ -88,11 +88,19 @@ TEST_F(AsyncErrorTrackerTest, ScopedErrorTracking) {
 
     {
         cuda::production::ScopedErrorTracking scope(tracker);
+        // Force a real CUDA error inside the scope. The previous version relied
+        // on some stray sticky error left by an earlier test, which made this
+        // test pass or fail depending on process order (it failed standalone).
         int* p = nullptr;
-        cudaMalloc(&p, 1);
-    }
+        (void)cudaMalloc(&p, static_cast<size_t>(-1));
+    }  // scope dtor -> tracker.check() records the failed allocation
 
     EXPECT_GT(tracker.error_count(), 0u);
+
+    // Drain the sticky error left by the deliberately failed allocation so this
+    // negative-path test cannot poison later GPU work in the same process.
+    (void)cudaGetLastError();
+    ASSERT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 class HealthMonitorTest : public ::testing::Test {
