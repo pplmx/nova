@@ -29,8 +29,24 @@ std::string NcclException::format_message(const char* msg, const char* expr,
 // ============================================================================
 
 NcclContext& NcclContext::instance() {
-    static NcclContext ctx;
-    return ctx;
+    // Heap-allocated singleton that is intentionally never destroyed.
+    //
+    // A function-local static's destructor runs at process exit, and this
+    // destructor tears down per-device CUDA streams / NCCL communicators.
+    // Calling into the CUDA driver from a static destructor after an
+    // earlier error (e.g. an OOM that left the driver context in a bad
+    // state) makes cudaStreamDestroy SEGV inside the driver — this was
+    // observed as an intermittent "end-of-run SIGSEGV" with no failing
+    // test nearby, and it discards a 1GB core per occurrence.
+    //
+    // The CUDA driver reclaims all GPU resources when the process exits, so
+    // orderly teardown at exit is unnecessary; callers that want to release
+    // resources while the process is still alive use destroy() explicitly
+    // (already idempotent). Note this deliberately deviates from the DeviceMesh
+    // singleton, whose destructor does run at exit — harmless there only because
+    // it makes no CUDA calls; here the destructor would call the driver.
+    static NcclContext* ctx = new NcclContext();
+    return *ctx;
 }
 
 NcclContext::NcclContext(const NcclContextConfig& config) {
