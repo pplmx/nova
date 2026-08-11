@@ -56,6 +56,44 @@ high-level ops — and of the SyncBatchNorm training path that consumes them —
 
 `task-v17a-dist-ops-harness` (P1) is the round 17 focus.
 
-## Execute / Verify / Learn (P1)
+## Execute — Phase 1 (task-v17a-dist-ops-harness)
 
-(filled at round close)
+Added a `run_per_rank` thread-per-rank harness (RankBarrier + one thread per device +
+first-exception rethrow) to `tests/distributed/distributed_ops_test.cu`, plus four real
+multi-GPU tests that drove the legacy ops with **distinct per-rank data** from every rank:
+
+- `MultiGpu_AllReduceDistinctData`, `MultiGpu_AllReduceInPlace` — `DistributedReduce::all_reduce`
+  with per-rank base (r+1); assert every rank ends with the group sum.
+- `MultiGpu_AllGatherDistinctData` — `DistributedAllGather::all_gather`; assert recv is the
+  rank-ordered concatenation of all ranks' blocks.
+- `MultiGpu_BroadcastDistinctData` — `DistributedBroadcast::broadcast(..., root=0)`; assert every
+  rank ends with the root's value.
+
+## Verify — Phase 1 (evidence)
+
+On 2× A100 (`CUDA_VISIBLE_DEVICES=0,1`), all four **fail fast and deterministically** (no
+hang, ~10-600 ms each) with the exact failure modes code-reading predicted:
+
+| op | observed | root cause |
+|----|----------|------------|
+| `all_reduce` | result ≠ group sum | CPU-coordinated host-staging loops over all GPUs reading the caller's single `send_data` — cannot gather distinct per-rank contributions; `all_reduce_async` is a blocking sync delegate that ignores its `stream` |
+| `all_gather` | every block = caller's own data | `send_data` (the caller's pointer) is read as if each `src` had its own; non-P2P fallback even comments "assumes send_data is on src device - need to handle this" |
+| `broadcast` | non-root never receives root's value | P2P/event copies dereference the root's `data` address on destination devices (buffer addresses differ across ranks); cross-thread event wait is fragile |
+| `MeshBarrier` | (not exercised this round — per-instance host event poll with a non-threadsafe flag; a real cross-thread barrier is P2 work) | — |
+
+Suite stays green: the four tests are committed as `DISABLED_MultiGpu_*` regression tests
+(documented: they are the P2 acceptance tests, not hidden skips), and the 10 existing
+"Requires single GPU" env-skips remain for single-GPU coverage. Full-suite regression:
+**1451 ran / 1423 pass / 0 fail / 5 disabled, EXIT=0** (no behavior change; harness only).
+Re-run the disabled set: `--gtest_filter='*DISABLED_MultiGpu_*' --gtest_also_run_disabled_tests`.
+
+## Learn — Phase 1 (graph)
+
+- `ev-v17-p1-dist-ops-failures` (confidence 1.0) — the four failure modes above.
+- `issue-v17-dist-ops-multigpu-untested` still open — now with direct evidence.
+- `task-v17a-dist-ops-harness` → resolved by `change-v17-p1` (commit 4b2d10a).
+- P2 (`task-v17b-dist-ops-nccl-converge`) is now unambiguous: re-route
+  `DistributedReduce/DistributedAllGather/DistributedBroadcast` (and `MeshBarrier`) onto the
+  R15/R16-verified NCCL collectives (`current_comm` routing, sync-vs-async preserved) and flip
+  the four disabled tests on. SyncBatchNorm's multi-GPU `all_reduce_async` call sites are the
+  production consumer to re-verify in P3.

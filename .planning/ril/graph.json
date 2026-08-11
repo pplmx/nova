@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 16,
+  "round": 17,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-11T08:58:44+00:00",
+  "updated_at": "2026-08-11T09:16:49+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -250,7 +250,7 @@
       "version": 1,
       "created_at": "2026-08-11T08:57:51+00:00",
       "updated_at": "2026-08-11T08:57:51+00:00",
-      "touched_round": 16,
+      "touched_round": 17,
       "severity": 4,
       "title": "High-level distributed ops multi-GPU paths never exercised: 10 'Requires single GPU' skips, yet SyncBatchNorm multi-GPU training calls all_reduce_async"
     },
@@ -268,11 +268,11 @@
     "task-v17a-dist-ops-harness": {
       "id": "task-v17a-dist-ops-harness",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-08-11T08:58:29+00:00",
-      "updated_at": "2026-08-11T08:58:29+00:00",
-      "touched_round": 16,
+      "updated_at": "2026-08-11T09:16:49+00:00",
+      "touched_round": 17,
       "category": "core-feature",
       "confidence": 0.9,
       "severity": 4,
@@ -312,6 +312,45 @@
       "unlock_factor": 1.0,
       "title": "P3: verify SyncBatchNorm multi-GPU gradient path end-to-end (production consumer of all_reduce_async)",
       "summary": "SyncBatchNorm backward+forward call DistributedReduce::all_reduce_async at 3 sites when device_count>1; after P2, add gradient-correctness tests on 2+ GPUs for the training path and run the full-suite regression. Include R16 review HIGH-B scope: rank exiting a collective early must not poison the shared NcclContext."
+    },
+    "ev-v17-p1-dist-ops-failures": {
+      "id": "ev-v17-p1-dist-ops-failures",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T09:10:26+00:00",
+      "updated_at": "2026-08-11T09:10:26+00:00",
+      "touched_round": 17,
+      "confidence": 1.0,
+      "source": "distributed_ops_test.cu DISABLED_MultiGpu_* re-run on 2x A100 (CUDA_VISIBLE_DEVICES=0,1), Round 17 P1",
+      "summary": "All 4 high-level distributed ops multi-GPU paths FAIL for real (deterministic, no hang): all_reduce result != group sum (CPU-coordinated host staging can't gather distinct per-rank data; all_reduce_async ignores stream); all_gather blocks repeat the caller's own data (send_data read as if every source had its own); broadcast non-root never receives root's data (P2P derefs root pointer address on dst devices). Confirms issue-v17-dist-ops-multigpu-untested; P2 task-v17b must re-route onto verified NCCL."
+    },
+    "task-v17d-dist-ops-harness-committed": {
+      "id": "task-v17d-dist-ops-harness-committed",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-11T09:10:26+00:00",
+      "updated_at": "2026-08-11T09:11:14+00:00",
+      "touched_round": 17,
+      "category": "test-quality",
+      "confidence": 1.0,
+      "severity": 2,
+      "effort": 2,
+      "title": "P1 delivered: thread-per-rank harness + ready DISABLED multi-GPU regression tests (4) for legacy distributed ops",
+      "summary": "run_per_rank harness + RankBarrier added to distributed_ops_test.cu; 4 real multi-GPU tests converted from 'Requires single GPU' skips, left DISABLED_ pending P2 fix; suite green."
+    },
+    "change-v17-p1": {
+      "id": "change-v17-p1",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T09:16:36+00:00",
+      "updated_at": "2026-08-11T09:16:36+00:00",
+      "touched_round": 17,
+      "commit": "4b2d10a",
+      "title": "P1: thread-per-rank harness + DISABLED multi-GPU ops regression tests expose 4 broken legacy paths",
+      "summary": "task-v17a-dist-ops-harness delivered: run_per_rank harness + 4 ready regression tests in distributed_ops_test.cu; all 4 legacy ops multi-GPU paths confirmed broken on 2x A100 (evidence ev-v17-p1-dist-ops-failures)."
     }
   },
   "edges": [
@@ -470,6 +509,18 @@
       "to": "task-v17a-dist-ops-harness",
       "type": "governs",
       "created_at": "2026-08-11T08:58:44+00:00"
+    },
+    {
+      "from": "task-v17d-dist-ops-harness-committed",
+      "to": "issue-v17-dist-ops-multigpu-untested",
+      "type": "addresses",
+      "created_at": "2026-08-11T09:11:14+00:00"
+    },
+    {
+      "from": "change-v17-p1",
+      "to": "task-v17a-dist-ops-harness",
+      "type": "implements",
+      "created_at": "2026-08-11T09:16:36+00:00"
     }
   ]
 }

@@ -4,10 +4,10 @@ milestone: v2.17
 milestone_name: Distributed Ops On Real Multi-GPU
 status: In Progress
 last_updated: "2026-08-11"
-last_activity: 2026-08-11 — Round 17 opening: milestone v2.17 opened, P1 harness in progress
+last_activity: 2026-08-11 — Round 17: P1 harness complete; all 4 legacy ops multi-GPU paths confirmed broken
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,8 +20,8 @@ progress:
 ## Current Position
 
 Milestone: v2.17 Distributed Ops On Real Multi-GPU
-Status: In Progress (Round 17)
-Last activity: 2026-08-11 — RIL Round 17 opening: high-level distributed ops multi-GPU harness (P1)
+Status: In Progress (Round 17, P1 complete)
+Last activity: 2026-08-11 — RIL Round 17: P1 harness done; all 4 legacy ops multi-GPU paths confirmed broken
 
 ## Milestone v2.17 — Distributed Ops On Real Multi-GPU
 
@@ -32,8 +32,8 @@ their real multi-GPU correctness:
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Thread-per-rank harness + real distributed-ops multi-GPU tests | In progress (Round 17) |
-| 2 | Converge high-level collectives on verified NCCL layer (or fix per P1 evidence) | Pending |
+| 1 | Thread-per-rank harness + real distributed-ops multi-GPU tests | Complete (Round 17) — all 4 legacy multi-GPU paths confirmed broken; ready DISABLED regression tests |
+| 2 | Converge high-level collectives on verified NCCL layer (or fix per P1 evidence) | Next (Round 17/18) |
 | 3 | SyncBatchNorm multi-GPU gradient-path verify + full-suite regression | Pending |
 
 ## Milestone v2.16 — Distributed Multi-GPU Verification (Complete)
@@ -83,6 +83,7 @@ Turn the last un-verified distributed functionality into running, asserted tests
 
 ---
 
-## State updated: 2026-08-11 — Milestone v2.17 opened (RIL Round 17)
-v2.16 closed (baseline 1451/1423/0). v2.17 "Distributed Ops On Real Multi-GPU" opened:
-P1 thread-per-rank harness for the high-level distributed ops is in progress (Round 17).
+## State updated: 2026-08-11 — RIL Round 17 P1 complete (milestone v2.17)
+P1 harness + ready DISABLED multi-GPU regression tests prove all 4 legacy ops multi-GPU paths
+break (ev-v17-p1-dist-ops-failures). Next: P2 converge onto the verified NCCL layer. Full-suite
+baseline stays 1451/1423/0 EXIT=0 (5 disabled).

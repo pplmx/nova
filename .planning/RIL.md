@@ -9,12 +9,15 @@ Verification"** opened at Round 15 and **closed at Round 16** → **v2.17 "Distr
 Real Multi-GPU"** opened at Round 17 (P1 in progress).
 
 ## Latest round
-- **Round 17 (2026-08-11)** — milestone v2.17 kickoff. The high-level distributed ops
-  (`DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast`/`MeshBarrier`) carry 10
-  "Requires single GPU" test skips, yet SyncBatchNorm multi-GPU training calls
-  `DistributedReduce::all_reduce_async` at 3 sites. Opened the milestone (decision
-  `decision-v17-dist-ops-real-multigpu`) with 3 phase tasks and started P1: thread-per-rank
-  harness + real multi-GPU tests. See `ril_autonomous_round17.md`.
+- **Round 17 (2026-08-11)** — milestone v2.17 kickoff + **P1 complete**. The high-level
+  distributed ops (`DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast`/
+  `MeshBarrier`) carry 10 "Requires single GPU" test skips, yet SyncBatchNorm multi-GPU
+  training calls `DistributedReduce::all_reduce_async` at 3 sites. Opened the milestone
+  (`decision-v17-dist-ops-real-multigpu`), then built a thread-per-rank harness + 4 real
+  multi-GPU tests (ev-v17-p1-dist-ops-failures) that proved **all 4 legacy multi-GPU paths
+  fail for real** — committed `DISABLED_` as ready P2 acceptance tests. P2
+  (`task-v17b-dist-ops-nccl-converge`) re-routes the ops onto the verified NCCL layer. Full
+  suite 1451/1423/0 EXIT=0. See `ril_autonomous_round17.md`.
 - **Round 16 (2026-08-11)** — milestone v2.16 Phase 3: implemented the real distributed matmul
   multi-GPU path `DistributedMatmul::matmul_multi_gpu` (row-split compute + NCCL all-gather) and
   replaced the last unconditional distributed skip with three real multi-GPU tests
@@ -34,9 +37,13 @@ Real Multi-GPU"** opened at Round 17 (P1 in progress).
 ## Active tasks (by priority_score; threshold 3.0)
 | score | task | status |
 |-------|------|--------|
-| 21.60 | task-v17a-dist-ops-harness (P1) | active |
-| 20.82 | task-v17b-dist-ops-nccl-converge (P2) | active (depends on P1) |
+| 20.82 | task-v17b-dist-ops-nccl-converge (P2) | active — next focus |
 | 14.31 | task-v17c-syncbn-multigpu-backward (P3) | active (depends on P2) |
+
+## Resolved (v2.17)
+- `task-v17a-dist-ops-harness` RESOLVED by `change-v17-p1` (4b2d10a) — thread-per-rank harness
+  + 4 ready `DISABLED_` multi-GPU regression tests; all 4 legacy ops multi-GPU paths confirmed
+  broken (2x A100). `task-v17d` (redundant annotation) abandoned.
 
 ## Candidate follow-up (below threshold / env-bound)
 - MPI enablement — `NOVA_ENABLE_MPI=ON` needs MPI headers/dev absent on this host (env-bound).
