@@ -1,103 +1,184 @@
 ---
 name: graph-engineering
-description: Maintain this repo's repository-intelligence layer (RIL) - a typed engineering graph of components, issues, hypotheses, evidence, decisions, changes and tasks, with lifecycle, scoring and cross-session loading. Use for autonomous/continuous engineering rounds on this repo (the /goal loop: OBSERVE -> MODEL -> EVALUATE -> SELECT -> EXECUTE -> VERIFY -> LEARN), when recording a research/fix outcome or next-task into the graph, or when asked to continue prior autonomous work.
+description: >
+  Continuous autonomous engineering loop for the current repository
+  (OBSERVE, MODEL, EVALUATE, SELECT, EXECUTE, VERIFY, LEARN, REPEAT),
+  backed by a typed knowledge graph (RIL) as cross-session memory.
+  Use when the user wants the agent to keep iterating on the repo by
+  itself, asks for autonomous/continuous engineering mode, "graph
+  engineering", "loop engineering", "keep improving the repository", or
+  wants issues tracked as typed nodes and edges with weighted priority
+  scoring. Covers graph schema and lifecycle, cross-session loading,
+  concurrency locking, scoring, deep-dive budgets, human-intervention
+  boundaries, and stop conditions.
 ---
 
-# Graph Engineering (RIL)
+# Graph Engineering（长期自主工程循环）
 
-Codifies the engineering-graph methodology this repo's autonomous rounds use. It exists because the `/goal` directive is session-scoped and ephemeral; this skill gives the repo a durable, canonical reference. Ground it in what the repo actually stores (markdown round docs), not in an idealized graph DB.
+## 运行总览
 
-## When to use
-- Starting or continuing an autonomous engineering round on this repo.
-- Recording findings, root causes, decisions, or scored next-tasks (the "LEARN" step, or a `docs(ril)` commit).
-- Cross-session reload of prior work (active tasks + recent decisions + repo intel).
+作为长期运行的 Autonomous Engineering Agent，目标不是完成某个预先定义的任务，而是持续自主推进当前 Git 仓库，使项目在每一轮迭代后都变得更正确、更稳定、更安全、更高性能、更易维护。
 
-## Schema — canonical vocabulary
-Nodes carry `id/type/status/created_at/updated_at/confidence`:
+默认行为：**OBSERVE → MODEL → EVALUATE → SELECT → EXECUTE → VERIFY → LEARN → REPEAT**。
+除非触发"人工介入边界"（见第 9 节），不等待确认，不询问"是否继续"。
 
-- `component` — module/service/file entity
-- `issue` — identified problem (bug / risk / debt)
-- `hypothesis` — unverified root cause (confidence 0–1)
-- `evidence` — concrete observation supporting/refuting a hypothesis; must cite a source (commit hash, test name, file:line)
-- `decision` — made decision; record rationale + alternatives_rejected
-- `change` — actual code change; tie to a commit sha
-- `task` — next action; carries `priority_score`
+## 1. OBSERVE
 
-Edges are directional and semantic (no bare "relates to"):
+每轮基于仓库最新状态重新观察：
 
-- `depends_on` — task→task, component→component
-- `causes` — issue→issue (mark root-cause vs symptom)
-- `blocks` — task→task
-- `validates` / `refutes` — evidence→hypothesis
-- `resolves` — change→issue
-- `supersedes` — decision→decision (records evolution, never overwrite)
+- 代码/架构/依赖
+- git status/diff/log
+- Issue/TODO/FIXME
+- 测试/CI/构建
+- 性能/稳定性/安全性/可观测性
+- 文档
+- 最近变更
+- 已有工程知识（见 MODEL）
 
-**Rule:** a hypothesis is not treated as fact in EVALUATE until it has a `validates`/`refutes` edge.
+不要只找孤立 TODO；理解组件、API、数据流、测试、配置、运行时行为之间的关系。
 
-Node id convention: `<type>-<short-kebab-slug>`, e.g. `issue-segsort-poison`, `hypothesis-thrust-plan-cache`, `change-r13-segsort`.
+## 2. MODEL 工程图谱
 
-## Storage — as actually practiced in this repo
-The RIL lives in markdown, not a graph database. Locations:
+### 2.1 Schema（绑定到 RIL，而不是自然语言描述）
 
-- `.planning/ril_autonomous_roundN.md` — one doc per autonomous round: narrative + a **graph-delta** block (below).
-- `.planning/RIL.md` — the index: active tasks ranked by `priority_score`, recent decisions, latest-round pointer.
-- `.planning/codebase/CONCERNS.md` — cross-round issue register; mark items STALE, never delete.
-- `.planning/STATE.md`, `ARCHITECTURE.md`, `PROJECT.md`, ... — existing planning docs; keep in sync when closing items.
+图谱是类型化的节点+边，不是自由文本笔记。RIL（repository-intelligence-layer）的 schema 由本技能自带的 CLI `.agents/skills/graph-engineering/scripts/ril.py`（下称 `ril.py`）强制校验，`.planning/ril/graph.json` 是唯一事实源；一律通过 `ril.py` 读写，**禁止手改 graph.json、禁止新建平行的知识存储**。完整 schema 与 CLI 清单以 `references/ril-schema.md` 为准；`.planning/ril/README.md` 只描述数据存储。
 
-Graph-delta convention — append this compact, machine-scannable block to each round doc (existing docs may predate it; apply going forward):
+**节点类型**（每个节点必有 `id`, `type`, `status`, `version`, `created_at`, `updated_at`, `touched_round`；下表为各类型的额外必填字段）：
 
-```yaml
-## Graph delta
-nodes:
-  - id: issue-segsort-poison
-    type: issue
-    status: resolved
-    confidence: 0.95
-  - id: change-r13-backward-nan
-    type: change
-    status: active
-edges:
-  - from: change-r13-backward-nan
-    type: resolves
-    to: issue-backward-nan
-  - from: evidence-<slug>
-    type: refutes
-    to: hypothesis-thrust-plan-cache
+| 节点类型   | 额外必填字段                                                                                                            | 说明                                                                   |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| component  | —                                                                                                                       | 模块/服务/文件级实体                                                   |
+| issue      | —                                                                                                                       | 已识别问题（bug/风险/债务）                                            |
+| hypothesis | `confidence`（0-1）                                                                                                     | 未验证的根因猜测                                                       |
+| evidence   | `source`（commit hash / 测试名 / 文件行号），append-only                                                                | 支持或反驳某个 hypothesis 的具体观测（测试结果、日志、profiling 数据） |
+| decision   | `rationale`、`alternatives_rejected`，不可变                                                                            | 已做出的选择                                                           |
+| change     | `commit` hash                                                                                                           | 实际代码修改                                                           |
+| task       | `category`（correctness/security/stability/critical-bug/core-feature/performance/test-quality/maintainability/dx/docs） | 可执行的下一步行动，带 priority_score（见 EVALUATE）                   |
+
+**边类型**（有向，语义明确，禁止用无类型的"关联"边）：
+
+| 边类型              | 允许的端点                                        | 语义                                              |
+| ------------------- | ------------------------------------------------- | ------------------------------------------------- |
+| depends_on          | task→task, component→component                    | 硬依赖                                            |
+| causes              | issue→issue                                       | 根因/症状链接，标注是根因还是症状                 |
+| blocks              | task→task                                         | 执行阻塞                                          |
+| validates / refutes | evidence→hypothesis                               | 证据支持/反驳假设                                 |
+| resolves            | change→issue                                      | change 修复 issue                                 |
+| supersedes          | decision→decision                                 | 决策变更历史而不是覆盖                            |
+| addresses           | task→issue                                        | task 处理某个 issue                               |
+| located_in          | issue→component                                   | 问题所在位置                                      |
+| part_of             | component→component                               | 子系统层级                                        |
+| implements          | change→task                                       | change 交付 task                                  |
+| governs             | decision→component/task                           | decision 约束目标                                 |
+
+一个 hypothesis 在没有任何 validates/refutes 边之前，不得被 EVALUATE 当作 fact 使用。
+
+**常用命令**（`ril.py` 即 `.agents/skills/graph-engineering/scripts/ril.py`）：
+
+```bash
+ril.py check                      # 一致性检查（孤立节点/循环/无证据 hypothesis）
+ril.py tasks --top 10             # active task 按 priority_score 排序取 top-K
+ril.py show --id <id> --hops 2    # 拉取节点及其 1-2 跳邻域
+ril.py node add --type task --field category=correctness --field severity=...  # 建节点（id 自动分配 TASK-N）
+ril.py node set --id <id> --expect-version <v> --field status=resolved         # 乐观更新，版本不匹配会报错
+ril.py edge add --type addresses --from <task> --to <issue>                    # 建边
+ril.py lock --id <task> --owner <instance> [--minutes 30]                      # 分布式锁
+ril.py unlock --id <task>                                                      # 释放锁
+ril.py round | ril.py stale --rounds 10                                        # 生命周期维护
 ```
 
-## Lifecycle
-- Statuses: `active` / `stale` / `resolved` / `superseded` / `abandoned`.
-- A hypothesis/task untouched for N rounds (default 10) → `stale`; keep for audit, skip in EVALUATE unless new evidence re-activates it.
-- Decisions are never deleted; replace by adding a new decision with a `supersedes` edge.
-- Concurrency (only when multiple agents touch the repo): optimistic-lock node/edge writes, set `owner` on `in_progress` tasks, evidence is append-only. Single-instance fast path: skip the locking machinery.
+### 2.2 生命周期与淘汰
 
-## Scoring
-`priority_score = category_weight × severity × confidence × (1/√effort) × unlock_factor`
+- 每个节点有 status：`active` / `stale` / `resolved` / `superseded` / `abandoned`。
+- 每轮 MODEL 阶段用 `ril.py round` 推进轮次；`ril.py stale --rounds 10` 把超过 N 轮（默认 10）未被触碰的 hypothesis/task 标记为 `stale`（不删除，保留审计轨迹），EVALUATE 阶段默认跳过 stale 节点，除非新证据重新激活它。
+- decision 永不删除，只能被新 decision 通过 `supersedes` 边替代，保留决策演化历史。
+- 图谱本身要定期（例如每 50 次 commit 或每周）跑一次 `ril.py check`（孤立节点、循环 depends_on、无证据 hypothesis、长期未闭环的 blocks 边），发现问题作为一个具体 task 提交处理，而不是无限累积。
 
-- category_weight: correctness/security 10 · stability/critical bug 8 · core feature 6 · performance 5 · test-quality 4 · maintainability 3 · DX 2 · docs 1
-- severity = blast radius × trigger probability; confidence = how much the root-cause claim is backed by `validates` evidence; effort = implementation cost (prevents gaming high weights with trivial items); unlock_factor = downstream tasks enabled.
-- Switch focus to a new task only when it scores ≥1.5× the current task; record the switch as a decision.
+### 2.3 跨 session 的加载策略
 
-## Round workflow
-1. **OBSERVE** — git status/diff/log, issues/TODO/FIXME, tests/CI build state, docs, recent changes. Understand component/data-flow relationships, not just isolated TODOs. Reproduce suspected failures with minimal `--gtest_filter` prefixes before theorizing.
-2. **MODEL** — load active tasks (top-K by score) + their directly-linked components/issues/hypotheses + recent decisions. Expand along edges only as needed.
-3. **EVALUATE** — score candidates; pick the highest-scoring `active` task above threshold (default 3.0).
-4. **SELECT** — one focus line at a time.
-5. **EXECUTE** — repo-local, git-revertible changes only. Lock the task (`in_progress` + owner) if multi-instance.
-6. **VERIFY** — build/lint/tests; on failure fix the root cause and re-verify. Hard prohibitions: do NOT delete/skip tests, lower assertions or thresholds, comment out failing cases, or change quality bars to manufacture a pass. If a fix cannot be made reliable, roll it back and mark the hypothesis `refuted` with evidence.
-7. **LEARN** — write nodes/edges + the graph delta; commit messages reference the task/issue ids.
+每次 agent 启动是全新 context，不能靠"重读整个图谱"来恢复状态，成本不可控。规则：
 
-**Stop conditions** (all must hold): no active task with score > threshold · high-severity issues resolved or documented-with-decision · last VERIFY green · two consecutive deep-dive rounds produced no above-threshold task.
+- 启动时用 `ril.py tasks --top K` 加载 `status=active` 的 task（按 priority_score 排序取 top-K），用 `ril.py show --id <id> --hops 2` 拉取这些 task 直接关联的 component/issue/hypothesis 子图（1-2 跳），以及最近 N 次 decision。
+- 不做全图扫描，除非本轮任务明确是"图谱一致性检查"或"深度探索"（见第 8 节）。
+- 如果某个 task 需要更大范围的上下文，允许按需扩展加载（跟着边走），但要在 LEARN 阶段记录"本轮实际使用的子图范围"，供后续 session 参考典型的加载半径。
 
-## Repo intel (learned; keep current — mostly from Rounds 9–13)
-- **Device-poisoning class**: UB in tests (reads through freed device pointers, leaving invalidated CUDA stream captures, sticky errors from deliberately-failed giant allocs) faults the CUDA driver so later thrust/cub dispatch fails with `cudaErrorInvalidDevice`, or the process SIGSEGVs at exit. Round 13 fixed the three known poisoners + the exit crash.
-- **Exit-teardown class**: static singletons whose destructors call CUDA driver APIs crash inside libcuda at exit. `NcclContext` (R12) and `MeshStreams` (R13) are fixed; `nova::sparse::detail::CusparseContext::~CusparseContext` still runs `cusparseDestroy` at exit (latent, no observed crash yet — fix only on evidence).
-- **Sticky-error hygiene**: tests asserting `cudaGetLastError()==cudaSuccess` must drain the error in the fixture's SetUp so the assertion reflects only that test; negative-path tests must drain after forcing an error (else they poison later tests).
-- **Skips can hide real bugs**: `SyncBatchNormTest`'s GPU tests always skipped because they queried `DeviceMesh::device_count()` without `initialize()` and ran before any mesh test — un-skipping exposed a genuine all-NaN backward gradient bug. Before trusting any `GTEST_SKIP`, verify its guard.
-- **Known-skip inventory** (verify current state before relying on it): MPI tests (build flag off), NCCL multi-GPU tests, `block_manager_edge` OOM guards, `scheduler_edge` "non-continuous batching not implemented" (half-implemented mode), sparse BiCGSTAB convergence skip.
-- **Quiet-GPU convention**: the suite runs on an idle GPU. `cudaMemGetInfo`-based assertions assume no concurrent allocation churn from other processes.
-- **Correct RIL narrative**: Round 12's "thrust plan-cache staleness" explanation for the SegmentedSort failure was wrong (Thrust 2.0.8 has no host plan cache); the real cause was the test-UB poisoners (see Round 13). Cite Round 13, not 12.
+### 2.4 并发语义
 
-## Verification discipline
-- Evidence before assertions: name the root cause, fix it, then verify with targeted reproducers AND the full suite.
-- Report failures faithfully — never weaken an assertion to get green.
+若存在多个 agent instance（Loop Engineering 架构下这是常态）：
+
+- 写入图谱前，对目标节点/边执行乐观锁：`ril.py node set` 必须带 `--expect-version <当前 version>`；版本冲突时 CLI 报错并把节点输出到 stderr，此时重新读取并 diff 合并，而不是覆盖。
+- 两个 instance 不得同时对同一 component 下的代码发起 EXECUTE；开始 EXECUTE 前，用 RIL 分布式锁占用对应 task 节点：`python3 .agents/skills/graph-engineering/scripts/ril.py lock --id TASK-x --owner <instance_id>`（默认 30 分钟超时，过期自动释放），结束时 `python3 .agents/skills/graph-engineering/scripts/ril.py unlock --id TASK-x`。**不要**手写 `status=in_progress` 或 `owner=` 字段——RIL schema 没有这些字段，`ril.py` 会直接拒绝。
+- evidence 节点只增不改，天然无冲突，鼓励优先通过增加 evidence 而不是编辑已有节点来记录新发现。
+
+## 3. EVALUATE
+
+用加权评分而非严格字典序判断优先级，每个 task 计算：
+
+```text
+priority_score = category_weight × severity × confidence × (1 / sqrt(effort)) × unlock_factor
+```
+
+- category_weight：正确性/安全性=10，稳定性/关键 bug=8，核心功能=6，性能=5，测试质量=4，可维护性=3，DX=2，文档=1（默认值，可按仓库调整）
+- severity：影响范围 × 触发概率
+- confidence：该 task 关联的根因判断有多少 validates 证据支撑，未经验证的 hypothesis 打折
+- effort：预估实现成本，用于避免"为了刷分做琐碎高权重类别的事"
+- unlock_factor：完成后解锁的下游 task 数量/价值，鼓励优先做能解锁后续工作的事
+
+只有当新 task 的 priority_score 显著高于（默认 1.5x）当前正在做的 task 时才切换方向，避免频繁跳变；切换必须在 decision 节点记录原因。
+
+## 4. SELECT
+
+选 priority_score 最高且 `status=active` 的 task，一次聚焦一个主线。允许根据新证据切换，但受上面的切换阈值约束。
+
+## 5. EXECUTE
+
+正常仓库内工程操作（改代码、修 bug、加测试、重构、性能优化、错误处理、可观测性、依赖更新、配置、CI、文档、删除废弃代码）默认自主执行，只要限定在当前仓库且可通过 Git 回滚。
+
+开始前：在对应 task 节点加锁（见第 2.4 节）。
+
+## 6. VERIFY
+
+运行测试/lint/formatter/类型检查/构建/benchmark/静态分析。失败时：分析根因 → 修根因 → 重新验证。
+
+硬性禁止：删测试、跳测试、降低断言/阈值、注释失败用例、修改质量标准来制造"通过"。无法可靠修复时回滚本轮改动，并在图谱中把对应 hypothesis（如果修复基于某个根因假设）标记为 `refuted`，附上 evidence。
+
+## 7. LEARN
+
+按第 2.1 节的 schema 写入节点和边，而不是自由文本日志。区分 Fact/Hypothesis/Evidence/Decision 必须体现在节点类型上，不是靠文字语气区分。
+
+Commit 时在 message 里引用相关 task/issue 节点 id，保证代码历史和图谱可以互相追溯。
+
+## 8. 深度探索（无明显 TODO 时）
+
+主动做 Repository Intelligence Deep Dive，寻找隐藏 bug、边界问题、并发问题、错误处理缺陷、资源泄漏、性能瓶颈、测试缺口、安全风险、架构耦合、技术债务，优先形成"证据 → 根因 → 修复 → 验证"闭环。
+
+硬性预算约束：
+
+- 单轮深度探索最多产出 3 个新 task 节点，否则说明范围没收敛，需要先合并/归类。
+- 单次 commit 的 diff 不超过某个阈值（默认 300 行，特殊重构除外并需在 decision 中说明理由）。
+- 若连续 2 轮深度探索新增 task 的 priority_score 均低于当前阈值（默认 3.0），停止深度探索，转入停止条件评估。
+
+## 9. 人工介入边界
+
+只有以下情况暂停等待人工确认：
+
+- push 到 main/master 或强制 push
+- 删除远程分支
+- 正式发布版本或包
+- 不可逆的生产环境操作
+- 不可逆的数据删除或破坏性数据库迁移
+- 需要访问无权限的秘密/凭据/敏感数据
+- 明显超出当前仓库权限范围
+- 无法合理回滚且可能造成重大外部影响的操作
+
+## 10. 停止条件
+
+满足全部以下条件才停止：
+
+1. 图谱中不存在 `status=active` 且 priority_score 高于阈值（默认 3.0）的 task。
+2. 所有 severity 高的 issue 节点，status 为 `resolved` 或有明确 decision 记录暂缓原因。
+3. 最近一次 VERIFY 全绿。
+4. 连续 2 轮深度探索无法产出高于阈值的新 task（见第 8 节）。
+5. 图谱一致性检查（第 2.2 节）无未处理的孤立/循环节点超过 N 个。
+
+否则继续 REPEAT，直到用户主动中止或以上全部满足。
