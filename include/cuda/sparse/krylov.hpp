@@ -229,7 +229,11 @@ public:
             d_Ap.copy_to(h_Ap.data(), n);
 
             T p_Ap = detail::dot_product(h_p.data(), h_Ap.data(), n);
-            if (std::abs(p_Ap) < std::numeric_limits<T>::epsilon()) {
+            // Division-by-zero guard: p_Ap shrinks with the (converging) residual,
+            // so an absolute epsilon() threshold fires spuriously in float and
+            // stalls CG well above the requested tolerance (same defect as the
+            // BiCGSTAB guards). Only a genuinely zero denominator is a breakdown.
+            if (std::abs(p_Ap) < std::numeric_limits<T>::min()) {
                 result.error_code = SolverError::BREAKDOWN;
                 break;
             }
@@ -279,7 +283,11 @@ public:
 
         result.iterations = this->config_.max_iterations;
         result.residual_norm = detail::norm2(h_r.data(), n);
-        result.error_code = SolverError::MAX_ITERATIONS;
+        // Preserve a BREAKDOWN set inside the loop instead of reporting every
+        // exit as MAX_ITERATIONS.
+        if (result.error_code == SolverError::SUCCESS) {
+            result.error_code = SolverError::MAX_ITERATIONS;
+        }
         for (int i = 0; i < n; ++i) {
             x[i] = h_x[i];
         }
@@ -515,7 +523,9 @@ public:
         result.residual_norm = result.residual_history.empty()
                                    ? T{0}
                                    : result.residual_history.back();
-        result.error_code = SolverError::MAX_ITERATIONS;
+        if (result.error_code == SolverError::SUCCESS) {
+            result.error_code = SolverError::MAX_ITERATIONS;
+        }
         for (int i = 0; i < n; ++i) {
             x[i] = h_x[i];
         }
@@ -718,7 +728,9 @@ public:
         result.iterations = total_iterations;
         result.residual_norm = beta;
         result.residual_history = std::move(residual_history);
-        result.error_code = SolverError::MAX_ITERATIONS;
+        if (result.error_code == SolverError::SUCCESS) {
+            result.error_code = SolverError::MAX_ITERATIONS;
+        }
         for (int i = 0; i < n; ++i) {
             x[i] = h_x[i];
         }
@@ -779,7 +791,13 @@ public:
             spmv(A, d_p.data(), d_temp.data());
             d_temp.copy_to(h_temp.data(), n);
 
-            if (std::abs(r_r_tilde) < std::numeric_limits<T>::epsilon()) {
+            // These are division-by-(near-)zero guards, so they must only trip on
+            // a genuinely zero denominator. An absolute std::numeric_limits<T>::
+            // epsilon() threshold fired spuriously once the residual is small
+            // (e.g. t_t = <A s, A s> ~ 1.8e-7 for a float residual of 1.8e-5,
+            // just under epsilon() ~ 1.2e-7), halting a healthy BiCGSTAB at
+            // ~1e-5 instead of letting it converge to the 1e-6 tolerance.
+            if (std::abs(r_r_tilde) < std::numeric_limits<T>::min()) {
                 result.error_code = SolverError::BREAKDOWN;
                 break;
             }
@@ -792,7 +810,7 @@ public:
             // Guard the actual denominator of alpha: when A p is (numerically)
             // orthogonal to rhat, alpha diverges and the iterate is silently
             // corrupted instead of failing loudly.
-            if (std::abs(rhat_v) < std::numeric_limits<T>::epsilon()) {
+            if (std::abs(rhat_v) < std::numeric_limits<T>::min()) {
                 result.error_code = SolverError::BREAKDOWN;
                 break;
             }
@@ -836,7 +854,7 @@ public:
             T t_s = detail::dot_product(h_t.data(), h_s.data(), n);
             T t_t = detail::dot_product(h_t.data(), h_t.data(), n);
 
-            if (std::abs(t_t) < std::numeric_limits<T>::epsilon()) {
+            if (std::abs(t_t) < std::numeric_limits<T>::min()) {
                 result.error_code = SolverError::BREAKDOWN;
                 break;
             }
@@ -871,7 +889,13 @@ public:
 
             T r_new_r_tilde = detail::dot_product(h_r.data(), h_r_tilde.data(), n);
 
-            if (std::abs(r_r_tilde) < std::numeric_limits<T>::epsilon()) {
+            // These are division-by-(near-)zero guards, so they must only trip on
+            // a genuinely zero denominator. An absolute std::numeric_limits<T>::
+            // epsilon() threshold fired spuriously once the residual is small
+            // (e.g. t_t = <A s, A s> ~ 1.8e-7 for a float residual of 1.8e-5,
+            // just under epsilon() ~ 1.2e-7), halting a healthy BiCGSTAB at
+            // ~1e-5 instead of letting it converge to the 1e-6 tolerance.
+            if (std::abs(r_r_tilde) < std::numeric_limits<T>::min()) {
                 result.error_code = SolverError::BREAKDOWN;
                 break;
             }
@@ -888,7 +912,11 @@ public:
 
         result.iterations = this->config_.max_iterations;
         result.residual_norm = detail::norm2(h_r.data(), n);
-        result.error_code = SolverError::MAX_ITERATIONS;
+        // Preserve a BREAKDOWN recorded inside the loop instead of overwriting
+        // it with MAX_ITERATIONS (previously every breakdown was misreported).
+        if (result.error_code == SolverError::SUCCESS) {
+            result.error_code = SolverError::MAX_ITERATIONS;
+        }
         for (int i = 0; i < n; ++i) {
             x[i] = h_x[i];
         }
