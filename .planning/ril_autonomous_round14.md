@@ -1,4 +1,4 @@
-# RIL — Round 14 (2026-08-11) — implement non-continuous (static) batching
+# RIL — Round 14 (2026-08-11) — static batching, cusparse hardening, BiCGSTAB/CG breakdown fix
 
 ## Task: task-scheduler-noncontig-mode (was ~4.5, active) — RESOLVED
 
@@ -39,8 +39,28 @@ for NcclContext (R12) and MeshStreams (R13). No crash was observed (sparse suite
 the fix is the established, tiny, consistent one: heap-allocate the singleton and never destroy it
 (fix(sparse) 1b817df). Prevents a rare 1GB-core class rather than waiting for evidence.
 
+## Skip-audit (task-skip-audit, partial): BiCGSTAB convergence skip was masking a REAL bug — FIXED
+
+`SparseIntegrationTest.BiCGSTABConvergence` unconditionally skipped ("BiCGSTAB solver did not
+converge - known numerical stability issue"). Comparing the library iteration trajectory against
+an independent host replica of the same algorithm showed they match for the first 6 iterations,
+then the library **halted at relative residual 1.8e-5** while the host replica reached 6.95e-7.
+
+Root cause: the breakdown guards compared denominators (`t_t=<A s,A s>`, `r_r_tilde`, `rhat_v`;
+and CG's `p_Ap`) against an absolute `std::numeric_limits<float>::epsilon()` (~1.2e-7). With a
+residual of 1.8e-5, `t_t` legitimately drops to ~1.8e-7 — just under epsilon — so the guard fired
+mid-convergence (spurious BREAKDOWN) and aborted a healthy solve. Additionally, the post-loop
+`error_code = MAX_ITERATIONS` overwrote the BREAKDOWN in CG/GMRES/GMRES-restart/BiCGSTAB, so every
+breakdown was misreported as MAX_ITERATIONS.
+
+Fix (fix(sparse) 6e57d93): breakdown guards now use `std::numeric_limits<T>::min()` (only genuine
+zero/denormal division is breakdown; the relative-residual check is the real stop condition);
+MAX_ITERATIONS is only set when error is still SUCCESS. The previously-skipped test now runs and
+passes; Krylov/CG/GMRES/preconditioner cluster 93/93.
+
 ## Final full-suite verification (GPU 2)
-- **1420 pass / 0 fail / 29 skip / 1 disabled, EXIT=0** (round-13 baseline 1419/0/30 skip).
+- Round-14 baseline: **1420 pass / 0 fail / 29 skip / 1 disabled, EXIT=0**.
+- (final count after the Krylov fix re-verified in this round's last run)
 
 ## Graph delta
 nodes:
@@ -56,6 +76,9 @@ nodes:
   - id: change-r14-cusparse
     type: change
     status: active
+  - id: change-r14-krylov-breakdown
+    type: change
+    status: active
 edges:
   - from: change-r14-static-batching
     type: resolves
@@ -63,3 +86,6 @@ edges:
   - from: change-r14-cusparse
     type: resolves
     to: task-cusparse-exit-dtor
+  - from: change-r14-krylov-breakdown
+    type: resolves
+    to: issue-krylov-spurious-breakdown
