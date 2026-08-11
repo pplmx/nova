@@ -5,6 +5,9 @@ Maintained by the autonomous engineering loop. Full guidance: `.claude/skills/gr
 Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 13).
 
 ## Latest round
+- **Round 14 (2026-08-11)** — implemented `task-scheduler-noncontig-mode` (fix(inference) 7f300e6):
+  non-continuous batching was a no-op (requests stuck in pending forever); now static-batching
+  cohort semantics + real test replacing the empty skip. See `ril_autonomous_round14.md`.
 - **Round 13 (2026-08-10)** — full suite 1411 pass/4 fail + exit SIGSEGV → **1419 pass / 0 fail / EXIT=0**.
   Fixed: SegmentedSort-process poisoners (UB test patterns), MeshStreams exit-teardown crash,
   SyncBatchNorm backward all-NaN gradients (from un-skipped tests). See
@@ -13,7 +16,6 @@ Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (lates
 ## Active tasks (by priority_score; threshold 3.0)
 | score | task | status |
 |-------|------|--------|
-| ~4.5 | `task-scheduler-noncontig-mode` — `scheduler_edge_test.cpp:264` skips "non-continuous batching not implemented"; verify whether `step()` leaves pending requests stuck and either implement or make the skip honest. Category: core feature. | active |
 | ~3.2 | `task-cusparse-exit-dtor` — `nova::sparse::detail::CusparseContext::~CusparseContext` runs `cusparseDestroy` at process exit (latent exit-crash class like NcclContext/MeshStreams). No crash observed — act on evidence only. Category: stability. | active |
 | low | `task-skip-audit` — audit remaining `GTEST_SKIP`s (MPI flag, NCCL multi-GPU, block_manager_edge OOM, BiCGSTAB convergence) for guards that silently skip on a normal GPU. | active |
 
@@ -26,7 +28,8 @@ Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (lates
 - `decision-keep-round-docs` (R13) — RIL stored as markdown round docs + graph-delta blocks, not a
   graph DB.
 
-## Resolved (round 13)
+## Resolved
+- `task-scheduler-noncontig-mode` RESOLVED by `change-r14-static-batching` (fix(inference) 7f300e6).
 - `issue-segsort-poison` RESOLVED by `change-r13-poisoners` (UB test patterns faulting the driver).
 - `issue-meshstreams-exit-crash` RESOLVED by `change-r13-meshstreams` (fix(distributed) f9493d8).
 - `issue-backward-dinput-nan` RESOLVED by `change-r13-backward-nan` (fix(neural) 4b6c2c1).
