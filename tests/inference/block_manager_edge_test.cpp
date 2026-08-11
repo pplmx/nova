@@ -903,7 +903,35 @@ TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeChunkedPrefill) {
 }
 
 TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeKVCacheAllocation) {
-    GTEST_SKIP() << "Beam speculative test requires too much GPU memory - skipping";
+    // The skip ("requires too much GPU memory") was stale: sibling
+    // BeamSpeculativeIntegrationTest cases use the same num_gpu_blocks=512 pool
+    // and run fine. Exercise the real KV-allocation path for beam sequences.
+    BlockManagerConfig config;
+    config.block_size = 16;
+    config.num_gpu_blocks = 512;
+    config.max_model_len = 2048;
+
+    auto manager = std::make_unique<BlockManager>(config);
+
+    auto* kv_cache = manager->get_kv_cache();
+    ASSERT_NE(kv_cache, nullptr);
+
+    // One main sequence plus several beam branches.
+    manager->create_sequence(1, 512);
+    for (int beam = 2; beam <= 4; ++beam) {
+        manager->create_sequence(beam, 512);
+    }
+
+    auto stats = kv_cache->get_stats();
+    EXPECT_GT(stats.allocated_blocks, 0)
+        << "Beam sequences must allocate KV blocks";
+
+    // Free a beam branch: KV blocks must be released back to the pool.
+    const int free_before = manager->get_num_free_blocks();
+    manager->free_sequence(3);
+    const int free_after = manager->get_num_free_blocks();
+    EXPECT_GT(free_after, free_before)
+        << "Freeing a beam sequence must return KV blocks to the pool";
 }
 
 }  // namespace cuda::inference::test
