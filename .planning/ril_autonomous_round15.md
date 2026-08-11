@@ -80,6 +80,27 @@ had never executed.
   off, 2 distributed pool need 2 GPUs, 1 PeerCopy needs 2 GPUs, 1 matmul
   multi-process design limitation).
 
+### Code review pass (cpp-reviewer on bfb9e80 → fix 6c84803)
+The review verified the concurrency design (per-thread cudaSetDevice, disjoint
+comm-index writes, exceptions re-thrown only after all joins, barrier/group
+buffer lifetimes) and found one HIGH + two MEDIUM + three LOW, all fixed:
+- HIGH: `barrier_async(int device, ...)` still passed a host-stack `int` to
+  `ncclAllReduce` — the same illegal-memory-access bug; now uses a device
+  buffer (both overloads) and `ncclInt32`.
+- MEDIUM: collectives' "returns NcclResult, never throws" contract was violated
+  by `current_comm()` throwing when the calling thread's device is not in the
+  group — reachable from `TensorParallelMatmul` and from `NcclGroupHandle`'s
+  destructor during unwinding (a throw there would `std::terminate`). All five
+  collectives + group handle now convert the throw into an error `NcclResult`.
+- MEDIUM: `create_streams_and_comms()` could leak partial streams/comms and
+  stall the surviving ranks on a failed rank's init; the join-complete failure
+  path now cleans up partial resources before rethrowing.
+- LOW (tests): `run_per_rank` always signals the start barrier so a rank that
+  fails before reaching it cannot hang the others; `SafeNcclCallDetectsErrors`
+  passes rank 0's comm explicitly.
+Re-verified after hardening: NCCL multi-GPU 14/14; full suite 1449/1423/0,
+EXIT=0.
+
 ### Known skips remaining (verified reasons)
 - 14 NCCL tests: skip without `NCCL_TESTS_AVAILABLE` (now real when set).
 - 8 MPI tests: build-flag off; no MPI headers on host.
