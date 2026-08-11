@@ -22,6 +22,7 @@
 #include "cuda/distributed/common.h"
 #include "cuda/distributed/all_gather.h"
 #include "cuda/mesh/device_mesh.h"
+#include "cuda/nccl/nccl_context.h"
 #include "cuda/neural/matmul.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
@@ -33,10 +34,84 @@
 #include <cstdlib>
 #include <numeric>
 #include <random>
+#include <thread>
 #include <vector>
 
 using namespace cuda::distributed;
 using namespace cuda::mesh;
+
+namespace {
+
+// Barrier so every rank thread enters the collective together. NCCL
+// collectives are per-rank: every rank must post its op before any of them
+// completes, so a straggler start would otherwise burn safe_stream_wait's
+// timeout. Mirrors the identical helper in the NCCL collective suite.
+class RankBarrier {
+public:
+    explicit RankBarrier(int count) : total_(count) {}
+
+    void wait() {
+        std::unique_lock<std::mutex> lk(mutex_);
+        ++arrived_;
+        cv_.wait(lk, [this] { return arrived_ >= total_; });
+        cv_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    int total_;
+    int arrived_ = 0;
+};
+
+// Runs `per_rank(d)` on one thread per visible device, each pinned to its
+// own device. cudaSetDevice is per-thread state, so this is the only way to
+// issue each rank's part of a multi-device operation from one process.
+// Thread exceptions are collected and rethrown once after all threads join.
+template <typename F>
+void run_per_rank(int device_count, F&& per_rank) {
+    RankBarrier barrier(device_count);
+    std::vector<std::thread> threads;
+    threads.reserve(device_count);
+    std::mutex error_mutex;
+    std::exception_ptr first_error;
+    for (int d = 0; d < device_count; ++d) {
+        threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
+            bool skipped = false;
+            try {
+                CUDA_CHECK(cudaSetDevice(d));
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                if (!first_error) {
+                    first_error = std::current_exception();
+                }
+                skipped = true;
+            }
+            // Always signal the barrier: a rank that failed before reaching it
+            // must still let the others proceed, otherwise they hang forever.
+            barrier.wait();
+            if (skipped) {
+                return;
+            }
+            try {
+                per_rank(d);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                if (!first_error) {
+                    first_error = std::current_exception();
+                }
+            }
+        });
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+    if (first_error) {
+        std::rethrow_exception(first_error);
+    }
+}
+
+}  // namespace
 
 // ============================================================================
 // Test Fixtures
@@ -309,16 +384,220 @@ TEST_F(DistributedMatmulTest, MultiGpu_RowPartition) {
     EXPECT_EQ(covered, m);
 }
 
-TEST_F(DistributedMatmulTest, MultiGpu_RequiresMultiProcess) {
-    // Document that multi-GPU matmul requires multi-process execution
-    int device_count = DeviceMesh::instance().device_count();
+// ============================================================================
+// Multi-GPU Tests — real row-split + all-gather path (MGPU-12)
+// ============================================================================
 
-    if (device_count > 1) {
-        GTEST_SKIP() << "Multi-GPU matmul requires multi-process execution (e.g., NCCL). "
-                     << "Single-process tests use the single-GPU fallback path for correctness.";
-    } else {
-        GTEST_SKIP() << "Single GPU system - multi-GPU tests not applicable";
+// Runs the genuine multi-GPU matmul path: one thread per rank pinned to its
+// own device, each computing its row partition of C locally, then an NCCL
+// all-gather reconstructing the full result on every device. Cross-checks the
+// gathered C on every rank against a single-GPU reference computed on device 0.
+//
+// Environment-bound skips are genuine: <2 GPUs, or NCCL unavailable (the
+// NCCL_TESTS_AVAILABLE gate used by the collective suite), or NCCL initialization
+// failing (e.g. no nccl support in this build).
+TEST_F(DistributedMatmulTest, MultiGpu_RowSplitAllGather) {
+    int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU matmul test";
     }
+    const char* nccl_test_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_test_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+
+    // Initialize the shared NCCL context (per-device comms, one thread per rank).
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    try {
+        ctx.initialize();
+    } catch (const std::exception& e) {
+        GTEST_SKIP() << "NCCL initialization failed: " << e.what();
+    }
+    if (!ctx.has_nccl()) {
+        GTEST_SKIP() << "NCCL not enabled in this build";
+    }
+
+    // Pick a shape where the last rank's partition is a proper partial block so
+    // the test exercises the padded equal-size all-gather path, not just an even
+    // split. m = 6*device_count - 1 is never divisible by device_count for
+    // device_count >= 2 (for 2 GPUs: 11 rows -> 6 + 5).
+    const int m = 6 * device_count - 1;
+    const int n = 48, k = 32;
+    constexpr float kTolerance = 1e-3f;
+
+    // Generate random input once; every rank replicates A and B.
+    std::vector<float> h_A(m * k);
+    std::vector<float> h_B(k * n);
+    fill_random(h_A.data(), m * k);
+    fill_random(h_B.data(), k * n);
+
+    // Single-GPU reference on device 0.
+    std::vector<float> h_C_ref(m * n);
+    {
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        d_A.copy_from(h_A.data(), m * k);
+        d_B.copy_from(h_B.data(), k * n);
+        cuda::neural::matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
+        d_C.copy_to(h_C_ref.data(), m * n);
+    }
+
+    // Each rank holds its own copy of A/B/C on its device, runs the genuine
+    // multi-GPU path, and all ranks must converge on the reference.
+    std::vector<std::vector<float>> h_results(device_count, std::vector<float>(m * n));
+    run_per_rank(device_count, [&](int d) {
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        d_A.copy_from(h_A.data(), m * k);
+        d_B.copy_from(h_B.data(), k * n);
+
+        auto result = DistributedMatmul::matmul_multi_gpu(
+            d_A.data(), d_B.data(), d_C.data(), m, n, k);
+        ASSERT_TRUE(result.ok()) << result.error_message;
+
+        d_C.copy_to(h_results[d].data(), m * n);
+    });
+
+    for (int rank = 0; rank < device_count; ++rank) {
+        SCOPED_TRACE("rank " + std::to_string(rank));
+        EXPECT_TRUE(arrays_near(h_C_ref.data(), h_results[rank].data(), m * n, kTolerance))
+            << "Multi-GPU all-gathered matmul result on rank " << rank
+            << " differs from single-GPU reference";
+    }
+}
+
+TEST_F(DistributedMatmulTest, MultiGpu_AlphaBeta) {
+    int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU matmul test";
+    }
+    const char* nccl_test_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_test_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    try {
+        ctx.initialize();
+    } catch (const std::exception& e) {
+        GTEST_SKIP() << "NCCL initialization failed: " << e.what();
+    }
+    if (!ctx.has_nccl()) {
+        GTEST_SKIP() << "NCCL not enabled in this build";
+    }
+
+    const int m = 6 * device_count - 1;
+    const int n = 48, k = 32;
+    constexpr float kTolerance = 1e-3f;
+
+    std::vector<float> h_A(m * k);
+    std::vector<float> h_B(k * n);
+    fill_random(h_A.data(), m * k);
+    fill_random(h_B.data(), k * n);
+
+    DistributedMatmulOptions opts;
+    opts.alpha = 2.0f;
+    opts.beta = 0.5f;
+
+    // Reference: alpha*(A@B) + beta*C_init, single GPU.
+    std::vector<float> h_C_init(m * n);
+    fill_constant(h_C_init.data(), m * n, 1.0f);
+    std::vector<float> h_C_ref(m * n);
+    {
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        d_A.copy_from(h_A.data(), m * k);
+        d_B.copy_from(h_B.data(), k * n);
+        d_C.copy_from(h_C_init.data(), m * n);
+
+        cuda::neural::MatmulOptions neural_opts;
+        neural_opts.alpha = opts.alpha;
+        neural_opts.beta = opts.beta;
+        cuda::neural::matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k, neural_opts);
+        d_C.copy_to(h_C_ref.data(), m * n);
+    }
+
+    std::vector<std::vector<float>> h_results(device_count, std::vector<float>(m * n));
+    run_per_rank(device_count, [&](int d) {
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        d_A.copy_from(h_A.data(), m * k);
+        d_B.copy_from(h_B.data(), k * n);
+        d_C.copy_from(h_C_init.data(), m * n);
+
+        auto result = DistributedMatmul::matmul_multi_gpu(
+            d_A.data(), d_B.data(), d_C.data(), m, n, k, opts);
+        ASSERT_TRUE(result.ok()) << result.error_message;
+
+        d_C.copy_to(h_results[d].data(), m * n);
+    });
+
+    for (int rank = 0; rank < device_count; ++rank) {
+        SCOPED_TRACE("rank " + std::to_string(rank));
+        EXPECT_TRUE(arrays_near(h_C_ref.data(), h_results[rank].data(), m * n, kTolerance))
+            << "Multi-GPU alpha/beta matmul result on rank " << rank
+            << " differs from single-GPU reference";
+    }
+}
+
+// Regression for the m/n_dev guard: shapes where a rank's row slice would be
+// empty or negative must be rejected with ncclInvalidArgument BEFORE entering
+// the collective, so no rank blocks or poisons the shared NcclContext. The
+// guards are rank-independent (all ranks share m/n/k/options), so every rank
+// returns the same result and the group never waits on a missing collective.
+TEST_F(DistributedMatmulTest, MultiGpu_RejectsBadShapes) {
+    int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU matmul test";
+    }
+    const char* nccl_test_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_test_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    try {
+        ctx.initialize();
+    } catch (const std::exception& e) {
+        GTEST_SKIP() << "NCCL initialization failed: " << e.what();
+    }
+    if (!ctx.has_nccl()) {
+        GTEST_SKIP() << "NCCL not enabled in this build";
+    }
+
+    // m = 1 leaves the last rank with no rows (ceil(1/n) = 1 rows_per_gpu,
+    // (n_dev-1)*1 >= 1). m < n_dev also exercises the same guard.
+    const int m = 1, n = 8, k = 8;
+    std::vector<float> h_A(m * k);
+    std::vector<float> h_B(k * n);
+    fill_random(h_A.data(), m * k);
+    fill_random(h_B.data(), k * n);
+
+    auto bad_shape = [&](int d) {
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        d_A.copy_from(h_A.data(), m * k);
+        d_B.copy_from(h_B.data(), k * n);
+
+        auto result = DistributedMatmul::matmul_multi_gpu(
+            d_A.data(), d_B.data(), d_C.data(), m, n, k);
+        EXPECT_EQ(static_cast<int>(result.code), static_cast<int>(ncclInvalidArgument))
+            << "expected ncclInvalidArgument for m=" << m << ", got " << result.error_message;
+
+        // Transposed operands are rejected on the row-split path regardless of shape.
+        DistributedMatmulOptions transp;
+        transp.trans_a = true;
+        auto result_t = DistributedMatmul::matmul_multi_gpu(
+            d_A.data(), d_B.data(), d_C.data(), m + 100, n, k, transp);
+        EXPECT_EQ(static_cast<int>(result_t.code), static_cast<int>(ncclInvalidArgument))
+            << "transposed operands must be rejected on the row-split path";
+    };
+    run_per_rank(device_count, bad_shape);
 }
 
 // ============================================================================

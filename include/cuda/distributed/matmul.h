@@ -13,13 +13,15 @@
  * // Single-GPU fallback (automatic when device_count <= 1)
  * DistributedMatmul::matmul(A, B, C, m, n, k);
  *
- * // Multi-GPU: requires all GPUs calling simultaneously
- * // Each GPU computes rows [rank * m/n, (rank+1) * m/n) of C
- * // After all-gather, all GPUs have the full result in C
+ * // Multi-GPU: matmul_multi_gpu() driven one thread per rank, each pinned to
+ * // its own device. Rank r computes rows [r*rows_per_gpu, min((r+1)*rows_per_gpu, m))
+ * // of C locally, then an NCCL all-gather reconstructs the full result on every
+ * // device. See matmul_multi_gpu() for the calling contract.
  * @endcode
  */
 
 #include "common.h"
+#include "cuda/nccl/nccl_error.h"
 
 #include <cuda_runtime.h>
 
@@ -158,6 +160,55 @@ public:
      * @return true if device_count > 1, false otherwise
      */
     static bool needs_multi_gpu();
+
+    /**
+     * @brief Multi-GPU distributed matmul (row-wise split + all-gather)
+     *
+     * Each rank thread computes the rows of C owned by its device, then an
+     * NCCL all-gather reconstructs the full result on every device.
+     *
+     * @warning Hard contract: must be called with one thread per rank, every
+     * rank thread pinned to its own device with cudaSetDevice, and ALL ranks
+     * entering the call — an NCCL collective only completes once every rank
+     * has posted it. Calling from a single thread (or with fewer threads than
+     * ranks) on a multi-GPU host will hang the missing ranks' collectives
+     * until safe_nccl_call's timeout, then abort the shared process-wide
+     * NcclContext communicators, poisoning it for all later NCCL users. Callers
+     * that cannot provide this orchestration should use the single-GPU
+     * fallback (`matmul`) instead.
+     *
+     * Partitioning: rows_per_gpu = ceil(m / n_dev); rank r owns rows
+     * [r*rows_per_gpu, min((r+1)*rows_per_gpu, m)). Each rank sends exactly
+     * rows_per_gpu*n elements (padding beyond local_m with uninitialized rows
+     * that all-gather carries but the caller ignores), so ncclAllGather's
+     * equal-send-count requirement holds. After the call, @p C (m*n) holds the
+     * complete result on this rank's device.
+     *
+     * Requires every rank to own at least one row, i.e. m >= device_count and
+     * (device_count - 1) * ceil(m / device_count) < m — otherwise a rank's row
+     * slice is empty or negative and the call returns ncclInvalidArgument
+     * before entering the collective. Transposed operands (trans_a/trans_b) are
+     * not supported on this path and return ncclInvalidArgument.
+     *
+     * @param A Full input matrix [m x k] on this rank's device
+     * @param B Full weight matrix [k x n] on this rank's device
+     * @param C Output matrix [m x n] on this rank's device (full after gather)
+     * @param m Number of rows in A and C
+     * @param n Number of columns in B and C
+     * @param k Inner dimension
+     * @param options Operation options (default: all defaults)
+     * @return NcclResult: ncclSuccess on success; errors are reported in the
+     *         result, never thrown (matches the NCCL collective contract, so a
+     *         failing rank can be surfaced from a spawned thread safely)
+     */
+    static cuda::nccl::NcclResult matmul_multi_gpu(
+        const float* A,
+        const float* B,
+        float* C,
+        int m,
+        int n,
+        int k,
+        DistributedMatmulOptions options = {});
 };
 
 }  // namespace cuda::distributed

@@ -243,6 +243,22 @@ public:
     cudaStream_t get_stream(int device) const;
 
     /**
+     * @brief Resolve a device's rank within this NCCL group
+     *
+     * The NCCL rank is the position of @p device in this context's configured
+     * device list, NOT the raw CUDA device index. They coincide only for the
+     * default mesh-init group {0..n-1}; with a custom/subset
+     * NcclContextConfig they diverge, so any code that derives a rank from the
+     * raw index is wrong for non-default groups. Use this to map correctly in
+     * both cases.
+     *
+     * @param device CUDA device index
+     * @return NCCL rank (0-based position in the group)
+     * @throws NcclException if context not initialized or device not in group
+     */
+    [[nodiscard]] int rank_of_device(int device) const;
+
+    /**
      * @brief Check if NCCL context is initialized
      * @return true if initialized
      */

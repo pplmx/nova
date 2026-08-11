@@ -263,6 +263,31 @@ cudaStream_t NcclContext::get_stream(int device) const {
     return streams_[std::distance(device_ids_.begin(), it)];
 }
 
+int NcclContext::rank_of_device(int device) const {
+    std::lock_guard<std::mutex> lock(init_mutex_);
+
+    if (!initialized_) {
+#if NOVA_NCCL_ENABLED
+        throw NcclException("NcclContext not initialized", ncclInvalidArgument,
+                            "rank_of_device", __FILE__, __LINE__);
+#else
+        throw std::runtime_error("NcclContext not initialized");
+#endif
+    }
+
+    auto it = std::find(device_ids_.begin(), device_ids_.end(), device);
+    if (it == device_ids_.end()) {
+#if NOVA_NCCL_ENABLED
+        throw NcclException("Device not in NCCL group", ncclInvalidArgument,
+                            "rank_of_device", __FILE__, __LINE__);
+#else
+        throw std::runtime_error("Device not in NCCL group");
+#endif
+    }
+
+    return static_cast<int>(std::distance(device_ids_.begin(), it));
+}
+
 void NcclContext::destroy() {
     std::lock_guard<std::mutex> lock(init_mutex_);
 

@@ -41,6 +41,7 @@ constexpr int ncclSystemError = 1;
 constexpr int ncclInternalError = 3;
 constexpr int ncclInProgress = 2;
 constexpr int ncclTimeout = 9;
+constexpr int ncclInvalidArgument = 4;
 
 // Stub values for common types
 constexpr int ncclFloat32 = 0;
