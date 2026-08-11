@@ -16,7 +16,6 @@ Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (lates
 ## Active tasks (by priority_score; threshold 3.0)
 | score | task | status |
 |-------|------|--------|
-| ~3.2 | `task-cusparse-exit-dtor` — `nova::sparse::detail::CusparseContext::~CusparseContext` runs `cusparseDestroy` at process exit (latent exit-crash class like NcclContext/MeshStreams). No crash observed — act on evidence only. Category: stability. | active |
 | low | `task-skip-audit` — audit remaining `GTEST_SKIP`s (MPI flag, NCCL multi-GPU, block_manager_edge OOM, BiCGSTAB convergence) for guards that silently skip on a normal GPU. | active |
 
 ## Recent decisions
@@ -29,6 +28,8 @@ Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (lates
   graph DB.
 
 ## Resolved
+- `task-cusparse-exit-dtor` RESOLVED by `change-r14-cusparse` (fix(sparse) 1b817df — heap-allocated
+  never-destroyed singleton, matching NcclContext/MeshStreams).
 - `task-scheduler-noncontig-mode` RESOLVED by `change-r14-static-batching` (fix(inference) 7f300e6).
 - `issue-segsort-poison` RESOLVED by `change-r13-poisoners` (UB test patterns faulting the driver).
 - `issue-meshstreams-exit-crash` RESOLVED by `change-r13-meshstreams` (fix(distributed) f9493d8).
