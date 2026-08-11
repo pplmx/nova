@@ -343,7 +343,33 @@ TEST_F(BlockManagerCudaGraphTest, ForwardBatchWithCudaGraphEnabled) {
 }
 
 TEST_F(BlockManagerCudaGraphTest, KVCacheAccessWithCudaGraph) {
-    GTEST_SKIP() << "BlockManager allocation fails with CUDA OOM in test environment";
+    // The empty skip ("allocation fails with CUDA OOM") was stale: the other
+    // BlockManagerCudaGraphTest cases use the same num_gpu_blocks=256 pool and
+    // run fine, so exercise the real KV-cache path under the CUDA-graph flag.
+    BlockManagerConfig config;
+    config.enable_cuda_graph = true;
+    config.num_gpu_blocks = 256;
+    config.block_size = 16;
+
+    auto manager = std::make_unique<BlockManager>(config);
+    ASSERT_NE(manager, nullptr);
+
+    auto* kv_cache = manager->get_kv_cache();
+    ASSERT_NE(kv_cache, nullptr);
+
+    manager->create_sequence(1, 64);
+    manager->create_sequence(2, 64);
+
+    auto stats = kv_cache->get_stats();
+    EXPECT_GT(stats.allocated_blocks, 0)
+        << "Creating sequences must allocate KV blocks under CUDA-graph config";
+
+    // KV cache is usable when CUDA graphs are enabled: forward does not throw.
+    memory::Buffer<float> query(64 * 4 * 64);
+    memory::Buffer<float> output(64 * 4 * 64);
+    std::vector<int64_t> batch = {1, 2};
+    EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
 }
 
 class DynamicBlockSizingTest : public ::testing::Test {
