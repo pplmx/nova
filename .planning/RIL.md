@@ -9,15 +9,16 @@ Verification"** opened at Round 15 and **closed at Round 16** → **v2.17 "Distr
 Real Multi-GPU"** opened at Round 17 (P1 in progress).
 
 ## Latest round
-- **Round 17 (2026-08-11)** — milestone v2.17 kickoff + **P1 complete**. The high-level
-  distributed ops (`DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast`/
-  `MeshBarrier`) carry 10 "Requires single GPU" test skips, yet SyncBatchNorm multi-GPU
-  training calls `DistributedReduce::all_reduce_async` at 3 sites. Opened the milestone
-  (`decision-v17-dist-ops-real-multigpu`), then built a thread-per-rank harness + 4 real
-  multi-GPU tests (ev-v17-p1-dist-ops-failures) that proved **all 4 legacy multi-GPU paths
-  fail for real** — committed `DISABLED_` as ready P2 acceptance tests. P2
-  (`task-v17b-dist-ops-nccl-converge`) re-routes the ops onto the verified NCCL layer. Full
-  suite 1451/1423/0 EXIT=0. See `ril_autonomous_round17.md`.
+- **Round 17 (2026-08-11)** — milestone v2.17 kickoff; **P1 + P2 complete**. P1: built a
+  thread-per-rank harness + 4 real multi-GPU tests (`ev-v17-p1-dist-ops-failures`) proving all
+  4 legacy high-level ops multi-GPU paths fail for real (all-reduce wrong sum, all-gather
+  self-data, broadcast never arrives), committed `DISABLED_` as ready acceptance tests. P2
+  (`change-v17-p2` 5c77d01): converged `DistributedReduce`/`DistributedAllGather`/
+  `DistributedBroadcast` onto the verified NCCL layer (`current_comm` routing; async now
+  honors the caller's stream; legacy CPU-coordinated/P2P paths deleted); all 4 tests flipped ON
+  and pass (4/4, was 4/4 fail). Full suite 1455/1423/0 EXIT=0. Follow-ups tracked:
+  `issue-v17-dist-ops-harness-flake` (rare 2-GPU stall), `issue-v17-meshbarrier-multigpu`
+  (MeshBarrier convergence deferred). See `ril_autonomous_round17.md`.
 - **Round 16 (2026-08-11)** — milestone v2.16 Phase 3: implemented the real distributed matmul
   multi-GPU path `DistributedMatmul::matmul_multi_gpu` (row-split compute + NCCL all-gather) and
   replaced the last unconditional distributed skip with three real multi-GPU tests
@@ -37,10 +38,11 @@ Real Multi-GPU"** opened at Round 17 (P1 in progress).
 ## Active tasks (by priority_score; threshold 3.0)
 | score | task | status |
 |-------|------|--------|
-| 20.82 | task-v17b-dist-ops-nccl-converge (P2) | active — next focus |
-| 14.31 | task-v17c-syncbn-multigpu-backward (P3) | active (depends on P2) |
+| 14.31 | task-v17c-syncbn-multigpu-backward (P3) | active — next focus |
 
 ## Resolved (v2.17)
+- `task-v17b-dist-ops-nccl-converge` RESOLVED by `change-v17-p2` (5c77d01) — high-level ops
+  converged onto the verified NCCL layer; 4/4 multi-GPU ops tests green (was 4/4 fail in P1).
 - `task-v17a-dist-ops-harness` RESOLVED by `change-v17-p1` (4b2d10a) — thread-per-rank harness
   + 4 ready `DISABLED_` multi-GPU regression tests; all 4 legacy ops multi-GPU paths confirmed
   broken (2x A100). `task-v17d` (redundant annotation) abandoned.

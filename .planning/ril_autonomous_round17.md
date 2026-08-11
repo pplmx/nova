@@ -97,3 +97,46 @@ Re-run the disabled set: `--gtest_filter='*DISABLED_MultiGpu_*' --gtest_also_run
   R15/R16-verified NCCL collectives (`current_comm` routing, sync-vs-async preserved) and flip
   the four disabled tests on. SyncBatchNorm's multi-GPU `all_reduce_async` call sites are the
   production consumer to re-verify in P3.
+
+## Round 17 — P2 (task-v17b-dist-ops-nccl-converge)
+
+### Execute
+
+Converged the three data ops onto the verified NCCL layer (R15 `current_comm` routing), each
+still preserving its public API + single-GPU fallback:
+
+- `DistributedReduce::all_reduce` / `all_reduce_async` → `NcclAllReduce`; the async variant now
+  **respects the caller's stream** (pre-v2.17 it was a blocking sync delegate that ignored it).
+- `DistributedAllGather::all_gather` / `all_gather_async` → `NcclAllGather` (recv = count*n).
+- `DistributedBroadcast::broadcast` / `broadcast_async` → in-place `NcclBroadcast` (data==recv;
+  `root` passed as NCCL group rank).
+- Multi-GPU requires an initialized NCCL context — a clear `NcclException` (rather than the old
+  silently-wrong legacy CPU-coordinated/P2P path, which was deleted). `ncclInternalError` /
+  `ncclInvalidArgument` used unqualified (global in both real-nccl.h and the stub layer).
+- The four P1 `DISABLED_` regression tests were flipped ON with a shared `multigpu_nccl_ready()`
+  gate (>= 2 GPUs + `NCCL_TESTS_AVAILABLE` + idempotent `NcclContext::initialize`).
+
+### Verify (P2)
+
+- 2x A100 `NCCL_TESTS_AVAILABLE=1`: `MultiGpu_AllReduceDistinctData` (2.2s),
+  `MultiGpu_AllReduceInPlace`, `MultiGpu_AllGatherDistinctData`, `MultiGpu_BroadcastDistinctData`
+  → **4/4 pass**, correct group semantics (was 4/4 fail in P1).
+- Cross-suite single-process regression (matmul multi-GPU + NCCL 14/14 + ops): **22/22 pass,
+  twice, stable** (shared NcclContext state safe across suites).
+- distributed_ops 19-test 2-GPU filter: green.
+- Full-suite single-GPU baseline: **1455 ran / 1423 pass / 0 fail / EXIT=0 / 1 disabled**
+  (4 tests flipped on; they env-skip on single-GPU).
+- **Flakiness note (unresolved, tracked):** one 19-test 2-GPU run once stalled >120s at
+  `MultiGpu_AllReduceDistinctData` (timeout-killed); not reproducible across 5x repeats or any
+  later run. Recorded as `issue-v17-dist-ops-harness-flake` — cleanup / stress investigation is
+  a follow-up before the milestone closes.
+
+### Learn (P2, graph)
+
+- `change-v17-p2` implements `task-v17b-dist-ops-nccl-converge`; `task-v17b` resolved.
+- `ev-v17-p2-dist-ops-converged`: 4/4 multi-GPU ops tests green on 2 GPUs (was 4/4 fail in P1).
+- `issue-v17-dist-ops-multigpu-untested` still open until SyncBatchNorm multi-GPU path is verified
+  (P3) and MeshBarrier convergence lands (deferred: `issue-v17-meshbarrier-multigpu`).
+- `MeshBarrier` convergence deferred: it is a per-instance object with several live methods
+  (`synchronize`, `synchronize_async`, `synchronize_devices`; `NoDeadlock` runs on multi-GPU);
+  converging it needs a proper per-rank multi-GPU test first (tracked separately).

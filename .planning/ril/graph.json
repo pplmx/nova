@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 17,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-11T09:16:49+00:00",
+  "updated_at": "2026-08-11T11:28:01+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -240,7 +240,7 @@
       "version": 1,
       "created_at": "2026-08-11T08:57:51+00:00",
       "updated_at": "2026-08-11T08:57:51+00:00",
-      "touched_round": 16,
+      "touched_round": 17,
       "title": "High-level distributed ops (DistributedReduce/DistributedAllGather/DistributedBroadcast/MeshBarrier - src/cuda/distributed/{reduce,all_gather,broadcast,barrier}.cu)"
     },
     "issue-v17-dist-ops-multigpu-untested": {
@@ -284,11 +284,11 @@
     "task-v17b-dist-ops-nccl-converge": {
       "id": "task-v17b-dist-ops-nccl-converge",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-08-11T08:58:29+00:00",
-      "updated_at": "2026-08-11T08:58:29+00:00",
-      "touched_round": 16,
+      "updated_at": "2026-08-11T11:28:01+00:00",
+      "touched_round": 17,
       "category": "correctness",
       "confidence": 0.85,
       "severity": 4,
@@ -351,6 +351,52 @@
       "commit": "4b2d10a",
       "title": "P1: thread-per-rank harness + DISABLED multi-GPU ops regression tests expose 4 broken legacy paths",
       "summary": "task-v17a-dist-ops-harness delivered: run_per_rank harness + 4 ready regression tests in distributed_ops_test.cu; all 4 legacy ops multi-GPU paths confirmed broken on 2x A100 (evidence ev-v17-p1-dist-ops-failures)."
+    },
+    "ev-v17-p2-dist-ops-converged": {
+      "id": "ev-v17-p2-dist-ops-converged",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T11:20:05+00:00",
+      "updated_at": "2026-08-11T11:20:05+00:00",
+      "touched_round": 17,
+      "confidence": 1.0,
+      "source": "distributed_ops_test.cu MultiGpu_* on 2x A100 (CUDA_VISIBLE_DEVICES=0,1 NCCL_TESTS_AVAILABLE=1), Round 17 P2",
+      "summary": "P2: DistributedReduce/DistributedAllGather/DistributedBroadcast re-routed onto verified NCCL layer (current_comm). MultiGpu_AllReduceDistinctData, MultiGpu_AllReduceInPlace, MultiGpu_AllGatherDistinctData, MultiGpu_BroadcastDistinctData all pass (4/4, was 4/4 fail in P1). Cross-suite 22/22 stable; NCCL 14/14; full suite 1455/1423/0."
+    },
+    "issue-v17-dist-ops-harness-flake": {
+      "id": "issue-v17-dist-ops-harness-flake",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T11:20:05+00:00",
+      "updated_at": "2026-08-11T11:20:05+00:00",
+      "touched_round": 17,
+      "severity": 2,
+      "title": "One-off >120s stall in MultiGpu_AllReduceDistinctData on 2 GPUs; not reproducible across 5x repeats - investigate before milestone close"
+    },
+    "issue-v17-meshbarrier-multigpu": {
+      "id": "issue-v17-meshbarrier-multigpu",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T11:20:05+00:00",
+      "updated_at": "2026-08-11T11:20:05+00:00",
+      "touched_round": 17,
+      "severity": 2,
+      "title": "MeshBarrier multi-GPU convergence deferred: per-instance host event poll with non-threadsafe barriering_ flag; needs a proper per-rank multi-GPU test before re-routing onto NcclBarrier"
+    },
+    "change-v17-p2": {
+      "id": "change-v17-p2",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T11:27:41+00:00",
+      "updated_at": "2026-08-11T11:27:41+00:00",
+      "touched_round": 17,
+      "commit": "5c77d01",
+      "title": "P2: high-level distributed ops converged onto verified NCCL layer (all_reduce/all_gather/broadcast)",
+      "summary": "task-v17b-dist-ops-nccl-converge delivered: legacy broken CPU-coordinated/P2P paths replaced by per-rank NcclAllReduce/NcclAllGather/NcclBroadcast; 4/4 multi-GPU ops tests now green (was 4/4 fail in P1)."
     }
   },
   "edges": [
@@ -521,6 +567,24 @@
       "to": "task-v17a-dist-ops-harness",
       "type": "implements",
       "created_at": "2026-08-11T09:16:36+00:00"
+    },
+    {
+      "from": "issue-v17-dist-ops-harness-flake",
+      "to": "comp-dist-ops",
+      "type": "located_in",
+      "created_at": "2026-08-11T11:20:05+00:00"
+    },
+    {
+      "from": "issue-v17-meshbarrier-multigpu",
+      "to": "comp-dist-ops",
+      "type": "located_in",
+      "created_at": "2026-08-11T11:20:05+00:00"
+    },
+    {
+      "from": "change-v17-p2",
+      "to": "task-v17b-dist-ops-nccl-converge",
+      "type": "implements",
+      "created_at": "2026-08-11T11:27:41+00:00"
     }
   ]
 }
