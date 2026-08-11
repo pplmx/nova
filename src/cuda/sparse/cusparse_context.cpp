@@ -19,8 +19,16 @@ CusparseContext::~CusparseContext() {
 }
 
 CusparseContext& CusparseContext::get() {
-    static CusparseContext instance;
-    return instance;
+    // Heap-allocated singleton that is intentionally never destroyed.
+    //
+    // A function-local static's destructor runs at process exit and calls
+    // cusparseDestroy, which touches the CUDA device context during runtime
+    // teardown - the same exit-crash class that SIGSEGV'd inside libcuda for
+    // NcclContext (Round 12) and MeshStreams (Round 13) singletons.
+    // The CUDA driver reclaims device state when the process exits, so orderly
+    // teardown at exit is unnecessary.
+    static CusparseContext* instance = new CusparseContext();
+    return *instance;
 }
 
 void CusparseContext::set_stream(cudaStream_t stream) {
