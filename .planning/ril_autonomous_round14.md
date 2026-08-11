@@ -62,8 +62,16 @@ Also in skip-audit: `BlockManagerCudaGraphTest.KVCacheAccessWithCudaGraph` was a
 `GTEST_SKIP` ("allocation fails with CUDA OOM") while every sibling BlockManagerCudaGraphTest case
 uses the same num_gpu_blocks=256 pool and runs fine. Replaced with a real test (create sequences →
 KV blocks allocated under the CUDA-graph flag → forward without error), mirroring
-`BlockManagerTest.KVCacheIntegration` (78bc6e7). Remaining non-environment skips after this:
-none beyond env-bound (MPI flag, NCCL/multi-GPU) — task-skip-audit substantially complete.
+`BlockManagerTest.KVCacheIntegration` (78bc6e7).
+
+And `BeamSpeculativeIntegrationTest.BeamSpeculativeKVCacheAllocation` was an empty `GTEST_SKIP`
+("requires too much GPU memory") while siblings use the same num_gpu_blocks=512 pool; replaced with
+a real test (beam branches allocate KV blocks; freeing a branch returns blocks to the pool)
+(132fe3e).
+
+**task-skip-audit RESOLVED.** Every stale/non-environment hard skip has been replaced or its hidden
+bug fixed (SyncBatchNorm, scheduler non-continuous, BiCGSTAB convergence, KVCacheWithCudaGraph,
+beam KV). Remaining 26 skips are all environment-bound: 15 NCCL/multi-GPU, 8 MPI build-flag.
 
 ## Final full-suite verification (GPU 2)
 - Round-14 baseline: **1420 pass / 0 fail / 29 skip / 1 disabled, EXIT=0**.
@@ -86,6 +94,9 @@ nodes:
   - id: change-r14-krylov-breakdown
     type: change
     status: active
+  - id: task-skip-audit
+    type: task
+    status: resolved
 edges:
   - from: change-r14-static-batching
     type: resolves
@@ -96,3 +107,6 @@ edges:
   - from: change-r14-krylov-breakdown
     type: resolves
     to: issue-krylov-spurious-breakdown
+  - from: change-r14-skip-audit
+    type: resolves
+    to: task-skip-audit

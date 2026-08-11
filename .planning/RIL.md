@@ -16,7 +16,7 @@ Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (lates
 ## Active tasks (by priority_score; threshold 3.0)
 | score | task | status |
 |-------|------|--------|
-| low | `task-skip-audit` — audit remaining `GTEST_SKIP`s (MPI flag, NCCL multi-GPU, block_manager_edge OOM, BiCGSTAB convergence) for guards that silently skip on a normal GPU. | active |
+| — | (none above threshold) | — |
 
 ## Recent decisions
 - `decision-heap-singletons-exit` (R12/R13) — heap-allocate never-destroyed singletons whose
@@ -28,6 +28,9 @@ Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (lates
   graph DB.
 
 ## Resolved
+- `task-skip-audit` RESOLVED — all stale/non-env hard skips replaced or their hidden bugs fixed
+  (SyncBatchNorm, scheduler, BiCGSTAB/CG breakdown, cuda-graph KV, beam KV); remaining skips are
+  env-bound.
 - `task-cusparse-exit-dtor` RESOLVED by `change-r14-cusparse` (fix(sparse) 1b817df — heap-allocated
   never-destroyed singleton, matching NcclContext/MeshStreams).
 - `task-scheduler-noncontig-mode` RESOLVED by `change-r14-static-batching` (fix(inference) 7f300e6).
