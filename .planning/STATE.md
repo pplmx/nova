@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.16
 milestone_name: Distributed Multi-GPU Verification
-status: In Progress
+status: Complete
 last_updated: "2026-08-11"
-last_activity: 2026-08-11 — Round 15: NCCL multi-GPU collective suite enabled & green
+last_activity: 2026-08-11 — Round 16: all 3 phases complete, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 3
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 3
 ---
 
 # Project State
@@ -20,8 +20,8 @@ progress:
 ## Current Position
 
 Milestone: v2.16 Distributed Multi-GPU Verification
-Status: In Progress
-Last activity: 2026-08-11 — RIL Round 15: real NCCL multi-GPU collectives now run and pass on 2 GPUs
+Status: Complete
+Last activity: 2026-08-11 — RIL Round 16: distributed matmul multi-GPU path implemented & verified, milestone closed
 
 ## Milestone v2.16 — Distributed Multi-GPU Verification
 
@@ -30,8 +30,10 @@ Turn the last un-verified distributed functionality into running, asserted tests
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | NCCL multi-GPU collectives enablement (Round 15) | Complete — 14/14 green (fix bfb9e80) |
-| 2 | Distributed pool / mesh multi-GPU verification | In progress — 2 pool tests verified on 2 GPUs in Round 15 |
-| 3 | Multi-process matmul harness (distributed matmul real path) | Planned — currently a documented skip |
+| 2 | Distributed pool / mesh multi-GPU verification | Complete — 2 pool tests verified on 2 GPUs (R15, re-confirmed R16) |
+| 3 | Multi-process matmul harness (distributed matmul real path) | Complete — `matmul_multi_gpu` row-split+all-gather implemented and tested thread-per-rank (R16) |
+
+## Milestone History
 
 ## Milestone History
 
@@ -63,8 +65,11 @@ Turn the last un-verified distributed functionality into running, asserted tests
 | v2.13 Transformer Optimization | Shipped | 2026-05-06 | 25 |
 | v2.14 Documentation Quality | Shipped | 2026-05-07 | 31 |
 | v2.15 Test Quality Assurance | Complete | 2026-05-09 | 5 phases |
-| v2.16 Distributed Multi-GPU Verification | In Progress | 2026-08-11 | 3 phases |
+| v2.16 Distributed Multi-GPU Verification | Complete | 2026-08-11 | 3 phases |
 
 ---
 
-## State updated: 2026-08-11 — Milestone v2.16 started (RIL Round 15)
+## State updated: 2026-08-11 — Milestone v2.16 completed (RIL Round 16)
+All three phases closed: NCCL collectives (R15), distributed pool/mesh verification (R15+R16),
+and the distributed matmul real multi-GPU path (R16, `matmul_multi_gpu` thread-per-rank).
+Full-suite baseline: 1451 ran / 1423 pass / 0 fail / 28 skip / EXIT=0.

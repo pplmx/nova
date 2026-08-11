@@ -6,16 +6,21 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.16 Distributed Multi-GPU Verification
 
+**Status:** Complete (2026-08-11, RIL Round 16)
+
 **Goal:** Turn the last un-verified distributed functionality into running, asserted tests - the
 RIL skip-audit showed every skipped test block so far hid at least one real bug, and the NCCL
 multi-GPU suite was the largest remaining never-run block.
 
-**Target features:**
+**Delivered:**
 
 - NCCL multi-GPU collectives (all-reduce, broadcast, barrier, all-gather, reduce-scatter, groups)
-  run and pass for real on multi-GPU (Round 15: 14/14 green)
-- Distributed memory pool / mesh multi-GPU paths verified
-- Multi-process execution harness so distributed matmul's real multi-GPU path is tested end-to-end
+  run and pass for real on multi-GPU (Round 15: 14/14 green, fix bfb9e80)
+- Distributed memory pool / mesh multi-GPU paths verified on 2 GPUs
+- `DistributedMatmul::matmul_multi_gpu` — the real row-split + NCCL all-gather path — implemented
+  and tested thread-per-rank (Round 16), replacing the last unconditional distributed skip.
+  Supersedes the "multi-process required" assumption (`decision-matmul-thread-per-rank`).
+- Full-suite baseline at close: 1451 ran / 1423 pass / 0 fail / EXIT=0.
 
 ## Completed (v2.14 Documentation Quality)
 

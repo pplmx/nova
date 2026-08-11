@@ -1,0 +1,353 @@
+{
+  "ril_version": 1,
+  "round": 16,
+  "created_at": "2026-08-11T06:37:58+00:00",
+  "updated_at": "2026-08-11T08:55:21+00:00",
+  "nodes": {
+    "comp-nccl": {
+      "id": "comp-nccl",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:46:47+00:00",
+      "updated_at": "2026-08-11T06:46:47+00:00",
+      "touched_round": 15,
+      "title": "NCCL integration (context, collectives, barrier, group)"
+    },
+    "comp-dist-matmul": {
+      "id": "comp-dist-matmul",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:46:47+00:00",
+      "updated_at": "2026-08-11T06:46:47+00:00",
+      "touched_round": 15,
+      "title": "DistributedMatmul (src/cuda/distributed/matmul.cu)"
+    },
+    "comp-dist-pool": {
+      "id": "comp-dist-pool",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:46:47+00:00",
+      "updated_at": "2026-08-11T06:46:47+00:00",
+      "touched_round": 15,
+      "title": "Distributed memory pool + mesh multi-GPU tests"
+    },
+    "comp-dist-test-suite": {
+      "id": "comp-dist-test-suite",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:46:47+00:00",
+      "updated_at": "2026-08-11T06:46:47+00:00",
+      "touched_round": 15,
+      "title": "tests/distributed + tests/cuda/nccl multi-GPU test surface"
+    },
+    "decision-nccl-current-device-routing": {
+      "id": "decision-nccl-current-device-routing",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:00+00:00",
+      "updated_at": "2026-08-11T06:47:00+00:00",
+      "touched_round": 15,
+      "rationale": "NCCL collectives resolve communicator via currently-active device (NcclContext::current_comm()), never hardcoded rank 0; each rank owns its device/comm/stream.",
+      "alternatives_rejected": "hardcode get_comm(0) seen in pre-R15 code"
+    },
+    "decision-dist-matmul-multiprocess": {
+      "id": "decision-dist-matmul-multiprocess",
+      "type": "decision",
+      "status": "superseded",
+      "version": 2,
+      "created_at": "2026-08-11T06:47:00+00:00",
+      "updated_at": "2026-08-11T08:55:21+00:00",
+      "touched_round": 16,
+      "rationale": "Distributed matmul multi-GPU path is intentionally a multi-process execution model; single-process suite documents limitation instead of faking single-GPU semantics. Convert later with process-per-rank harness.",
+      "alternatives_rejected": "single-process thread-per-rank like NCCL tests; faking single-GPU semantics in multi-GPU test"
+    },
+    "ev-r15-nccl-14-14": {
+      "id": "ev-r15-nccl-14-14",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:00+00:00",
+      "updated_at": "2026-08-11T06:47:00+00:00",
+      "touched_round": 15,
+      "source": "test_nccl_collectives.cpp (CUDA_VISIBLE_DEVICES=0,1 NCCL_TESTS_AVAILABLE=1)",
+      "confidence": 1.0,
+      "summary": "R15: NcclCollectivesTest.* 14/14 pass on 2 GPUs (twice, stable)"
+    },
+    "ev-r15-fullsuite-baseline": {
+      "id": "ev-r15-fullsuite-baseline",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:00+00:00",
+      "updated_at": "2026-08-11T06:47:00+00:00",
+      "touched_round": 15,
+      "source": "build/bin/nova-tests full run",
+      "confidence": 1.0,
+      "summary": "R15 baseline: 1449 ran / 1423 pass / 0 fail / 26 skip / 1 disabled, EXIT=0"
+    },
+    "issue-nccl-mesh-comm-init": {
+      "id": "issue-nccl-mesh-comm-init",
+      "type": "issue",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:04+00:00",
+      "updated_at": "2026-08-11T06:47:04+00:00",
+      "touched_round": 15,
+      "title": "NcclContext mesh-init left communicators null; has_nccl() guard passed on empty vec",
+      "severity": 5
+    },
+    "issue-nccl-init-deadlock": {
+      "id": "issue-nccl-init-deadlock",
+      "type": "issue",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:04+00:00",
+      "updated_at": "2026-08-11T06:47:04+00:00",
+      "touched_round": 15,
+      "title": "Sequential ncclCommInitRank deadlocks (it is a per-rank collective)",
+      "severity": 5
+    },
+    "issue-nccl-comm-routing": {
+      "id": "issue-nccl-comm-routing",
+      "type": "issue",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:04+00:00",
+      "updated_at": "2026-08-11T06:47:04+00:00",
+      "touched_round": 15,
+      "title": "Collectives hardcoded get_comm(0), invalid for rank!=0",
+      "severity": 4
+    },
+    "issue-nccl-barrier-host-ptr": {
+      "id": "issue-nccl-barrier-host-ptr",
+      "type": "issue",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:04+00:00",
+      "updated_at": "2026-08-11T06:47:04+00:00",
+      "touched_round": 15,
+      "title": "NcclBarrier passed host stack int as device pointer -> illegal memory access",
+      "severity": 5
+    },
+    "issue-dist-matmul-multigpu-unverified": {
+      "id": "issue-dist-matmul-multigpu-unverified",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-11T06:47:04+00:00",
+      "updated_at": "2026-08-11T08:55:21+00:00",
+      "touched_round": 16,
+      "title": "DistributedMatmul multi-GPU path never exercised: matmul_async always delegates to single-GPU MGPU-13 regardless of device count",
+      "severity": 4
+    },
+    "task-r15-nccl-collectives": {
+      "id": "task-r15-nccl-collectives",
+      "type": "task",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-11T06:47:15+00:00",
+      "updated_at": "2026-08-11T06:47:15+00:00",
+      "touched_round": 15,
+      "category": "critical-bug",
+      "confidence": 0.95,
+      "severity": 5,
+      "effort": 5,
+      "title": "Enable+fix NCCL multi-GPU collective suite (14/14 green)"
+    },
+    "task-dist-matmul-multiprocess": {
+      "id": "task-dist-matmul-multiprocess",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-11T06:47:15+00:00",
+      "updated_at": "2026-08-11T08:55:21+00:00",
+      "touched_round": 16,
+      "category": "core-feature",
+      "confidence": 0.9,
+      "severity": 4,
+      "effort": 8,
+      "unlock_factor": 2.0,
+      "title": "Build process-per-rank harness so distributed matmul multi-GPU path is a real test (Phase 3)",
+      "summary": "matmul_async() unconditionally calls matmul_single_gpu; the row-split + all-gather multi-GPU path in matmul.h is infra only. Replace the unconditional MultiGpu_RequiresMultiProcess skip with a real multi-process (one proc per rank) test using the now-working NCCL layer."
+    },
+    "change-r15-nccl": {
+      "id": "change-r15-nccl",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T06:49:15+00:00",
+      "updated_at": "2026-08-11T06:49:15+00:00",
+      "touched_round": 15,
+      "commit": "bfb9e80",
+      "summary": "R15 fix(nccl): current-comm routing, per-thread comm init, device buffer barrier, real per-rank tests"
+    },
+    "ev-r16-matmul-mgpu": {
+      "id": "ev-r16-matmul-mgpu",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T07:48:55+00:00",
+      "updated_at": "2026-08-11T07:48:55+00:00",
+      "touched_round": 15,
+      "source": "test_nccl_collectives.cpp run_per_rank pattern + tests/distributed/distributed_matmul_test.cu",
+      "confidence": 1.0,
+      "summary": "R16: DistributedMatmul multi-GPU row-split+all-gather path implemented (matmul_multi_gpu) and verified thread-per-rank on 2 GPUs: MultiGpu_RowSplitAllGather + MultiGpu_AlphaBeta pass (13/13 DistributedMatmul), stable across repeated runs. Supersedes the \"multi-process required\" assumption: R15 proved genuine multi-GPU NCCL works thread-per-rank."
+    },
+    "decision-matmul-thread-per-rank": {
+      "id": "decision-matmul-thread-per-rank",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T07:48:58+00:00",
+      "updated_at": "2026-08-11T07:48:58+00:00",
+      "touched_round": 15,
+      "rationale": "Distributed matmul multi-GPU path does NOT require separate OS processes: genuine multi-device NCCL collectives run correctly thread-per-rank (one thread per device, cudaSetDevice per thread) in a single process, exactly as the R15 NCCL collective suite proved (14/14) and as cpp-reviewer validated. Implemented matmul_multi_gpu (row-split + NcclAllGather) and tested it thread-per-rank; avoids fork/exec complexity and CUDA-fork hazards.",
+      "alternatives_rejected": "process-per-rank harness (fork/exec CSP); multi-process NCCL bootstrap via ncclGetUniqueId env passing"
+    },
+    "change-r16-matmul-multigpu": {
+      "id": "change-r16-matmul-multigpu",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T08:55:12+00:00",
+      "updated_at": "2026-08-11T08:55:12+00:00",
+      "touched_round": 16,
+      "commit": "a1f438d",
+      "title": "matmul_multi_gpu: real row-split+NCCL all-gather path (thread-per-rank)",
+      "summary": "R16 feat(distributed): DistributedMatmul::matmul_multi_gpu implemented and hardened per cpp-review (rank/device handle key, empty-slice guard); DistributedMatmulTest 14/14 on 2 GPUs."
+    },
+    "ev-r16-fullsuite-baseline": {
+      "id": "ev-r16-fullsuite-baseline",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-11T08:55:21+00:00",
+      "updated_at": "2026-08-11T08:55:21+00:00",
+      "touched_round": 16,
+      "source": "build/bin/nova-tests full run (CUDA_VISIBLE_DEVICES=2)",
+      "confidence": 1.0,
+      "summary": "R16 baseline: 1451 ran / 1423 pass / 0 fail / 28 skip / 1 disabled, EXIT=0 (+1 guard test)"
+    }
+  },
+  "edges": [
+    {
+      "from": "issue-dist-matmul-multigpu-unverified",
+      "to": "comp-dist-matmul",
+      "type": "located_in",
+      "created_at": "2026-08-11T06:49:34+00:00"
+    },
+    {
+      "from": "task-dist-matmul-multiprocess",
+      "to": "issue-dist-matmul-multigpu-unverified",
+      "type": "addresses",
+      "created_at": "2026-08-11T06:49:34+00:00"
+    },
+    {
+      "from": "comp-dist-matmul",
+      "to": "comp-dist-test-suite",
+      "type": "part_of",
+      "created_at": "2026-08-11T06:49:34+00:00"
+    },
+    {
+      "from": "comp-dist-pool",
+      "to": "comp-dist-test-suite",
+      "type": "part_of",
+      "created_at": "2026-08-11T06:49:34+00:00"
+    },
+    {
+      "from": "comp-nccl",
+      "to": "comp-dist-test-suite",
+      "type": "part_of",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "decision-dist-matmul-multiprocess",
+      "to": "task-dist-matmul-multiprocess",
+      "type": "governs",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "issue-nccl-mesh-comm-init",
+      "to": "comp-nccl",
+      "type": "located_in",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "issue-nccl-init-deadlock",
+      "to": "comp-nccl",
+      "type": "located_in",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "issue-nccl-comm-routing",
+      "to": "comp-nccl",
+      "type": "located_in",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "issue-nccl-barrier-host-ptr",
+      "to": "comp-nccl",
+      "type": "located_in",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "change-r15-nccl",
+      "to": "issue-nccl-mesh-comm-init",
+      "type": "resolves",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "change-r15-nccl",
+      "to": "issue-nccl-init-deadlock",
+      "type": "resolves",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "change-r15-nccl",
+      "to": "issue-nccl-comm-routing",
+      "type": "resolves",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "change-r15-nccl",
+      "to": "issue-nccl-barrier-host-ptr",
+      "type": "resolves",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "change-r15-nccl",
+      "to": "task-r15-nccl-collectives",
+      "type": "implements",
+      "created_at": "2026-08-11T06:49:35+00:00"
+    },
+    {
+      "from": "decision-matmul-thread-per-rank",
+      "to": "decision-dist-matmul-multiprocess",
+      "type": "supersedes",
+      "created_at": "2026-08-11T07:49:07+00:00"
+    },
+    {
+      "from": "decision-matmul-thread-per-rank",
+      "to": "task-dist-matmul-multiprocess",
+      "type": "governs",
+      "created_at": "2026-08-11T07:49:07+00:00"
+    },
+    {
+      "from": "change-r16-matmul-multigpu",
+      "to": "task-dist-matmul-multiprocess",
+      "type": "implements",
+      "created_at": "2026-08-11T08:55:21+00:00"
+    },
+    {
+      "from": "change-r16-matmul-multigpu",
+      "to": "issue-dist-matmul-multigpu-unverified",
+      "type": "resolves",
+      "created_at": "2026-08-11T08:55:21+00:00"
+    }
+  ]
+}

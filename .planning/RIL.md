@@ -3,11 +3,18 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 15).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 16).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
-Verification"** opened at Round 15.
+Verification"** opened at Round 15 and **closed at Round 16** (all 3 phases green).
 
 ## Latest round
+- **Round 16 (2026-08-11)** — milestone v2.16 Phase 3: implemented the real distributed matmul
+  multi-GPU path `DistributedMatmul::matmul_multi_gpu` (row-split compute + NCCL all-gather) and
+  replaced the last unconditional distributed skip with two real multi-GPU tests
+  (`MultiGpu_RowSplitAllGather`, `MultiGpu_AlphaBeta`) driven thread-per-rank. Proved the R15
+  "multi-process required" assumption unnecessary and superseded it with
+  `decision-matmul-thread-per-rank`. **14/14 DistributedMatmul on 2 GPUs; full suite
+  1451/1423/0 EXIT=0.** See `ril_autonomous_round16.md`.
 - **Round 15 (2026-08-11)** — milestone v2.16 kickoff. The 14 `NcclCollectivesTest` cases had
   never run (`NCCL_TESTS_AVAILABLE` was a dead gate); running them for real exposed three bugs:
   `NcclContext` mesh-init never created communicators (nullcomm → invalid argument), sequential
@@ -23,12 +30,13 @@ Verification"** opened at Round 15.
 | — | (none above threshold this round) | — |
 
 ## Candidate follow-up (below threshold / env-bound)
-- `task-dist-matmul-multiprocess` — implement a real multi-process execution harness so
-  `DistributedMatmulTest.MultiGpu_RequiresMultiProcess` becomes a real test (currently an
-  unconditional, *documented* skip). category: core feature; effort: high.
 - MPI enablement — `NOVA_ENABLE_MPI=ON` needs MPI headers/dev absent on this host (env-bound).
 
 ## Recent decisions
+- `decision-matmul-thread-per-rank` (R16) — the distributed matmul multi-GPU path does NOT require
+  separate OS processes: genuine multi-device NCCL collectives run correctly thread-per-rank in one
+  process (proven by the R15 NCCL suite). `matmul_multi_gpu` uses row-split + NcclAllGather,
+  avoiding fork/exec and CUDA-fork hazards. Supersedes `decision-dist-matmul-multiprocess`.
 - `decision-nccl-current-device-routing` (R15) — NCCL collectives resolve their communicator via
   the currently-active device (`NcclContext::current_comm()`), never hardcoded rank 0's; each
   rank owns its device/comm/stream. Supersedes the old "use device 0's communicator" assumption.
@@ -42,6 +50,9 @@ Verification"** opened at Round 15.
   drain sticky CUDA error state so tests cannot poison each other.
 
 ## Resolved
+- `task-dist-matmul-multiprocess` RESOLVED by `change-r16-matmul-multigpu` — 
+  `issue-dist-matmul-multigpu-unverified` fixed; `matmul_multi_gpu` (row-split + NcclAllGather)
+  implemented and tested thread-per-rank on 2 GPUs; milestone v2.16 closed.
 - `task-r15-nccl-collectives` RESOLVED by `change-r15-nccl-context` + `change-r15-nccl-tests`
   (fix(nccl) bfb9e80) — NCCL multi-GPU suite 14/14 green; exposed/fixed: `issue-nccl-mesh-comm-init`,
   `issue-nccl-init-deadlock`, `issue-nccl-comm-routing`, `issue-nccl-barrier-host-ptr`.
