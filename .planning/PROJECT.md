@@ -4,17 +4,18 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.15 Test Quality Assurance
+## Current Milestone: v2.16 Distributed Multi-GPU Verification
 
-**Goal:** Fix all 89 failing tests with real implementation fixes - no skipping tests or relaxing tolerances
+**Goal:** Turn the last un-verified distributed functionality into running, asserted tests - the
+RIL skip-audit showed every skipped test block so far hid at least one real bug, and the NCCL
+multi-GPU suite was the largest remaining never-run block.
 
 **Target features:**
 
-- CUDA Context fixes: Add cudaSetDevice initialization to 40+ test fixtures
-- Memory Allocation: Fix OOM tests with proper resource management
-- Algorithm Kernels: Fix FlashAttention, TopK, SegmentedSort implementations
-- Test Expectations: Correct wrong expected values in 15+ tests
-- Memory/Resource Leaks: Fix memory management issues
+- NCCL multi-GPU collectives (all-reduce, broadcast, barrier, all-gather, reduce-scatter, groups)
+  run and pass for real on multi-GPU (Round 15: 14/14 green)
+- Distributed memory pool / mesh multi-GPU paths verified
+- Multi-process execution harness so distributed matmul's real multi-GPU path is tested end-to-end
 
 ## Completed (v2.14 Documentation Quality)
 

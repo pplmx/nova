@@ -2,6 +2,22 @@
 
 **Analysis Date:** 2026-04-30
 
+## Audit log
+
+### 2026-08-11 (RIL Round 15) — marked STALE, fixed by later rounds/milestones
+- SyncBatchNorm empty backward → STALE (implemented + RAII buffers in R13). Backward now uses
+  `cuda::memory::unique_ptr` throughout; no raw `cudaMalloc` leak path.
+- Checkpoint path-traversal / PID tempfile collision → STALE (both guarded in current
+  `checkpoint_manager.cpp`: `resolve_path` rejects absolute + `..`; atomic write uses
+  PID + steady-clock ns).
+- NCCL `get_comm(0)`-based collectives "never exercised" concern — the entire distributed/mesh
+  confidence gap behind it was the Round-15 work item; NCCL multi-GPU suite now runs 14/14.
+- "Test coverage gaps for distributed code" (High priority #5) → largely closed by v2.16 Round 15;
+  remaining: multi-process matmul harness, MPI build-flag (env-bound).
+
+Items below may still hold; re-verify before acting: tools module input validation, memory-pool
+hard limits, HealthMonitor thread-safety, SECURITY.md placeholder, cuda_error_guard silent drain.
+
 ## Technical Debt
 
 ### Large, Complex Files

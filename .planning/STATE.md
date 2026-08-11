@@ -1,37 +1,37 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.15
-milestone_name: Test Quality Assurance
+milestone: v2.16
+milestone_name: Distributed Multi-GPU Verification
 status: In Progress
-last_updated: "2026-05-09"
-last_activity: 2026-05-09 — Milestone v2.15 COMPLETE
+last_updated: "2026-08-11"
+last_activity: 2026-08-11 — Round 15: NCCL multi-GPU collective suite enabled & green
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 5
-  completed_plans: 5
+  total_phases: 3
+  completed_phases: 1
+  total_plans: 3
+  completed_plans: 1
 ---
 
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-05-09
+**Last Updated:** 2026-08-11
 
 ## Current Position
 
-Milestone: v2.15 Test Quality Assurance
-Status: COMPLETE
-Last activity: 2026-05-09 — All 5 phases complete
+Milestone: v2.16 Distributed Multi-GPU Verification
+Status: In Progress
+Last activity: 2026-08-11 — RIL Round 15: real NCCL multi-GPU collectives now run and pass on 2 GPUs
 
-## Phase List
+## Milestone v2.16 — Distributed Multi-GPU Verification
 
-| Phase | Name | Status | Plans | Progress |
-|-------|------|--------|-------|----------|
-| 1 | CUDA Context Fixes | Complete | 1/1 | 100% |
-| 2 | Memory Allocation Fixes | Complete | 1/1 | 100% |
-| 3 | Algorithm Kernel Fixes | Complete | 1/1 | 100% |
-| 4 | Test Expectation Corrections | Complete | 1/1 | 100% |
-| 5 | Error Handling & Safety | Complete | 1/1 | 100% |
+Turn the last un-verified distributed functionality into running, asserted tests:
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | NCCL multi-GPU collectives enablement (Round 15) | Complete — 14/14 green (fix bfb9e80) |
+| 2 | Distributed pool / mesh multi-GPU verification | In progress — 2 pool tests verified on 2 GPUs in Round 15 |
+| 3 | Multi-process matmul harness (distributed matmul real path) | Planned — currently a documented skip |
 
 ## Milestone History
 
@@ -62,8 +62,9 @@ Last activity: 2026-05-09 — All 5 phases complete
 | v2.12 Advanced Quantization | Shipped | 2026-05-03 | 14 |
 | v2.13 Transformer Optimization | Shipped | 2026-05-06 | 25 |
 | v2.14 Documentation Quality | Shipped | 2026-05-07 | 31 |
-| v2.15 Test Quality Assurance | In Progress | 2026-05-09 | TBD |
+| v2.15 Test Quality Assurance | Complete | 2026-05-09 | 5 phases |
+| v2.16 Distributed Multi-GPU Verification | In Progress | 2026-08-11 | 3 phases |
 
 ---
 
-## State updated: 2026-05-09 — Milestone v2.15 started
+## State updated: 2026-08-11 — Milestone v2.16 started (RIL Round 15)
