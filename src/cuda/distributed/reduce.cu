@@ -2,73 +2,70 @@
  * @file reduce.cu
  * @brief Multi-GPU all-reduce implementation
  *
- * Implements distributed reduction using a gather-reduce-broadcast pattern
- * coordinated by CPU threads. This is simpler and more testable than true
- * ring all-reduce while maintaining correctness.
+ * Single-GPU fallback (MGPU-13) is a plain copy. The multi-GPU path is a
+ * genuine per-rank NCCL all-reduce: each rank contributes its local data on
+ * its own communicator (`current_comm()`, resolved from the calling thread's
+ * current device) and every rank ends with the reduced result.
  *
- * Algorithm:
- * 1. CPU coordinates: each GPU copies its data to GPU 0 (via host staging)
- * 2. GPU 0 reduces all chunks
- * 3. GPU 0 copies result back to all GPUs (via host staging)
+ * This converges the high-level distributed ops onto the verified NCCL layer
+ * (see decision-nccl-current-device-routing / decision-v17-dist-ops-real-
+ * multigpu). The pre-v2.17 CPU-coordinated host-staging implementation was
+ * broken on real multi-GPU (it read the caller's single send_data while
+ * cudaSetDevice-swapping across all GPUs and could never gather distinct
+ * per-rank contributions) and is not retained — see
+ * issue-v17-dist-ops-multigpu-untested and ev-v17-p1-dist-ops-failures.
  */
 
 #include "cuda/distributed/reduce.h"
-#include "cuda/distributed/common.h"
 #include "cuda/mesh/device_mesh.h"
-#include "cuda/mesh/peer_copy.h"
 #include "cuda/device/error.h"
+#include "cuda/nccl/nccl_all_reduce.h"
+#include "cuda/nccl/nccl_context.h"
+#include "cuda/nccl/nccl_error.h"
 
 #include <cuda_runtime.h>
-
-#include <vector>
 
 namespace cuda::distributed {
 
 namespace {
 
-// Reduction kernel for element-wise operations
-template <typename T, ReductionOp Op>
-__global__ void reduce_kernel(T* __restrict__ dst, const T* __restrict__ src, size_t count) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < count) {
-        if constexpr (Op == ReductionOp::Sum) {
-            dst[idx] = dst[idx] + src[idx];
-        } else if constexpr (Op == ReductionOp::Min) {
-            dst[idx] = dst[idx] < src[idx] ? dst[idx] : src[idx];
-        } else if constexpr (Op == ReductionOp::Max) {
-            dst[idx] = dst[idx] > src[idx] ? dst[idx] : src[idx];
-        } else {
-            dst[idx] = dst[idx] * src[idx];
-        }
+// Byte size of one element for the given dtype (used by the single-GPU
+// fallback copy). Full map, not float-or-4: CUDA_R_16F is 2 bytes (a 4-byte
+// copy would overrun the buffer) and the 64-bit dtypes are 8.
+size_t element_size_bytes(cudaDataType dtype) {
+    switch (dtype) {
+        case CUDA_R_8I:
+        case CUDA_R_8U:    return 1;
+        case CUDA_R_16F:
+        case CUDA_R_16BF:  return 2;
+        case CUDA_R_32F:
+        case CUDA_R_32I:
+        case CUDA_R_32U:   return 4;
+        case CUDA_R_64F:
+        case CUDA_R_64I:
+        case CUDA_R_64U:   return 8;
+        default:           return 4;
     }
 }
 
-template <typename T>
-void launch_reduce_kernel(T* dst, const T* src, size_t count, ReductionOp op, cudaStream_t stream) {
-    constexpr int block_size = 256;
-    int grid_size = static_cast<int>((count + block_size - 1) / block_size);
+int current_device() {
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    return device;
+}
 
-    switch (op) {
-        case ReductionOp::Sum: {
-            reduce_kernel<T, ReductionOp::Sum><<<grid_size, block_size, 0, stream>>>(
-                dst, src, count);
-            break;
-        }
-        case ReductionOp::Min: {
-            reduce_kernel<T, ReductionOp::Min><<<grid_size, block_size, 0, stream>>>(
-                dst, src, count);
-            break;
-        }
-        case ReductionOp::Max: {
-            reduce_kernel<T, ReductionOp::Max><<<grid_size, block_size, 0, stream>>>(
-                dst, src, count);
-            break;
-        }
-        case ReductionOp::Product: {
-            reduce_kernel<T, ReductionOp::Product><<<grid_size, block_size, 0, stream>>>(
-                dst, src, count);
-            break;
-        }
+// Fail fast (throw) when a multi-GPU group has no initialized NCCL context:
+// the single-GPU fallback only applies to device_count <= 1, and there is no
+// working non-NCCL multi-GPU implementation to fall back to.
+void require_nccl_initialized() {
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    if (!ctx.has_nccl()) {
+        throw cuda::nccl::NcclException(
+            "multi-GPU all-reduce requires an initialized NCCL context (call "
+            "NcclContext::instance().initialize() from one thread per rank); "
+            "the single-GPU fallback applies only when device_count <= 1",
+            ncclInternalError, "DistributedReduce",
+            __FILE__, __LINE__);
     }
 }
 
@@ -84,106 +81,77 @@ void DistributedReduce::all_reduce(const void* send_data, void* recv_data,
     mesh.initialize();
 
     int n = mesh.device_count();
-    size_t elem_size = (dtype == cudaDataType::CUDA_R_32F) ? sizeof(float) : 4;
-    size_t total_bytes = count * elem_size;
 
-    // Single-GPU fallback
+    // Single-GPU fallback: all-reduce of one contribution is the identity.
     if (n <= 1) {
         if (send_data != recv_data) {
-            CUDA_CHECK(cudaMemcpy(recv_data, send_data, total_bytes, cudaMemcpyDeviceToDevice));
+            CUDA_CHECK(cudaMemcpy(recv_data, send_data,
+                                  count * element_size_bytes(dtype),
+                                  cudaMemcpyDeviceToDevice));
         }
         return;
     }
 
-    // Get current device
-    int my_rank = 0;
-    CUDA_CHECK(cudaGetDevice(&my_rank));
+    // Per-rank NCCL all-reduce (blocking). Every rank thread must enter; the
+    // caller must run one thread per device pinned with cudaSetDevice (see the
+    // collective contract used by the NCCL suite / distributed matmul).
+    //
+    // Ordering contract: the collective posts and blocks on the context's
+    // per-device stream (ctx.get_stream(device)) — send_data must be readable
+    // from that stream (produce on the same stream, the default stream, or a
+    // prior host-visible barrier such as a blocking cudaMemcpy). There is no
+    // implicit edge from the caller's arbitrary private stream.
+    int device = current_device();
+    require_nccl_initialized();
+    auto& ctx = cuda::nccl::NcclContext::instance();
 
-    // Allocate staging buffer on GPU 0
-    void* staging = nullptr;
-    void* result = nullptr;
-    void* host_staging = nullptr;
-
-    if (my_rank == 0) {
-        CUDA_CHECK(cudaMalloc(&staging, total_bytes * n));
-        CUDA_CHECK(cudaMalloc(&result, total_bytes));
-        host_staging = malloc(total_bytes * n);
+    cuda::nccl::NcclAllReduce reduce(ctx);
+    cuda::nccl::NcclResult result = reduce.all_reduce(
+        send_data, recv_data, count,
+        cuda::nccl::NcclAllReduce::to_nccl_dtype(dtype),
+        cuda::nccl::NcclAllReduce::to_nccl_op(op),
+        ctx.get_stream(device));
+    if (!result.ok()) {
+        throw cuda::nccl::NcclException(result.error_message.c_str(), result.code,
+                                        "DistributedReduce::all_reduce (NCCL)",
+                                        __FILE__, __LINE__);
     }
-
-    // Phase 1: Gather data to GPU 0
-    // Each GPU: copy data to host, then GPU 0 copies to staging
-    std::vector<void*> host_buffers(n);
-
-    // Allocate host buffers for each GPU's data
-    for (int i = 0; i < n; ++i) {
-        host_buffers[i] = malloc(total_bytes);
-    }
-
-    // Copy each GPU's data to host
-    for (int gpu = 0; gpu < n; ++gpu) {
-        CUDA_CHECK(cudaSetDevice(gpu));
-        void* src = (send_data != recv_data) ? const_cast<void*>(send_data) : recv_data;
-        CUDA_CHECK(cudaMemcpy(host_buffers[gpu], src, total_bytes, cudaMemcpyDeviceToHost));
-    }
-
-    // GPU 0: copy all host buffers to staging area
-    if (my_rank == 0) {
-        CUDA_CHECK(cudaSetDevice(0));
-        for (int i = 0; i < n; ++i) {
-            char* dst = static_cast<char*>(staging) + i * total_bytes;
-            CUDA_CHECK(cudaMemcpy(dst, host_buffers[i], total_bytes, cudaMemcpyHostToDevice));
-        }
-
-        // Phase 2: Reduce on GPU 0
-        // Start with chunk 0 as accumulator
-        float* acc = static_cast<float*>(staging);
-        for (int i = 1; i < n; ++i) {
-            float* src = static_cast<float*>(staging) + i * count;
-            launch_reduce_kernel(acc, src, count, op, 0);
-        }
-        CUDA_CHECK(cudaDeviceSynchronize());
-
-        // Copy result to result buffer
-        CUDA_CHECK(cudaMemcpy(result, acc, total_bytes, cudaMemcpyDeviceToDevice));
-    }
-
-    // Phase 3: Broadcast result to all GPUs
-    // Copy result to host on GPU 0
-    if (my_rank == 0) {
-        CUDA_CHECK(cudaMemcpy(host_staging, result, total_bytes, cudaMemcpyDeviceToHost));
-    }
-
-    // Each GPU copies from host to its device memory
-    for (int gpu = 0; gpu < n; ++gpu) {
-        CUDA_CHECK(cudaSetDevice(gpu));
-        CUDA_CHECK(cudaMemcpy(recv_data, (my_rank == 0) ? host_staging : host_buffers[0],
-                             total_bytes, cudaMemcpyHostToDevice));
-    }
-
-    // Cleanup
-    for (int i = 0; i < n; ++i) {
-        free(host_buffers[i]);
-    }
-
-    if (my_rank == 0) {
-        free(host_staging);
-        CUDA_CHECK(cudaFree(staging));
-        CUDA_CHECK(cudaFree(result));
-    }
-
-    // Final sync
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    // Restore device
-    CUDA_CHECK(cudaSetDevice(my_rank));
 }
 
 void DistributedReduce::all_reduce_async(const void* send_data, void* recv_data,
                                          size_t count, ReductionOp op,
                                          cudaStream_t stream, cudaDataType dtype) {
-    // Delegate to sync version for simplicity
-    // Production would use async P2P operations
-    all_reduce(send_data, recv_data, count, op, dtype);
+    auto& mesh = cuda::mesh::DeviceMesh::instance();
+    mesh.initialize();
+
+    int n = mesh.device_count();
+
+    // Single-GPU fallback (async, on the caller's stream).
+    if (n <= 1) {
+        if (send_data != recv_data) {
+            CUDA_CHECK(cudaMemcpyAsync(recv_data, send_data,
+                                       count * element_size_bytes(dtype),
+                                       cudaMemcpyDeviceToDevice, stream));
+        }
+        return;
+    }
+
+    // Per-rank NCCL all-reduce on the caller's stream (the pre-v2.17 async
+    // ignored its stream and delegated to a blocking host-staged sync op).
+    require_nccl_initialized();
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    cuda::nccl::NcclAllReduce reduce(ctx);
+    cuda::nccl::NcclResult result = reduce.all_reduce_async(
+        send_data, recv_data, count,
+        cuda::nccl::NcclAllReduce::to_nccl_dtype(dtype),
+        cuda::nccl::NcclAllReduce::to_nccl_op(op),
+        stream);
+    if (!result.ok()) {
+        throw cuda::nccl::NcclException(result.error_message.c_str(), result.code,
+                                        "DistributedReduce::all_reduce_async (NCCL)",
+                                        __FILE__, __LINE__);
+    }
 }
 
 }  // namespace cuda::distributed

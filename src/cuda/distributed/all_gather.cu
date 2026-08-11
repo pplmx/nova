@@ -1,17 +1,67 @@
 /**
  * @file all_gather.cu
- * @brief All-gather implementation using P2P peer copy
+ * @brief Multi-GPU all-gather implementation
+ *
+ * Single-GPU fallback (MGPU-13) is a plain copy. The multi-GPU path is a
+ * genuine per-rank NCCL all-gather: each rank contributes its local block on
+ * its own communicator, and every rank ends with recv = [rank 0][rank 1]...
+ * in rank order (recv must hold count * device_count elements).
+ *
+ * Converged onto the verified NCCL layer in v2.17 (decision-v17-dist-ops-real-
+ * multigpu). The pre-v2.17 P2P implementation read the caller's single
+ * send_data as if every source had its own block, so each block came back as a
+ * copy of the caller's own data — broken on real multi-GPU (see
+ * issue-v17-dist-ops-multigpu-untested / ev-v17-p1-dist-ops-failures).
  */
 
 #include "cuda/distributed/all_gather.h"
-#include "cuda/distributed/common.h"
 #include "cuda/mesh/device_mesh.h"
-#include "cuda/mesh/peer_copy.h"
 #include "cuda/device/error.h"
+#include "cuda/nccl/nccl_all_gather.h"
+#include "cuda/nccl/nccl_all_reduce.h"  // shared static to_nccl_dtype()
+#include "cuda/nccl/nccl_context.h"
+#include "cuda/nccl/nccl_error.h"
 
 #include <cuda_runtime.h>
 
 namespace cuda::distributed {
+
+namespace {
+
+size_t element_size_bytes(cudaDataType dtype) {
+    switch (dtype) {
+        case CUDA_R_8I:
+        case CUDA_R_8U:    return 1;
+        case CUDA_R_16F:
+        case CUDA_R_16BF:  return 2;
+        case CUDA_R_32F:
+        case CUDA_R_32I:
+        case CUDA_R_32U:   return 4;
+        case CUDA_R_64F:
+        case CUDA_R_64I:
+        case CUDA_R_64U:   return 8;
+        default:           return 4;
+    }
+}
+
+int current_device() {
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    return device;
+}
+
+void require_nccl_initialized(const char* fn) {
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    if (!ctx.has_nccl()) {
+        throw cuda::nccl::NcclException(
+            "multi-GPU all-gather requires an initialized NCCL context (call "
+            "NcclContext::instance().initialize() from one thread per rank); "
+            "the single-GPU fallback applies only when device_count <= 1",
+            ncclInternalError, fn, __FILE__, __LINE__);
+    }
+}
+
+}  // anonymous namespace
 
 void DistributedAllGather::all_gather(const void* send_data, void* recv_data,
                                       size_t count, cudaDataType dtype) {
@@ -20,96 +70,62 @@ void DistributedAllGather::all_gather(const void* send_data, void* recv_data,
 
     int n = mesh.device_count();
 
-    // Single-GPU fallback
+    // Single-GPU fallback: gathering one contribution is a copy.
     if (n <= 1) {
-        size_t elem_size = (dtype == cudaDataType::CUDA_R_32F) ? sizeof(float) : 4;
-        CUDA_CHECK(cudaMemcpy(recv_data, send_data, count * elem_size,
+        CUDA_CHECK(cudaMemcpy(recv_data, send_data,
+                              count * element_size_bytes(dtype),
                               cudaMemcpyDeviceToDevice));
         return;
     }
 
-    all_gather_async(send_data, recv_data, count, 0, dtype);
+    // Per-rank NCCL all-gather (blocking). Caller runs one thread per device,
+    // each pinned with cudaSetDevice, holding its own block in `send_data`.
+    int device = current_device();
+    require_nccl_initialized("DistributedAllGather::all_gather");
+    auto& ctx = cuda::nccl::NcclContext::instance();
 
-    // Wait for completion
-    CUDA_CHECK(cudaDeviceSynchronize());
+    cuda::nccl::NcclAllGather op(ctx);
+    cuda::nccl::NcclResult result = op.all_gather(
+        send_data, recv_data, count,
+        cuda::nccl::NcclAllReduce::to_nccl_dtype(dtype),
+        ctx.get_stream(device));
+    if (!result.ok()) {
+        throw cuda::nccl::NcclException(result.error_message.c_str(), result.code,
+                                        "DistributedAllGather::all_gather (NCCL)",
+                                        __FILE__, __LINE__);
+    }
 }
 
 void DistributedAllGather::all_gather_async(const void* send_data, void* recv_data,
-                                            size_t count, cudaStream_t /*stream*/,
+                                            size_t count, cudaStream_t stream,
                                             cudaDataType dtype) {
     auto& mesh = cuda::mesh::DeviceMesh::instance();
     mesh.initialize();
 
     int n = mesh.device_count();
 
-    // Single-GPU fallback
+    // Single-GPU fallback (async, on the caller's stream).
     if (n <= 1) {
-        size_t elem_size = (dtype == cudaDataType::CUDA_R_32F) ? sizeof(float) : 4;
-        CUDA_CHECK(cudaMemcpyAsync(recv_data, send_data, count * elem_size,
-                                   cudaMemcpyDeviceToDevice, 0));
+        CUDA_CHECK(cudaMemcpyAsync(recv_data, send_data,
+                                   count * element_size_bytes(dtype),
+                                   cudaMemcpyDeviceToDevice, stream));
         return;
     }
 
-    // Get my rank
-    int rank = 0;
-    CUDA_CHECK(cudaGetDevice(&rank));
+    // Per-rank NCCL all-gather on the caller's stream.
+    require_nccl_initialized("DistributedAllGather::all_gather_async");
+    auto& ctx = cuda::nccl::NcclContext::instance();
 
-    auto& streams = MeshStreams::instance();
-    if (!streams.initialized()) {
-        streams.initialize(n);
+    cuda::nccl::NcclAllGather op(ctx);
+    cuda::nccl::NcclResult result = op.all_gather_async(
+        send_data, recv_data, count,
+        cuda::nccl::NcclAllReduce::to_nccl_dtype(dtype),
+        stream);
+    if (!result.ok()) {
+        throw cuda::nccl::NcclException(result.error_message.c_str(), result.code,
+                                        "DistributedAllGather::all_gather_async (NCCL)",
+                                        __FILE__, __LINE__);
     }
-
-    size_t elem_size = (dtype == cudaDataType::CUDA_R_32F) ? sizeof(float) : 4;
-    size_t chunk_bytes = count * elem_size;
-
-    // Copy my own data to my position in recv_data
-    char* recv_buf = static_cast<char*>(recv_data);
-    const char* send_buf = static_cast<const char*>(send_data);
-    char* my_pos = recv_buf + rank * chunk_bytes;
-
-    CUDA_CHECK(cudaMemcpyAsync(my_pos, send_data, chunk_bytes,
-                               cudaMemcpyDeviceToDevice, streams.get_stream(rank)));
-
-    // Copy data from each other GPU to our recv buffer
-    cuda::mesh::PeerCopy copier;
-
-    for (int src = 0; src < n; ++src) {
-        if (src == rank) continue;
-
-        // Calculate positions
-        char* dst_pos = recv_buf + src * chunk_bytes;
-
-        // Record event on source device after its data is ready
-        // We need to ensure the source GPU has written its data first
-        CUDA_CHECK(cudaSetDevice(src));
-        // The source's send_data is ready on its device
-
-        // Wait for source to be ready and copy to our buffer
-        if (mesh.can_access_peer(src, rank)) {
-            copier.enable_peer_access(src, rank);
-
-            // Source records event after its data is ready
-            // (in a real implementation, we'd have source explicitly signal)
-            // For now, we use a simplified approach where we assume data is ready
-
-            CUDA_CHECK(cudaSetDevice(rank));
-            copier.copy_async(dst_pos, send_data, chunk_bytes, rank, src,
-                             streams.get_stream(rank));
-        } else {
-            // Host-mediated fallback
-            CUDA_CHECK(cudaSetDevice(src));
-            void* host_tmp = malloc(chunk_bytes);
-            // Note: This assumes send_data is on src device - need to handle this
-            // For now, this is a simplified implementation
-            CUDA_CHECK(cudaSetDevice(rank));
-            CUDA_CHECK(cudaMemcpyAsync(dst_pos, send_data, chunk_bytes,
-                                       cudaMemcpyDeviceToDevice, streams.get_stream(rank)));
-            free(host_tmp);
-        }
-    }
-
-    // Note: This is a simplified implementation. A production version would use
-    // a ring-based algorithm or explicit handshaking to ensure data is ready.
 }
 
 }  // namespace cuda::distributed

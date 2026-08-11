@@ -26,13 +26,16 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include "cuda/device/error.h"
+#include "cuda/nccl/nccl_context.h"
 
 using namespace cuda::distributed;
 using namespace cuda::mesh;
@@ -117,6 +120,28 @@ bool arrays_near(const float* a, const float* b, size_t count, float tol = 1e-3f
         }
     }
     return true;
+}
+
+// Gate + NCCL bootstrap shared by the real multi-GPU tests: returns true when
+// a genuine run is possible (>= 2 GPUs, NCCL-enabled build, shared NcclContext
+// initialized). Initialization is idempotent across tests (R15 design);
+// failures (e.g. no NCCL in this build) report false. GTEST_SKIP is a
+// void-return macro, so the callers — not this predicate — issue the skip.
+bool multigpu_nccl_ready() {
+    if (DeviceMesh::instance().device_count() < 2) {
+        return false;
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr || std::string(nccl_env) != "1") {
+        return false;
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    try {
+        ctx.initialize();
+    } catch (const std::exception&) {
+        return false;
+    }
+    return ctx.has_nccl();
 }
 
 }  // namespace
@@ -455,11 +480,11 @@ TEST(DeviceMeshIntegration, MultiGpuAvailable) {
 
 // DistributedReduce: each rank contributes distinct local data; every rank must
 // end with the group sum (rank r sends base (r+1), element i adds i).
-TEST_F(DistributedReduceTest, DISABLED_MultiGpu_AllReduceDistinctData) {
-    int device_count = DeviceMesh::instance().device_count();
-    if (device_count < 2) {
-        GTEST_SKIP() << "Need at least 2 GPUs for a multi-GPU all-reduce test";
+TEST_F(DistributedReduceTest, MultiGpu_AllReduceDistinctData) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
     }
+    const int device_count = DeviceMesh::instance().device_count();
     const size_t count = 64;
     std::vector<std::vector<float>> h_results(device_count, std::vector<float>(count));
     run_per_rank(device_count, [&](int d) {
@@ -487,11 +512,11 @@ TEST_F(DistributedReduceTest, DISABLED_MultiGpu_AllReduceDistinctData) {
     }
 }
 
-TEST_F(DistributedReduceTest, DISABLED_MultiGpu_AllReduceInPlace) {
-    int device_count = DeviceMesh::instance().device_count();
-    if (device_count < 2) {
-        GTEST_SKIP() << "Need at least 2 GPUs for a multi-GPU all-reduce test";
+TEST_F(DistributedReduceTest, MultiGpu_AllReduceInPlace) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
     }
+    const int device_count = DeviceMesh::instance().device_count();
     const size_t count = 32;
     std::vector<std::vector<float>> h_results(device_count, std::vector<float>(count));
     run_per_rank(device_count, [&](int d) {
@@ -519,11 +544,11 @@ TEST_F(DistributedReduceTest, DISABLED_MultiGpu_AllReduceInPlace) {
 
 // DistributedAllGather: each rank contributes distinct data; every rank must
 // end with recv = [rank 0 block][rank 1 block]... in rank order.
-TEST_F(DistributedAllGatherTest, DISABLED_MultiGpu_AllGatherDistinctData) {
-    int device_count = DeviceMesh::instance().device_count();
-    if (device_count < 2) {
-        GTEST_SKIP() << "Need at least 2 GPUs for a multi-GPU all-gather test";
+TEST_F(DistributedAllGatherTest, MultiGpu_AllGatherDistinctData) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
     }
+    const int device_count = DeviceMesh::instance().device_count();
     const size_t count = 64;
     std::vector<std::vector<float>> h_results(device_count,
                                               std::vector<float>(count * device_count));
@@ -556,11 +581,11 @@ TEST_F(DistributedAllGatherTest, DISABLED_MultiGpu_AllGatherDistinctData) {
 }
 
 // DistributedBroadcast: root's data must reach every rank.
-TEST_F(DistributedBroadcastTest, DISABLED_MultiGpu_BroadcastDistinctData) {
-    int device_count = DeviceMesh::instance().device_count();
-    if (device_count < 2) {
-        GTEST_SKIP() << "Need at least 2 GPUs for a multi-GPU broadcast test";
+TEST_F(DistributedBroadcastTest, MultiGpu_BroadcastDistinctData) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
     }
+    const int device_count = DeviceMesh::instance().device_count();
     const size_t count = 64;
     const float root_value = 7.0f;
     std::vector<std::vector<float>> h_results(device_count, std::vector<float>(count));
@@ -589,17 +614,11 @@ TEST_F(DistributedBroadcastTest, DISABLED_MultiGpu_BroadcastDistinctData) {
     }
 }
 
-// The four DISABLED_MultiGpu_* tests above are READY regression tests that
-// currently fail against the legacy host-staged/P2P implementations of the
-// high-level distributed ops — see issue-v17-dist-ops-multigpu-untested.
-// Failure modes observed on 2x A100 (Round 17 P1 evidence, run with
-// --gtest_also_run_disabled_tests):
-//   - DistributedReduce::all_reduce: result != group sum (CPU-coordinated
-//     host-staging reads the caller's single send_data, cannot gather distinct
-//     per-rank contributions; all_reduce_async also ignores its stream).
-//   - DistributedAllGather::all_gather: each block ends up a copy of the
-//     caller's own data (send_data is read as if every source had its own).
-//   - DistributedBroadcast::broadcast: non-root never receives root's data
-//     (P2P copies dereference root's pointer address on destination devices).
-// They are flipped ON by task-v17b-dist-ops-nccl-converge once the ops are
-// re-routed onto the verified NCCL layer (or fixed per P1 evidence).
+// The three MultiGpu_* data-op tests above were written in Round 17 P1 as
+// ready regression tests; P1 proved they FAIL against the legacy
+// host-staged/P2P implementations of the high-level distributed ops (see
+// issue-v17-dist-ops-multigpu-untested and ev-v17-p1-dist-ops-failures for the
+// observed failure modes). task-v17b-dist-ops-nccl-converge re-routed the ops
+// onto the verified NCCL layer, and the tests are now enabled: each posts a
+// genuine per-rank NCCL collective from one thread per device. `MeshBarrier`
+// convergence (per-instance host event poll) is tracked separately.
