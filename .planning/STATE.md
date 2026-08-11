@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.16
-milestone_name: Distributed Multi-GPU Verification
-status: Complete
+milestone: v2.17
+milestone_name: Distributed Ops On Real Multi-GPU
+status: In Progress
 last_updated: "2026-08-11"
-last_activity: 2026-08-11 — Round 16: all 3 phases complete, milestone closed
+last_activity: 2026-08-11 — Round 17 opening: milestone v2.17 opened, P1 harness in progress
 progress:
   total_phases: 3
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -19,11 +19,24 @@ progress:
 
 ## Current Position
 
-Milestone: v2.16 Distributed Multi-GPU Verification
-Status: Complete
-Last activity: 2026-08-11 — RIL Round 16: distributed matmul multi-GPU path implemented & verified, milestone closed
+Milestone: v2.17 Distributed Ops On Real Multi-GPU
+Status: In Progress (Round 17)
+Last activity: 2026-08-11 — RIL Round 17 opening: high-level distributed ops multi-GPU harness (P1)
 
-## Milestone v2.16 — Distributed Multi-GPU Verification
+## Milestone v2.17 — Distributed Ops On Real Multi-GPU
+
+The high-level distributed API's multi-GPU paths are still never exercised (10 "Requires
+single GPU" test skips) yet SyncBatchNorm's multi-GPU training path consumes
+`DistributedReduce::all_reduce_async`. Converge them on the verified NCCL layer / verify
+their real multi-GPU correctness:
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Thread-per-rank harness + real distributed-ops multi-GPU tests | In progress (Round 17) |
+| 2 | Converge high-level collectives on verified NCCL layer (or fix per P1 evidence) | Pending |
+| 3 | SyncBatchNorm multi-GPU gradient-path verify + full-suite regression | Pending |
+
+## Milestone v2.16 — Distributed Multi-GPU Verification (Complete)
 
 Turn the last un-verified distributed functionality into running, asserted tests:
 
@@ -66,10 +79,10 @@ Turn the last un-verified distributed functionality into running, asserted tests
 | v2.14 Documentation Quality | Shipped | 2026-05-07 | 31 |
 | v2.15 Test Quality Assurance | Complete | 2026-05-09 | 5 phases |
 | v2.16 Distributed Multi-GPU Verification | Complete | 2026-08-11 | 3 phases |
+| v2.17 Distributed Ops On Real Multi-GPU | Open | 2026-08-11 | 3 phases |
 
 ---
 
-## State updated: 2026-08-11 — Milestone v2.16 completed (RIL Round 16)
-All three phases closed: NCCL collectives (R15), distributed pool/mesh verification (R15+R16),
-and the distributed matmul real multi-GPU path (R16, `matmul_multi_gpu` thread-per-rank).
-Full-suite baseline: 1451 ran / 1423 pass / 0 fail / 28 skip / EXIT=0.
+## State updated: 2026-08-11 — Milestone v2.17 opened (RIL Round 17)
+v2.16 closed (baseline 1451/1423/0). v2.17 "Distributed Ops On Real Multi-GPU" opened:
+P1 thread-per-rank harness for the high-level distributed ops is in progress (Round 17).

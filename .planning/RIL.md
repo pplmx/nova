@@ -3,17 +3,24 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 16).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 17).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
-Verification"** opened at Round 15 and **closed at Round 16** (all 3 phases green).
+Verification"** opened at Round 15 and **closed at Round 16** → **v2.17 "Distributed Ops On
+Real Multi-GPU"** opened at Round 17 (P1 in progress).
 
 ## Latest round
+- **Round 17 (2026-08-11)** — milestone v2.17 kickoff. The high-level distributed ops
+  (`DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast`/`MeshBarrier`) carry 10
+  "Requires single GPU" test skips, yet SyncBatchNorm multi-GPU training calls
+  `DistributedReduce::all_reduce_async` at 3 sites. Opened the milestone (decision
+  `decision-v17-dist-ops-real-multigpu`) with 3 phase tasks and started P1: thread-per-rank
+  harness + real multi-GPU tests. See `ril_autonomous_round17.md`.
 - **Round 16 (2026-08-11)** — milestone v2.16 Phase 3: implemented the real distributed matmul
   multi-GPU path `DistributedMatmul::matmul_multi_gpu` (row-split compute + NCCL all-gather) and
-  replaced the last unconditional distributed skip with two real multi-GPU tests
-  (`MultiGpu_RowSplitAllGather`, `MultiGpu_AlphaBeta`) driven thread-per-rank. Proved the R15
-  "multi-process required" assumption unnecessary and superseded it with
-  `decision-matmul-thread-per-rank`. **14/14 DistributedMatmul on 2 GPUs; full suite
+  replaced the last unconditional distributed skip with three real multi-GPU tests
+  (`MultiGpu_RowSplitAllGather`, `MultiGpu_AlphaBeta`, `MultiGpu_RejectsBadShapes`) driven
+  thread-per-rank. Proved the R15 "multi-process required" assumption unnecessary and superseded
+  it with `decision-matmul-thread-per-rank`. **14/14 DistributedMatmul on 2 GPUs; full suite
   1451/1423/0 EXIT=0.** See `ril_autonomous_round16.md`.
 - **Round 15 (2026-08-11)** — milestone v2.16 kickoff. The 14 `NcclCollectivesTest` cases had
   never run (`NCCL_TESTS_AVAILABLE` was a dead gate); running them for real exposed three bugs:
@@ -27,12 +34,18 @@ Verification"** opened at Round 15 and **closed at Round 16** (all 3 phases gree
 ## Active tasks (by priority_score; threshold 3.0)
 | score | task | status |
 |-------|------|--------|
-| — | (none above threshold this round) | — |
+| 21.60 | task-v17a-dist-ops-harness (P1) | active |
+| 20.82 | task-v17b-dist-ops-nccl-converge (P2) | active (depends on P1) |
+| 14.31 | task-v17c-syncbn-multigpu-backward (P3) | active (depends on P2) |
 
 ## Candidate follow-up (below threshold / env-bound)
 - MPI enablement — `NOVA_ENABLE_MPI=ON` needs MPI headers/dev absent on this host (env-bound).
 
 ## Recent decisions
+- `decision-v17-dist-ops-real-multigpu` (R17) — milestone v2.17: the high-level distributed ops'
+  multi-GPU paths (10 "Requires single GPU" skips) are the next never-run surface, and they back
+  the SyncBatchNorm multi-GPU training path. P1 harness (+evidence) → P2 converge on the verified
+  NCCL layer (or fix legacy per evidence) → P3 SyncBatchNorm gradient verify.
 - `decision-matmul-thread-per-rank` (R16) — the distributed matmul multi-GPU path does NOT require
   separate OS processes: genuine multi-device NCCL collectives run correctly thread-per-rank in one
   process (proven by the R15 NCCL suite). `matmul_multi_gpu` uses row-split + NcclAllGather,
