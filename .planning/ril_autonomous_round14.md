@@ -58,6 +58,13 @@ zero/denormal division is breakdown; the relative-residual check is the real sto
 MAX_ITERATIONS is only set when error is still SUCCESS. The previously-skipped test now runs and
 passes; Krylov/CG/GMRES/preconditioner cluster 93/93.
 
+Also in skip-audit: `BlockManagerCudaGraphTest.KVCacheAccessWithCudaGraph` was an EMPTY
+`GTEST_SKIP` ("allocation fails with CUDA OOM") while every sibling BlockManagerCudaGraphTest case
+uses the same num_gpu_blocks=256 pool and runs fine. Replaced with a real test (create sequences →
+KV blocks allocated under the CUDA-graph flag → forward without error), mirroring
+`BlockManagerTest.KVCacheIntegration` (78bc6e7). Remaining non-environment skips after this:
+none beyond env-bound (MPI flag, NCCL/multi-GPU) — task-skip-audit substantially complete.
+
 ## Final full-suite verification (GPU 2)
 - Round-14 baseline: **1420 pass / 0 fail / 29 skip / 1 disabled, EXIT=0**.
 - (final count after the Krylov fix re-verified in this round's last run)
