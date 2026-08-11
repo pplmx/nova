@@ -1,8 +1,9 @@
 # RIL — Repository Intelligence Layer (index)
 
-Maintained by the autonomous engineering loop. Full guidance: `.claude/skills/graph-engineering/SKILL.md`
-(loadable skill; `.agents/skills/graph-engineering/SKILL.md` is a symlink alias for the agents.md standard).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 13).
+Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
+(single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
+discovers it under the skills it scans).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 14).
 
 ## Latest round
 - **Round 14 (2026-08-11)** — implemented `task-scheduler-noncontig-mode` (fix(inference) 7f300e6):
