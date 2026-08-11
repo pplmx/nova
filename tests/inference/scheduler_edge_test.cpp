@@ -261,7 +261,40 @@ TEST_F(SchedulerEdgeTest, SequenceManagerAccess) {
 }
 
 TEST_F(SchedulerEdgeTest, NonContinuousBatchingMode) {
-    GTEST_SKIP() << "Non-continuous batching mode not fully implemented - step() does not move pending requests to active batch";
+    // Static batching cohort semantics: pending requests join the active batch
+    // only when it is (re)composed, and slots freed mid-generation are not
+    // refilled. Previously this mode did nothing, so add_request() left every
+    // sequence stuck in pending_requests_ and get_batch() was always empty.
+    auto config_static = config_;
+    config_static.enable_continuous_batching = false;
+    config_static.max_batch_size = 2;
+
+    auto scheduler = std::make_unique<Scheduler>(config_static);
+
+    const int64_t id1 = scheduler->add_request(64);
+    const int64_t id2 = scheduler->add_request(64);
+    const int64_t id3 = scheduler->add_request(64);
+
+    // First cohort: capped at max_batch_size; id3 stays pending.
+    auto batch1 = scheduler->get_batch();
+    ASSERT_EQ(batch1.size(), 2u);
+    ASSERT_NE(std::find(batch1.begin(), batch1.end(), id1), batch1.end());
+    ASSERT_NE(std::find(batch1.begin(), batch1.end(), id2), batch1.end());
+    EXPECT_EQ(std::find(batch1.begin(), batch1.end(), id3), batch1.end());
+
+    // A slot freed by a completed sequence is NOT refilled while the cohort runs.
+    scheduler->on_sequence_complete(id1);
+    scheduler->step();
+    auto batch2 = scheduler->get_batch();
+    ASSERT_EQ(batch2.size(), 1u);
+    EXPECT_EQ(std::find(batch2.begin(), batch2.end(), id3), batch2.end());
+
+    // Once the cohort drains, the next step composes a fresh batch from pending.
+    scheduler->on_sequence_complete(id2);
+    scheduler->step();
+    auto batch3 = scheduler->get_batch();
+    ASSERT_EQ(batch3.size(), 1u);
+    EXPECT_NE(std::find(batch3.begin(), batch3.end(), id3), batch3.end());
 }
 
 TEST_F(SchedulerEdgeTest, SequenceStateTransitions) {

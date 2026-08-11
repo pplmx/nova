@@ -84,7 +84,9 @@ public:
     BlockManager& get_block_manager() { return block_manager_; }
 
 private:
+    void prune_completed();
     void recompose_batch();
+    void recompose_batch_static();
     bool should_preempt() const;
 
     SchedulerConfig config_;
@@ -242,6 +244,8 @@ inline int64_t Scheduler::add_request(int max_tokens) {
 inline std::vector<int64_t> Scheduler::get_batch() {
     if (config_.enable_continuous_batching) {
         recompose_batch();
+    } else {
+        recompose_batch_static();
     }
     return active_batch_;
 }
@@ -276,6 +280,8 @@ inline void Scheduler::on_sequence_complete(int64_t seq_id) {
 inline void Scheduler::step() {
     if (config_.enable_continuous_batching) {
         recompose_batch();
+    } else {
+        recompose_batch_static();
     }
 }
 
@@ -291,7 +297,7 @@ inline void Scheduler::forward_batch(
     block_manager_.forward_batch(active_batch_, query, output, stream);
 }
 
-inline void Scheduler::recompose_batch() {
+inline void Scheduler::prune_completed() {
     std::vector<int64_t> to_remove;
     for (const int64_t seq_id : active_batch_) {
         const SequenceState state = seq_manager_.get_state(seq_id);
@@ -306,6 +312,10 @@ inline void Scheduler::recompose_batch() {
             active_batch_.erase(it);
         }
     }
+}
+
+inline void Scheduler::recompose_batch() {
+    prune_completed();
 
     const int slots_available = config_.max_batch_size -
                                 static_cast<int>(active_batch_.size());
@@ -316,6 +326,29 @@ inline void Scheduler::recompose_batch() {
 
         if (seq_manager_.get_state(next_seq) == SequenceState::Running) {
             active_batch_.push_back(next_seq);
+        }
+    }
+
+    current_batch_size_ = static_cast<int>(active_batch_.size());
+}
+
+inline void Scheduler::recompose_batch_static() {
+    // Non-continuous (static) batching: prune finished sequences, then compose a
+    // fresh cohort only when the current one has fully drained. Slots freed by
+    // mid-generation completions are NOT refilled (that is the continuous-mode
+    // behaviour); new requests wait for the next batch. Previously this branch
+    // did nothing, so with enable_continuous_batching=false every request stayed
+    // queued in pending_requests_ forever and get_batch() returned an empty set.
+    prune_completed();
+
+    if (active_batch_.empty()) {
+        for (int i = 0; i < config_.max_batch_size && !pending_requests_.empty(); ++i) {
+            const int64_t next_seq = pending_requests_.front();
+            pending_requests_.erase(pending_requests_.begin());
+
+            if (seq_manager_.get_state(next_seq) == SequenceState::Running) {
+                active_batch_.push_back(next_seq);
+            }
         }
     }
 
