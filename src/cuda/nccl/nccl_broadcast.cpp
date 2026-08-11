@@ -34,12 +34,14 @@ NcclResult NcclBroadcast::broadcast_async(
 
     return safe_nccl_call(
         [&]() {
-            ncclComm_t comm = get_comm(root_rank);
+            // Broadcast is posted per-rank with the rank's own communicator;
+            // `root_rank` is the root's rank within the comm, not the device.
+            ncclComm_t comm = current_comm();
             return ncclBroadcast(
                 data, recv_data, count,
                 dtype, root_rank, comm, stream);
         },
-        get_comm(root_rank),
+        current_comm(),
         30000);
 #endif
 }

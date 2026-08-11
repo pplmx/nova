@@ -221,6 +221,20 @@ public:
     ncclComm_t get_comm(int device) const;
 
     /**
+     * @brief Get the NCCL communicator for the currently-active device
+     *
+     * NCCL collectives must be issued with the communicator whose rank owns
+     * the send/recv buffers and stream (the device set with cudaSetDevice on
+     * the calling thread). Hard-coding rank 0's communicator is only correct
+     * when the caller's data happens to live on device 0, so collectives
+     * resolve the communicator through this instead.
+     *
+     * @return NCCL communicator for the current device
+     * @throws NcclException if context not initialized or device not in group
+     */
+    [[nodiscard]] ncclComm_t current_comm() const;
+
+    /**
      * @brief Get CUDA stream for a specific device
      * @param device Device index
      * @return CUDA stream for NCCL operations on this device
@@ -261,6 +275,7 @@ public:
 
 private:
     void initialize_from_mesh();
+    void create_streams_and_comms();
     void cleanup();
 
     int device_count_ = 0;

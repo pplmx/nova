@@ -4,10 +4,22 @@
  *
  * Tests AllReduce, Broadcast, and Barrier operations with NCCL.
  * Tests are skipped if NCCL is not enabled.
+ *
+ * These tests drive a real multi-rank NCCL communicator group from a single
+ * process: one thread per rank/device, each posting the collective on that
+ * rank's communicator. NCCL collectives are per-rank — every rank must post
+ * its op before any of them completes — which the old single-call style (one
+ * buffer on one device, "device 0's communicator") could never express, and
+ * was exactly why these tests had been gated behind NCCL_TESTS_AVAILABLE and
+ * never run. Set NCCL_TESTS_AVAILABLE=1 and expose >=2 GPUs to run them.
  */
 
 #include <gtest/gtest.h>
 #include <vector>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
 
 #include "cuda/nccl/nccl_context.h"
 #include "cuda/nccl/nccl_all_reduce.h"
@@ -17,6 +29,7 @@
 #include "cuda/nccl/nccl_reduce_scatter.h"
 #include "cuda/nccl/nccl_group.h"
 #include "cuda/nccl/nccl_ops.h"
+#include "cuda/nccl/nccl_error.h"
 
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
@@ -24,6 +37,69 @@
 #if NOVA_NCCL_ENABLED
 
 namespace cuda::nccl {
+
+namespace {
+
+// Barrier so every rank thread enters the collective together: a rank that
+// posted its op waits for the others to post before any can complete, so the
+// first thread would otherwise burn part of safe_stream_wait's timeout while
+// the last thread is still starting up.
+class RankBarrier {
+public:
+    explicit RankBarrier(int count) : total_(count) {}
+
+    void wait() {
+        std::unique_lock<std::mutex> lk(mutex_);
+        ++arrived_;
+        cv_.wait(lk, [this] { return arrived_ >= total_; });
+        cv_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    int total_;
+    int arrived_ = 0;
+};
+
+// Runs `per_rank(d)` on one thread per visible device, each pinned to its own
+// device. cudaSetDevice is per-thread state, so this is the only way to issue
+// each rank's part of a multi-device NCCL collective from one process.
+//
+// Thread exceptions (e.g. a CUDA_CHECK surfacing a sticky device error) are
+// collected and rethrown once after all threads join — rethrowing from inside
+// join() on the first thread would leave the others running and hit
+// std::terminate instead of producing a normal test failure.
+template <typename F>
+void run_per_rank(int device_count, F&& per_rank) {
+    RankBarrier barrier(device_count);
+    std::vector<std::thread> threads;
+    threads.reserve(device_count);
+    std::mutex error_mutex;
+    std::exception_ptr first_error;
+    for (int d = 0; d < device_count; ++d) {
+        threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
+            try {
+                CUDA_CHECK(cudaSetDevice(d));
+                barrier.wait();
+                per_rank(d);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                if (!first_error) {
+                    first_error = std::current_exception();
+                }
+            }
+        });
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+    if (first_error) {
+        std::rethrow_exception(first_error);
+    }
+}
+
+}  // namespace
 
 // Test fixture for NCCL collective tests
 class NcclCollectivesTest : public ::testing::Test {
@@ -58,6 +134,8 @@ protected:
     }
 
     std::unique_ptr<NcclContext> context_;
+
+    constexpr static size_t kCount = 1024;
 };
 
 // ============================================================================
@@ -66,63 +144,72 @@ protected:
 
 TEST_F(NcclCollectivesTest, AllReduceSum) {
     NcclAllReduce reduce(*context_);
+    const int ndev = context_->device_count();
 
-    // Create test buffers
-    cuda::memory::Buffer<float> send(1024);
-    cuda::memory::Buffer<float> recv(1024);
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Initialize with values
-    std::vector<float> h_send(1024);
-    for (size_t i = 0; i < 1024; ++i) {
-        h_send[i] = static_cast<float>(i + 1);
-    }
-    send.copy_from(h_send.data(), 1024);
+        cuda::memory::Buffer<float> send(kCount);
+        cuda::memory::Buffer<float> recv(kCount);
+        std::vector<float> h_send(kCount);
+        for (size_t i = 0; i < kCount; ++i) {
+            h_send[i] = static_cast<float>(i + 1);
+        }
+        send.copy_from(h_send.data(), kCount);
 
-    // Perform all-reduce
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+        auto result = reduce.all_reduce_async(
+            send.data(), recv.data(), kCount,
+            ncclFloat32, ncclSum,
+            stream);
 
-    auto result = reduce.all_reduce_async(
-        send.data(), recv.data(), 1024,
-        ncclFloat32, ncclSum,
-        stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
+        ASSERT_TRUE(result.ok()) << result.error_message;
 
-    EXPECT_TRUE(result.ok()) << result.error_message;
-
-    // Each element should be the sum across GPUs
-    // In single-GPU test, result is just the input
-    std::vector<float> h_recv(1024);
-    recv.copy_to(h_recv.data(), 1024);
-    for (size_t i = 0; i < 1024; ++i) {
-        EXPECT_FLOAT_EQ(h_recv[i], static_cast<float>(i + 1));
-    }
+        // Each rank provided i+1, so after the all-reduce every rank sees
+        // ndev * (i+1).
+        std::vector<float> h_recv(kCount);
+        recv.copy_to(h_recv.data(), kCount);
+        for (size_t i = 0; i < kCount; ++i) {
+            EXPECT_FLOAT_EQ(h_recv[i], static_cast<float>(ndev * (i + 1)));
+        }
+    });
 }
 
 TEST_F(NcclCollectivesTest, AllReduceInPlace) {
     NcclAllReduce reduce(*context_);
+    const int ndev = context_->device_count();
 
-    cuda::memory::Buffer<float> data(1024);
-    std::vector<float> h_data(1024);
-    for (size_t i = 0; i < 1024; ++i) {
-        h_data[i] = static_cast<float>(i + 1);
-    }
-    data.copy_from(h_data.data(), 1024);
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+        cuda::memory::Buffer<float> data(kCount);
+        std::vector<float> h_data(kCount);
+        for (size_t i = 0; i < kCount; ++i) {
+            h_data[i] = static_cast<float>((d + 1) * (i + 1));
+        }
+        data.copy_from(h_data.data(), kCount);
 
-    auto result = reduce.all_reduce_async(
-        data.data(), data.data(), 1024,
-        ncclFloat32, ncclSum,
-        stream);
+        auto result = reduce.all_reduce_async(
+            data.data(), data.data(), kCount,
+            ncclFloat32, ncclSum,
+            stream);
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
 
-    EXPECT_TRUE(result.ok()) << result.error_message;
+        ASSERT_TRUE(result.ok()) << result.error_message;
+
+        // Rank d contributed (d+1)*(i+1); the sum is (i+1)*sum_{r=0}^{ndev-1}(r+1).
+        data.copy_to(h_data.data(), kCount);
+        const float factor = static_cast<float>(ndev * (ndev + 1) / 2);
+        for (size_t i = 0; i < kCount; ++i) {
+            EXPECT_FLOAT_EQ(h_data[i], factor * static_cast<float>(i + 1));
+        }
+    });
 }
 
 // ============================================================================
@@ -131,33 +218,33 @@ TEST_F(NcclCollectivesTest, AllReduceInPlace) {
 
 TEST_F(NcclCollectivesTest, BroadcastFromRoot) {
     NcclBroadcast broadcast(*context_);
+    const int ndev = context_->device_count();
+    constexpr int kRoot = 0;
 
-    cuda::memory::Buffer<float> root_data(1024);
-    cuda::memory::Buffer<float> recv_data(1024);
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-    // Initialize root data (stage on the host; Buffer.data() is device memory)
-    std::vector<float> h_root(1024, 42.0f);
-    root_data.copy_from(h_root.data(), 1024);
+        // Root seeds the value; non-root buffers are ignored by NCCL.
+        cuda::memory::Buffer<float> data(kCount);
+        std::vector<float> h_data(kCount, d == kRoot ? 42.0f : -1.0f);
+        data.copy_from(h_data.data(), kCount);
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+        auto result = broadcast.broadcast_async(
+            data.data(), data.data(), kCount,
+            ncclFloat32, kRoot, stream);
 
-    auto result = broadcast.broadcast_async(
-        root_data.data(), recv_data.data(), 1024,
-        ncclFloat32, 0,  // root_rank = 0
-        stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
+        ASSERT_TRUE(result.ok()) << result.error_message;
 
-    EXPECT_TRUE(result.ok()) << result.error_message;
-
-    // All elements should be 42.0
-    std::vector<float> h_recv(1024);
-    recv_data.copy_to(h_recv.data(), 1024);
-    for (size_t i = 0; i < 1024; ++i) {
-        EXPECT_FLOAT_EQ(h_recv[i], 42.0f);
-    }
+        // Every rank ends up with the root's value.
+        data.copy_to(h_data.data(), kCount);
+        for (size_t i = 0; i < kCount; ++i) {
+            EXPECT_FLOAT_EQ(h_data[i], 42.0f);
+        }
+    });
 }
 
 // ============================================================================
@@ -166,16 +253,19 @@ TEST_F(NcclCollectivesTest, BroadcastFromRoot) {
 
 TEST_F(NcclCollectivesTest, BarrierSync) {
     NcclBarrier barrier(*context_);
+    const int ndev = context_->device_count();
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-    auto result = barrier.barrier_async(stream);
+        auto result = barrier.barrier_async(stream);
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
 
-    EXPECT_TRUE(result.ok()) << result.error_message;
+        EXPECT_TRUE(result.ok()) << result.error_message;
+    });
 }
 
 // ============================================================================
@@ -183,26 +273,14 @@ TEST_F(NcclCollectivesTest, BarrierSync) {
 // ============================================================================
 
 TEST_F(NcclCollectivesTest, SafeNcclCallDetectsErrors) {
-    NcclAllReduce reduce(*context_);
+    // safe_nccl_call must surface an immediate NCCL error as an NcclResult
+    // (never throw) with a human-readable message.
+    auto result = safe_nccl_call(
+        []() -> ncclResult_t { return ncclInvalidArgument; },
+        context_->current_comm());
 
-    // Invalid pointers should still call NCCL (which may or may not detect)
-    cuda::memory::Buffer<float> send(1024);
-    cuda::memory::Buffer<float> recv(1024);
-
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-
-    auto result = reduce.all_reduce_async(
-        send.data(), recv.data(), 1024,
-        ncclFloat32, ncclSum,
-        stream);
-
-    // Result depends on GPU state
-    if (!result.ok()) {
-        EXPECT_FALSE(result.error_message.empty());
-    }
-
-    cudaStreamDestroy(stream);
+    EXPECT_FALSE(result.ok());
+    EXPECT_FALSE(result.error_message.empty());
 }
 
 // ============================================================================
@@ -231,31 +309,39 @@ TEST_F(NcclCollectivesTest, TypeConversion) {
 
 TEST_F(NcclCollectivesTest, AllGatherBasic) {
     NcclAllGather gather(*context_);
+    const int ndev = context_->device_count();
 
-    int device_count = context_->device_count();
-    size_t send_count = 1024;
-    size_t recv_count = send_count * device_count;
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-    cuda::memory::Buffer<float> send(send_count);
-    cuda::memory::Buffer<float> recv(recv_count);
+        cuda::memory::Buffer<float> send(kCount);
+        cuda::memory::Buffer<float> recv(kCount * ndev);
+        std::vector<float> h_send(kCount);
+        for (size_t i = 0; i < kCount; ++i) {
+            h_send[i] = static_cast<float>(d * 1000 + i + 1);  // rank-distinct
+        }
+        send.copy_from(h_send.data(), kCount);
 
-    std::vector<float> h_send(send_count);
-    for (size_t i = 0; i < send_count; ++i) {
-        h_send[i] = static_cast<float>(i + 1);
-    }
-    send.copy_from(h_send.data(), send_count);
+        auto result = gather.all_gather_async(
+            send.data(), recv.data(), kCount,
+            ncclFloat32, stream);
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
 
-    auto result = gather.all_gather_async(
-        send.data(), recv.data(), send_count,
-        ncclFloat32, stream);
+        ASSERT_TRUE(result.ok()) << result.error_message;
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
-
-    EXPECT_TRUE(result.ok()) << result.error_message;
+        // recv is [rank0's send | rank1's send | ...] in rank order.
+        std::vector<float> h_recv(kCount * ndev);
+        recv.copy_to(h_recv.data(), kCount * ndev);
+        for (int r = 0; r < ndev; ++r) {
+            for (size_t i = 0; i < kCount; ++i) {
+                EXPECT_FLOAT_EQ(h_recv[r * kCount + i],
+                                static_cast<float>(r * 1000 + i + 1));
+            }
+        }
+    });
 }
 
 TEST_F(NcclCollectivesTest, AllGatherBufferSize) {
@@ -271,31 +357,43 @@ TEST_F(NcclCollectivesTest, AllGatherBufferSize) {
 
 TEST_F(NcclCollectivesTest, ReduceScatterBasic) {
     NcclReduceScatter reduce_scatter(*context_);
+    const int ndev = context_->device_count();
+    constexpr size_t kRecvCount = 1024;
+    const size_t send_count = kRecvCount * ndev;
 
-    int device_count = context_->device_count();
-    size_t recv_count = 1024;
-    size_t send_count = recv_count * device_count;
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-    cuda::memory::Buffer<float> send(send_count);
-    cuda::memory::Buffer<float> recv(recv_count);
+        cuda::memory::Buffer<float> send(send_count);
+        cuda::memory::Buffer<float> recv(kRecvCount);
+        std::vector<float> h_send(send_count);
+        for (size_t j = 0; j < send_count; ++j) {
+            h_send[j] = static_cast<float>(d * 1000 + j + 1);
+        }
+        send.copy_from(h_send.data(), send_count);
 
-    std::vector<float> h_send(send_count);
-    for (size_t i = 0; i < send_count; ++i) {
-        h_send[i] = 1.0f;
-    }
-    send.copy_from(h_send.data(), send_count);
+        auto result = reduce_scatter.reduce_scatter_async(
+            send.data(), recv.data(), kRecvCount,
+            ncclFloat32, ncclSum, stream);
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
 
-    auto result = reduce_scatter.reduce_scatter_async(
-        send.data(), recv.data(), recv_count,
-        ncclFloat32, ncclSum, stream);
+        ASSERT_TRUE(result.ok()) << result.error_message;
 
-    cudaStreamSynchronize(stream);
-    cudaStreamDestroy(stream);
-
-    EXPECT_TRUE(result.ok()) << result.error_message;
+        // Rank d receives the sum over all ranks of its quotient chunk.
+        std::vector<float> h_recv(kRecvCount);
+        recv.copy_to(h_recv.data(), kRecvCount);
+        for (size_t i = 0; i < kRecvCount; ++i) {
+            const size_t idx = d * kRecvCount + i;
+            float expected = 0.0f;
+            for (int r = 0; r < ndev; ++r) {
+                expected += static_cast<float>(r * 1000 + idx + 1);
+            }
+            EXPECT_FLOAT_EQ(h_recv[i], expected);
+        }
+    });
 }
 
 TEST_F(NcclCollectivesTest, ReduceScatterBufferSize) {
@@ -310,42 +408,52 @@ TEST_F(NcclCollectivesTest, ReduceScatterBufferSize) {
 // ============================================================================
 
 TEST_F(NcclCollectivesTest, GroupHandleBatched) {
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    const int ndev = context_->device_count();
 
-    {
-        NcclGroupHandle group(*context_, stream);
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-        cuda::memory::Buffer<float> send1(1024);
-        cuda::memory::Buffer<float> recv1(1024);
-        std::vector<float> h_send1(1024, 1.0f);
-        send1.copy_from(h_send1.data(), 1024);
+        // Buffers must outlive the group handle: the group's destructor executes
+        // the queued ops, so declaring them after the handle would free them
+        // first (reverse destruction order) and pass dangling pointers to NCCL.
+        cuda::memory::Buffer<float> send(kCount);
+        cuda::memory::Buffer<float> recv(kCount);
+        std::vector<float> h_send(kCount, 1.0f);
+        send.copy_from(h_send.data(), kCount);
+        {
+            NcclGroupHandle group(*context_, stream);
 
-        group.add_all_reduce(send1.data(), recv1.data(), 1024, ncclFloat32, ncclSum);
-        EXPECT_EQ(group.operation_count(), 1u);
-    }
+            group.add_all_reduce(send.data(), recv.data(), kCount, ncclFloat32, ncclSum);
+            EXPECT_EQ(group.operation_count(), 1u);
+        }  // destructor executes the queued ops
 
-    cudaStreamDestroy(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
+    });
 }
 
 TEST_F(NcclCollectivesTest, GroupHandleExplicitExecute) {
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
+    const int ndev = context_->device_count();
 
-    {
-        NcclGroupHandle group(*context_, stream);
+    run_per_rank(ndev, [&](int d) {
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
 
-        cuda::memory::Buffer<float> send(1024);
-        cuda::memory::Buffer<float> recv(1024);
-        std::vector<float> h_send(1024, 1.0f);
-        send.copy_from(h_send.data(), 1024);
+        cuda::memory::Buffer<float> send(kCount);
+        cuda::memory::Buffer<float> recv(kCount);
+        std::vector<float> h_send(kCount, 2.0f);
+        send.copy_from(h_send.data(), kCount);
+        {
+            NcclGroupHandle group(*context_, stream);
 
-        group.add_all_reduce(send.data(), recv.data(), 1024, ncclFloat32, ncclSum);
-        auto result = group.execute();
-        EXPECT_TRUE(result.ok() || !context_->has_nccl());
-    }
+            group.add_all_reduce(send.data(), recv.data(), kCount, ncclFloat32, ncclSum);
+            auto result = group.execute();
+            EXPECT_TRUE(result.ok()) << result.error_message;
+        }
 
-    cudaStreamDestroy(stream);
+        CUDA_CHECK(cudaStreamDestroy(stream));
+    });
 }
 
 // ============================================================================

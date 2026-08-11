@@ -18,6 +18,10 @@ ncclComm_t NcclCollective::get_comm(int device) const {
     return ctx_.get_comm(device);
 }
 
+ncclComm_t NcclCollective::current_comm() const {
+    return ctx_.current_comm();
+}
+
 cudaStream_t NcclCollective::get_stream(int device) const {
     return ctx_.get_stream(device);
 }

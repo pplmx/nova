@@ -36,12 +36,13 @@ NcclResult NcclAllGather::all_gather_async(
 
     return safe_nccl_call(
         [&]() {
-            ncclComm_t comm = get_comm(0);
+            // Per-rank operation: use the current device's communicator.
+            ncclComm_t comm = current_comm();
             return ncclAllGather(
                 send_data, recv_data, send_count,
                 dtype, comm, stream);
         },
-        get_comm(0),
+        current_comm(),
         30000);
 #endif
 }

@@ -40,13 +40,14 @@ NcclResult NcclAllReduce::all_reduce_async(
     // Result is written to recv_data on each GPU
     return safe_nccl_call(
         [&]() {
-            // Use device 0's communicator (valid for all devices in the group)
-            ncclComm_t comm = get_comm(0);
+            // Each rank must use its own communicator: the one owned by the
+            // device the caller's buffers/stream live on (set with cudaSetDevice).
+            ncclComm_t comm = current_comm();
             return ncclAllReduce(
                 send_data, recv_data, count,
                 dtype, op, comm, stream);
         },
-        get_comm(0),
+        current_comm(),
         30000);
 #endif
 }

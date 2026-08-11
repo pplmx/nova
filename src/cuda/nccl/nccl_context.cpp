@@ -82,7 +82,7 @@ NcclContext::~NcclContext() {
 }
 
 void NcclContext::initialize() {
-    initialize_from_mesh();
+    initialize(NcclContextConfig{});
 }
 
 void NcclContext::initialize(const NcclContextConfig& config) {
@@ -92,47 +92,17 @@ void NcclContext::initialize(const NcclContextConfig& config) {
         return;  // Idempotent
     }
 
-#if NOVA_NCCL_ENABLED
-    // Use provided device IDs or detect from mesh
+    // Use provided device IDs or detect from mesh.
     if (!config.device_ids.empty()) {
         device_ids_ = config.device_ids;
+        device_count_ = static_cast<int>(device_ids_.size());
     } else {
         initialize_from_mesh();
-        return;
     }
 
-    device_count_ = static_cast<int>(device_ids_.size());
-    communicators_.resize(device_count_);
-    streams_.resize(device_count_);
-
-    // Generate NCCL unique ID for this communicator group
-    ncclUniqueId unique_id;
-    NCCL_CHECK(ncclGetUniqueId(&unique_id));
-
-    // Initialize communicators for each device
-    for (int i = 0; i < device_count_; ++i) {
-        int device = device_ids_[i];
-
-        // Set current device
-        CUDA_CHECK(cudaSetDevice(device));
-
-        // Create stream for this device
-        CUDA_CHECK(cudaStreamCreate(&streams_[i]));
-
-        // Initialize NCCL communicator
-        NCCL_CHECK(ncclCommInitRank(
-            &communicators_[i],
-            device_count_,
-            unique_id,
-            i  // rank within NCCL group
-        ));
-    }
+    create_streams_and_comms();
 
     initialized_ = true;
-#else
-    // Without NCCL, just use DeviceMesh for device discovery
-    initialize_from_mesh();
-#endif
 }
 
 void NcclContext::initialize_from_mesh() {
@@ -144,18 +114,97 @@ void NcclContext::initialize_from_mesh() {
     for (int i = 0; i < device_count_; ++i) {
         device_ids_[i] = i;
     }
+}
 
-    // Create streams for each device even without NCCL
+void NcclContext::create_streams_and_comms() {
     streams_.resize(device_count_);
+    communicators_.resize(device_count_);
+
+#if NOVA_NCCL_ENABLED
+    // Generate NCCL unique ID for this communicator group.
+    ncclUniqueId unique_id;
+    NCCL_CHECK(ncclGetUniqueId(&unique_id));
+
+    // One stream per device (sequential; cudaStreamCreate is thread-hostile).
     for (int i = 0; i < device_count_; ++i) {
         int device = device_ids_[i];
         CUDA_CHECK(cudaSetDevice(device));
         CUDA_CHECK(cudaStreamCreate(&streams_[i]));
     }
 
-    communicators_.resize(device_count_, nullptr);
+    // ncclCommInitRank is itself a per-rank collective: rank 0's call blocks
+    // until every other rank posts its own init. Initializing four ranks
+    // sequentially from one thread would therefore deadlock at rank 0, so
+    // each rank's communicator is initialized from its own thread. cudaSetDevice
+    // is per-thread state, hence set again here inside each thread.
+    std::vector<std::thread> init_threads;
+    init_threads.reserve(device_count_);
+    std::mutex error_mutex;
+    std::exception_ptr first_error;
 
-    initialized_ = true;
+    for (int i = 0; i < device_count_; ++i) {
+        init_threads.emplace_back([&, i]() {
+            try {
+                CUDA_CHECK(cudaSetDevice(device_ids_[i]));
+                NCCL_CHECK(ncclCommInitRank(
+                    &communicators_[i],
+                    device_count_,
+                    unique_id,
+                    i  // rank within NCCL group
+                ));
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                if (!first_error) {
+                    first_error = std::current_exception();
+                }
+            }
+        });
+    }
+
+    for (auto& t : init_threads) {
+        t.join();
+    }
+
+    if (first_error) {
+        std::rethrow_exception(first_error);
+    }
+#else
+    // Without NCCL, create per-device streams so callers can use get_stream();
+    // communicators_ stays nullptr and NCCL paths are guarded out.
+    for (int i = 0; i < device_count_; ++i) {
+        int device = device_ids_[i];
+        CUDA_CHECK(cudaSetDevice(device));
+        CUDA_CHECK(cudaStreamCreate(&streams_[i]));
+    }
+#endif
+}
+
+ncclComm_t NcclContext::current_comm() const {
+    std::lock_guard<std::mutex> lock(init_mutex_);
+
+    if (!initialized_) {
+#if NOVA_NCCL_ENABLED
+        throw NcclException("NcclContext not initialized", ncclInvalidArgument,
+                            "current_comm", __FILE__, __LINE__);
+#else
+        throw std::runtime_error("NcclContext not initialized");
+#endif
+    }
+
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+
+    auto it = std::find(device_ids_.begin(), device_ids_.end(), device);
+    if (it == device_ids_.end()) {
+#if NOVA_NCCL_ENABLED
+        throw NcclException("Device not in NCCL group", ncclInvalidArgument,
+                            "current_comm", __FILE__, __LINE__);
+#else
+        throw std::runtime_error("Device not in NCCL group");
+#endif
+    }
+
+    return communicators_[std::distance(device_ids_.begin(), it)];
 }
 
 ncclComm_t NcclContext::get_comm(int device) const {

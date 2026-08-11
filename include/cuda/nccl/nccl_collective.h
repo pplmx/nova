@@ -75,6 +75,17 @@ public:
     [[nodiscard]] ncclComm_t get_comm(int device) const;
 
     /**
+     * @brief Get communicator for the currently-active device
+     *
+     * NCCL collects are per-rank: each rank must issue the operation with its
+     * own communicator (the one owned by the device the caller's buffers and
+     * stream live on). Use this instead of hard-coding rank 0's communicator.
+     *
+     * @return NCCL communicator for the current device
+     */
+    [[nodiscard]] ncclComm_t current_comm() const;
+
+    /**
      * @brief Get stream for a device
      * @param device Device index
      * @return CUDA stream

@@ -37,12 +37,13 @@ NcclResult NcclReduceScatter::reduce_scatter_async(
 
     return safe_nccl_call(
         [&]() {
-            ncclComm_t comm = get_comm(0);
+            // Per-rank operation: use the current device's communicator.
+            ncclComm_t comm = current_comm();
             return ncclReduceScatter(
                 send_data, recv_data, recv_count,
                 dtype, op, comm, stream);
         },
-        get_comm(0),
+        current_comm(),
         30000);
 #endif
 }

@@ -5,6 +5,8 @@
 
 #include "cuda/nccl/nccl_barrier.h"
 #include "cuda/nccl/nccl_error.h"
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
 
 #if NOVA_NCCL_ENABLED
 #include <nccl.h>
@@ -27,11 +29,16 @@ NcclResult NcclBarrier::barrier_async(cudaStream_t stream) {
 
     return safe_nccl_call(
         [&]() {
-            ncclComm_t comm = get_comm(0);
-            int dummy = 0;
-            return ncclAllReduce(&dummy, &dummy, 1, ncclInt, ncclMin, comm, stream);
+            // Per-rank operation: use the current device's communicator.
+            ncclComm_t comm = current_comm();
+            // NCCL requires device-resident pointers; a host stack `int` here
+            // silently corrupts the kernel (illegal memory access) — use a
+            // device buffer and reduce the min of 0 to nothing across ranks.
+            cuda::memory::Buffer<int> dummy(1);
+            int* dummy_ptr = dummy.data();
+            return ncclAllReduce(dummy_ptr, dummy_ptr, 1, ncclInt, ncclMin, comm, stream);
         },
-        get_comm(0),
+        current_comm(),
         30000);
 #endif
 }
