@@ -73,6 +73,12 @@ had never executed.
   (previously skipped on 1 GPU) pass on 2 GPUs.
 - Standard single-GPU suite unaffected (69/69 distributed/mesh/tensor-parallel
   subset on GPU 2).
+- Full-suite regression run (CUDA_VISIBLE_DEVICES=2): **1449 ran / 1423 pass /
+  0 fail / 26 skip / 1 disabled, EXIT=0** — same test surface as the Round-14
+  baseline (1420 pass), no regressions; remaining 26 skips are env-bound or
+  documented (14 NCCL need `NCCL_TESTS_AVAILABLE` + 2 GPUs, 8 MPI build-flag
+  off, 2 distributed pool need 2 GPUs, 1 PeerCopy needs 2 GPUs, 1 matmul
+  multi-process design limitation).
 
 ### Known skips remaining (verified reasons)
 - 14 NCCL tests: skip without `NCCL_TESTS_AVAILABLE` (now real when set).
