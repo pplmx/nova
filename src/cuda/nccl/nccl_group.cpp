@@ -47,7 +47,12 @@ void NcclGroupHandle::add_all_reduce(
         if (!ctx_.has_nccl()) {
             return NcclResult{.code = ncclInternalError, .error_message = "NCCL not initialized"};
         }
-        ncclComm_t comm = ctx_.current_comm();
+        ncclComm_t comm;
+        try {
+            comm = ctx_.current_comm();
+        } catch (const std::exception& e) {
+            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+        }
         return safe_nccl_call(
             [&]() {
                 return ncclAllReduce(send_data, recv_data, count, dtype, op, comm, stream_);
@@ -73,7 +78,12 @@ void NcclGroupHandle::add_broadcast(
         if (!ctx_.has_nccl()) {
             return NcclResult{.code = ncclInternalError, .error_message = "NCCL not initialized"};
         }
-        ncclComm_t comm = ctx_.current_comm();
+        ncclComm_t comm;
+        try {
+            comm = ctx_.current_comm();
+        } catch (const std::exception& e) {
+            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+        }
         return safe_nccl_call(
             [&]() {
                 return ncclBroadcast(send_data, recv_data, count, dtype, root, comm, stream_);
@@ -98,7 +108,12 @@ void NcclGroupHandle::add_all_gather(
         if (!ctx_.has_nccl()) {
             return NcclResult{.code = ncclInternalError, .error_message = "NCCL not initialized"};
         }
-        ncclComm_t comm = ctx_.current_comm();
+        ncclComm_t comm;
+        try {
+            comm = ctx_.current_comm();
+        } catch (const std::exception& e) {
+            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+        }
         return safe_nccl_call(
             [&]() {
                 return ncclAllGather(send_data, recv_data, send_count, dtype, comm, stream_);
@@ -124,7 +139,12 @@ void NcclGroupHandle::add_reduce_scatter(
         if (!ctx_.has_nccl()) {
             return NcclResult{.code = ncclInternalError, .error_message = "NCCL not initialized"};
         }
-        ncclComm_t comm = ctx_.current_comm();
+        ncclComm_t comm;
+        try {
+            comm = ctx_.current_comm();
+        } catch (const std::exception& e) {
+            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+        }
         return safe_nccl_call(
             [&]() {
                 return ncclReduceScatter(send_data, recv_data, recv_count, dtype, op, comm, stream_);

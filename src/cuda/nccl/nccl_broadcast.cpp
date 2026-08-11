@@ -32,16 +32,23 @@ NcclResult NcclBroadcast::broadcast_async(
                           .error_message = "NCCL context not initialized"};
     }
 
+    // Broadcast is posted per-rank with the rank's own communicator; `root_rank`
+    // is the root's rank within the comm, not the device. Resolve it up front
+    // and keep the "returns NcclResult, never throws" contract.
+    ncclComm_t comm;
+    try {
+        comm = current_comm();
+    } catch (const std::exception& e) {
+        return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+    }
+
     return safe_nccl_call(
         [&]() {
-            // Broadcast is posted per-rank with the rank's own communicator;
-            // `root_rank` is the root's rank within the comm, not the device.
-            ncclComm_t comm = current_comm();
             return ncclBroadcast(
                 data, recv_data, count,
                 dtype, root_rank, comm, stream);
         },
-        current_comm(),
+        comm,
         30000);
 #endif
 }

@@ -34,15 +34,22 @@ NcclResult NcclAllGather::all_gather_async(
                           .error_message = "NCCL context not initialized"};
     }
 
+    // Per-rank operation: use the current device's communicator. Resolve it up
+    // front and keep the "returns NcclResult, never throws" contract.
+    ncclComm_t comm;
+    try {
+        comm = current_comm();
+    } catch (const std::exception& e) {
+        return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+    }
+
     return safe_nccl_call(
         [&]() {
-            // Per-rank operation: use the current device's communicator.
-            ncclComm_t comm = current_comm();
             return ncclAllGather(
                 send_data, recv_data, send_count,
                 dtype, comm, stream);
         },
-        current_comm(),
+        comm,
         30000);
 #endif
 }

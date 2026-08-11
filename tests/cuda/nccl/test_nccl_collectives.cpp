@@ -79,9 +79,23 @@ void run_per_rank(int device_count, F&& per_rank) {
     std::exception_ptr first_error;
     for (int d = 0; d < device_count; ++d) {
         threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
+            bool skipped = false;
             try {
                 CUDA_CHECK(cudaSetDevice(d));
-                barrier.wait();
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                if (!first_error) {
+                    first_error = std::current_exception();
+                }
+                skipped = true;
+            }
+            // Always signal the barrier: a rank that failed before reaching it
+            // must still let the others proceed, otherwise they hang forever.
+            barrier.wait();
+            if (skipped) {
+                return;
+            }
+            try {
                 per_rank(d);
             } catch (...) {
                 std::lock_guard<std::mutex> lock(error_mutex);
@@ -274,10 +288,12 @@ TEST_F(NcclCollectivesTest, BarrierSync) {
 
 TEST_F(NcclCollectivesTest, SafeNcclCallDetectsErrors) {
     // safe_nccl_call must surface an immediate NCCL error as an NcclResult
-    // (never throw) with a human-readable message.
+    // (never throw) with a human-readable message. The comm argument is unused
+    // when fn returns an error immediately, so pass rank 0's explicitly rather
+    // than resolving the (thread-local) current device.
     auto result = safe_nccl_call(
         []() -> ncclResult_t { return ncclInvalidArgument; },
-        context_->current_comm());
+        context_->get_comm(0));
 
     EXPECT_FALSE(result.ok());
     EXPECT_FALSE(result.error_message.empty());

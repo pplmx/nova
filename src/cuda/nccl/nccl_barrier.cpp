@@ -27,18 +27,26 @@ NcclResult NcclBarrier::barrier_async(cudaStream_t stream) {
                           .error_message = "NCCL context not initialized"};
     }
 
+    // NCCL barrier is a 1-element all-reduce(min) of 0 — meaningless result,
+    // only the cross-rank completion matters.
+    ncclComm_t comm;
+    try {
+        // Per-rank operation: use the current device's communicator.
+        comm = current_comm();
+    } catch (const std::exception& e) {
+        return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+    }
+
     return safe_nccl_call(
         [&]() {
-            // Per-rank operation: use the current device's communicator.
-            ncclComm_t comm = current_comm();
             // NCCL requires device-resident pointers; a host stack `int` here
             // silently corrupts the kernel (illegal memory access) — use a
-            // device buffer and reduce the min of 0 to nothing across ranks.
+            // device buffer instead.
             cuda::memory::Buffer<int> dummy(1);
             int* dummy_ptr = dummy.data();
-            return ncclAllReduce(dummy_ptr, dummy_ptr, 1, ncclInt, ncclMin, comm, stream);
+            return ncclAllReduce(dummy_ptr, dummy_ptr, 1, ncclInt32, ncclMin, comm, stream);
         },
-        current_comm(),
+        comm,
         30000);
 #endif
 }
@@ -56,8 +64,12 @@ NcclResult NcclBarrier::barrier_async(int device, cudaStream_t stream) {
     return safe_nccl_call(
         [&]() {
             ncclComm_t comm = get_comm(device);
-            int dummy = 0;
-            return ncclAllReduce(&dummy, &dummy, 1, ncclInt, ncclMin, comm, stream);
+            // Same device-resident requirement as the no-device overload: a
+            // host stack int passed to ncclAllReduce is an illegal memory
+            // access on the GPU.
+            cuda::memory::Buffer<int> dummy(1);
+            int* dummy_ptr = dummy.data();
+            return ncclAllReduce(dummy_ptr, dummy_ptr, 1, ncclInt32, ncclMin, comm, stream);
         },
         get_comm(device),
         30000);

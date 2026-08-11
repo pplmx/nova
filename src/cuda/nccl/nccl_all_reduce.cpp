@@ -38,16 +38,23 @@ NcclResult NcclAllReduce::all_reduce_async(
     // Launch all-reduce across all devices in the communicator
     // Each GPU provides its local send_data, NCCL handles the ring algorithm
     // Result is written to recv_data on each GPU
+    // Each rank must use its own communicator: the one owned by the device the
+    // caller's buffers/stream live on (set with cudaSetDevice). Resolve it up
+    // front and keep the "returns NcclResult, never throws" contract.
+    ncclComm_t comm;
+    try {
+        comm = current_comm();
+    } catch (const std::exception& e) {
+        return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+    }
+
     return safe_nccl_call(
         [&]() {
-            // Each rank must use its own communicator: the one owned by the
-            // device the caller's buffers/stream live on (set with cudaSetDevice).
-            ncclComm_t comm = current_comm();
             return ncclAllReduce(
                 send_data, recv_data, count,
                 dtype, op, comm, stream);
         },
-        current_comm(),
+        comm,
         30000);
 #endif
 }

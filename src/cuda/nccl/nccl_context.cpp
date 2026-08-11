@@ -166,6 +166,21 @@ void NcclContext::create_streams_and_comms() {
     }
 
     if (first_error) {
+        // Best-effort cleanup of partially-created resources so initialize()
+        // can be retried on a clean slate. All init threads have joined, so a
+        // non-null communicator is fully created and safe to destroy.
+        for (auto& comm : communicators_) {
+            if (comm != nullptr) {
+                ncclCommDestroy(comm);
+            }
+        }
+        for (auto& s : streams_) {
+            if (s != nullptr && s != cudaStreamDefault) {
+                cudaStreamDestroy(s);
+            }
+        }
+        communicators_.clear();
+        streams_.clear();
         std::rethrow_exception(first_error);
     }
 #else
