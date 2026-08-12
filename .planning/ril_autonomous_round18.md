@@ -35,7 +35,7 @@ event-poll path (barrier.cu) has never been driven from real per-rank threads.
 
 `TASK-001` (P1) first — unlocks P2/P3.
 
-## Execute — P1 (TASK-001, milestone v2.18)
+## Execute — Phase 1 (TASK-001)
 
 Added two **per-rank thread-per-rank multi-GPU MeshBarrier tests** to
 `tests/distributed/distributed_ops_test.cu`, asserting the *rendezvous semantics*
@@ -48,32 +48,73 @@ asserts every `reached[]` flag is set, then marks `released[d]`:
 - `MultiGpu_SynchronizeDevicesRendezvous` — `synchronize_devices()` over the full
   mesh, same check.
 
-Both gated on the same `multigpu_nccl_ready()` predicate as the data-op tests so
-they stay valid after P2 converges onto NcclBarrier (which requires NCCL). In the
-P1 checkpoint they are committed as `DISABLED_MultiGpu_*` (the P2 acceptance
-tests, same convention as R17 P1).
+Committed as `DISABLED_MultiGpu_*` in the P1 checkpoint (P2 acceptance tests,
+same convention as R17 P1).
 
-## Verify — P1 (evidence)
+## Verify — Phase 1 (evidence)
 
-On 2x A100 (`CUDA_VISIBLE_DEVICES=0,1`, `NCCL_TESTS_AVAILABLE=1`), both new tests
-**FAIL RED deterministically** (re-run twice, ~1s / 15ms), confirming the milestone
-hypothesis:
+On 2x A100 both new tests **FAIL RED deterministically** (rank 0 released before
+rank 1 reached), confirming the milestone hypothesis (`HYP-001` / `EV-001`): the
+per-instance host event-poll recorded events on empty internal streams that fired
+immediately — no cross-rank arrival signal.
 
-| test | observed | root cause |
-|------|----------|------------|
-| `MultiGpu_BarrierRendezvous` | rank 0 released before rank 1 reached | `synchronize()` records an event per device on internally-created (empty) streams and host-polls — those events fire immediately, so the "barrier" returns as soon as its *own* thread's events complete, with no cross-rank arrival signal (`HYP-001` / `EV-001`) |
-| `MultiGpu_SynchronizeDevicesRendezvous` | rank 0 (synchronize_devices) released before rank 1 reached | same premature release |
+## Execute — Phase 2 (TASK-002)
 
-Checkpoint regression on 2 GPUs: **6 passed / 10 env-skipped / 2 disabled, EXIT=0**
-(no behavior change; harness-only). Single-GPU unaffected.
+Converged `MeshBarrier` onto the verified `NcclBarrier` layer (`CHG-002`, 0a12a84),
+preserving the public API + single-GPU fallback:
 
-## Learn — P1 (graph)
+- `synchronize()` — blocking per-rank NcclBarrier (completes only when every rank
+  entered); single-GPU fallback `cudaDeviceSynchronize`.
+- `synchronize_async(stream)` — NCCL barrier ordered on the caller's stream
+  (pre-v2.18 ignored it); `barriering_` resets on success.
+- `synchronize_devices()` — full NCCL group only; a proper subset (incl. single
+  device on multi-GPU) throws NcclException (no sub-communicators in NcclContext).
+- Dropped the per-instance events_/streams_ (constructor no longer creates them);
+  `NoDeadlock` made genuinely per-rank on multi-GPU.
 
-- `HYP-001` — legacy MeshBarrier multi-GPU path does not enforce cross-rank arrival
-  (events on empty streams fire immediately).
-- `EV-001` (confidence 1.0) — the two RED failures above; `validates` HYP-001.
-- `change-v18-p1` (this round) implements `TASK-001`.
-- P2 (`TASK-002`) now unambiguous: route `MeshBarrier::synchronize()` /
-  `synchronize_devices()` (and the async variant) onto `NcclBarrier` with
-  `current_comm` routing, keep the single-GPU fallback, flip the two disabled
-  tests on. `synchronize_async` must also stop ignoring its stream.
+## Verify — Phase 2
+
+2x A100: `MultiGpu_BarrierRendezvous` / `MultiGpu_SynchronizeDevicesRendezvous` /
+`MultiGpu_SynchronizeAsyncRendezvous` / `MultiGpu_SynchronizeSubsetThrows` +
+per-rank `NoDeadlock` → **5/5 green** (was RED at ~1s before; now 15–40ms).
+Single-GPU MeshBarrier fallbacks 4/4. Cross-suite 43/43, full suite 1460/1423/0.
+cpp-review: **approve** (MEDIUM #1/#2/#3 addressed: subset-throws contract,
+async flag reset + new async test).
+
+## Execute — Phase 3 (TASK-003)
+
+Harness robustness + R16 HIGH-B context poisoning (`CHG-003`, 7914b34):
+
+- `NcclContext::mark_comm_aborted()` — the error layer (safe_nccl_call /
+  safe_stream_wait) now flags a communicator it aborts on the owning context:
+  the comm is nulled (destroy() never double-frees an aborted NCCL comm = UB),
+  `broken_` set, `has_nccl()` false → later collectives fail fast instead of
+  silently reusing a dead comm and hanging. `destroy()` + fresh `initialize()`
+  is the documented recovery. Threaded `&ctx_` through all six collectives.
+- Abort-only flagging (never on immediate synchronous caller errors, so
+  deliberate negative tests cannot poison the shared singleton).
+- New shared `distributed_test_common.h` — single home of the thread-per-rank
+  harness (RankBarrier + run_per_rank), replacing four copies; barrier now
+  BOUNDED (120s) → a dead rank is a diagnosed `RankBarrierTimeout`, not an
+  unkillable >120s scale-hang.
+- Distributed suites' readiness gate self-heals a broken singleton.
+
+## Verify — Phase 3
+
+- `AbortedCommPoisoningFailFast` (2x A100): abort → has_nccl false/broken true →
+  collective fails fast → destroy+reinit recovers — **1/1**.
+- 2-GPU cross-suite 49/49-ish (14 env-skips), **5x + 3x consecutive distributed
+  ops stress runs stable (10/10 each)**; the original one-off stall never
+  reproduced and its two mechanisms are now bounded failures.
+- Full suite **1461/1423/0**. cpp-review: **approve** (M1 self-healing gate +
+  L1 faithful abort test addressed).
+
+## Learn — Milestone v2.18 close (graph)
+
+- `TASK-001/002/003` resolved (CHG-001 c5f302a, CHG-002 0a12a84, CHG-003 7914b34).
+- `issue-v17-meshbarrier-multigpu` resolved; `HYP-001` validated by `EV-001`,
+  post-convergence evidence `EV-002`.
+- `issue-v17-dist-ops-harness-flake` resolved by disposition `DEC-002` — the
+  flake's two root-cause mechanisms (dead-rank hang, dead-comm poisoning) are
+  both now bounded, diagnosed failures; the stall itself never re-observed.
+- **Milestone v2.18 closed**: 3/3 phases green, no active task above threshold.

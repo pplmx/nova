@@ -4,18 +4,29 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.16 Distributed Multi-GPU Verification
+## Current Milestone: v2.18 MeshBarrier On The Verified Layer + Distributed Robustness
 
-**Status:** Complete (2026-08-12, RIL Round 17)
+**Status:** Complete (2026-08-12, RIL Round 18)
 
-**Milestone v2.17 — "Distributed Ops On Real Multi-GPU".** The high-level distributed API's
-multi-GPU paths were never exercised; they are now proven, converged, and gradient-verified:
-P1 thread-per-rank harness proved all 4 legacy paths broken (ev-v17-p1-dist-ops-failures);
-P2 converged `DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast` onto the
-verified NCCL layer (4/4 green, change-v17-p2 5c77d01); P3 corrected and verified the
-SyncBatchNorm multi-GPU gradient path against a global-batch host reference (change-v17-p3
-a8334d1), exposing a latent single-GPU mean double-centering bug. Full suite 1456/1423/0.
-Decision: `decision-v17-dist-ops-real-multigpu`. Follow-ups tracked: flake, MeshBarrier.
+**Milestone v2.18.** Closed out the distributed-ops convergence thread: `MeshBarrier` — the
+last high-level distributed op still on the legacy per-instance host event-poll — was proven
+to have no cross-rank arrival semantics (per-rank rendezvous tests RED against it,
+HYP-001/EV-001) and converged onto the verified `NcclBarrier` layer (5/5 multi-GPU barrier
+tests green; CHG-002 0a12a84). Then hardened the collective harness: a bounded 120s
+thread-per-rank barrier turns a dead rank into a diagnosed `RankBarrierTimeout` (previously
+an unkillable >120s hang), and `NcclContext` now learns when the error layer aborts a
+communicator (`mark_comm_aborted`) so dead comms fail fast and recover via destroy+reinit
+instead of poisoning later tests (CHG-003 7914b34) — closing the R16 review HIGH-B and
+`issue-v17-dist-ops-harness-flake` (DEC-002). Full suite 1461/1423/0; 2-GPU cross-suite
+49/49; stress stable. Decisions: `DEC-001` (v2.18), `DEC-002` (flake disposition).
+
+## Previous Milestones: v2.16/v2.17 Distributed Multi-GPU
+
+**v2.17 "Distributed Ops On Real Multi-GPU" (Complete, Round 17).** The high-level distributed
+API's multi-GPU paths were never exercised; proven broken (P1), converged onto the verified
+NCCL layer (P2, 4/4 green), and the SyncBatchNorm multi-GPU gradient path
+verified/corrected vs a global-batch host reference (P3), exposing a latent single-GPU mean
+double-centering bug. Full suite 1456/1423/0. Decision `decision-v17-dist-ops-real-multigpu`.
 
 ## Completed (v2.16 Distributed Multi-GPU Verification)
 

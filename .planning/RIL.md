@@ -3,22 +3,27 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 17).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 18).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
-Verification"** opened at Round 15 and **closed at Round 16** → **v2.17 "Distributed Ops On
-Real Multi-GPU"** opened at Round 17 (P1 in progress).
+Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
+Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** opened and
+**closed at Round 18**.
 
 ## Latest round
-- **Round 17 (2026-08-11/12)** — milestone v2.17 kickoff through **close (P1+P2+P3)**. P1:
-  harness + 4 real multi-GPU tests (`ev-v17-p1-dist-ops-failures`) proving all 4 legacy
-  high-level ops multi-GPU paths fail. **P2** (`change-v17-p2` 5c77d01): converged
-  `DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast` onto the verified NCCL
-  layer; 4/4 green. **P3** (`change-v17-p3` a8334d1): SyncBatchNorm multi-GPU path corrected
-  against a global-batch host reference — forward 1/R stat scaling + latent single-GPU mean
-  double-centering, backward global d_var/d_mean all-reduce; multi-GPU test 1/1, single-GPU
-  8/8, cross-suite 23/23, full suite 1456/1423/0 EXIT=0. `issue-v17-dist-ops-multigpu-untested`
-  resolved; milestone **closed**. Two tracked follow-ups: `issue-v17-dist-ops-harness-flake`,
-  `issue-v17-meshbarrier-multigpu`. See `ril_autonomous_round17.md`.
+- **Round 18 (2026-08-12)** — milestone v2.18 kickoff through **close (P1+P2+P3)**. **P1**
+  (`change-v18-p1` c5f302a): per-rank MeshBarrier rendezvous tests FAIL RED — the legacy
+  per-instance host event-poll recorded events on empty internal streams that fired
+  immediately (no cross-rank arrival signal; `HYP-001`/`EV-001`). **P2** (`change-v18-p2`
+  0a12a84): converged `MeshBarrier` onto the verified `NcclBarrier` layer (sync / async /
+  synchronize_devices; subset throws; per-rank `NoDeadlock`) — 5/5 multi-GPU barrier tests
+  green. **P3** (`change-v18-p3` 7914b34): harness robustness + R16 HIGH-B — bounded 120s
+  thread-per-rank barrier (`RankBarrierTimeout` instead of an unkillable hang) and
+  `NcclContext::mark_comm_aborted` so dead comms fail fast and recover via destroy+reinit
+  instead of poisoning later tests; shared `distributed_test_common.h` single harness home.
+  `issue-v17-meshbarrier-multigpu` resolved; `issue-v17-dist-ops-harness-flake` resolved by
+  disposition `DEC-002` (both root-cause mechanisms now bounded failures; never re-observed).
+  Full suite **1461/1423/0**; 2-GPU cross-suite 49/49 (14 env-skips); 5x+3x stress stable.
+  Milestone **closed**. See `ril_autonomous_round18.md`.
 - **Round 16 (2026-08-11)** — milestone v2.16 Phase 3: implemented the real distributed matmul
   multi-GPU path `DistributedMatmul::matmul_multi_gpu` (row-split compute + NCCL all-gather) and
   replaced the last unconditional distributed skip with three real multi-GPU tests
@@ -36,7 +41,18 @@ Real Multi-GPU"** opened at Round 17 (P1 in progress).
   `ril_autonomous_round15.md`.
 
 ## Active tasks (by priority_score; threshold 3.0)
-(none — milestone v2.17 closed)
+(none — milestone v2.18 closed)
+
+## Resolved (v2.18)
+- `task-v18a-meshbarrier-tests` (TASK-001) RESOLVED by `change-v18-p1` (c5f302a) — per-rank
+  MeshBarrier rendezvous/sync-devices tests prove the legacy event-poll had no cross-rank
+  arrival semantics (RED evidence HYP-001/EV-001).
+- `task-v18b-meshbarrier-converge` (TASK-002) RESOLVED by `change-v18-p2` (0a12a84) —
+  MeshBarrier converged onto verified NcclBarrier; 5/5 multi-GPU barrier tests green.
+- `task-v18c-harness-robustness` (TASK-003) RESOLVED by `change-v18-p3` (7914b34) — bounded
+  barrier + self-healing broken-comm state; harness flake + R16 HIGH-B closed.
+- `issue-v17-meshbarrier-multigpu` RESOLVED; `issue-v17-dist-ops-harness-flake` RESOLVED by
+  disposition `DEC-002` (both mechanisms neutralized; stall never re-observed).
 
 ## Resolved (v2.17)
 - `task-v17c-syncbn-multigpu-backward` RESOLVED by `change-v17-p3` (a8334d1) — SyncBatchNorm

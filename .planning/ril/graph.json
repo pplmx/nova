@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 18,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T03:01:28+00:00",
+  "updated_at": "2026-08-12T04:10:26+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -367,10 +367,10 @@
     "issue-v17-dist-ops-harness-flake": {
       "id": "issue-v17-dist-ops-harness-flake",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-11T11:20:05+00:00",
-      "updated_at": "2026-08-11T11:20:05+00:00",
+      "updated_at": "2026-08-12T04:10:26+00:00",
       "touched_round": 18,
       "severity": 2,
       "title": "One-off >120s stall in MultiGpu_AllReduceDistinctData on 2 GPUs; not reproducible across 5x repeats - investigate before milestone close"
@@ -378,10 +378,10 @@
     "issue-v17-meshbarrier-multigpu": {
       "id": "issue-v17-meshbarrier-multigpu",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-11T11:20:05+00:00",
-      "updated_at": "2026-08-11T11:20:05+00:00",
+      "updated_at": "2026-08-12T04:09:42+00:00",
       "touched_round": 18,
       "severity": 2,
       "title": "MeshBarrier multi-GPU convergence deferred: per-instance host event poll with non-threadsafe barriering_ flag; needs a proper per-rank multi-GPU test before re-routing onto NcclBarrier"
@@ -460,16 +460,14 @@
     "TASK-003": {
       "id": "TASK-003",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-08-12T02:19:56+00:00",
-      "updated_at": "2026-08-12T03:01:08+00:00",
+      "updated_at": "2026-08-12T04:09:42+00:00",
       "touched_round": 18,
       "category": "stability",
       "severity": 3,
-      "title": "Distributed-ops harness robustness: isolate harness flake + R16 HIGH-B shared-NcclContext poisoning hardening",
-      "lock_owner": "auto-r18",
-      "lock_until": "2026-08-12T05:01:08+00:00"
+      "title": "Distributed-ops harness robustness: isolate harness flake + R16 HIGH-B shared-NcclContext poisoning hardening"
     },
     "HYP-001": {
       "id": "HYP-001",
@@ -527,6 +525,40 @@
       "source": "0a12a84; regardless tests distributed_ops_test.cu MultiGpu_BarrierRendezvous/MultiGpu_SynchronizeDevicesRendezvous/MultiGpu_SynchronizeAsyncRendezvous/MultiGpu_SynchronizeSubsetThrows on 2x A100",
       "confidence": 1.0,
       "title": "Post-convergence: 5/5 multi-GPU MeshBarrier tests green (rendezvous enforced - rank waits for all arrivals); cross-suite 43/43, full suite 1460/1423/0"
+    },
+    "CHG-003": {
+      "id": "CHG-003",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T04:08:07+00:00",
+      "updated_at": "2026-08-12T04:08:07+00:00",
+      "touched_round": 18,
+      "commit": "7914b34",
+      "title": "feat(nccl): self-healing broken-comm state + bounded harness barrier (milestone v2.18 P3)"
+    },
+    "EV-003": {
+      "id": "EV-003",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T04:08:48+00:00",
+      "updated_at": "2026-08-12T04:08:48+00:00",
+      "touched_round": 18,
+      "source": "7914b34; tests AbortedCommPoisoningFailFast (2x A100); 5x+3x 2-GPU distributed-ops stress; full suite 1461/1423/0",
+      "confidence": 1.0,
+      "title": "P3 verified: broken-comm fail-fast + destroy/reinit recovery round-trips on 2 GPUs; bounded barrier converts dead-rank hang into RankBarrierTimeout; stress stable; no regression"
+    },
+    "DEC-002": {
+      "id": "DEC-002",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T04:10:14+00:00",
+      "updated_at": "2026-08-12T04:10:14+00:00",
+      "touched_round": 18,
+      "rationale": "Disposition of issue-v17-dist-ops-harness-flake (one-off >120s stall at MultiGpu_AllReduceDistinctData, never reproduced across 5x repeats): P3 (TASK-003, CHG-003) eliminates the failure mode that made the flake harmful — a rank thread dying before the barrier can no longer hang the suite forever (bounded RankBarrier -> diagnosed RankBarrierTimeout), and a communicator abort on the shared NcclContext no longer poisons later tests (has_nccl() gone false -> fail fast + self-heal). The specific stall was non-deterministic and never re-observed; its two root-cause mechanisms are both now converted to bounded, diagnosed failures. Residual environmental risk (NCCL transport hiccup under load) is covered by the same mechanisms.",
+      "alternatives_rejected": "Chasing the (never-reproducible) stall via more stress before hardening (bounded-failure guarantees are the deliverable, not a de-flaked test); leaving the issue active forever despite its two mechanisms being neutralized."
     }
   },
   "edges": [
@@ -775,6 +807,18 @@
       "to": "TASK-002",
       "type": "implements",
       "created_at": "2026-08-12T03:01:00+00:00"
+    },
+    {
+      "from": "CHG-003",
+      "to": "TASK-003",
+      "type": "implements",
+      "created_at": "2026-08-12T04:08:19+00:00"
+    },
+    {
+      "from": "DEC-002",
+      "to": "comp-dist-ops",
+      "type": "governs",
+      "created_at": "2026-08-12T04:10:26+00:00"
     }
   ]
 }

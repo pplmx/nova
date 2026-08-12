@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.17
-milestone_name: Distributed Ops On Real Multi-GPU
+milestone: v2.18
+milestone_name: MeshBarrier On The Verified Layer + Distributed Robustness
 status: Complete
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 17: all 3 phases complete, milestone closed
+last_activity: 2026-08-12 — Round 18: all 3 phases complete, milestone closed
 progress:
   total_phases: 3
   completed_phases: 3
@@ -15,38 +15,39 @@ progress:
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-08-11
+**Last Updated:** 2026-08-12
 
 ## Current Position
 
-Milestone: v2.17 Distributed Ops On Real Multi-GPU
-Status: In Progress (Round 17, P1 complete)
-Last activity: 2026-08-11 — RIL Round 17: P1 harness done; all 4 legacy ops multi-GPU paths confirmed broken
+Milestone: v2.18 MeshBarrier On The Verified Layer + Distributed Robustness
+Status: Complete (Round 18)
+Last activity: 2026-08-12 — priority None: MeshBarrier converged onto NcclBarrier;
+distributed harness hardened against dead-rank hangs and dead-communicator
+poisoning
 
-## Milestone v2.17 — Distributed Ops On Real Multi-GPU
+## Milestone v2.18 — MeshBarrier On The Verified Layer + Distributed Robustness
 
-The high-level distributed API's multi-GPU paths are still never exercised (10 "Requires
-single GPU" test skips) yet SyncBatchNorm's multi-GPU training path consumes
-`DistributedReduce::all_reduce_async`. Converge them on the verified NCCL layer / verify
-their real multi-GPU correctness:
+Close out the distributed-ops convergence thread (v2.15→v2.17 converged every
+high-level op except `MeshBarrier`) and harden the collective test harness
+against the two tracked follow-ups (harness flake, R16 review HIGH-B context
+poisoning):
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Thread-per-rank harness + real distributed-ops multi-GPU tests | Complete (Round 17) — all 4 legacy multi-GPU paths confirmed broken; ready regression tests |
-| 2 | Converge high-level collectives on verified NCCL layer (or fix per P1 evidence) | Complete (Round 17) — 4/4 green on 2 GPUs (change-v17-p2 5c77d01) |
-| 3 | SyncBatchNorm multi-GPU gradient-path verify + full-suite regression | Complete (Round 17) — host-reference verified (change-v17-p3 a8334d1) |
+| 1 | Per-rank MeshBarrier multi-GPU rendezvous tests (evidence) | Complete (Round 18) — RED proof the legacy event-poll had no cross-rank arrival signal (HYP-001/EV-001) |
+| 2 | Converge MeshBarrier onto verified NcclBarrier (sync/async/devices) | Complete (Round 18) — 5/5 multi-GPU barrier tests green (0a12a84) |
+| 3 | Harness robustness: bounded barrier + self-healing broken-comm state | Complete (Round 18) — fail-fast vs dead comms; diagnostic RankBarrierTimeout vs dead ranks (7914b34) |
+
+## Milestone v2.17 — Distributed Ops On Real Multi-GPU (Complete)
+
+High-level distributed ops' multi-GPU paths proven broken (P1), converged onto the
+verified NCCL layer (P2), and the SyncBatchNorm multi-GPU gradient path verified
+against a global-batch host reference (P3). Full suite 1456/1423/0.
 
 ## Milestone v2.16 — Distributed Multi-GPU Verification (Complete)
 
-Turn the last un-verified distributed functionality into running, asserted tests:
-
-| Phase | Name | Status |
-|-------|------|--------|
-| 1 | NCCL multi-GPU collectives enablement (Round 15) | Complete — 14/14 green (fix bfb9e80) |
-| 2 | Distributed pool / mesh multi-GPU verification | Complete — 2 pool tests verified on 2 GPUs (R15, re-confirmed R16) |
-| 3 | Multi-process matmul harness (distributed matmul real path) | Complete — `matmul_multi_gpu` row-split+all-gather implemented and tested thread-per-rank (R16) |
-
-## Milestone History
+NCCL multi-GPU collectives 14/14 real; distributed pool/mesh verified; distributed
+matmul real path (row-split + NCCL all-gather) thread-per-rank.
 
 ## Milestone History
 
@@ -80,12 +81,19 @@ Turn the last un-verified distributed functionality into running, asserted tests
 | v2.15 Test Quality Assurance | Complete | 2026-05-09 | 5 phases |
 | v2.16 Distributed Multi-GPU Verification | Complete | 2026-08-11 | 3 phases |
 | v2.17 Distributed Ops On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
+| v2.18 MeshBarrier On The Verified Layer + Distributed Robustness | Complete | 2026-08-12 | 3 phases |
 
 ---
 
-## State updated: 2026-08-12 — Milestone v2.17 complete (RIL Round 17)
-All 3 phases closed: high-level distributed ops' multi-GPU paths proven broken (P1), converged
-onto the verified NCCL layer (P2, 4/4), and the SyncBatchNorm multi-GPU gradient path verified
-against a global-batch host reference (P3). Full-suite baseline 1456/1423/0 EXIT=0. Next
-milestone: TBD. Tracked follow-ups: issue-v17-dist-ops-harness-flake, issue-v17-meshbarrier-
-multigpu.
+## State updated: 2026-08-12 — Milestone v2.18 complete (RIL Round 18)
+3/3 phases green. MeshBarrier — the last unconverged high-level distributed op —
+was proven to have no cross-rank arrival semantics (per-instance host event-poll
+on empty internal streams) and converged onto the verified NcclBarrier layer;
+5/5 per-rank multi-GPU barrier tests green. Harness hardening: a bounded 120s
+thread-per-rank barrier turns a dead rank into a diagnosed RankBarrierTimeout
+(previously an unkillable >120s hang), and NcclContext now learns when a
+communicator is aborted (mark_comm_aborted) so dead comms fail fast and recover
+via destroy+reinit instead of poisoning the rest of the suite. Full-suite
+baseline 1461/1423/0; 2-GPU cross-suite 49/49 (14 env-skips); 5x+3x 2-GPU stress
+stable. Next milestone: TBD. Both v2.17 follow-ups resolved
+(issue-v17-meshbarrier-multigpu, issue-v17-dist-ops-harness-flake via DEC-002).
