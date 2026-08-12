@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 22,
+  "round": 23,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T11:40:47+00:00",
+  "updated_at": "2026-08-12T12:03:06+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -710,7 +710,7 @@
       "version": 2,
       "created_at": "2026-08-12T06:27:13+00:00",
       "updated_at": "2026-08-12T11:40:46+00:00",
-      "touched_round": 21,
+      "touched_round": 22,
       "title": "RingSequenceParallelism::ring_attention's multi-GPU path (NOVA_NCCL_ENABLED branch) is an empty no-op: it (void)s all arguments and does nothing; send_recv_kv is declared but never defined, so ring sequence parallelism computes nothing on multi-GPU.",
       "severity": 2
     },
@@ -817,7 +817,7 @@
       "version": 2,
       "created_at": "2026-08-12T07:59:02+00:00",
       "updated_at": "2026-08-12T10:26:08+00:00",
-      "touched_round": 20,
+      "touched_round": 22,
       "title": "TensorParallelLayers (ColumnParallelLayer/RowParallelLayer/TensorParallelMLP) are non-functional skeletons: forward() passes B=nullptr to TP matmul (no weight storage exists - cuBLAS crash on a null pointer), and TensorParallelMLP::forward is an empty body. They were shipped in v1.3 but have zero tests/usages.",
       "severity": 3
     },
@@ -1025,7 +1025,7 @@
       "version": 2,
       "created_at": "2026-08-12T10:56:37+00:00",
       "updated_at": "2026-08-12T11:33:28+00:00",
-      "touched_round": 21,
+      "touched_round": 22,
       "title": "P2 implementation: RingSequenceParallelism::ring_attention multi-GPU — send_recv_kv via NCCL P2P send/recv on the group comm (prev/next ranks), P-1 ring iterations accumulating partial attention with online softmax (max/denominator carries), single-GPU fallback preserved",
       "category": "core-feature",
       "severity": 2
@@ -1076,6 +1076,41 @@
       "touched_round": 21,
       "commit": "9d91be1",
       "title": "v2.22 P2: real multi-GPU ring attention (send_recv_kv NCCL P2P + online softmax kernels, ncclGroupStart/End deadlock fix, hidden_dim config); parity GREEN on 2 & 4 GPUs"
+    },
+    "CHG-011": {
+      "id": "CHG-011",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T12:01:28+00:00",
+      "updated_at": "2026-08-12T12:01:28+00:00",
+      "touched_round": 22,
+      "commit": "6b5528c",
+      "title": "v2.22 review hardening: ring world_size/seq_size fail-fast + ctor modulo guard + ncclResult_t in error + size_t buffer sizes; layers ctor dim validation + doc fix"
+    },
+    "EV-014": {
+      "id": "EV-014",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T12:01:28+00:00",
+      "updated_at": "2026-08-12T12:01:28+00:00",
+      "touched_round": 22,
+      "source": "post-fix re-verification: ring/seq multi-GPU 6/6 @2GPUs; isolated cross-suite 16/16 @4GPUs; single-GPU seq-parallel 33/33",
+      "title": "cpp-review fixes keep all parity/reference gates green (EV-013 plus review round)",
+      "confidence": 1.0
+    },
+    "TASK-018": {
+      "id": "TASK-018",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T12:01:28+00:00",
+      "updated_at": "2026-08-12T12:01:28+00:00",
+      "touched_round": 22,
+      "title": "Maintainability follow-up: route NCCL P2P (ring send_recv_kv) and TP-layer collective failures through the comm-error layer (mark_comm_aborted) so a broken ring/AllReduce comm poisons has_nccl() and the self-healing suite recovers; config/API needs an NcclContext or comm-recovery hook",
+      "category": "maintainability",
+      "severity": 1
     }
   },
   "edges": [
@@ -1564,6 +1599,24 @@
       "to": "issue-v19-ring-parallel-noop",
       "type": "resolves",
       "created_at": "2026-08-12T11:33:28+00:00"
+    },
+    {
+      "from": "CHG-011",
+      "to": "TASK-016",
+      "type": "implements",
+      "created_at": "2026-08-12T12:03:06+00:00"
+    },
+    {
+      "from": "TASK-018",
+      "to": "issue-v19-ring-parallel-noop",
+      "type": "addresses",
+      "created_at": "2026-08-12T12:03:06+00:00"
+    },
+    {
+      "from": "TASK-018",
+      "to": "issue-v20-tp-layers-stubs",
+      "type": "addresses",
+      "created_at": "2026-08-12T12:03:06+00:00"
     }
   ]
 }
