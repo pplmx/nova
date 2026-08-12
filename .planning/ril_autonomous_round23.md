@@ -51,9 +51,44 @@ analytic reference parity on real multi-GPU (TASK-022).
 **6/6 RED** (all throw the provisional stub): 3 single-GPU on device 2, 3
 multi-GPU on CUDA_VISIBLE_DEVICES=2,3 (EV-015). Forward suites unaffected.
 
-## Milestone state
+## Execute — Phase 2 (TASK-020, `CHG-012` 7855ab3)
 
-v2.23 OPENED in STATE.md / PROJECT.md (In Progress). RIL: DEC-009,
-TASK-019/020/021/022 active, EV-015, graph consistent (98+ nodes). Next phase:
-P2 implementation (TASK-020) — transposed GEMMs + col grad-input AllReduce +
-silu_and_mul backward kernel.
+- New kernels in activations: `silu_and_mul_backward` (dgate = dsub .* up .*
+  silu'(gate), dup = dsub .* silu(gate)), `elementwise_add`, `transpose` (+
+  unit tests). Transposing W/X turns `dW = X^T dY` / `dX = dY W^T` into the
+  library's verified non-transposed matmul convention.
+- `ColumnParallelLayer::backward`: dW = X^T dY written as the rank's column-slice
+  (strided `cudaMemcpy2DAsync` scatter); grad-input = dY W^T, then **AllReduce**
+  across ranks (the new never-run collective; `NcclResult` checked → `NcclException`).
+- `RowParallelLayer::backward`: dW = X^T dY (contiguous row-block copy); grad-input
+  local = dY W_r^T (block of the full grad, matching the sharded input layout).
+- `TensorParallelMLP::backward`: down row-backward → silu_and_mul_backward → gate/up
+  column-backward; the two full grad-inputs summed (`elementwise_add`).
+
+## Verify — Phase 2/3 (EV-016)
+
+- Single-GPU backward 3/3 + activation helpers 3/3 GREEN.
+- Multi-GPU backward **3/3 GREEN on 2 GPUs and 4 GPUs** — col grad-input AllReduce
+  parity, row grad-slice parity, MLP gated-chain parity.
+- Isolated distributed cross-suite (matmul + layers fwd/bwd + sequence parallel)
+  **19/19 on 2 & 4 GPUs**; single-GPU regression 49/49; full-suite baseline 1422/0.
+- **Test-side bug (not impl)**: the first multi-GPU row-backward run "failed" because
+  the test compared the rank-local [m x k_local] grad-input against a bogus contiguous
+  pointer into the [m x k] reference (the feature block strides by the full row length
+  k). Extracting the strided block fixed it; the implementation was already correct.
+  Col/MLP passed from the start (their grad-input is the full AllReduced matrix).
+
+## Learn
+
+- The column-layer grad-input AllReduce is a genuinely new collective for the stack;
+  its reference parity + `NcclResult` propagation is the thing that future training
+  relies on. The row layer needs no comm in backward — a good asymmetry to keep.
+- A full [m x k] reference can't be viewed as contiguous blocks along k; sub-views of
+  row-major matrices along the feature dimension must be extracted stride-aware.
+
+## Milestone close
+
+- `TASK-019/020/021/022` resolved; DEC-009; EV-015/EV-016; CHG-012. Round bumped.
+- The stack is now forward+backward capable. Next milestone (natural candidate):
+  end-to-end training integration — loss → backward → optimizer stepping the parallel
+  layers, or attention-block integration of forward+backward.

@@ -2,13 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.23
 milestone_name: Tensor-Parallel Layer Backward Passes
-status: "In Progress"
+status: Complete
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 23: milestone v2.23 opened (TASK-022, DEC-009);
-P1 RED backward reference-parity tests running
+last_activity: 2026-08-12 — Round 23: P1-P3 complete, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -21,10 +20,9 @@ progress:
 ## Current Position
 
 Milestone: v2.23 Tensor-Parallel Layer Backward Passes
-Status: In Progress (Round 23)
-Last activity: 2026-08-12 — opened on the forward-only gap: the v2.21 weight-
-managed layers compute no gradients; backward adds the col-layer grad-input
-AllReduce (new never-run collective)
+Status: Complete (Round 23)
+Last activity: 2026-08-12 — backward GREEN on 2 & 4 GPUs; TASK-022/019/020/021
+closed (DEC-009)
 
 ## Milestone v2.23 — Tensor-Parallel Layer Backward Passes
 
@@ -33,9 +31,9 @@ keeps the parallel stack inference-only (TASK-022):
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Analytic reference-parity RED tests: single-GPU col/row/MLP backward vs host double-precision gradients; multi-GPU col grad-input AllReduce parity / row grad-slice parity / MLP chain parity | In Progress (Round 23) — RED against unimplemented backward stubs |
-| 2 | Implement backward: transposed GEMMs (dW = X^T dY, dX = dY W^T) on the per-instance stream-bound handle; col-layer grad-input AllReduce (NcclResult checked); silu_and_mul backward kernel; shard-sliced grad_weight writes | Pending |
-| 3 | Verify: backward parity GREEN on 2 & 4 GPUs, forward regression green, full-suite baseline, RIL close | Pending |
+| 1 | Analytic reference-parity RED tests: single-GPU col/row/MLP backward vs host double-precision gradients; multi-GPU col grad-input AllReduce parity / row grad-slice parity / MLP chain parity | Complete (Round 23) — 6/6 RED against unimplemented backward stubs (EV-015) |
+| 2 | Implement backward: transposed GEMMs (dW = X^T dY, dX = dY W^T) on the per-instance stream-bound handle; col-layer grad-input AllReduce (NcclResult checked); silu_and_mul backward kernel; shard-sliced grad_weight writes | Complete (Round 23) — 7855ab3; col AllReduce + row local + MLP chain GREEN on 2 & 4 GPUs (EV-016) |
+| 3 | Verify: backward parity GREEN on 2 & 4 GPUs, forward regression green, full-suite baseline, RIL close | Complete (Round 23) — cross-suite 19/19, single-GPU 49/49, full baseline 1422/0 |
 
 Decision: DEC-009. Host note: GPUs 0/1 externally loaded — use
 `CUDA_VISIBLE_DEVICES=2,3+`.
@@ -173,8 +171,29 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism) | Complete | 2026-08-12 | 3 phases |
 | v2.20 TensorParallelMatmul Production Hardening | Complete | 2026-08-12 | 2 phases |
 | v2.21 Weight-Managed TensorParallelLayers | Complete | 2026-08-12 | 3 phases |
+| v2.22 Ring Sequence Parallelism On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
 
 ---
+
+## State updated: 2026-08-12 — Milestone v2.23 complete (RIL Round 23)
+
+TASK-022 / TASK-019/020/021 closed. The v2.21 weight-managed layers now have
+backward passes, closing the gap that kept the parallel stack inference-only. Backward
+math verified against analytic host references on real multi-GPU: `dW = X^T dY`,
+`dX = dY W^T` (realized as the library's verified non-transposed matmul convention
+through new transpose/elementwise_add/silu_and_mul_backward kernels). The column layer's
+grad-input is the **AllReduce** of the per-rank `dY W^T` (replicated input ⇒ summed
+gradient — a real collective never exercised before, now with `NcclResult` checked);
+the row layer's grad-input is local (matches the sharded-input layout); the gated MLP
+chains down→silu_and_mul→gate/up with the grad-inputs summed then AllReduced.
+
+Acceptance: single-GPU backward 3/3 + activation helpers 3/3; multi-GPU backward 3/3 on
+2 & 4 GPUs (EV-016); isolated distributed cross-suite 19/19 on 2 & 4 GPUs; single-GPU
+regression 49/49; full-suite baseline 1422/0. A test-side strided-block extraction bug
+in the row grad-input reference was fixed (the implementation was correct). Decision:
+DEC-009. Next: the stack is now forward+backward capable — a gradient/training
+end-to-end integration (loss → backward → optimizer stepping the parallel layers) is the
+natural next milestone.
 
 ## State updated: 2026-08-12 — Milestone v2.22 complete (RIL Round 22)
 

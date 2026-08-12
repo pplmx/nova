@@ -6,18 +6,26 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.23 Tensor-Parallel Layer Backward Passes
 
-**Status:** In Progress (2026-08-12, RIL Round 23 — milestone opened, P1 RED tests running)
+**Status:** Complete (2026-08-12, RIL Round 23)
 
 **Milestone v2.23.** Adds backward (gradient) passes to the v2.21 weight-managed layers
-(TASK-022), the gap that keeps the parallel stack inference-only (only loss/optimizers
-exist; no layer computes gradients). Backward math with analytic host references:
-`dW = X^T dY`, `dX = dY W^T`, and — the new never-run collective — the column layer's
-grad-input is the **AllReduce** of the per-rank `dY W^T` (replicated input ⇒ summed
-gradient), while the row layer's grad-input matches its sharded-input layout locally
-(no comm). TensorParallelMLP chains silu_and_mul backward (new kernel). P1: analytic
-reference-parity RED tests (single-GPU + multi-GPU); P2: implement; P3: verify GREEN
-on 2 & 4 GPUs + full-suite baseline. Decision: DEC-009. Host note: use
-`CUDA_VISIBLE_DEVICES=2,3+`.
+(TASK-022), closing the gap that kept the parallel stack inference-only. P1 shipped 6
+analytic reference-parity RED tests. P2 (7855ab3) implemented `backward()`: `dW = X^T dY`,
+`dX = dY W^T` (realized via new transpose/elementwise_add/silu_and_mul_backward kernels
+onto the verified non-transposed matmul convention; per-instance stream-bound handle);
+the column layer's grad-input is the **AllReduce** of the per-rank `dY W^T` — the new
+never-run collective, `NcclResult` checked (replicated input ⇒ summed gradient); the row
+layer's grad-input is local (matches the sharded-input layout); the gated MLP chains
+down→silu_and_mul→gate/up with the grad-inputs summed and AllReduced; grad weights
+written as col/row shard slices into the caller's full buffers.
+
+Verified on real multi-GPU: single-GPU backward 3/3 + activation helpers 3/3; multi-GPU
+backward 3/3 on 2 & 4 GPUs; isolated distributed cross-suite 19/19 on 2 & 4 GPUs;
+single-GPU regression 49/49; full-suite baseline 1422/0. (A test-side strided-block
+extraction bug in the row grad-input reference was fixed — the implementation was
+correct.) Decision: DEC-009. The stack is now forward+backward capable; a
+loss→backward→optimizer end-to-end training integration is the natural next milestone.
+Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Previous Milestone: v2.22 Ring Sequence Parallelism On Real Multi-GPU
 

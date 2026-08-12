@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 23,
+  "round": 24,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T15:31:19+00:00",
+  "updated_at": "2026-08-12T15:48:21+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1127,10 +1127,10 @@
     "TASK-019": {
       "id": "TASK-019",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T15:19:49+00:00",
-      "updated_at": "2026-08-12T15:19:49+00:00",
+      "updated_at": "2026-08-12T15:43:29+00:00",
       "touched_round": 23,
       "title": "P1 evidence: analytic reference-parity RED tests for layer backward — single-GPU (tp<=1) col/row/MLP backward vs host double-precision gradients; multi-GPU col grad-input AllReduce / row grad-slice / MLP chain parity; RED against unimplemented backward stubs",
       "category": "test-quality",
@@ -1139,10 +1139,10 @@
     "TASK-020": {
       "id": "TASK-020",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T15:19:49+00:00",
-      "updated_at": "2026-08-12T15:19:49+00:00",
+      "updated_at": "2026-08-12T15:43:29+00:00",
       "touched_round": 23,
       "title": "P2 implementation: ColumnParallelLayer/RowParallelLayer/TensorParallelMLP backward — transposed GEMMs (dW=X^T dY, dX=dY W^T) on the per-instance stream-bound handle, column grad-input AllReduce (NcclResult checked), silu_and_mul backward kernel, shard-sliced grad_weight writes",
       "category": "core-feature",
@@ -1151,10 +1151,10 @@
     "TASK-021": {
       "id": "TASK-021",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T15:19:49+00:00",
-      "updated_at": "2026-08-12T15:19:49+00:00",
+      "updated_at": "2026-08-12T15:48:21+00:00",
       "touched_round": 23,
       "title": "P3 verification: backward parity GREEN on 2 & 4 GPUs, forward still green (regression), full-suite baseline, RIL close",
       "category": "maintainability",
@@ -1163,10 +1163,10 @@
     "TASK-022": {
       "id": "TASK-022",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 3,
       "created_at": "2026-08-12T15:19:58+00:00",
-      "updated_at": "2026-08-12T15:19:58+00:00",
+      "updated_at": "2026-08-12T15:48:21+00:00",
       "touched_round": 23,
       "title": "(umbrella v2.23) implement backward/gradient passes for the weight-managed TensorParallelLayers (col/row/MLP) with multi-GPU analytic reference parity, replacing forward-only",
       "category": "core-feature",
@@ -1182,6 +1182,29 @@
       "touched_round": 23,
       "source": "tests/neural/tensor_parallel_layers_test.cpp + tensor_parallel_multigpu_test.cpp: 6 backward tests RED (3 single-GPU analytic refs + 3 multi-GPU parity) against provisional throw-stubs",
       "title": "v2.23 P1: backward contract pinned by reference tests — col/row/MLP single-GPU analytic gradients (dW=X^T dY, dX=dY W^T) and multi-GPU col grad-input AllReduce / row grad-slice / full MLP chain parity, all RED until P2 implements backward",
+      "confidence": 1.0
+    },
+    "CHG-012": {
+      "id": "CHG-012",
+      "type": "change",
+      "status": "active",
+      "version": 2,
+      "created_at": "2026-08-12T15:42:43+00:00",
+      "updated_at": "2026-08-12T15:43:29+00:00",
+      "touched_round": 23,
+      "commit": "7855ab3",
+      "title": "v2.23 P2 (TASK-020): backward passes — transpose/matmul (dW=X^T dY, dX=dY W^T), col grad-input AllReduce, silu_and_mul_backward + elementwise_add + transpose kernels; parity GREEN"
+    },
+    "EV-016": {
+      "id": "EV-016",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T15:42:43+00:00",
+      "updated_at": "2026-08-12T15:42:43+00:00",
+      "touched_round": 23,
+      "source": "tests: single-GPU backward 3/3 + activation helpers 3/3; multi-GPU backward 3/3 on 2 & 4 GPUs; cross-suite 19/19 both; single-GPU regression 49/49",
+      "title": "v2.23 P2 verified: col grad-input AllReduce, row local grad-slice, MLP gated chain all match analytic references on real multi-GPU (a test-side strided-block extraction bug was fixed, not an impl bug)",
       "confidence": 1.0
     }
   },
@@ -1707,6 +1730,18 @@
       "to": "TASK-021",
       "type": "depends_on",
       "created_at": "2026-08-12T15:19:58+00:00"
+    },
+    {
+      "from": "CHG-012",
+      "to": "TASK-020",
+      "type": "implements",
+      "created_at": "2026-08-12T15:43:29+00:00"
+    },
+    {
+      "from": "CHG-012",
+      "to": "TASK-019",
+      "type": "implements",
+      "created_at": "2026-08-12T15:43:29+00:00"
     }
   ]
 }
