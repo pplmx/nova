@@ -56,6 +56,7 @@ add_executable(nova-tests
     neural/layer_norm_test.cpp
     neural/sync_batch_norm_test.cu
     neural/tensor_parallel_test.cpp
+    neural/tensor_parallel_multigpu_test.cpp
     neural/fusion/fused_matmul_bias_act_test.cpp
     neural/fusion/fused_matmul_bias_act_edge_test.cpp
     neural/transformer/attention_test.cpp
