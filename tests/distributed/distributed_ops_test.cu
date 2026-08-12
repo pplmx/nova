@@ -27,6 +27,8 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
@@ -477,6 +479,110 @@ TEST(DeviceMeshIntegration, MultiGpuAvailable) {
 // (issue-v17-dist-ops-multigpu-untested: these paths were never exercised;
 //  every "Requires single GPU" skip in this file had a single-GPU-only guard)
 // ============================================================================
+
+// ============================================================================
+// MeshBarrier multi-GPU real tests — thread-per-rank (TASK-001, milestone v2.18)
+// ============================================================================
+//
+// The legacy MeshBarrier (barrier.cu, pre-v2.18) is a per-instance host
+// event-poll: it records one event per device on internally-created streams and
+// host-polls completion. When driven from real per-rank threads (the collective
+// contract) it has never been exercised — `NoDeadlock` runs single-host-thread.
+// These tests assert the *rendezvous semantics* of a barrier: a rank must not be
+// released until every rank has reached the barrier (`reached[]` all set after
+// `synchronize()` returns), which a premature event-fire on empty streams
+// violates. They are gated on the same shared NCCL readiness predicate as the
+// data-op tests so they stay valid after P2 converges MeshBarrier onto
+// NcclBarrier (which requires NCCL).
+
+// Tagged/flag-based rendezvous check shared by the barrier tests: each rank sets
+// `reached[d]=true` immediately before entering the barrier; after the barrier
+// call each rank asserts every `reached[]` flag is set (no rank was released
+// before all ranks arrived). `released[d]` is set only after that check passes,
+// so the barrier must have genuinely waited for all ranks.
+//
+// DISABLED_ in the P1 checkpoint (TASK-001): both tests FAIL RED against the
+// legacy event-poll MeshBarrier (rank 0 released before rank 1 reached) — see
+// HYP-001 / EV-001. They are the P2 acceptance tests; P2 (TASK-002) converges
+// barrier.cu onto NcclBarrier and re-enables them.
+TEST_F(MeshBarrierTest, DISABLED_MultiGpu_BarrierRendezvous) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
+    }
+    const int n = DeviceMesh::instance().device_count();
+
+    std::vector<std::atomic<bool>> reached(n);
+    std::vector<std::atomic<bool>> released(n);
+    for (int d = 0; d < n; ++d) {
+        reached[d].store(false);
+        released[d].store(false);
+    }
+
+    run_per_rank(n, [&](int d) {
+        // Deliberately stagger rank arrival: rank d sleeps d*15ms before
+        // entering the barrier. A correct barrier must still wait for the slow
+        // rank; a premature-release barrier returns while reached[] is unset.
+        if (d > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(d * 15));
+        }
+        reached[d].store(true, std::memory_order_release);
+
+        MeshBarrier barrier;
+        EXPECT_NO_THROW(barrier.synchronize());
+
+        // Rendezvous assertion: every rank must have reached the barrier.
+        for (int r = 0; r < n; ++r) {
+            EXPECT_TRUE(reached[r].load(std::memory_order_acquire))
+                << "rank " << d << " released before rank " << r << " reached the barrier";
+        }
+        released[d].store(true, std::memory_order_release);
+    });
+
+    // All ranks must eventually release (no deadlock).
+    for (int d = 0; d < n; ++d) {
+        EXPECT_TRUE(released[d].load()) << "rank " << d << " never released";
+    }
+}
+
+// Same rendezvous check through synchronize_devices() on the full mesh.
+TEST_F(MeshBarrierTest, DISABLED_MultiGpu_SynchronizeDevicesRendezvous) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
+    }
+    const int n = DeviceMesh::instance().device_count();
+
+    std::vector<int> devices(n);
+    for (int d = 0; d < n; ++d) {
+        devices[d] = d;
+    }
+    std::vector<std::atomic<bool>> reached(n);
+    std::vector<std::atomic<bool>> released(n);
+    for (int d = 0; d < n; ++d) {
+        reached[d].store(false);
+        released[d].store(false);
+    }
+
+    run_per_rank(n, [&](int d) {
+        if (d > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(d * 15));
+        }
+        reached[d].store(true, std::memory_order_release);
+
+        MeshBarrier barrier;
+        EXPECT_NO_THROW(barrier.synchronize_devices(devices));
+
+        for (int r = 0; r < n; ++r) {
+            EXPECT_TRUE(reached[r].load(std::memory_order_acquire))
+                << "rank " << d << " (synchronize_devices) released before rank "
+                << r << " reached";
+        }
+        released[d].store(true, std::memory_order_release);
+    });
+
+    for (int d = 0; d < n; ++d) {
+        EXPECT_TRUE(released[d].load()) << "rank " << d << " never released";
+    }
+}
 
 // DistributedReduce: each rank contributes distinct local data; every rank must
 // end with the group sum (rank r sends base (r+1), element i adds i).
