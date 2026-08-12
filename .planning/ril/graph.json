@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 18,
+  "round": 19,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T04:10:26+00:00",
+  "updated_at": "2026-08-12T07:01:17+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -559,6 +559,207 @@
       "touched_round": 18,
       "rationale": "Disposition of issue-v17-dist-ops-harness-flake (one-off >120s stall at MultiGpu_AllReduceDistinctData, never reproduced across 5x repeats): P3 (TASK-003, CHG-003) eliminates the failure mode that made the flake harmful — a rank thread dying before the barrier can no longer hang the suite forever (bounded RankBarrier -> diagnosed RankBarrierTimeout), and a communicator abort on the shared NcclContext no longer poisons later tests (has_nccl() gone false -> fail fast + self-heal). The specific stall was non-deterministic and never re-observed; its two root-cause mechanisms are both now converted to bounded, diagnosed failures. Residual environmental risk (NCCL transport hiccup under load) is covered by the same mechanisms.",
       "alternatives_rejected": "Chasing the (never-reproducible) stall via more stress before hardening (bounded-failure guarantees are the deliverable, not a de-flaked test); leaving the issue active forever despite its two mechanisms being neutralized."
+    },
+    "DEC-003": {
+      "id": "DEC-003",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T05:10:54+00:00",
+      "updated_at": "2026-08-12T05:10:54+00:00",
+      "touched_round": 18,
+      "title": "Milestone v2.19 direction: verify + converge neural parallel-training surfaces (TensorParallelMatmul, SequenceParallel) onto the verified real-multi-GPU layer",
+      "rationale": "v2.15-v2.18 converged and verified every high-level distributed op on the verified NCCL layer (distributed ops, distributed matmul, MeshBarrier) - RIL graph now has zero active tasks. The largest remaining never-run multi-GPU surface is the neural parallel-training layer: TensorParallelMatmul multi-GPU execution has no real multi-GPU test (tests/neural/tensor_parallel_test.cpp checks only buffer-size formulas and profiler math), and SequenceParallel tests pass comm=nullptr so they never drive a real NCCL collective. Static read of src/cuda/neural/tensor_parallel_matmul.cpp shows strong bug smells: ColumnParallel partitions B/C as contiguous slices (column-major semantics) while RowParallel slices A as contiguous rows (row-major), the SAME matrix order cannot satisfy both, recv_buffer is dead code, every rank redundantly computes ALL slices with the full B buffer, local_n = n/tp_degree drops remainders, and there is no divisibility guard. The R15-R18 pattern is that every never-run multi-GPU surface hides real bugs, so this path is expected RED. Plan: (P1) real thread-per-rank multi-GPU execution tests vs single-GPU reference (RED evidence); (P2) correct the partition/layout math on the verified NCCL layer and prove numerical equivalence; (P3) drive SequenceParallelAttention gather/scatter/all-reduce with a real NcclContext communicator, then optionally scale to 4/8 GPUs (host has 8x A100).",
+      "alternatives_rejected": "MPI enablement is env-bound (no MPI headers on host); inference-layer multi-GPU (FlashAttention/PagedAttention) is a larger follow-up that depends on the sequence-parallel verification here; pure 8-GPU scale-up of already-green suites adds confidence but no new verified surface."
+    },
+    "comp-neural-parallel": {
+      "id": "comp-neural-parallel",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T05:11:01+00:00",
+      "updated_at": "2026-08-12T05:11:01+00:00",
+      "touched_round": 18,
+      "title": "Neural parallel-training layer: TensorParallelMatmul (include/cuda/neural/tensor_parallel_matmul.{h,cpp}), TensorParallelLayers, SequenceParallelAttention / RingSequenceParallelism (include/cuda/distributed/sequence_parallel.h)"
+    },
+    "HYP-002": {
+      "id": "HYP-002",
+      "type": "hypothesis",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T05:11:01+00:00",
+      "updated_at": "2026-08-12T05:11:01+00:00",
+      "touched_round": 18,
+      "title": "TensorParallelMatmul ColumnParallel multi-GPU path in src/cuda/neural/tensor_parallel_matmul.cpp produces numerically wrong C (or crashes) on real multi-GPU because B/C column partitions use contiguous-slice offsets (column-major math) against a row-major matmul, and every rank redundantly computes all slices so there is no per-rank narrowing",
+      "confidence": 0.85
+    },
+    "TASK-004": {
+      "id": "TASK-004",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-08-12T05:11:09+00:00",
+      "updated_at": "2026-08-12T05:19:35+00:00",
+      "touched_round": 18,
+      "title": "P1: real thread-per-rank multi-GPU execution tests for TensorParallelMatmul (column + row forward) asserted against a single-GPU reference; expected RED",
+      "category": "test-quality",
+      "severity": 3,
+      "priority_score": 8.5,
+      "confidence": 0.85
+    },
+    "TASK-005": {
+      "id": "TASK-005",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-08-12T05:11:09+00:00",
+      "updated_at": "2026-08-12T06:52:22+00:00",
+      "touched_round": 18,
+      "title": "P2: correct TensorParallelMatmul partition/layout math on the verified NCCL layer (per-rank column slices + AllReduce, divisibility guard); prove numerical equivalence vs single-GPU reference on real multi-GPU",
+      "category": "core-feature",
+      "severity": 3,
+      "priority_score": 8.0,
+      "confidence": 0.8
+    },
+    "TASK-006": {
+      "id": "TASK-006",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-12T05:11:09+00:00",
+      "updated_at": "2026-08-12T06:52:02+00:00",
+      "touched_round": 18,
+      "title": "P3: drive SequenceParallelAttention gather/scatter/all-reduce with a real NcclContext communicator (currently comm=nullptr in tests) and verify vs reference; scale to 4/8 GPUs",
+      "category": "test-quality",
+      "severity": 2,
+      "priority_score": 6.5,
+      "confidence": 0.7
+    },
+    "issue-v19-tp-multigpu-unverified": {
+      "id": "issue-v19-tp-multigpu-unverified",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T05:11:35+00:00",
+      "updated_at": "2026-08-12T05:11:35+00:00",
+      "touched_round": 18,
+      "title": "TensorParallelMatmul multi-GPU execution path has never been run on real multi-GPU (tests only buffer-size formulas); sequence-parallel tests pass comm=nullptr"
+    },
+    "EV-004": {
+      "id": "EV-004",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T05:19:09+00:00",
+      "updated_at": "2026-08-12T05:19:09+00:00",
+      "touched_round": 18,
+      "source": "tests/neural/tensor_parallel_multigpu_test.cpp (DISABLED_MultiGpu_*), run CUDA_VISIBLE_DEVICES=0,1 NCCL_TESTS_AVAILABLE=1 --gtest_also_run_disabled_tests, 2026-08-12",
+      "confidence": 1.0,
+      "title": "On 2x A100 all 4 new per-rank TensorParallelMatmul tests FAIL RED: ColumnParallel sync + async differ from the single-GPU reference (e.g. rank 0 element 0 expected -0.82 actual -0.46); n%tp!=0 silently drops columns (no throw); RowParallel ignores the rank index - every rank returns the same wrong block (rank 0 block untouched). Confirms HYP-002: the multi-GPU TP path was never-run and is numerically broken"
+    },
+    "CHG-004": {
+      "id": "CHG-004",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T05:19:29+00:00",
+      "updated_at": "2026-08-12T05:19:29+00:00",
+      "touched_round": 18,
+      "commit": "2006da8",
+      "title": "test(neural): per-rank TensorParallelMatmul multi-GPU RED tests (P1)"
+    },
+    "issue-v19-shared-nccl-context-reset": {
+      "id": "issue-v19-shared-nccl-context-reset",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:05:18+00:00",
+      "updated_at": "2026-08-12T06:05:18+00:00",
+      "touched_round": 18,
+      "title": "Full-suite NCCL-enabled run can SIGSEGV in a driver region when unrelated suites call cudaDeviceReset() after the shared NcclContext singleton created its communicators - stale comms are used, and unlike aborts (v2.18 mark_comm_aborted) a context reset is undetectable, so the comms are silently invalid",
+      "severity": 2
+    },
+    "EV-005": {
+      "id": "EV-005",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:06:59+00:00",
+      "updated_at": "2026-08-12T06:06:59+00:00",
+      "touched_round": 18,
+      "source": "tests/neural/tensor_parallel_multigpu_test.cpp + tests/distributed/sequence_parallel_multigpu_test.cu on CUDA_VISIBLE_DEVICES=2,3 / 2,3,4,5 / 8 (2026-08-12)",
+      "confidence": 1.0,
+      "title": "TP matmul P2 fix GREEN: MultiGpu_TensorParallelColumnParallel(Async)/NonDivisible/RowParallel 4/4 on 2, 4, and 8 GPUs; SequenceParallel AllReduceSequence/GatherKV/ScatterReduceScatter/ScatterSliceCopy 4/4 on 2 and 4 GPUs; TP+NCCL paired suites 19/19 on free GPUs"
+    },
+    "EV-006": {
+      "id": "EV-006",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:06:59+00:00",
+      "updated_at": "2026-08-12T06:06:59+00:00",
+      "touched_round": 18,
+      "source": "full-suite run with NCCL_TESTS_AVAILABLE=1 on CUDA_VISIBLE_DEVICES=2,3; SIGSEGV core at tests/neural/tensor_parallel_multigpu_test.cpp (2026-08-12)",
+      "confidence": 0.8,
+      "title": "Full-suite run crashes ONLY when NCCL_TESTS_AVAILABLE=1 enables all multi-GPU suites to interleave with ~1400 cudaDeviceReset-heavy tests; the crash is a symbol-less driver/library SEGV at the first NCCL collective after long interleaving. Multi-GPU suites pass in all curated NCCL-enabled configurations - evidence of shared-NcclContext-singleton fragility under unrelated context resets, not a TP-multigpu bug. R15-R18 never ran the NCCL-enabled full suite (multi-GPU tests env-skip in the 1461/1423/0 baseline)"
+    },
+    "issue-v19-ring-parallel-noop": {
+      "id": "issue-v19-ring-parallel-noop",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:27:13+00:00",
+      "updated_at": "2026-08-12T06:27:13+00:00",
+      "touched_round": 18,
+      "title": "RingSequenceParallelism::ring_attention's multi-GPU path (NOVA_NCCL_ENABLED branch) is an empty no-op: it (void)s all arguments and does nothing; send_recv_kv is declared but never defined, so ring sequence parallelism computes nothing on multi-GPU.",
+      "severity": 2
+    },
+    "TASK-007": {
+      "id": "TASK-007",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-12T06:27:14+00:00",
+      "updated_at": "2026-08-12T06:56:26+00:00",
+      "touched_round": 18,
+      "title": "Follow-up: implement or explicitly unsupport RingSequenceParallelism multi-GPU path (send_recv_kv is declared-never-defined; ring_attention is a silent no-op on multi-GPU)",
+      "category": "correctness",
+      "severity": 2,
+      "priority_score": 4.0
+    },
+    "CHG-005": {
+      "id": "CHG-005",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:52:02+00:00",
+      "updated_at": "2026-08-12T06:52:02+00:00",
+      "touched_round": 18,
+      "commit": "837a966",
+      "title": "fix(neural): correct TensorParallelMatmul multi-GPU partition math on the verified NCCL layer (P2)"
+    },
+    "CHG-006": {
+      "id": "CHG-006",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:52:02+00:00",
+      "updated_at": "2026-08-12T06:52:02+00:00",
+      "touched_round": 18,
+      "commit": "2a93f52",
+      "title": "test(distributed): real-comm SequenceParallelAttention multi-GPU tests (P3)"
+    },
+    "DEC-004": {
+      "id": "DEC-004",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T06:56:26+00:00",
+      "updated_at": "2026-08-12T06:56:26+00:00",
+      "touched_round": 18,
+      "title": "Defer ring sequence parallelism implementation; RingSequenceParallelism::ring_attention multi-GPU now fails fast",
+      "rationale": "send_recv_kv was declared but never defined, so the multi-GPU ring path was a silent no-op returning garbage. The library's fail-fast convention (MeshBarrier subset, TP divisibility) says never return wrong output silently; a throw at the unsupported path is strictly safer and costs nothing. Actual ring-algorithm implementation is deferred to a future milestone needing real P2P/send-recv verification.",
+      "alternatives_rejected": "Implementing ring attention now (larger scope requiring P2P send/recv verification not covered by the comm harness); leaving the silent no-op (silently wrong output)."
     }
   },
   "edges": [
@@ -819,6 +1020,102 @@
       "to": "comp-dist-ops",
       "type": "governs",
       "created_at": "2026-08-12T04:10:26+00:00"
+    },
+    {
+      "from": "TASK-004",
+      "to": "issue-v19-tp-multigpu-unverified",
+      "type": "addresses",
+      "created_at": "2026-08-12T05:11:35+00:00"
+    },
+    {
+      "from": "TASK-005",
+      "to": "TASK-004",
+      "type": "depends_on",
+      "created_at": "2026-08-12T05:11:35+00:00"
+    },
+    {
+      "from": "TASK-006",
+      "to": "TASK-005",
+      "type": "depends_on",
+      "created_at": "2026-08-12T05:11:35+00:00"
+    },
+    {
+      "from": "DEC-003",
+      "to": "comp-neural-parallel",
+      "type": "governs",
+      "created_at": "2026-08-12T05:11:35+00:00"
+    },
+    {
+      "from": "issue-v19-tp-multigpu-unverified",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-12T05:11:35+00:00"
+    },
+    {
+      "from": "EV-004",
+      "to": "HYP-002",
+      "type": "validates",
+      "created_at": "2026-08-12T05:19:09+00:00"
+    },
+    {
+      "from": "CHG-004",
+      "to": "TASK-004",
+      "type": "implements",
+      "created_at": "2026-08-12T05:19:29+00:00"
+    },
+    {
+      "from": "issue-v19-shared-nccl-context-reset",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-12T06:05:18+00:00"
+    },
+    {
+      "from": "EV-005",
+      "to": "HYP-002",
+      "type": "refutes",
+      "created_at": "2026-08-12T06:06:59+00:00"
+    },
+    {
+      "from": "EV-006",
+      "to": "HYP-002",
+      "type": "validates",
+      "created_at": "2026-08-12T06:06:59+00:00"
+    },
+    {
+      "from": "TASK-005",
+      "to": "issue-v19-tp-multigpu-unverified",
+      "type": "addresses",
+      "created_at": "2026-08-12T06:06:59+00:00"
+    },
+    {
+      "from": "TASK-007",
+      "to": "issue-v19-ring-parallel-noop",
+      "type": "addresses",
+      "created_at": "2026-08-12T06:27:14+00:00"
+    },
+    {
+      "from": "issue-v19-ring-parallel-noop",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-12T06:27:14+00:00"
+    },
+    {
+      "from": "CHG-005",
+      "to": "TASK-005",
+      "type": "implements",
+      "created_at": "2026-08-12T06:52:02+00:00"
+    },
+    {
+      "from": "CHG-006",
+      "to": "TASK-006",
+      "type": "implements",
+      "created_at": "2026-08-12T06:52:02+00:00"
+    },
+    {
+      "from": "DEC-004",
+      "to": "comp-neural-parallel",
+      "type": "governs",
+      "created_at": "2026-08-12T06:56:26+00:00"
     }
   ]
 }

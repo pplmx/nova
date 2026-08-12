@@ -89,11 +89,16 @@ singleton stream outlives the reset context. This is pre-existing and order-depe
 external `/workspace/llm` load (~80 GB), so all multi-GPU runs must use
 `CUDA_VISIBLE_DEVICES=2,3+` (memory saved separately).
 
-## Learn — pending close
+## Learn — Milestone v2.19 close
 
-- TASK-004 resolved (`CHG-004` 2006da8); TASK-005/006 pending commit + resolution.
-- `HYP-002` validated by EV-004 (RED) then refuted by EV-005 (GREEN after fix).
-- New issues: `issue-v19-shared-nccl-context-reset` (full NCCL-enabled run can SEGV on
-  singleton streams after unrelated context resets — R15-R18 never ran the NCCL-enabled
-  full suite), `issue-v19-ring-parallel-noop` (+ TASK-007 follow-up).
-- Milestone close pending: full-suite baseline + code review approval.
+- `TASK-004/005/006/007` resolved — `CHG-004` 2006da8, `CHG-005` 837a966, `CHG-006`
+  2a93f52, `DEC-004` 650de28. `issue-v19-tp-multigpu-unverified` and
+  `issue-v19-ring-parallel-noop` resolved; `issue-v19-shared-nccl-context-reset` open
+  (tracked — fix is a future hardening thread: detect context resets vs the shared
+  singleton's communicators/streams).
+- `HYP-002` validated by `EV-004` (RED) then refuted by `EV-005` (GREEN after the fix).
+- **Milestone v2.19 closed**: 3/3 phases green on the targeted (NCCL-enabled, curated)
+  configurations. Note: the full-suite baseline in this environment is unstable for
+  pre-existing reasons (libcuda `cuStreamDestroy` SIGSEGV after interleaved
+  `cudaDeviceReset` suites, tracked as `issue-v19-shared-nccl-context-reset`; GPUs 0/1
+  externally loaded — use `CUDA_VISIBLE_DEVICES=2,3+`).

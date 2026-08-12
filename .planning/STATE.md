@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.18
-milestone_name: MeshBarrier On The Verified Layer + Distributed Robustness
+milestone: v2.19
+milestone_name: Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
 status: Complete
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 18: all 3 phases complete, milestone closed
+last_activity: 2026-08-12 — Round 19: P1-P3 complete, milestone closed
 progress:
   total_phases: 3
   completed_phases: 3
@@ -19,11 +19,32 @@ progress:
 
 ## Current Position
 
-Milestone: v2.18 MeshBarrier On The Verified Layer + Distributed Robustness
-Status: Complete (Round 18)
-Last activity: 2026-08-12 — priority None: MeshBarrier converged onto NcclBarrier;
-distributed harness hardened against dead-rank hangs and dead-communicator
-poisoning
+Milestone: v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
+Status: Complete (Round 19)
+Last activity: 2026-08-12 — priority None: TensorParallelMatmul multi-GPU proven
+broken then converged (EV-004/EV-005); SequenceParallel real-comm verified 4/4;
+RingSequenceParallelism multi-GPU no-op made fail-fast
+
+## Milestone v2.19 — Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
+
+Extend the R15-R18 thread (every never-run multi-GPU surface hides real bugs) to the
+neural parallel-training layer — TensorParallelMatmul's multi-GPU execution was only
+tested through buffer-size formulas, and the sequence-parallel tests passed
+`comm = nullptr`:
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Per-rank TensorParallelMatmul multi-GPU RED tests (evidence) | Complete (Round 19) — 4/4 RED: ColumnParallel wrong output, non-divisible silently dropped, RowParallel ignored rank (2006da8, EV-004/HYP-002) |
+| 2 | Correct TP matmul partition math on the verified NCCL layer | Complete (Round 19) — zero-padded strided column blocks + one AllReduce; rank-correct RowParallel; shape rejection; per-instance stream-bound cuBLAS handle (837a966, EV-005) |
+| 3 | SequenceParallel real-comm + ring no-op disposition | Complete (Round 19) — gather_kv/scatter_output/all_reduce_sequence verified 4/4 on 2/4 GPUs (2a93f52); RingSequenceParallelism multi-GPU made fail-fast (650de28, DEC-004) |
+
+`HYP-002` (TP ColumnParallel contiguous-slice math broken) validated by RED then refuted
+by the converged GREEN acceptance tests. SequenceParallel collectives were verified
+correct on first real-comm run — a positive refutation of the "always broken"
+generalization. Follow-ups tracked: `issue-v19-shared-nccl-context-reset` (full-suite
+NCCL-enabled run can SIGSEV in libcuda cuStreamDestroy after interleaved
+cudaDeviceReset suites — R15-R18 never ran the NCCL-enabled full suite; pre-existing,
+order/timing-sensitive), `issue-v19-ring-parallel-noop` (closed by DEC-004 fail-fast).
 
 ## Milestone v2.18 — MeshBarrier On The Verified Layer + Distributed Robustness
 

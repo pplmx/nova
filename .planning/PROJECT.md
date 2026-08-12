@@ -4,7 +4,28 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.18 MeshBarrier On The Verified Layer + Distributed Robustness
+## Current Milestone: v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
+
+**Status:** Complete (2026-08-12, RIL Round 19)
+
+**Milestone v2.19.** Extended the R15-R18 "never-run multi-GPU surface hides real bugs"
+thread to the neural parallel-training layer. P1 proved `TensorParallelMatmul`'s
+multi-GPU paths broken — ColumnParallel sliced B/C as contiguous (column-major) offsets
+against the row-major matmul and AllReduce-summed disjoint output slices, RowParallel
+ignored the rank index, and non-divisible `n` was silently dropped (4/4 RED, HYP-002
+validated, c5f302a→2006da8). P2 rewrote the partition math on the verified NCCL layer:
+zero-padded strided column blocks + a single block-wise AllReduce (honoring the documented
+"compute A @ B_part then AllReduce, output identical" contract), rank-correct RowParallel,
+explicit shape rejection, and per-instance stream-bound cuBLAS handles (the shared handle
+is not thread-safe) — 8/8 acceptance GREEN on 2, 4, and 8 GPUs; TP+NCCL suites 19/19
+(EV-005 refutes HYP-002). P3 drove `SequenceParallelAttention` (gather_kv / scatter_output
+/ all_reduce_sequence) with real `NcclContext::current_comm()` on each rank — 4/4 GREEN on
+2/4 GPUs, verifying the collectives were actually correct — and made
+`RingSequenceParallelism`'s multi-GPU no-op fail fast (DEC-004). Decisions: DEC-003
+(milestone direction), DEC-004 (ring no-op disposition). Host note: GPUs 0/1 are under
+external load — use `CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.18 MeshBarrier On The Verified Layer + Distributed Robustness
 
 **Status:** Complete (2026-08-12, RIL Round 18)
 

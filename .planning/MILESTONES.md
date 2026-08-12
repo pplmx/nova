@@ -478,3 +478,32 @@
 - `docs/PERFORMANCE_TOOLING.md` - Comprehensive tooling guide
 
 **Next:** TBD
+
+---
+
+## v2.19 Parallel Training On Real Multi-GPU (Closed: 2026-08-12, RIL Round 19)
+
+**Phases:** 3 (TensorParallelMatmul RED→converge, SequenceParallel real-comm, ring no-op)
+
+**Key accomplishments:**
+
+- **TensorParallelMatmul multi-GPU proven broken and converged** — P1 per-rank tests went RED
+  4/4 (ColumnParallel contiguous-slice math against the row-major matmul, RowParallel
+  ignoring the rank index, non-divisible n silently dropped); P2 rewrote the partition math
+  on the verified NCCL layer (zero-padded strided column blocks + one AllReduce, rank-correct
+  RowParallel, shape rejection, per-instance stream-bound cuBLAS handle) — acceptance 8/8
+  GREEN on 2/4/8 GPUs (EV-005 refutes HYP-002).
+- **SequenceParallelAttention real-comm verified** — gather_kv (AllGather), scatter_output
+  (ReduceScatter + slice-copy), all_reduce_sequence all driven with a real
+  `NcclContext::current_comm()` per rank: 4/4 GREEN on 2/4 GPUs (collectives were already
+  correct).
+- **RingSequenceParallelism no-op made fail-fast** — the multi-GPU path
+  (`send_recv_kv` declared-never-defined) was silently returning garbage; it now throws
+  (DEC-004); full ring implementation deferred.
+
+**Tracked follow-ups:** `issue-v19-shared-nccl-context-reset` (full NCCL-enabled suite can
+SEGV in libcuda cuStreamDestroy after interleaved cudaDeviceReset suites — pre-existing,
+order/timing-sensitive; run multi-GPU suites via curated NCCL-enabled invocations on
+`CUDA_VISIBLE_DEVICES=2,3+` — GPUs 0/1 are externally loaded).
+
+**Next:** TBD

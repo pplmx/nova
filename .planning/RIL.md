@@ -3,13 +3,33 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 18).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 19).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
-Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** opened and
-**closed at Round 18**.
+Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
+Round 18 → **v2.19 "Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)"**
+opened and **closed at Round 19**.
 
 ## Latest round
+- **Round 19 (2026-08-12)** — milestone v2.19 kickoff through **close (P1+P2+P3)**. **P1**
+  (`CHG-004` 2006da8): per-rank TensorParallelMatmul multi-GPU tests FAIL RED (4/4) —
+  ColumnParallel contiguous-slice offsets against the row-major matmul produce wrong output,
+  `n % tp != 0` silently drops columns, RowParallel ignores the rank index (`HYP-002`/
+  `EV-004`). **P2** (`CHG-005` 837a966): corrected the partition math on the verified NCCL
+  layer — zero-padded strided column blocks computed via cuBLAS (`ldb=ldc=n`) + one
+  block-wise AllReduce, rank-correct RowParallel, shape rejection, per-instance stream-bound
+  cuBLAS handle (shared handle is not thread-safe), RAII stream guard — `MultiGpu_*`
+  acceptance 8/8 GREEN on 2/4/8 GPUs, TP+NCCL suites 19/19 (`EV-005` refutes `HYP-002`).
+  **P3** (`CHG-006` 2a93f52): `SequenceParallelAttention` driven with a real
+  `NcclContext::current_comm()` per rank — all_reduce_sequence / gather_kv / scatter_output
+  (ReduceScatter + slice-copy) 4/4 GREEN on 2/4 GPUs (collectives were already correct);
+  `RingSequenceParallelism` multi-GPU no-op made fail-fast (650de28, `DEC-004`, `TASK-007`).
+  New issues: `issue-v19-shared-nccl-context-reset` (full NCCL-enabled suite run can SEGV in
+  libcuda `cuStreamDestroy` after interleaved `cudaDeviceReset` suites — pre-existing,
+  order/timing-sensitive; R15-R18 never ran the NCCL-enabled full suite),
+  `issue-v19-ring-parallel-noop` (closed by DEC-004). Host note: GPUs 0/1 externally loaded;
+  use `CUDA_VISIBLE_DEVICES=2,3+`. Milestone **closed (3/3 phases)**. See
+  `ril_autonomous_round19.md`.
 - **Round 18 (2026-08-12)** — milestone v2.18 kickoff through **close (P1+P2+P3)**. **P1**
   (`change-v18-p1` c5f302a): per-rank MeshBarrier rendezvous tests FAIL RED — the legacy
   per-instance host event-poll recorded events on empty internal streams that fired
@@ -41,7 +61,19 @@ Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness
   `ril_autonomous_round15.md`.
 
 ## Active tasks (by priority_score; threshold 3.0)
-(none — milestone v2.18 closed)
+(none — milestone v2.19 closed)
+
+## Resolved (v2.19)
+- `TASK-004` (P1) RESOLVED by `CHG-004` (2006da8) — per-rank TensorParallelMatmul RED tests;
+  `HYP-002` validated by `EV-004`.
+- `TASK-005` (P2) RESOLVED by `CHG-005` (837a966) — TP matmul partition math corrected on the
+  verified NCCL layer; acceptance 8/8 GREEN 2/4/8 GPUs; `EV-005` refutes `HYP-002`.
+- `TASK-006` (P3) RESOLVED by `CHG-006` (2a93f52) — SequenceParallelAttention real-comm
+  tests 4/4 GREEN on 2/4 GPUs.
+- `TASK-007` RESOLVED by disposition `DEC-004` (650de28) — RingSequenceParallelism multi-GPU
+  now fails fast (was a silent no-op: `send_recv_kv` declared-never-defined).
+- `issue-v19-tp-multigpu-unverified` RESOLVED; `issue-v19-ring-parallel-noop` RESOLVED by
+  `DEC-004`. `issue-v19-shared-nccl-context-reset` OPEN (tracked follow-up).
 
 ## Resolved (v2.18)
 - `task-v18a-meshbarrier-tests` (TASK-001) RESOLVED by `change-v18-p1` (c5f302a) — per-rank
