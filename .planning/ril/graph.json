@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 19,
+  "round": 20,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T07:02:55+00:00",
+  "updated_at": "2026-08-12T08:10:49+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -579,7 +579,7 @@
       "version": 1,
       "created_at": "2026-08-12T05:11:01+00:00",
       "updated_at": "2026-08-12T05:11:01+00:00",
-      "touched_round": 18,
+      "touched_round": 19,
       "title": "Neural parallel-training layer: TensorParallelMatmul (include/cuda/neural/tensor_parallel_matmul.{h,cpp}), TensorParallelLayers, SequenceParallelAttention / RingSequenceParallelism (include/cuda/distributed/sequence_parallel.h)"
     },
     "HYP-002": {
@@ -642,7 +642,7 @@
       "version": 1,
       "created_at": "2026-08-12T05:11:35+00:00",
       "updated_at": "2026-08-12T05:11:35+00:00",
-      "touched_round": 18,
+      "touched_round": 19,
       "title": "TensorParallelMatmul multi-GPU execution path has never been run on real multi-GPU (tests only buffer-size formulas); sequence-parallel tests pass comm=nullptr"
     },
     "EV-004": {
@@ -756,7 +756,7 @@
       "version": 1,
       "created_at": "2026-08-12T06:56:26+00:00",
       "updated_at": "2026-08-12T06:56:26+00:00",
-      "touched_round": 18,
+      "touched_round": 19,
       "title": "Defer ring sequence parallelism implementation; RingSequenceParallelism::ring_attention multi-GPU now fails fast",
       "rationale": "send_recv_kv was declared but never defined, so the multi-GPU ring path was a silent no-op returning garbage. The library's fail-fast convention (MeshBarrier subset, TP divisibility) says never return wrong output silently; a throw at the unsupported path is strictly safer and costs nothing. Actual ring-algorithm implementation is deferred to a future milestone needing real P2P/send-recv verification.",
       "alternatives_rejected": "Implementing ring attention now (larger scope requiring P2P send/recv verification not covered by the comm harness); leaving the silent no-op (silently wrong output)."
@@ -772,6 +772,129 @@
       "source": "full multi-GPU cross-suite on CUDA_VISIBLE_DEVICES=2,3 NCCL_TESTS_AVAILABLE=1 (NcclCollectives+DistributedOps+DistributedMatmul+MeshBarrier+DistributedPool+TP-multigpu+SP-multigpu), 2026-08-12",
       "confidence": 1.0,
       "title": "Milestone v2.19 close verify: 48/48 multi-GPU tests PASS on 2 free GPUs (10 single-GPU env-skips); TP matmul acceptance 8/8 on 2/4/8 GPUs; SequenceParallel 5/5 on 2/4 GPUs"
+    },
+    "DEC-005": {
+      "id": "DEC-005",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T07:49:39+00:00",
+      "updated_at": "2026-08-12T07:49:39+00:00",
+      "touched_round": 19,
+      "title": "Milestone v2.20 direction: harden TensorParallelMatmul onto the verified NCCL conventions (rank resolution + collective error propagation)",
+      "rationale": "The just-shipped v2.19 P2 TP rewrite (CHG-005 837a966) was mathematically verified (8/8 GREEN 2/4/8 GPUs) but the cpp-review of the P2 diff returned a BLOCK verdict on two HIGH findings that still apply to the committed code: (1) rank is derived from the raw CUDA device index (cudaGetDevice) instead of ctx_.rank_of_device(), which breaks on non-default NCCL groups ({0,2,5} or reordered) and has no membership bounds check - the verified distributed matmul (src/cuda/distributed/matmul.cu) already uses rank_of_device with explicit membership failure; (2) all_reduce_async's NcclResult is discarded, so a failed/aborted collective (dead comm, timeout) silently returns success with garbage - the in-repo convention (distributed/reduce.cu) checks result.ok() and throws NcclException. Also closing: MEDIUM 6 (RowParallel non-divisible rejection untested) and the RowParallel header doc mismatch (split is along m with A replicated, not along k with A partitioned).",
+      "alternatives_rejected": "issue-v19-shared-nccl-context-reset hardening (larger, separate - a context-reset detector is a distinct thread); inference-layer multi-GPU (depends on a clean TP/distributed base); pure re-verification of already-green code (no new value)."
+    },
+    "TASK-008": {
+      "id": "TASK-008",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-08-12T07:49:39+00:00",
+      "updated_at": "2026-08-12T07:56:37+00:00",
+      "touched_round": 19,
+      "title": "P1: fix TP matmul HIGH-1 (rank via ctx_.rank_of_device + membership validation) + HIGH-2 (propagate all_reduce_async NcclResult failures as NcclException) + MEDIUM-6 (RowParallel non-divisible test) + correct RowParallel header doc",
+      "category": "correctness",
+      "severity": 3,
+      "priority_score": 9.0,
+      "confidence": 0.9
+    },
+    "CHG-007": {
+      "id": "CHG-007",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T07:56:37+00:00",
+      "updated_at": "2026-08-12T07:56:37+00:00",
+      "touched_round": 19,
+      "commit": "2137cea",
+      "title": "fix(neural): converge TensorParallelMatmul onto verified NCCL conventions (rank_of_device + NcclResult propagation, v2.20 P1)"
+    },
+    "issue-v20-tp-layers-stubs": {
+      "id": "issue-v20-tp-layers-stubs",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T07:59:02+00:00",
+      "updated_at": "2026-08-12T07:59:02+00:00",
+      "touched_round": 19,
+      "title": "TensorParallelLayers (ColumnParallelLayer/RowParallelLayer/TensorParallelMLP) are non-functional skeletons: forward() passes B=nullptr to TP matmul (no weight storage exists - cuBLAS crash on a null pointer), and TensorParallelMLP::forward is an empty body. They were shipped in v1.3 but have zero tests/usages.",
+      "severity": 3
+    },
+    "TASK-009": {
+      "id": "TASK-009",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-08-12T07:59:02+00:00",
+      "updated_at": "2026-08-12T08:07:07+00:00",
+      "touched_round": 19,
+      "title": "P2: disposition TensorParallelLayers stubs - fail fast on forward() (clear 'not implemented: no weight storage' errors, never pass null B to cuBLAS / silently return empty output) + tests pinning the fail-fast + decision to defer real implementation",
+      "category": "correctness",
+      "severity": 3,
+      "priority_score": 7.5,
+      "confidence": 0.9
+    },
+    "CHG-008": {
+      "id": "CHG-008",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T08:06:59+00:00",
+      "updated_at": "2026-08-12T08:06:59+00:00",
+      "touched_round": 19,
+      "commit": 6898654,
+      "title": "fix(neural): TensorParallelLayers stubs fail fast (v2.20 P2)"
+    },
+    "DEC-006": {
+      "id": "DEC-006",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T08:06:59+00:00",
+      "updated_at": "2026-08-12T08:06:59+00:00",
+      "touched_round": 19,
+      "title": "Defer weight-managed TensorParallelLayers implementation; stubs fail fast now",
+      "rationale": "The v1.3 layer wrappers never held weights; forward() passed a null pointer to cuBLAS. Fail-fast is strictly safer than a latent null crash; a real implementation (weight storage + col/row/MLP forward with AllReduce parity) is a feature-sized follow-up (TASK-010) that should land with a proper reference comparison.",
+      "alternatives_rejected": "Implementing the layers now (feature scope beyond a hardening milestone); keeping the null-pointer crash."
+    },
+    "TASK-010": {
+      "id": "TASK-010",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T08:06:59+00:00",
+      "updated_at": "2026-08-12T08:06:59+00:00",
+      "touched_round": 19,
+      "title": "Follow-up (feature): implement weight-managed ColumnParallelLayer/RowParallelLayer/TensorParallelMLP forward with real weight buffers and multi-GPU reference parity; replaces the fail-fast disposition (DEC-006)",
+      "category": "core-feature",
+      "severity": 2,
+      "priority_score": 5.0,
+      "confidence": 0.7
+    },
+    "EV-008": {
+      "id": "EV-008",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T08:07:42+00:00",
+      "updated_at": "2026-08-12T08:07:42+00:00",
+      "touched_round": 19,
+      "source": "driver-API probe program on device 2, 2026-08-12 (cuCtxGetCurrent before/after cudaDeviceReset)",
+      "confidence": 1.0,
+      "title": "cuCtxGetCurrent returns the SAME CUcontext pointer after cudaDeviceReset() (driver reuses the primary-context address; probe showed ctx0==ctx1==ctx2). So context-loss detection via CUcontext/handle comparison is infeasible - NcclContext cannot cheaply detect that an unrelated cudaDeviceReset invalidated its comms/streams. Disposition: documented curated multi-GPU workflow + standard baseline without NCCL_TESTS_AVAILABLE."
+    },
+    "EV-009": {
+      "id": "EV-009",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T08:07:42+00:00",
+      "updated_at": "2026-08-12T08:07:42+00:00",
+      "touched_round": 19,
+      "source": "v2.20 verification on CUDA_VISIBLE_DEVICES=2,3 NCCL_TESTS_AVAILABLE=1, 2026-08-12",
+      "confidence": 1.0,
+      "title": "v2.20 close verify: TP+NCCL suites 20/20 GREEN (rank_of_device + NcclResult-propagation fix); TP acceptance 5/5 at 4 GPUs; TensorParallelLayers fail-fast 3/3; neural/TP/SP regression smoke green"
     }
   },
   "edges": [
@@ -1128,6 +1251,54 @@
       "to": "comp-neural-parallel",
       "type": "governs",
       "created_at": "2026-08-12T06:56:26+00:00"
+    },
+    {
+      "from": "DEC-005",
+      "to": "comp-neural-parallel",
+      "type": "governs",
+      "created_at": "2026-08-12T07:50:56+00:00"
+    },
+    {
+      "from": "TASK-008",
+      "to": "issue-v19-tp-multigpu-unverified",
+      "type": "addresses",
+      "created_at": "2026-08-12T07:50:56+00:00"
+    },
+    {
+      "from": "CHG-007",
+      "to": "TASK-008",
+      "type": "implements",
+      "created_at": "2026-08-12T07:56:37+00:00"
+    },
+    {
+      "from": "TASK-009",
+      "to": "issue-v20-tp-layers-stubs",
+      "type": "addresses",
+      "created_at": "2026-08-12T07:59:03+00:00"
+    },
+    {
+      "from": "issue-v20-tp-layers-stubs",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-12T07:59:03+00:00"
+    },
+    {
+      "from": "CHG-008",
+      "to": "TASK-009",
+      "type": "implements",
+      "created_at": "2026-08-12T08:06:59+00:00"
+    },
+    {
+      "from": "DEC-006",
+      "to": "DEC-004",
+      "type": "supersedes",
+      "created_at": "2026-08-12T08:06:59+00:00"
+    },
+    {
+      "from": "TASK-010",
+      "to": "issue-v20-tp-layers-stubs",
+      "type": "addresses",
+      "created_at": "2026-08-12T08:07:07+00:00"
     }
   ]
 }

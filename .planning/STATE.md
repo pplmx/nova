@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.19
-milestone_name: Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
+milestone: v2.20
+milestone_name: TensorParallelMatmul Production Hardening
 status: Complete
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 19: P1-P3 complete, milestone closed
+last_activity: 2026-08-12 — Round 20: P1-P2 complete, milestone closed
 progress:
-  total_phases: 3
-  completed_phases: 3
+  total_phases: 2
+  completed_phases: 2
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,11 +19,26 @@ progress:
 
 ## Current Position
 
-Milestone: v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
-Status: Complete (Round 19)
-Last activity: 2026-08-12 — priority None: TensorParallelMatmul multi-GPU proven
-broken then converged (EV-004/EV-005); SequenceParallel real-comm verified 4/4;
-RingSequenceParallelism multi-GPU no-op made fail-fast
+Milestone: v2.20 TensorParallelMatmul Production Hardening
+Status: Complete (Round 20)
+Last activity: 2026-08-12 — priority None: TP matmul closed the review BLOCK
+(rank_of_device + NcclResult propagation); TensorParallelLayers stubs fail fast
+instead of null-pointer crash
+
+## Milestone v2.20 — TensorParallelMatmul Production Hardening
+
+Close the cpp-review BLOCK on the v2.19 TP rewrite and disposition the last
+non-functional neural parallel-training surface:
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | TP matmul: rank via `rank_of_device` (membership validation) + propagate collective failures + RowParallel non-divisible test | Complete (Round 20) — closes review HIGH-1/HIGH-2/MEDIUM-6; TP+NCCL 20/20, acceptance 5/5 at 4 GPUs (2137cea, EV-009) |
+| 2 | TensorParallelLayers stubs fail fast (were null-B cuBLAS crash / empty MLP body) | Complete (Round 20) — 3/3 reject tests; weight-managed implementation deferred (DEC-006, TASK-010) |
+
+`issue-v19-shared-nccl-context-reset` (full-suite/curated crash after interleaved
+`cudaDeviceReset`) investigated for P3: driver-level detection infeasible
+(`cuCtxGetCurrent` returns the same address after reset, EV-008); disposition =
+documented curated multi-GPU workflow + standard baseline without `NCCL_TESTS_AVAILABLE`.
 
 ## Milestone v2.19 — Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
 

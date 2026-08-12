@@ -4,7 +4,29 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
+## Current Milestone: v2.20 TensorParallelMatmul Production Hardening
+
+**Status:** Complete (2026-08-12, RIL Round 20)
+
+**Milestone v2.20.** Closed the cpp-review BLOCK on the v2.19 TP rewrite and disposed the
+last non-functional neural parallel-training surface. P1 hardened `TensorParallelMatmul`
+onto the verified NCCL conventions: rank is resolved through `ctx_.rank_of_device()`
+(validated membership — no more raw-device-index rank, which breaks on non-default NCCL
+groups and could overrun buffers), the column AllReduce's `NcclResult` is now checked and
+failures throw `NcclException` (no more silent-garbage on a dead comm), plus a RowParallel
+non-divisible test and corrected header docs — 20/20 TP+NCCL suites, acceptance 5/5 at
+4 GPUs (2137cea, EV-009). P2 disposed the `TensorParallelLayers` skeletons
+(ColumnParallelLayer / RowParallelLayer / TensorParallelMLP) which were never implemented
+— their `forward()` passed `B = nullptr` into cuBLAS and the MLP forward was empty; they
+now fail fast with explicit errors and a real weight-managed implementation is tracked as
+TASK-010 (DEC-006). `issue-v19-shared-nccl-context-reset` investigated (driver-level
+context-loss detection is infeasible — `cuCtxGetCurrent` returns the same address after
+reset, EV-008); disposition is the documented curated multi-GPU workflow + standard
+baseline without `NCCL_TESTS_AVAILABLE`. Decisions: DEC-005 (milestone direction),
+DEC-006 (layers disposition). Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)
 
 **Status:** Complete (2026-08-12, RIL Round 19)
 

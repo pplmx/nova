@@ -3,14 +3,27 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 19).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 20).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
 Round 18 → **v2.19 "Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)"**
-opened and **closed at Round 19**.
+closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** opened and
+**closed at Round 20**.
 
 ## Latest round
+- **Round 20 (2026-08-12)** — milestone v2.20 kickoff through **close (P1+P2)**. **P1**
+  (`CHG-007` 2137cea): closed the cpp-review BLOCK on the v2.19 TP rewrite — rank resolved
+  via `ctx_.rank_of_device()` (membership-validated, no raw-index rank), the column
+  AllReduce `NcclResult` is checked and failures throw `NcclException`, RowParallel
+  non-divisible test added, header docs corrected — TP+NCCL 20/20, acceptance 5/5 at
+  4 GPUs (`EV-009`). **P2** (`CHG-008`): disposed the non-functional `TensorParallelLayers`
+  skeletons (were null-B cuBLAS crashes / empty MLP forward) — now fail fast, 3/3 reject
+  tests (`EV-009`), real implementation deferred (`DEC-006` supersedes `DEC-004`;
+  `TASK-010`). P3 investigation: `issue-v19-shared-nccl-context-reset` auto-detection is
+  infeasible (`cuCtxGetCurrent` reuses the address after reset, `EV-008`) — disposition is
+  the documented curated multi-GPU workflow. Milestone **closed (2/2 phases)**. See
+  `ril_autonomous_round20.md`.
 - **Round 19 (2026-08-12)** — milestone v2.19 kickoff through **close (P1+P2+P3)**. **P1**
   (`CHG-004` 2006da8): per-rank TensorParallelMatmul multi-GPU tests FAIL RED (4/4) —
   ColumnParallel contiguous-slice offsets against the row-major matmul produce wrong output,
@@ -61,7 +74,18 @@ opened and **closed at Round 19**.
   `ril_autonomous_round15.md`.
 
 ## Active tasks (by priority_score; threshold 3.0)
-(none — milestone v2.19 closed)
+- `TASK-010` (8.4, core-feature) — implement weight-managed ColumnParallelLayer /
+  RowParallelLayer / TensorParallelMLP forward (replaces the DEC-006 fail-fast disposition).
+
+## Resolved (v2.20)
+- `TASK-008` (P1) RESOLVED by `CHG-007` (2137cea) — TP matmul closes the review BLOCK:
+  rank via `rank_of_device()` (membership validation), collective `NcclResult` propagated,
+  RowParallel non-divisible test, header docs corrected; TP+NCCL 20/20.
+- `TASK-009` (P2) RESOLVED by `CHG-008` — `TensorParallelLayers` stubs fail fast (null-B
+  cuBLAS crash / empty MLP forward); 3/3 reject tests.
+- `issue-v20-tp-layers-stubs` RESOLVED (fail-fast disposition, DEC-006).
+- `issue-v19-shared-nccl-context-reset` OPEN with disposition: curated multi-GPU workflow;
+  auto-detection infeasible (`EV-008`).
 
 ## Resolved (v2.19)
 - `TASK-004` (P1) RESOLVED by `CHG-004` (2006da8) — per-rank TensorParallelMatmul RED tests;
