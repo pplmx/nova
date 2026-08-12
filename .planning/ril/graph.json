@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 19,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T07:01:17+00:00",
+  "updated_at": "2026-08-12T07:02:55+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -760,6 +760,18 @@
       "title": "Defer ring sequence parallelism implementation; RingSequenceParallelism::ring_attention multi-GPU now fails fast",
       "rationale": "send_recv_kv was declared but never defined, so the multi-GPU ring path was a silent no-op returning garbage. The library's fail-fast convention (MeshBarrier subset, TP divisibility) says never return wrong output silently; a throw at the unsupported path is strictly safer and costs nothing. Actual ring-algorithm implementation is deferred to a future milestone needing real P2P/send-recv verification.",
       "alternatives_rejected": "Implementing ring attention now (larger scope requiring P2P send/recv verification not covered by the comm harness); leaving the silent no-op (silently wrong output)."
+    },
+    "EV-007": {
+      "id": "EV-007",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T07:02:55+00:00",
+      "updated_at": "2026-08-12T07:02:55+00:00",
+      "touched_round": 19,
+      "source": "full multi-GPU cross-suite on CUDA_VISIBLE_DEVICES=2,3 NCCL_TESTS_AVAILABLE=1 (NcclCollectives+DistributedOps+DistributedMatmul+MeshBarrier+DistributedPool+TP-multigpu+SP-multigpu), 2026-08-12",
+      "confidence": 1.0,
+      "title": "Milestone v2.19 close verify: 48/48 multi-GPU tests PASS on 2 free GPUs (10 single-GPU env-skips); TP matmul acceptance 8/8 on 2/4/8 GPUs; SequenceParallel 5/5 on 2/4 GPUs"
     }
   },
   "edges": [
