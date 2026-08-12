@@ -5,6 +5,7 @@
 #include "cuda/memory/buffer-inl.h"
 #include "cuda/stream/stream.h"
 #include <memory>
+#include <stdexcept>
 
 #if defined(NOVA_NCCL_ENABLED)
 #include <nccl.h>
@@ -350,15 +351,18 @@ inline void RingSequenceParallelism::ring_attention(
         return;
     }
 
-#if defined(NOVA_NCCL_ENABLED)
-    (void)query;
+    // Multi-GPU ring sequence parallelism is NOT implemented: send_recv_kv is
+    // declared but never defined, so the old path was a silent no-op that left
+    // the caller with garbage output on multi-GPU (issue-v19-ring-parallel-noop).
+    // Fail fast instead of silently computing nothing; the single-GPU fallback
+    // (sequence_parallel_size == 1) above is the supported path.
     (void)key;
     (void)value;
-    (void)output;
     (void)stream;
-#else
-    output = query;
-#endif
+    throw std::runtime_error(
+        "RingSequenceParallelism::ring_attention: multi-GPU ring sequence "
+        "parallelism is not implemented (send_recv_kv is undefined); use "
+        "sequence_parallel_size = 1 for the supported single-GPU fallback");
 }
 
 }  // namespace cuda::distributed

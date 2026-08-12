@@ -266,6 +266,44 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterReduceScatter) {
     }
 }
 
+// RingSequenceParallelism's multi-GPU path is not implemented (send_recv_kv
+// is declared but never defined); it must fail fast rather than silently
+// produce garbage output (issue-v19-ring-parallel-noop, TASK-007 disposition).
+TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttentionNotImplemented) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU sequence-parallel test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU sequence-parallel requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    const int sp = device_count;
+    EXPECT_THROW(
+        run_per_rank(device_count, [&](int d) {
+            cuda::memory::Buffer<float> q(32), k(32), v(32), out(32);
+            SequenceParallelConfig cfg{
+                .num_model_parallel_gpus = sp,
+                .sequence_parallel_size = sp,
+                .reduce_scatter_output = true,
+                .rank = d,
+                .world_size = sp,
+                .comm = static_cast<void*>(ctx.current_comm()),
+            };
+            RingSequenceParallelism ring(cfg);
+            cuda::stream::Stream stream;
+            ring.ring_attention(q, k, v, out, stream);
+        }),
+        std::exception)
+        << "multi-GPU ring attention must fail fast (not implemented), not "
+           "silently compute nothing";
+}
+
 // scatter_output with reduce_scatter_output = false takes a D2D slice copy.
 TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
     const int device_count = DeviceMesh::instance().device_count();
