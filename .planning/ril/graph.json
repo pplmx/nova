@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 21,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T10:41:14+00:00",
+  "updated_at": "2026-08-12T10:56:37+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -993,6 +993,54 @@
       "title": "Follow-up (feature, v2.22 candidate): implement RingSequenceParallelism multi-GPU ring attention for real — send_recv_kv over verified NCCL P2P + incremental softmax, reference parity vs the single-GPU sparse-KV attention; replaces the DEC-004 fail-fast disposition (issue-v19-ring-parallel-noop)",
       "category": "core-feature",
       "severity": 2
+    },
+    "DEC-008": {
+      "id": "DEC-008",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T10:56:23+00:00",
+      "updated_at": "2026-08-12T10:56:23+00:00",
+      "touched_round": 21,
+      "title": "v2.22 milestone direction: implement RingSequenceParallelism::ring_attention for real (ring send/recv KV + online softmax over the verified NCCL layer), replacing the DEC-004 fail-fast disposition; acceptance = local-query output equals full-sequence attention reference on real multi-GPU",
+      "rationale": "TASK-014 (v2.22 candidate, core-feature) is the only active surface left from the parallel-training convergence thread: ring_attention multi-GPU throws (send_recv_kv declared but never defined), and pre-DEC-004 it silently returned garbage. This follows the established never-run-surface pattern (v2.16-v2.21): prove broken (RED parity test that currently throws), implement on the verified NCCL conventions (P2P send/recv on the group comm; online softmax accumulation), verify reference parity on real multi-GPU, drop the obsolete fail-fast pin. Reference computed as standard scaled dot-product attention over the concat of all ranks KV -- unambiguous single-GPU/host oracle.",
+      "alternatives_rejected": "Keeping the fail-fast disposition (leaves the last parallel surface unimplemented); implementing via AllGather-to-full-sequence (defeats the ring memory-saving purpose, reuses the already-verified gather path without proving the ring algorithm); a host-only/comm-null implementation (would not verify the real P2P path)."
+    },
+    "TASK-015": {
+      "id": "TASK-015",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T10:56:37+00:00",
+      "updated_at": "2026-08-12T10:56:37+00:00",
+      "touched_round": 21,
+      "title": "P1 evidence: full-sequence reference-parity RED test for ring ring_attention (per-rank local Q/K/V; each rank output == scaled dot-product attention over ALL ranks KV, host double-precision reference) on real multi-GPU; current ring path throws -> RED",
+      "category": "test-quality",
+      "severity": 1
+    },
+    "TASK-016": {
+      "id": "TASK-016",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T10:56:37+00:00",
+      "updated_at": "2026-08-12T10:56:37+00:00",
+      "touched_round": 21,
+      "title": "P2 implementation: RingSequenceParallelism::ring_attention multi-GPU — send_recv_kv via NCCL P2P send/recv on the group comm (prev/next ranks), P-1 ring iterations accumulating partial attention with online softmax (max/denominator carries), single-GPU fallback preserved",
+      "category": "core-feature",
+      "severity": 2
+    },
+    "TASK-017": {
+      "id": "TASK-017",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T10:56:37+00:00",
+      "updated_at": "2026-08-12T10:56:37+00:00",
+      "touched_round": 21,
+      "title": "P3 verification: reference parity GREEN on 2 & 4 GPUs, full-suite baseline, drop the obsolete MultiGpu_RingAttentionNotImplemented fail-fast pin, RIL close of issue-v19-ring-parallel-noop and TASK-014, docs/round record",
+      "category": "maintainability",
+      "severity": 1
     }
   },
   "edges": [
@@ -1445,6 +1493,30 @@
       "to": "issue-v19-ring-parallel-noop",
       "type": "addresses",
       "created_at": "2026-08-12T10:41:14+00:00"
+    },
+    {
+      "from": "TASK-015",
+      "to": "TASK-016",
+      "type": "depends_on",
+      "created_at": "2026-08-12T10:56:37+00:00"
+    },
+    {
+      "from": "TASK-016",
+      "to": "TASK-017",
+      "type": "depends_on",
+      "created_at": "2026-08-12T10:56:37+00:00"
+    },
+    {
+      "from": "DEC-008",
+      "to": "TASK-014",
+      "type": "governs",
+      "created_at": "2026-08-12T10:56:37+00:00"
+    },
+    {
+      "from": "TASK-014",
+      "to": "TASK-015",
+      "type": "depends_on",
+      "created_at": "2026-08-12T10:56:37+00:00"
     }
   ]
 }

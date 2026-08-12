@@ -4,7 +4,23 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.21 Weight-Managed TensorParallelLayers
+## Current Milestone: v2.22 Ring Sequence Parallelism On Real Multi-GPU
+
+**Status:** In Progress (2026-08-12, RIL Round 22 — milestone opened, P1 RED test running)
+
+**Milestone v2.22.** Implements `RingSequenceParallelism::ring_attention` for real
+(TASK-014 / issue-v19-ring-parallel-noop), replacing the DEC-004 fail-fast disposition.
+The multi-GPU ring path is currently a throw ("send_recv_kv undefined"); pre-DEC-004 it
+silently returned garbage. The real algorithm iterates P-1 NCCL P2P send/recv KV steps
+around the ring with online-softmax accumulation. Acceptance (TASK-015, P1 RED now):
+on real multi-GPU each rank's local-query output must equal standard scaled dot-product
+attention over the FULL KV sequence concatenated across all ranks (single-GPU host
+reference) — `MultiGpu_RingAttention_MatchesFullSequenceReference` is currently RED
+(throws). P2: implement send_recv_kv + online-softmax ring; P3: verify on 2 & 4 GPUs,
+drop the obsolete NotImplemented pin, close TASK-014. Decision: DEC-008. Host note: use
+`CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.21 Weight-Managed TensorParallelLayers
 
 **Status:** Complete (2026-08-12, RIL Round 21)
 

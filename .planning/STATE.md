@@ -1,13 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.21
-milestone_name: Weight-Managed TensorParallelLayers
-status: Complete
+milestone: v2.22
+milestone_name: Ring Sequence Parallelism On Real Multi-GPU
+status: "In Progress"
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 21: P1-P3 complete, milestone closed
+last_activity: 2026-08-12 — Round 22: milestone v2.22 opened (TASK-014);
+P1 RED ring-attention full-sequence reference-parity test
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,10 +20,30 @@ progress:
 
 ## Current Position
 
-Milestone: v2.21 Weight-Managed TensorParallelLayers
-Status: Complete (Round 21)
-Last activity: 2026-08-12 — priority: TASK-010 implemented (real weight
-shards), closing the DEC-006 fail-fast disposition of the v1.3 layer stubs
+Milestone: v2.22 Ring Sequence Parallelism On Real Multi-GPU
+Status: In Progress (Round 22)
+Last activity: 2026-08-12 — TASK-014 opened as v2.22; P1 RED test proves the
+ring path is not a real algorithm (throws not-implemented, DEC-004 disposition)
+
+## Milestone v2.22 — Ring Sequence Parallelism On Real Multi-GPU
+
+Implement `RingSequenceParallelism::ring_attention` for real (TASK-014 /
+issue-v19-ring-parallel-noop, replacing the DEC-004 fail-fast disposition):
+the multi-GPU ring path currently throws "not implemented" (send_recv_kv was
+declared but never defined; pre-DEC-004 it silently returned garbage). The ring
+algorithm iterates P-1 send/recv KV steps over the verified NCCL layer with
+online-softmax accumulation; acceptance = each rank's local-query output equals
+standard scaled dot-product attention over the FULL KV sequence (all ranks),
+computed as a single-GPU/host reference.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Reference-parity RED test: per-rank local Q/K/V, ring_attention == full-sequence attention reference on real multi-GPU (currently throws → RED) | In Progress (Round 22) — `MultiGpu_RingAttention_MatchesFullSequenceReference` RED (throws not-implemented); fail-fast pin test still green |
+| 2 | Implement ring attention: send_recv_kv (NCCL P2P send/recv on the group comm) + online-softmax accumulate over P-1 remote KV blocks | Pending |
+| 3 | Verify: reference parity GREEN on 2 & 4 GPUs, full-suite baseline, RIL close of issue/TASK-014; remove the obsolete NotImplemented fail-fast pin | Pending |
+
+Decision: DEC-008 (milestone direction). Host note: GPUs 0/1 externally loaded —
+use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Milestone v2.21 — Weight-Managed TensorParallelLayers
 

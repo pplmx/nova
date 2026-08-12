@@ -31,7 +31,9 @@
 
 #include "distributed_test_common.h"
 
+#include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -302,6 +304,130 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttentionNotImplemented) {
         std::exception)
         << "multi-GPU ring attention must fail fast (not implemented), not "
            "silently compute nothing";
+}
+
+// ============================================================================
+// v2.22 ring-attention acceptance — RingSequenceParallelism on real multi-GPU
+// (TASK-014 / issue-v19-ring-parallel-noop, replacing the DEC-004 fail-fast
+// disposition). milestone v2.22 P1 / TASK-015: RED against the current path.
+// ============================================================================
+
+// Contract for the real ring attention (to be implemented in P2): each rank
+// owns a local sequence shard of Q/K/V; ring_attention must return, for the
+// rank's local query tokens, the attention over the FULL KV sequence across
+// every rank (the ring walks P-1 remote blocks via send/recv, accumulating
+// with online softmax). The reference is standard scaled dot-product attention
+// over the concat of all ranks' K/V, computed in double precision on host.
+// The current ring_attention is a fail-fast throw (DEC-004), so this is RED.
+TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_MatchesFullSequenceReference) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU sequence-parallel test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU sequence-parallel requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    const int sp = device_count;
+    const int hidden = 8;
+    const int local_seq = 4;                 // per-rank query/KV tokens
+    const int full_seq = sp * local_seq;
+
+    // Random per-rank local Q/K/V [local_seq x hidden].
+    std::vector<std::vector<float>> h_q(sp), h_k(sp), h_v(sp);
+    for (int r = 0; r < sp; ++r) {
+        h_q[r].resize(static_cast<size_t>(local_seq) * hidden);
+        h_k[r].resize(static_cast<size_t>(local_seq) * hidden);
+        h_v[r].resize(static_cast<size_t>(local_seq) * hidden);
+        fill_random(h_q[r].data(), h_q[r].size());
+        fill_random(h_k[r].data(), h_k[r].size());
+        fill_random(h_v[r].data(), h_v[r].size());
+    }
+
+    // Assemble the full sequence K/V (concat along seq) and compute, per rank,
+    // the double-precision reference out_r = softmax(Q_r K^T / sqrt(h)) V.
+    std::vector<float> k_full(static_cast<size_t>(full_seq) * hidden);
+    std::vector<float> v_full(static_cast<size_t>(full_seq) * hidden);
+    for (int r = 0; r < sp; ++r) {
+        for (int t = 0; t < local_seq; ++t) {
+            for (int c = 0; c < hidden; ++c) {
+                k_full[static_cast<size_t>(r * local_seq + t) * hidden + c] =
+                    h_k[r][static_cast<size_t>(t) * hidden + c];
+                v_full[static_cast<size_t>(r * local_seq + t) * hidden + c] =
+                    h_v[r][static_cast<size_t>(t) * hidden + c];
+            }
+        }
+    }
+    const double inv_sqrt_h = 1.0 / std::sqrt(static_cast<double>(hidden));
+    std::vector<std::vector<float>> h_ref(sp, std::vector<float>(
+        static_cast<size_t>(local_seq) * hidden));
+    for (int r = 0; r < sp; ++r) {
+        for (int i = 0; i < local_seq; ++i) {
+            // scores over the full sequence (double precision).
+            std::vector<double> scores(full_seq);
+            double max_s = -std::numeric_limits<double>::infinity();
+            for (int j = 0; j < full_seq; ++j) {
+                double dot = 0.0;
+                for (int c = 0; c < hidden; ++c) {
+                    dot += static_cast<double>(h_q[r][static_cast<size_t>(i) * hidden + c]) *
+                           static_cast<double>(k_full[static_cast<size_t>(j) * hidden + c]);
+                }
+                scores[j] = dot * inv_sqrt_h;
+                max_s = std::max(max_s, scores[j]);
+            }
+            double sum = 0.0;
+            for (int j = 0; j < full_seq; ++j) {
+                scores[j] = std::exp(scores[j] - max_s);
+                sum += scores[j];
+            }
+            for (int c = 0; c < hidden; ++c) {
+                double acc = 0.0;
+                for (int j = 0; j < full_seq; ++j) {
+                    acc += (scores[j] / sum) *
+                           static_cast<double>(v_full[static_cast<size_t>(j) * hidden + c]);
+                }
+                h_ref[r][static_cast<size_t>(i) * hidden + c] = static_cast<float>(acc);
+            }
+        }
+    }
+
+    std::vector<std::vector<float>> h_results(sp, std::vector<float>(
+        static_cast<size_t>(local_seq) * hidden));
+    run_per_rank(device_count, [&](int d) {
+        cuda::memory::Buffer<float> q(local_seq * hidden), k(local_seq * hidden),
+            v(local_seq * hidden), out(local_seq * hidden);
+        q.copy_from(h_q[d].data(), h_q[d].size());
+        k.copy_from(h_k[d].data(), h_k[d].size());
+        v.copy_from(h_v[d].data(), h_v[d].size());
+
+        SequenceParallelConfig cfg{
+            .num_model_parallel_gpus = sp,
+            .sequence_parallel_size = sp,
+            .reduce_scatter_output = true,
+            .rank = d,
+            .world_size = sp,
+            .comm = static_cast<void*>(ctx.current_comm()),
+        };
+        RingSequenceParallelism ring(cfg);
+        cuda::stream::Stream stream;
+        ring.ring_attention(q, k, v, out, stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        out.copy_to(h_results[d].data(), h_results[d].size());
+    });
+
+    for (int rank = 0; rank < sp; ++rank) {
+        SCOPED_TRACE("rank " + std::to_string(rank));
+        EXPECT_TRUE(arrays_near(h_ref[rank].data(), h_results[rank].data(),
+                                h_ref[rank].size(), 1e-2f))
+            << "ring attention output on rank " << rank
+            << " differs from the full-sequence attention reference (the "
+               "multi-GPU ring path is not a real algorithm yet — RED)";
+    }
 }
 
 // scatter_output with reduce_scatter_output = false takes a D2D slice copy.
