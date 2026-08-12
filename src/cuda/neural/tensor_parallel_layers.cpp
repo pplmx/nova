@@ -1,11 +1,36 @@
 /**
  * @file tensor_parallel_layers.cpp
  * @brief Tensor-parallel layer implementations
+ *
+ * These layer wrappers (ColumnParallelLayer / RowParallelLayer / TensorParallelMLP)
+ * shipped in v1.3 as scaffolding and were never implemented: they hold no weight
+ * storage and their forward() bodies passed B = nullptr into the tensor-parallel
+ * matmul (a cuBLAS null-pointer crash) / returned an empty result. With no callers
+ * anywhere in the tree they are dead, non-functional surfaces, so every forward()
+ * now fails fast with an explicit error until a real weight-managed implementation
+ * lands (DEC-006). The supported primitive is TensorParallelMatmul.
  */
 
 #include "cuda/neural/tensor_parallel_layers.h"
 
+#include <stdexcept>
+#include <string>
+
 namespace cuda::neural {
+
+namespace {
+
+[[noreturn]] void throw_unimplemented(const char* layer) {
+    throw std::runtime_error(
+        std::string(layer) +
+        "::forward is not implemented: the layer owns no weight storage (its "
+        "pre-v2.20 body passed a null weight pointer to the cuBLAS-backed "
+        "TensorParallelMatmul, which would crash). Use the supported "
+        "TensorParallelMatmul primitive directly, or await a weight-managed "
+        "layer implementation (DEC-006).");
+}
+
+}  // namespace
 
 ColumnParallelLayer::ColumnParallelLayer(
     ::cuda::nccl::NcclContext& ctx,
@@ -25,11 +50,11 @@ void ColumnParallelLayer::forward(
     float* output,
     int batch,
     int seq) {
-
-    int batch_seq = batch * seq;
-    int local_hidden = hidden_dim_ / tp_degree_;
-
-    q_proj_->matmul(input, nullptr, output, batch_seq, local_hidden, hidden_dim_);
+    (void)input;
+    (void)output;
+    (void)batch;
+    (void)seq;
+    throw_unimplemented("ColumnParallelLayer");
 }
 
 int ColumnParallelLayer::hidden_dim() const {
@@ -55,11 +80,11 @@ void RowParallelLayer::forward(
     float* output,
     int batch,
     int seq) {
-
-    int batch_seq = batch * seq;
-    int local_hidden = hidden_dim_ / tp_degree_;
-
-    matmul_->matmul(input, nullptr, output, batch_seq, hidden_dim_, local_hidden);
+    (void)input;
+    (void)output;
+    (void)batch;
+    (void)seq;
+    throw_unimplemented("RowParallelLayer");
 }
 
 int RowParallelLayer::hidden_dim() const {
@@ -86,6 +111,11 @@ void TensorParallelMLP::forward(
     float* output,
     int batch,
     int seq) {
+    (void)input;
+    (void)output;
+    (void)batch;
+    (void)seq;
+    throw_unimplemented("TensorParallelMLP");
 }
 
 }  // namespace cuda::neural
