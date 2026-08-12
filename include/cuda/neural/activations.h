@@ -72,4 +72,45 @@ void silu_and_mul(
     cudaStream_t stream = nullptr
 );
 
+/**
+ * @brief Backward of the SiLU-gated activation (v2.23)
+ *
+ * out = silu(gate) * up  ⇒
+ *   grad_gate[i] = grad_output[i] * up[i] * silu'(gate[i])
+ *   grad_up[i]   = grad_output[i] * silu(gate[i])
+ * with silu'(x) = sigmoid(x) * (1 + x * (1 - sigmoid(x))).
+ */
+void silu_and_mul_backward(
+    const float* gate,
+    const float* up,
+    const float* grad_output,
+    float* grad_gate,
+    float* grad_up,
+    int size,
+    cudaStream_t stream = nullptr
+);
+
+/**
+ * @brief Elementwise add: output[i] = a[i] + b[i].
+ */
+void elementwise_add(
+    const float* a,
+    const float* b,
+    float* output,
+    int size,
+    cudaStream_t stream = nullptr
+);
+
+/**
+ * @brief In-place transpose helper (row-major) used by the layer backward:
+ * output [cols x rows] = input [rows x cols]^T.
+ */
+void transpose(
+    const float* input,
+    float* output,
+    int rows,
+    int cols,
+    cudaStream_t stream = nullptr
+);
+
 }  // namespace cuda::neural

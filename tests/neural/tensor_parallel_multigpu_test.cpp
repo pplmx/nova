@@ -815,9 +815,19 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_Backward_MatchesRef
 
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        // rank r's grad-input is block r of the full reference grad-input.
-        EXPECT_TRUE(arrays_near(ref_dX.data() + rank * k_local,
-                                dX_rank[rank].data(), m * k_local, kTolerance))
+        // rank r's grad-input is the r-th FEATURE block of the full reference
+        // grad-input (a [m x k] row-major matrix): columns [r*k_local, +k_local)
+        // stride by the full row length k, so extract them contiguously rather
+        // than viewing a bogus contiguous pointer.
+        std::vector<float> expect_block(static_cast<size_t>(m) * k_local);
+        for (int i = 0; i < m; ++i) {
+            for (int j = 0; j < k_local; ++j) {
+                expect_block[static_cast<size_t>(i) * k_local + j] =
+                    ref_dX[i * k + rank * k_local + j];
+            }
+        }
+        EXPECT_TRUE(arrays_near(expect_block.data(), dX_rank[rank].data(),
+                                m * k_local, kTolerance))
             << "row-layer local grad-input block on rank " << rank
             << " differs from the reference";
     }

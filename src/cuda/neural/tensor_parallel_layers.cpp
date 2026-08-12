@@ -171,16 +171,82 @@ void ColumnParallelLayer::backward(
     float* grad_weight,
     int batch,
     int seq) {
-    (void)input;
-    (void)grad_output;
-    (void)grad_input;
-    (void)grad_weight;
-    (void)batch;
-    (void)seq;
-    throw std::runtime_error(
-        "ColumnParallelLayer::backward is not implemented yet (TASK-020 "
-        "provisional stub — milestone v2.23 P1 is RED against this; the real "
-        "transposed-GEMM + grad-input AllReduce backward will replace it).");
+    const int m = batch * seq;
+    if (m <= 0) {
+        throw_shape_error("ColumnParallelLayer::backward requires batch*seq > 0");
+    }
+    if (!weight_) {
+        throw_no_weight("ColumnParallelLayer");
+    }
+    const int tp = tp_degree();
+    const int n_local = tp <= 1 ? out_features_ : out_features_ / tp;
+    const size_t k = static_cast<size_t>(in_features_);
+
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreate(&stream));
+    StreamGuard guard{stream};
+    cublasHandle_t handle = ensure_handle();
+    CUBLAS_CHECK(cublasSetStream(handle, stream));
+    MatmulOptions opts;
+    opts.handle = handle;
+
+    // grad-input: dX = dY @ W^T. The input is replicated, so this rank's
+    // contribution alone is partial: the full grad-input is the AllReduce of
+    // the per-rank dY W^T over the group (the never-run backward collective).
+    cuda::memory::Buffer<float> w_t(static_cast<size_t>(n_local) * k);
+    cuda::memory::Buffer<float> dX_loc(static_cast<size_t>(m) * k);
+    cuda::neural::transpose(weight_->data(), w_t.data(), in_features_, n_local,
+                            stream);
+    cuda::neural::matmul(grad_output, w_t.data(), dX_loc.data(),
+                         m, static_cast<int>(k), n_local, opts);
+    if (tp > 1) {
+        if (!ctx_.has_nccl()) {
+            throw_shape_error(
+                "ColumnParallelLayer::backward on multi-GPU requires an "
+                "initialized NCCL context");
+        }
+        ::cuda::nccl::NcclResult result = reducer_.all_reduce_async(
+            dX_loc.data(), grad_input, static_cast<size_t>(m) * k,
+            ncclFloat32, ncclSum, stream);
+        if (!result.ok()) {
+            throw ::cuda::nccl::NcclException(
+                result.error_message.c_str(), result.code,
+                "ColumnParallelLayer::backward grad-input AllReduce",
+                __FILE__, __LINE__);
+        }
+    } else {
+        CUDA_CHECK(cudaMemcpyAsync(
+            grad_input, dX_loc.data(),
+            static_cast<size_t>(m) * k * sizeof(float),
+            cudaMemcpyDeviceToDevice, stream));
+    }
+
+    // grad-weight: dW = X^T @ dY [k x n_local]; the caller owns the full
+    // grad_weight and this rank scatters its column-slice block into it.
+    cuda::memory::Buffer<float> x_t(static_cast<size_t>(k) * m);
+    cuda::memory::Buffer<float> dW_shard(static_cast<size_t>(k) * n_local);
+    cuda::neural::transpose(input, x_t.data(), m, in_features_, stream);
+    cuda::neural::matmul(x_t.data(), grad_output, dW_shard.data(),
+                         static_cast<int>(k), n_local, m, opts);
+    if (tp <= 1) {
+        CUDA_CHECK(cudaMemcpyAsync(
+            grad_weight, dW_shard.data(),
+            static_cast<size_t>(k) * n_local * sizeof(float),
+            cudaMemcpyDeviceToDevice, stream));
+    } else {
+        const int rank = active_rank(ctx_);
+        // Strided column scatter: destination pitch is the full row length
+        // (n floats), source pitch is the shard row length (n_local floats).
+        CUDA_CHECK(cudaMemcpy2DAsync(
+            grad_weight + static_cast<size_t>(rank) * n_local,
+            out_features_ * static_cast<size_t>(sizeof(float)),
+            dW_shard.data(),
+            n_local * static_cast<size_t>(sizeof(float)),
+            n_local * static_cast<size_t>(sizeof(float)),
+            static_cast<size_t>(in_features_),
+            cudaMemcpyDeviceToDevice, stream));
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
 int ColumnParallelLayer::in_features() const { return in_features_; }
@@ -310,15 +376,51 @@ void RowParallelLayer::backward(
     float* grad_weight,
     int batch,
     int seq) {
-    (void)input;
-    (void)grad_output;
-    (void)grad_input;
-    (void)grad_weight;
-    (void)batch;
-    (void)seq;
-    throw std::runtime_error(
-        "RowParallelLayer::backward is not implemented yet (TASK-020 "
-        "provisional stub — milestone v2.23 P1 is RED against this).");
+    const int m = batch * seq;
+    if (m <= 0) {
+        throw_shape_error("RowParallelLayer::backward requires batch*seq > 0");
+    }
+    if (!weight_) {
+        throw_no_weight("RowParallelLayer");
+    }
+    const int tp = tp_degree();
+    const int k_local = tp <= 1 ? in_features_ : in_features_ / tp;
+
+    cudaStream_t stream;
+    CUDA_CHECK(cudaStreamCreate(&stream));
+    StreamGuard guard{stream};
+    cublasHandle_t handle = ensure_handle();
+    CUBLAS_CHECK(cublasSetStream(handle, stream));
+    MatmulOptions opts;
+    opts.handle = handle;
+
+    // grad-input is local: the input shard matches the upstream sharded
+    // layout, so dX = dY @ W^T is exactly this rank's block of the full grad
+    // (no communication needed).
+    cuda::memory::Buffer<float> w_t(static_cast<size_t>(out_features_) *
+                                    static_cast<size_t>(k_local));
+    cuda::neural::transpose(weight_->data(), w_t.data(), k_local, out_features_,
+                            stream);
+    cuda::neural::matmul(grad_output, w_t.data(), grad_input,
+                         m, k_local, out_features_, opts);
+
+    // grad-weight: dW = X^T @ dY [k_local x out]; the rank's row block of the
+    // full grad_weight is contiguous in the row-major layout, so a plain copy.
+    cuda::memory::Buffer<float> x_t(static_cast<size_t>(k_local) * m);
+    cuda::memory::Buffer<float> dW_shard(static_cast<size_t>(k_local) *
+                                         static_cast<size_t>(out_features_));
+    cuda::neural::transpose(input, x_t.data(), m, k_local, stream);
+    cuda::neural::matmul(x_t.data(), grad_output, dW_shard.data(),
+                         k_local, out_features_, m, opts);
+    const size_t row_off =
+        static_cast<size_t>(tp <= 1 ? 0 : active_rank(ctx_)) * k_local;
+    CUDA_CHECK(cudaMemcpyAsync(
+        grad_weight + row_off * static_cast<size_t>(out_features_),
+        dW_shard.data(),
+        static_cast<size_t>(k_local) * static_cast<size_t>(out_features_) *
+            sizeof(float),
+        cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
 int RowParallelLayer::in_features() const { return in_features_; }
@@ -402,17 +504,43 @@ void TensorParallelMLP::backward(
     float* grad_down_weight,
     int batch,
     int seq) {
-    (void)input;
-    (void)grad_output;
-    (void)grad_input;
-    (void)grad_gate_weight;
-    (void)grad_up_weight;
-    (void)grad_down_weight;
-    (void)batch;
-    (void)seq;
-    throw std::runtime_error(
-        "TensorParallelMLP::backward is not implemented yet (TASK-020 "
-        "provisional stub — milestone v2.23 P1 is RED against this).");
+    const int m = batch * seq;
+    if (m <= 0) {
+        throw_shape_error("TensorParallelMLP::backward requires batch*seq > 0");
+    }
+    // forward() must have run first: the gate/up/sub activations live in the
+    // scratch buffers, and backward chains through them.
+    if (!gate_buf_ || !up_buf_ || !sub_buf_) {
+        throw std::runtime_error(
+            "TensorParallelMLP::backward called before forward: the forward "
+            "activations are required to compute the gradients");
+    }
+    const int tp = tp_degree();
+    const int inter_local =
+        tp <= 1 ? intermediate_size_ : intermediate_size_ / tp;
+
+    cuda::memory::Buffer<float> dsub(static_cast<size_t>(m) * inter_local);
+    cuda::memory::Buffer<float> dgate(static_cast<size_t>(m) * inter_local);
+    cuda::memory::Buffer<float> dup(static_cast<size_t>(m) * inter_local);
+    cuda::memory::Buffer<float> dXg(static_cast<size_t>(m) * hidden_dim_);
+    cuda::memory::Buffer<float> dXu(static_cast<size_t>(m) * hidden_dim_);
+
+    // 1) down projection (row-parallel): grad-sub sharded, grad-down-weight.
+    down_proj_->backward(sub_buf_->data(), grad_output, dsub.data(),
+                         grad_down_weight, batch, seq);
+    // 2) gated activation backward on the sharded intermediate.
+    cuda::neural::silu_and_mul_backward(
+        gate_buf_->data(), up_buf_->data(), dsub.data(),
+        dgate.data(), dup.data(), m * inter_local);
+    // 3) gate/up projections (column-parallel): their grad-inputs are each the
+    //    full replicated gradient, and both consume the same input X, so the
+    //    MLP grad-input is their elementwise sum.
+    gate_proj_->backward(input, dgate.data(), dXg.data(),
+                         grad_gate_weight, batch, seq);
+    up_proj_->backward(input, dup.data(), dXu.data(),
+                       grad_up_weight, batch, seq);
+    cuda::neural::elementwise_add(dXg.data(), dXu.data(), grad_input,
+                                  m * hidden_dim_);
 }
 
 int TensorParallelMLP::hidden_dim() const { return hidden_dim_; }

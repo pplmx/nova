@@ -91,6 +91,55 @@ __global__ void silu_and_mul_kernel(
     }
 }
 
+__global__ void silu_and_mul_backward_kernel(
+    const float* gate,
+    const float* up,
+    const float* grad_output,
+    float* grad_gate,
+    float* grad_up,
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        const float g = gate[idx];
+        const float u = up[idx];
+        const float d = grad_output[idx];
+        const float sig = 1.0f / (1.0f + expf(-g));
+        // silu'(x) = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+        const float silu_prime = sig * (1.0f + g * (1.0f - sig));
+        grad_gate[idx] = d * u * silu_prime;
+        grad_up[idx] = d * (g * sig);
+    }
+}
+
+__global__ void elementwise_add_kernel(
+    const float* a,
+    const float* b,
+    float* output,
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        output[idx] = a[idx] + b[idx];
+    }
+}
+
+__global__ void transpose_kernel(
+    const float* input,
+    float* output,
+    int rows,
+    int cols
+) {
+    // input [rows x cols] row-major -> output [cols x rows] row-major.
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = rows * cols;
+    if (idx < total) {
+        const int r = idx / cols;
+        const int c = idx % cols;
+        output[c * rows + r] = input[r * cols + c];
+    }
+}
+
 }  // anonymous namespace
 
 void relu(
@@ -195,6 +244,57 @@ void silu_and_mul(
 
     silu_and_mul_kernel<<<grid_size, block_size, 0, stream>>>(
         gate, up, output, size
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void silu_and_mul_backward(
+    const float* gate,
+    const float* up,
+    const float* grad_output,
+    float* grad_gate,
+    float* grad_up,
+    int size,
+    cudaStream_t stream
+) {
+    int block_size = 256;
+    int grid_size = (size + block_size - 1) / block_size;
+
+    silu_and_mul_backward_kernel<<<grid_size, block_size, 0, stream>>>(
+        gate, up, grad_output, grad_gate, grad_up, size
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void elementwise_add(
+    const float* a,
+    const float* b,
+    float* output,
+    int size,
+    cudaStream_t stream
+) {
+    int block_size = 256;
+    int grid_size = (size + block_size - 1) / block_size;
+
+    elementwise_add_kernel<<<grid_size, block_size, 0, stream>>>(
+        a, b, output, size
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void transpose(
+    const float* input,
+    float* output,
+    int rows,
+    int cols,
+    cudaStream_t stream
+) {
+    const int total = rows * cols;
+    int block_size = 256;
+    int grid_size = (total + block_size - 1) / block_size;
+
+    transpose_kernel<<<grid_size, block_size, 0, stream>>>(
+        input, output, rows, cols
     );
     CUDA_CHECK(cudaGetLastError());
 }

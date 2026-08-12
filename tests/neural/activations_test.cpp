@@ -130,3 +130,82 @@ TEST_F(ActivationTest, SiluAndMulNegativeGate) {
     EXPECT_NEAR(out[1], 0.0f, 1e-6f);
     EXPECT_NEAR(out[2], 3.0f * (2.0f / (1.0f + std::exp(-2.0f))), 1e-5f);
 }
+
+// v2.23: silu_and_mul_backward must match the analytic derivatives
+// (dout = du .* up .* silu'(g), dup = dout .* silu(g)).
+TEST_F(ActivationTest, SiluAndMulBackwardMatchesFormula) {
+    const int size = 1024;
+    std::mt19937 rng(17);
+    std::uniform_real_distribution<float> dist(-3.0f, 3.0f);
+    std::vector<float> gate(size), up(size), dout(size);
+    for (int i = 0; i < size; ++i) {
+        gate[i] = dist(rng);
+        up[i] = dist(rng);
+        dout[i] = dist(rng);
+    }
+    auto silu = [](double x) { return x / (1.0 + std::exp(-x)); };
+    auto silu_prime = [](double x) {
+        const double s = 1.0 / (1.0 + std::exp(-x));
+        return s * (1.0 + x * (1.0 - s));
+    };
+    std::vector<float> exp_dg(size), exp_du(size);
+    for (int i = 0; i < size; ++i) {
+        exp_dg[i] = static_cast<float>(dout[i] * up[i] * silu_prime(gate[i]));
+        exp_du[i] = static_cast<float>(dout[i] * silu(gate[i]));
+    }
+
+    cuda::memory::Buffer<float> d_gate(size), d_up(size), d_dout(size),
+        d_dg(size), d_du(size);
+    d_gate.copy_from(gate.data(), size);
+    d_up.copy_from(up.data(), size);
+    d_dout.copy_from(dout.data(), size);
+    cuda::neural::silu_and_mul_backward(
+        d_gate.data(), d_up.data(), d_dout.data(), d_dg.data(), d_du.data(), size);
+    d_dg.copy_to(gate.data(), size);
+    d_du.copy_to(up.data(), size);
+
+    for (int i = 0; i < size; ++i) {
+        EXPECT_NEAR(gate[i], exp_dg[i], 1e-4f) << "grad_gate element " << i;
+        EXPECT_NEAR(up[i], exp_du[i], 1e-4f) << "grad_up element " << i;
+    }
+}
+
+// v2.23: elementwise_add and transpose must match their host references.
+TEST_F(ActivationTest, ElementwiseAddMatchesReference) {
+    const int size = 512;
+    std::vector<float> a(size), b(size), ref(size);
+    for (int i = 0; i < size; ++i) {
+        a[i] = static_cast<float>(i);
+        b[i] = 1.5f * static_cast<float>(i);
+        ref[i] = a[i] + b[i];
+    }
+    cuda::memory::Buffer<float> d_a(size), d_b(size), d_out(size);
+    d_a.copy_from(a.data(), size);
+    d_b.copy_from(b.data(), size);
+    cuda::neural::elementwise_add(d_a.data(), d_b.data(), d_out.data(), size);
+    d_out.copy_to(a.data(), size);
+    for (int i = 0; i < size; ++i) {
+        EXPECT_FLOAT_EQ(a[i], ref[i]);
+    }
+}
+
+TEST_F(ActivationTest, TransposeMatchesReference) {
+    const int rows = 6, cols = 9;
+    std::vector<float> in(static_cast<size_t>(rows) * cols),
+        ref(static_cast<size_t>(cols) * rows);
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            in[r * cols + c] = static_cast<float>(r * 100 + c);
+            ref[c * rows + r] = in[r * cols + c];
+        }
+    }
+    cuda::memory::Buffer<float> d_in(rows * cols), d_out(cols * rows);
+    d_in.copy_from(in.data(), in.size());
+    cuda::neural::transpose(d_in.data(), d_out.data(), rows, cols);
+    d_out.copy_to(in.data(), in.size());
+    for (int c = 0; c < cols; ++c) {
+        for (int r = 0; r < rows; ++r) {
+            EXPECT_FLOAT_EQ(in[c * rows + r], ref[c * rows + r]);
+        }
+    }
+}
