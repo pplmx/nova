@@ -4,8 +4,10 @@
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 #include "cuda/stream/stream.h"
+#include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 
 #if defined(NOVA_NCCL_ENABLED)
 #include <nccl.h>
@@ -16,6 +18,19 @@ namespace cuda::distributed {
 
 using cuda::stream::Stream;
 
+// Device-kernel host entry points for the ring attention (defined in
+// src/cuda/distributed/ring_attention.cu; the header only orchestrates).
+void ring_attn_init(
+    float* out, float* running_max, float* running_l,
+    int local_seq, int hidden, cudaStream_t stream);
+void ring_attn_block(
+    const float* q, const float* k, const float* v,
+    float* out, float* running_max, float* running_l,
+    int local_seq, int keys, int hidden, float inv_sqrt, cudaStream_t stream);
+void ring_attn_finalize(
+    float* out, const float* running_l,
+    int local_seq, int hidden, cudaStream_t stream);
+
 struct SequenceParallelConfig {
     int num_model_parallel_gpus = 1;
     int sequence_parallel_size = 1;
@@ -23,6 +38,10 @@ struct SequenceParallelConfig {
     int rank = 0;
     int world_size = 1;
     void* comm = nullptr;
+    /** Feature dim of the Q/K/V rows. Required by the multi-GPU ring attention
+     *  (RingSequenceParallelism) to compute the per-token dot products; the
+     *  all-gather / scatter ops do not need it. */
+    int hidden_dim = 0;
 };
 
 class SequenceParallelAttention {
@@ -336,6 +355,50 @@ inline RingSequenceParallelism::RingSequenceParallelism(
 
 inline RingSequenceParallelism::~RingSequenceParallelism() = default;
 
+inline void RingSequenceParallelism::send_recv_kv(
+    memory::Buffer<float>& send_k,
+    memory::Buffer<float>& send_v,
+    memory::Buffer<float>& recv_k,
+    memory::Buffer<float>& recv_v,
+    size_t count,
+    const Stream& stream
+) {
+#if defined(NOVA_NCCL_ENABLED)
+    // Ring step: send this rank's block clockwise to next_rank_ while receiving
+    // prev_rank_'s block counter-clockwise. The four P2P ops are enqueued as one
+    // ncclGroupStart/GroupEnd group: without group semantics NCCL serializes
+    // consecutive point-to-point ops on the communicator and the ring deadlocks
+    // (each rank's send blocks on a peer progress that never comes). Next/prev
+    // are resolved from config rank / world_size in the constructor.
+    auto dtype = detail::to_nccl_dtype(float{});
+    ncclComm_t comm = static_cast<ncclComm_t>(config_.comm);
+    ncclGroupStart();
+    const ncclResult_t r = ncclSend(
+        send_k.data(), count, dtype, next_rank_, comm, stream.get());
+    const ncclResult_t r2 = ncclRecv(
+        recv_k.data(), count, dtype, prev_rank_, comm, stream.get());
+    const ncclResult_t r3 = ncclSend(
+        send_v.data(), count, dtype, next_rank_, comm, stream.get());
+    const ncclResult_t r4 = ncclRecv(
+        recv_v.data(), count, dtype, prev_rank_, comm, stream.get());
+    const ncclResult_t group = ncclGroupEnd();
+    if (r != ncclSuccess || r2 != ncclSuccess || r3 != ncclSuccess ||
+        r4 != ncclSuccess || group != ncclSuccess) {
+        throw std::runtime_error(
+            "RingSequenceParallelism::send_recv_kv: NCCL send/recv failed "
+            "(ring KV exchange)");
+    }
+    CUDA_CHECK(cudaGetLastError());
+#else
+    (void)send_k;
+    (void)send_v;
+    (void)recv_k;
+    (void)recv_v;
+    (void)count;
+    (void)stream;
+#endif
+}
+
 inline void RingSequenceParallelism::ring_attention(
     memory::Buffer<float>& query,
     memory::Buffer<float>& key,
@@ -351,18 +414,58 @@ inline void RingSequenceParallelism::ring_attention(
         return;
     }
 
-    // Multi-GPU ring sequence parallelism is NOT implemented: send_recv_kv is
-    // declared but never defined, so the old path was a silent no-op that left
-    // the caller with garbage output on multi-GPU (issue-v19-ring-parallel-noop).
-    // Fail fast instead of silently computing nothing; the single-GPU fallback
-    // (sequence_parallel_size == 1) above is the supported path.
-    (void)key;
-    (void)value;
-    (void)stream;
-    throw std::runtime_error(
-        "RingSequenceParallelism::ring_attention: multi-GPU ring sequence "
-        "parallelism is not implemented (send_recv_kv is undefined); use "
-        "sequence_parallel_size = 1 for the supported single-GPU fallback");
+    // Multi-GPU ring sequence parallelism (milestone v2.22 / TASK-016): each
+    // rank owns a local sequence shard of Q/K/V. The ring walks P-1 remote
+    // blocks (send_recv_kv) and accumulates each with online softmax, so the
+    // per-rank output is the local queries' attention over the FULL KV
+    // sequence. Numeric scale 1/sqrt(hidden) matches the attention reference.
+    const int hidden = config_.hidden_dim;
+    if (hidden <= 0) {
+        throw std::invalid_argument(
+            "RingSequenceParallelism::ring_attention: config.hidden_dim must be "
+            "> 0 for multi-GPU ring attention");
+    }
+    const size_t elems = query.size();
+    if (elems == 0 || elems % static_cast<size_t>(hidden) != 0 ||
+        key.size() != elems || value.size() != elems) {
+        throw std::invalid_argument(
+            "RingSequenceParallelism::ring_attention: query/key/value must have "
+            "equal sizes divisible by config.hidden_dim");
+    }
+    if (config_.comm == nullptr) {
+        throw std::invalid_argument(
+            "RingSequenceParallelism::ring_attention: multi-GPU ring requires "
+            "a live communicator (config.comm)");
+    }
+    const int local_seq = static_cast<int>(elems / static_cast<size_t>(hidden));
+    if (output.size() < elems) {
+        output = memory::Buffer<float>(elems);
+    }
+
+    memory::Buffer<float> running_max(local_seq);
+    memory::Buffer<float> running_l(local_seq);
+    memory::Buffer<float> cur_k(local_seq * hidden), cur_v(local_seq * hidden);
+    memory::Buffer<float> nx_k(local_seq * hidden), nx_v(local_seq * hidden);
+    cur_k.copy_from(key.data(), elems);
+    cur_v.copy_from(value.data(), elems);
+
+    const float inv_sqrt = 1.0f / std::sqrt(static_cast<float>(hidden));
+    ring_attn_init(output.data(), running_max.data(), running_l.data(),
+                   local_seq, hidden, stream.get());
+
+    const int sp = config_.world_size;
+    for (int step = 0; step < sp; ++step) {
+        ring_attn_block(query.data(), cur_k.data(), cur_v.data(),
+                        output.data(), running_max.data(), running_l.data(),
+                        local_seq, local_seq, hidden, inv_sqrt, stream.get());
+        if (step < sp - 1) {
+            send_recv_kv(cur_k, cur_v, nx_k, nx_v, elems, stream);
+            std::swap(cur_k, nx_k);
+            std::swap(cur_v, nx_v);
+        }
+    }
+    ring_attn_finalize(output.data(), running_l.data(),
+                       local_seq, hidden, stream.get());
 }
 
 }  // namespace cuda::distributed

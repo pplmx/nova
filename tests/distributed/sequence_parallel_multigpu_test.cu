@@ -268,10 +268,11 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterReduceScatter) {
     }
 }
 
-// RingSequenceParallelism's multi-GPU path is not implemented (send_recv_kv
-// is declared but never defined); it must fail fast rather than silently
-// produce garbage output (issue-v19-ring-parallel-noop, TASK-007 disposition).
-TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttentionNotImplemented) {
+// RingSequenceParallelism's multi-GPU ring attention requires the feature dim
+// (config.hidden_dim) to interpret the Q/K/V buffers; without it the call must
+// fail fast (the pre-v2.22 path was a silent garbage no-op — issue-v19-ring-
+// parallel-noop). This pins the input-validation contract of the new path.
+TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_RejectsMissingHiddenDim) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
         GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU sequence-parallel test";
@@ -296,29 +297,30 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttentionNotImplemented) {
                 .rank = d,
                 .world_size = sp,
                 .comm = static_cast<void*>(ctx.current_comm()),
+                // hidden_dim omitted: must be rejected, not silently computed.
             };
             RingSequenceParallelism ring(cfg);
             cuda::stream::Stream stream;
             ring.ring_attention(q, k, v, out, stream);
         }),
         std::exception)
-        << "multi-GPU ring attention must fail fast (not implemented), not "
-           "silently compute nothing";
+        << "multi-GPU ring attention with unset hidden_dim must fail fast, not "
+           "misinterpret the buffers";
 }
 
 // ============================================================================
 // v2.22 ring-attention acceptance — RingSequenceParallelism on real multi-GPU
-// (TASK-014 / issue-v19-ring-parallel-noop, replacing the DEC-004 fail-fast
-// disposition). milestone v2.22 P1 / TASK-015: RED against the current path.
+// (TASK-014 / issue-v19-ring-parallel-noop). P1 (TASK-015) shipped this as RED
+// against the DEC-004 fail-fast throw; P2 (TASK-016) implemented the ring and
+// it is now the GREEN acceptance gate.
 // ============================================================================
 
-// Contract for the real ring attention (to be implemented in P2): each rank
-// owns a local sequence shard of Q/K/V; ring_attention must return, for the
-// rank's local query tokens, the attention over the FULL KV sequence across
-// every rank (the ring walks P-1 remote blocks via send/recv, accumulating
-// with online softmax). The reference is standard scaled dot-product attention
-// over the concat of all ranks' K/V, computed in double precision on host.
-// The current ring_attention is a fail-fast throw (DEC-004), so this is RED.
+// Contract for the real ring attention: each rank owns a local sequence shard
+// of Q/K/V; ring_attention must return, for the rank's local query tokens, the
+// attention over the FULL KV sequence across every rank (the ring walks P-1
+// remote blocks via send/recv, accumulating with online softmax). The
+// reference is standard scaled dot-product attention over the concat of all
+// ranks' K/V, computed in double precision on host.
 TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_MatchesFullSequenceReference) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
@@ -412,6 +414,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_MatchesFullSequenceR
             .rank = d,
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
+            .hidden_dim = hidden,
         };
         RingSequenceParallelism ring(cfg);
         cuda::stream::Stream stream;
@@ -426,7 +429,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_MatchesFullSequenceR
                                 h_ref[rank].size(), 1e-2f))
             << "ring attention output on rank " << rank
             << " differs from the full-sequence attention reference (the "
-               "multi-GPU ring path is not a real algorithm yet — RED)";
+               "multi-GPU ring path is not computing full-sequence attention)";
     }
 }
 

@@ -368,6 +368,7 @@ set(DISTRIBUTED_SOURCES
         ${SRC_CUDA_DISTRIBUTED}/all_gather.cu
         ${SRC_CUDA_DISTRIBUTED}/barrier.cu
         ${SRC_CUDA_DISTRIBUTED}/matmul.cu
+        ${SRC_CUDA_DISTRIBUTED}/ring_attention.cu
 )
 
 set(MPI_SOURCES
