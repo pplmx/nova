@@ -77,6 +77,20 @@ __global__ void tanh_kernel(
     }
 }
 
+__global__ void silu_and_mul_kernel(
+    const float* gate,
+    const float* up,
+    float* output,
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        float g = gate[idx];
+        // out = silu(gate) * up = (gate * sigmoid(gate)) * up
+        output[idx] = (g / (1.0f + expf(-g))) * up[idx];
+    }
+}
+
 }  // anonymous namespace
 
 void relu(
@@ -165,6 +179,22 @@ void tanh_activation(
 
     tanh_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, size
+    );
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void silu_and_mul(
+    const float* gate,
+    const float* up,
+    float* output,
+    int size,
+    cudaStream_t stream
+) {
+    int block_size = 256;
+    int grid_size = (size + block_size - 1) / block_size;
+
+    silu_and_mul_kernel<<<grid_size, block_size, 0, stream>>>(
+        gate, up, output, size
     );
     CUDA_CHECK(cudaGetLastError());
 }

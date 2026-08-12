@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <random>
+#include <vector>
+
 #include "cuda/neural/activations.h"
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
 
 using namespace cuda::neural;
 
@@ -77,4 +82,51 @@ TEST_F(ActivationTest, ActivationOptionsDefaults) {
     ActivationOptions options;
     EXPECT_EQ(options.alpha, 0.01f);
     EXPECT_EQ(options.negative_slope, 0.01f);
+}
+
+// Milestone v2.21 (TASK-010): silu_and_mul is the gated-activation used by the
+// weight-managed TensorParallelMLP (gate projection through SiLU, elementwise
+// with up). Pin it against the host formula out = silu(gate) * up.
+TEST_F(ActivationTest, SiluAndMulMatchesHostFormula) {
+    const int size = 2048;
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> dist(-3.0f, 3.0f);
+    std::vector<float> gate(size), up(size);
+    for (int i = 0; i < size; ++i) {
+        gate[i] = dist(rng);
+        up[i] = dist(rng);
+    }
+
+    std::vector<float> expected(size);
+    for (int i = 0; i < size; ++i) {
+        const float g = gate[i];
+        expected[i] = (g / (1.0f + std::exp(-g))) * up[i];
+    }
+
+    cuda::memory::Buffer<float> d_gate(size), d_up(size), d_out(size);
+    d_gate.copy_from(gate.data(), size);
+    d_up.copy_from(up.data(), size);
+    cuda::neural::silu_and_mul(d_gate.data(), d_up.data(), d_out.data(), size);
+    d_out.copy_to(gate.data(), size);  // reuse gate as output scratch
+
+    for (int i = 0; i < size; ++i) {
+        EXPECT_NEAR(gate[i], expected[i], 1e-4f) << "element " << i;
+    }
+}
+
+// Negative gate inputs must flip sign like x*sigmoid(x), not clamp.
+TEST_F(ActivationTest, SiluAndMulNegativeGate) {
+    const float gate[] = {-2.0f, 0.0f, 2.0f};
+    const float up[] = {1.0f, 1.0f, 3.0f};
+    cuda::memory::Buffer<float> d_gate(3), d_up(3), d_out(3);
+    d_gate.copy_from(gate, 3);
+    d_up.copy_from(up, 3);
+    cuda::neural::silu_and_mul(d_gate.data(), d_up.data(), d_out.data(), 3);
+
+    float out[3];
+    d_out.copy_to(out, 3);
+    const float g0 = -2.0f;
+    EXPECT_NEAR(out[0], (g0 / (1.0f + std::exp(-g0))), 1e-5f);
+    EXPECT_NEAR(out[1], 0.0f, 1e-6f);
+    EXPECT_NEAR(out[2], 3.0f * (2.0f / (1.0f + std::exp(-2.0f))), 1e-5f);
 }

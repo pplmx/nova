@@ -51,4 +51,25 @@ void tanh_activation(
     cudaStream_t stream = nullptr
 );
 
+/**
+ * @brief SiLU-gated linear unit: out[i] = silu(gate[i]) * up[i]
+ *
+ * The gated activation used by the tensor-parallel MLP (TASK-010 / v2.21):
+ * gate passes through SiLU (x * sigmoid(x)), then is multiplied elementwise
+ * by the up stream, matching the standard transformer FFN gate pattern.
+ *
+ * @param gate Gate stream [size]
+ * @param up Up stream [size]
+ * @param output Output stream [size]
+ * @param size Element count
+ * @param stream CUDA stream (default null = current stream)
+ */
+void silu_and_mul(
+    const float* gate,
+    const float* up,
+    float* output,
+    int size,
+    cudaStream_t stream = nullptr
+);
+
 }  // namespace cuda::neural
