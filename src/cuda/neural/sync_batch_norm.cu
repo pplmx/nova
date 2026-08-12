@@ -36,6 +36,17 @@ __global__ void compute_mean_kernel(
     mean[feature] = sum * inv_n;
 }
 
+// Scales one per-feature stats buffer in place. Used after the multi-GPU
+// all-reduce of per-rank local statistics: the all-reduce sums R local means /
+// variances, and the true global statistics are the sum divided by R (the rank
+// count), re-derived from the rank's own shard size.
+template <typename T>
+__global__ void scale_stats_kernel(T* stats, int num_features, T scale) {
+    int feature = blockIdx.x * blockDim.x + threadIdx.x;
+    if (feature >= num_features) return;
+    stats[feature] *= scale;
+}
+
 template <typename T>
 __global__ void subtract_mean_kernel(
     const T* input,
@@ -79,7 +90,6 @@ __global__ void compute_variance_kernel(
 template <typename T>
 __global__ void normalize_kernel(
     const T* input,
-    const T* mean,
     const T* variance,
     T* output,
     int batch_size,
@@ -93,7 +103,10 @@ __global__ void normalize_kernel(
 
     int feature = (idx / spatial_size) % num_features;
     T std = sqrtf(variance[feature] + eps);
-    output[idx] = (input[idx] - mean[feature]) / std;
+    // `input` is already mean-centered (subtract_mean_kernel ran first), so
+    // normalize by dividing by the standard deviation only — subtracting the
+    // mean again here produced (x - 2*mean)/std (task-v17c discovery).
+    output[idx] = input[idx] / std;
 }
 
 template <typename T>
@@ -195,33 +208,41 @@ __global__ void backward_dvar_kernel(
 }
 
 template <typename T>
-__global__ void backward_dmean_kernel(
-    const T* d_x_norm,
-    const T* d_var,
-    const T* variance,
-    const T* centered,
-    T* d_mean,
+__global__ void backward_dxhat_sum_kernel(
+    const T* dxhat,
+    T* out,
     int batch_size,
     int num_features,
-    int spatial_size,
-    T inv_n,
+    int spatial_size
+) {
+    int feature = blockIdx.x * blockDim.x + threadIdx.x;
+    if (feature >= num_features) return;
+
+    T sum = 0.0f;
+    for (int b = 0; b < batch_size; ++b) {
+        for (int s = 0; s < spatial_size; ++s) {
+            int idx = (b * num_features + feature) * spatial_size + s;
+            sum += dxhat[idx];
+        }
+    }
+    out[feature] = sum;
+}
+
+template <typename T>
+__global__ void backward_dmean_global_kernel(
+    const T* dxhat_sum,
+    const T* variance,
+    T* d_mean,
+    int num_features,
     T eps
 ) {
     int feature = blockIdx.x * blockDim.x + threadIdx.x;
     if (feature >= num_features) return;
 
-    T sum_dxnorm = 0.0f;
-    T sum_centered = 0.0f;
-    for (int b = 0; b < batch_size; ++b) {
-        for (int s = 0; s < spatial_size; ++s) {
-            int idx = (b * num_features + feature) * spatial_size + s;
-            sum_dxnorm += d_x_norm[idx];
-            sum_centered += centered[idx];
-        }
-    }
     T inv_var_eps = 1.0f / sqrtf(variance[feature] + eps);
-    d_mean[feature] = sum_dxnorm * (-inv_var_eps) +
-                      d_var[feature] * (-2.0f * inv_n) * sum_centered;
+    // d_mean = -sigma^{-1} * sum_dxhat; the sum(x - mean) term vanishes over the
+    // full batch (see caller comment).
+    d_mean[feature] = dxhat_sum[feature] * (-inv_var_eps);
 }
 
 template <typename T>
@@ -422,6 +443,17 @@ void SyncBatchNorm::forward_training(
             distributed::ReductionOp::Sum,
             stream
         );
+        // The all-reduce summed R per-rank local means; the global mean is that
+        // sum divided by R. Without this the normalize step uses R x the true
+        // mean and the multi-GPU output diverges from a single-rank global
+        // batch (task-v17c-syncbn-multigpu-backward).
+        //
+        // Constraint: dividing by the rank count is exact only when every rank
+        // passes an identically-sized batch shard (the data-parallel
+        // convention). Unequal shards would need a sample-count-weighted
+        // aggregation; callers must keep shards equal.
+        scale_stats_kernel<float><<<grid_size, block_size, 0, stream>>>(
+            saved_mean_, num_features_, 1.0f / static_cast<float>(device_count));
     }
 
     subtract_mean_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
@@ -436,10 +468,15 @@ void SyncBatchNorm::forward_training(
             distributed::ReductionOp::Sum,
             stream
         );
+        // Same 1/R scaling for the variance: each rank's local variance is
+        // computed around the (now-global) mean, the all-reduce sums them, and
+        // dividing by R yields the global variance.
+        scale_stats_kernel<float><<<grid_size, block_size, 0, stream>>>(
+            saved_var_, num_features_, 1.0f / static_cast<float>(device_count));
     }
 
     normalize_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
-        output, saved_mean_, saved_var_, output,
+        output, saved_var_, output,
         batch_size, num_features_, spatial_size, eps_);
 
     scale_bias_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
@@ -488,6 +525,16 @@ void SyncBatchNorm::backward(
     int grid_size = (num_features_ + block_size - 1) / block_size;
     float inv_n = 1.0f / static_cast<float>(batch_size * spatial_size);
 
+    // On multi-GPU, d_input/d_mean/d_var gradients are normalized by the GLOBAL
+    // batch size (all ranks concatenated); each rank accumulates only its local
+    // shard, so fold 1/num_ranks into inv_n to match a single-rank global batch
+    // (task-v17c-syncbn-multigpu-backward). d_gamma/d_beta are bare sums and are
+    // all-reduced below independently of inv_n.
+    int device_count = mesh::DeviceMesh::instance().device_count();
+    if (device_count > 1) {
+        inv_n /= static_cast<float>(device_count);
+    }
+
     // RAII device buffers: the previous raw cudaMalloc/cudaFree pair leaked all
     // already-allocated buffers if any intermediate CUDA_CHECK threw.
     cuda::memory::unique_ptr<float> d_x_norm(n);
@@ -495,6 +542,7 @@ void SyncBatchNorm::backward(
     cuda::memory::unique_ptr<float> normalized_tmp(n);
     cuda::memory::unique_ptr<float> d_var(num_features_);
     cuda::memory::unique_ptr<float> d_mean(num_features_);
+    cuda::memory::unique_ptr<float> d_xhat_sum(num_features_);
 
     compute_centered_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         input, saved_mean_, centered_input.get(),
@@ -512,9 +560,36 @@ void SyncBatchNorm::backward(
         d_x_norm.get(), centered_input.get(), saved_var_, d_var.get(),
         batch_size, num_features_, spatial_size, inv_n, eps_);
 
-    backward_dmean_kernel<float><<<grid_size, block_size, 0, stream>>>(
-        d_x_norm.get(), d_var.get(), saved_var_, centered_input.get(), d_mean.get(),
-        batch_size, num_features_, spatial_size, inv_n, eps_);
+    // Per-feature sum of dxhat over this rank's shard; all-reduced below so
+    // d_mean uses the GLOBAL sum (d_mean must be identical on every rank).
+    backward_dxhat_sum_kernel<float><<<grid_size, block_size, 0, stream>>>(
+        d_x_norm.get(), d_xhat_sum.get(),
+        batch_size, num_features_, spatial_size);
+
+    // The mean/variance gradients are global quantities: every rank feeds them
+    // into the same d_input formula, so all-reduce the per-feature d_var and
+    // d_xhat_sum before assembling d_mean. (d_gamma/d_beta are all-reduced
+    // below.) On a single GPU these reduce to identity.
+    if (device_count > 1) {
+        distributed::DistributedReduce::all_reduce_async(
+            d_var.get(), d_var.get(), num_features_,
+            distributed::ReductionOp::Sum,
+            stream
+        );
+        distributed::DistributedReduce::all_reduce_async(
+            d_xhat_sum.get(), d_xhat_sum.get(), num_features_,
+            distributed::ReductionOp::Sum,
+            stream
+        );
+    }
+
+    // Global mean gradient: d_mean = -sigma^{-1} * sum_dxhat. The standard BN
+    // derivation also has a term d_var * (-2/N) * sum(x - mean), which is zero
+    // over the full batch (sum(x - mean) == 0 by definition of the mean), so it
+    // is omitted; including it would require a further all-reduce of sum(x-mean)
+    // that is identically zero.
+    backward_dmean_global_kernel<float><<<grid_size, block_size, 0, stream>>>(
+        d_xhat_sum.get(), saved_var_, d_mean.get(), num_features_, eps_);
 
     backward_dinput_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         d_x_norm.get(), centered_input.get(), saved_var_, d_var.get(), d_mean.get(), d_input,
@@ -528,8 +603,7 @@ void SyncBatchNorm::backward(
         d_output, d_beta,
         batch_size, num_features_, spatial_size);
 
-    auto& mesh = mesh::DeviceMesh::instance();
-    if (mesh.device_count() > 1) {
+    if (device_count > 1) {
         distributed::DistributedReduce::all_reduce_async(
             d_gamma, d_gamma, num_features_,
             distributed::ReductionOp::Sum,
