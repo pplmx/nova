@@ -129,9 +129,15 @@ void TensorParallelMatmul::matmul_async(
         return;
     }
 
-    // Rank is the thread's currently-active device (thread-per-rank harness).
-    int rank = 0;
-    CUDA_CHECK(cudaGetDevice(&rank));
+    // Rank is the thread's currently-active device resolved through the NCCL
+    // group (thread-per-rank harness). rank_of_device() validates membership
+    // and throws NcclException when the active device is not in the group —
+    // unlike a raw device index, it stays correct for non-default NCCL groups
+    // (e.g. {0,2,5} or reordered device ids) and fails fast on OOB devices
+    // instead of reading/writing the wrong B/C block.
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    const int rank = ctx_.rank_of_device(device);
 
     cublasHandle_t handle = ensure_handle();
 
@@ -161,9 +167,18 @@ void TensorParallelMatmul::matmul_async(
         column_block_sgemm(handle, A, B, C, m, n, k, rank, local_n, stream);
 
         if (ctx_.has_nccl()) {
-            reducer_.all_reduce_async(
+            // Propagate collective failures instead of silently returning
+            // success with garbage output (a dead/aborted comm, timeout, or
+            // async NCCL error otherwise folds into an unchecked NcclResult).
+            ::cuda::nccl::NcclResult result = reducer_.all_reduce_async(
                 C, C, static_cast<size_t>(m) * n,
                 ncclFloat32, ncclSum, stream);
+            if (!result.ok()) {
+                throw ::cuda::nccl::NcclException(
+                    result.error_message.c_str(), result.code,
+                    "TensorParallelMatmul::matmul_async column AllReduce",
+                    __FILE__, __LINE__);
+            }
         }
     } else {
         // Split A along m: each rank owns rows [rank*local_m, +local_m); B is

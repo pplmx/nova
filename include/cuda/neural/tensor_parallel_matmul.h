@@ -31,9 +31,11 @@ enum class TensorParallelStrategy {
      *  Input A is replicated, output C is identical on all GPUs */
     ColumnParallel,
 
-    /** Split weight matrix along input dimension (k)
-     *  Each GPU computes A_part @ B, no communication needed
-     *  Input A must be partitioned, output C is partitioned */
+    /** Split the output rows along m: each GPU computes A's row block @ B,
+     *  no communication needed. A is replicated (each rank indexes its own
+     *  contiguous row block of the shared buffer); output C is partitioned —
+     *  rank r writes the reference's rows [r*local_m, (r+1)*local_m) into its
+     *  own C[0, local_m*n). */
     RowParallel
 };
 

@@ -306,9 +306,8 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallel) {
         TensorParallelMatmul tpm(ctx, TensorParallelStrategy::RowParallel);
         tpm.matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
 
-        // Contract: rank r returns ITS contiguous row block in C[0, local_m*n).
-        // (The current implementation ignores the rank index entirely and writes
-        // the same second block on every rank — ——.)
+        // Contract: rank r returns ITS contiguous row block in C[0, local_m*n)
+        // (the union of the per-rank buffers reconstructs the full result).
         d_C.copy_to(h_results[d].data(), local_m * n);
     });
 
@@ -319,4 +318,42 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallel) {
             << "RowParallel TP matmul row block on rank " << rank
             << " differs from the single-GPU reference";
     }
+}
+
+// RowParallel with m NOT divisible by tp_degree: must reject the shape
+// explicitly (same fail-fast contract as the column path), not silently drop
+// rows. Complement to the ColumnParallel non-divisible test (MEDIUM-6).
+TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallelNonDivisible) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU TP matmul test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU TP matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    const int m = 8 * device_count + 1, n = 48, k = 16;  // m % tp_degree == 1
+    ASSERT_NE(m / device_count * device_count, m) << "m must not be divisible";
+
+    std::vector<float> h_A(m * k), h_B(k * n);
+    fill_random(h_A.data(), m * k);
+    fill_random(h_B.data(), k * n);
+
+    EXPECT_THROW(
+        run_per_rank(device_count, [&](int d) {
+            cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m);
+            d_A.copy_from(h_A.data(), m * k);
+            d_B.copy_from(h_B.data(), k * n);
+
+            TensorParallelMatmul tpm(ctx, TensorParallelStrategy::RowParallel);
+            tpm.matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
+        }),
+        std::exception)
+        << "RowParallel TP matmul with m % tp_degree != 0 must reject the "
+           "shape explicitly instead of silently dropping rows";
 }
