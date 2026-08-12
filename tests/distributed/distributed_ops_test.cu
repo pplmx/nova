@@ -388,12 +388,30 @@ TEST_F(MeshBarrierTest, NoDeadlock) {
     auto& mesh = DeviceMesh::instance();
     int n = mesh.device_count();
 
-    // This test primarily verifies no deadlock occurs
+    // This test primarily verifies no deadlock occurs: 10 back-to-back
+    // barriers, every rank entering each one. On multi-GPU the barrier is a
+    // genuine per-rank NCCL collective, so one thread per device must enter —
+    // a single host thread calling synchronize() repeatedly would stall the
+    // collective (the pre-v2.18 event-poll hid this by not rendezvousing at
+    // all).
     MeshBarrier barrier;
 
-    for (int iteration = 0; iteration < 10; ++iteration) {
-        EXPECT_NO_THROW(barrier.synchronize());
+    if (n <= 1) {
+        for (int iteration = 0; iteration < 10; ++iteration) {
+            EXPECT_NO_THROW(barrier.synchronize());
+        }
+        return;
     }
+
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
+    }
+
+    run_per_rank(n, [&](int) {
+        for (int iteration = 0; iteration < 10; ++iteration) {
+            barrier.synchronize();
+        }
+    });
 }
 
 TEST_F(MeshBarrierTest, AsyncBarrier) {
@@ -501,11 +519,11 @@ TEST(DeviceMeshIntegration, MultiGpuAvailable) {
 // before all ranks arrived). `released[d]` is set only after that check passes,
 // so the barrier must have genuinely waited for all ranks.
 //
-// DISABLED_ in the P1 checkpoint (TASK-001): both tests FAIL RED against the
-// legacy event-poll MeshBarrier (rank 0 released before rank 1 reached) — see
-// HYP-001 / EV-001. They are the P2 acceptance tests; P2 (TASK-002) converges
-// barrier.cu onto NcclBarrier and re-enables them.
-TEST_F(MeshBarrierTest, DISABLED_MultiGpu_BarrierRendezvous) {
+// P1 (TASK-001) proved these FAIL RED against the legacy event-poll MeshBarrier
+// (rank 0 released before rank 1 reached) — HYP-001 / EV-001. P2 (TASK-002)
+// converged barrier.cu onto NcclBarrier; they are now enabled as its acceptance
+// tests.
+TEST_F(MeshBarrierTest, MultiGpu_BarrierRendezvous) {
     if (!multigpu_nccl_ready()) {
         GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
     }
@@ -544,8 +562,68 @@ TEST_F(MeshBarrierTest, DISABLED_MultiGpu_BarrierRendezvous) {
     }
 }
 
+// Rendezvous through the async variant: each rank posts the barrier on its own
+// stream, then synchronizes that stream before the rendezvous check. This is
+// the multi-GPU coverage for synchronize_async (the pre-convergence AsyncBarrier
+// test is single-GPU-only).
+TEST_F(MeshBarrierTest, MultiGpu_SynchronizeAsyncRendezvous) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
+    }
+    const int n = DeviceMesh::instance().device_count();
+
+    std::vector<std::atomic<bool>> reached(n);
+    std::vector<std::atomic<bool>> released(n);
+    for (int d = 0; d < n; ++d) {
+        reached[d].store(false);
+        released[d].store(false);
+    }
+
+    run_per_rank(n, [&](int d) {
+        if (d > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(d * 15));
+        }
+        reached[d].store(true, std::memory_order_release);
+
+        MeshBarrier barrier;
+        cudaStream_t stream = nullptr;
+        CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+        EXPECT_NO_THROW(barrier.synchronize_async(stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaStreamDestroy(stream));
+
+        for (int r = 0; r < n; ++r) {
+            EXPECT_TRUE(reached[r].load(std::memory_order_acquire))
+                << "rank " << d << " (synchronize_async) released before rank "
+                << r << " reached";
+        }
+        released[d].store(true, std::memory_order_release);
+    });
+
+    for (int d = 0; d < n; ++d) {
+        EXPECT_TRUE(released[d].load()) << "rank " << d << " never released";
+    }
+}
+
+// Contract: on a multi-GPU box synchronize_devices() accepts only the full
+// NCCL group; a proper subset (e.g. a single device) must throw rather than
+// silently device-sync on the calling thread's device (the pre-v2.18 event-poll
+// honored neither the device list nor a real rendezvous).
+TEST_F(MeshBarrierTest, MultiGpu_SynchronizeSubsetThrows) {
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
+    }
+    const int n = DeviceMesh::instance().device_count();
+
+    std::vector<int> subset = {0};
+    run_per_rank(n, [&](int) {
+        MeshBarrier barrier;
+        EXPECT_THROW(barrier.synchronize_devices(subset), cuda::nccl::NcclException);
+    });
+}
+
 // Same rendezvous check through synchronize_devices() on the full mesh.
-TEST_F(MeshBarrierTest, DISABLED_MultiGpu_SynchronizeDevicesRendezvous) {
+TEST_F(MeshBarrierTest, MultiGpu_SynchronizeDevicesRendezvous) {
     if (!multigpu_nccl_ready()) {
         GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
     }

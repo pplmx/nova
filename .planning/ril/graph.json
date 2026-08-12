@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 17,
+  "round": 18,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T00:58:09+00:00",
+  "updated_at": "2026-08-12T02:29:46+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -240,7 +240,7 @@
       "version": 1,
       "created_at": "2026-08-11T08:57:51+00:00",
       "updated_at": "2026-08-11T08:57:51+00:00",
-      "touched_round": 17,
+      "touched_round": 18,
       "title": "High-level distributed ops (DistributedReduce/DistributedAllGather/DistributedBroadcast/MeshBarrier - src/cuda/distributed/{reduce,all_gather,broadcast,barrier}.cu)"
     },
     "issue-v17-dist-ops-multigpu-untested": {
@@ -371,7 +371,7 @@
       "version": 1,
       "created_at": "2026-08-11T11:20:05+00:00",
       "updated_at": "2026-08-11T11:20:05+00:00",
-      "touched_round": 17,
+      "touched_round": 18,
       "severity": 2,
       "title": "One-off >120s stall in MultiGpu_AllReduceDistinctData on 2 GPUs; not reproducible across 5x repeats - investigate before milestone close"
     },
@@ -382,7 +382,7 @@
       "version": 1,
       "created_at": "2026-08-11T11:20:05+00:00",
       "updated_at": "2026-08-11T11:20:05+00:00",
-      "touched_round": 17,
+      "touched_round": 18,
       "severity": 2,
       "title": "MeshBarrier multi-GPU convergence deferred: per-instance host event poll with non-threadsafe barriering_ flag; needs a proper per-rank multi-GPU test before re-routing onto NcclBarrier"
     },
@@ -421,6 +421,89 @@
       "confidence": 1.0,
       "source": "tests/neural/sync_batch_norm_test.cu MultiGpu_MatchesGlobalBatchReference on 2x A100, Round 17 P3",
       "summary": "SyncBatchNorm multi-GPU forward+backward matches an independent host reference over the global batch (was wrong before: R x stats + normalize double-centering). Cross-suite 23/23; full suite 1456/1423/0."
+    },
+    "DEC-001": {
+      "id": "DEC-001",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T02:19:33+00:00",
+      "updated_at": "2026-08-12T02:19:33+00:00",
+      "touched_round": 18,
+      "rationale": "Milestone v2.18: converged DistributedReduce/AllGather/Broadcast onto the verified NCCL layer in v2.17 but deliberately deferred MeshBarrier, the last high-level distributed op still on the legacy per-instance host-event-poll path (barrier.cu, non-threadsafe barriering_ flag, cross-thread cudaEventQuery polling; no real per-rank multi-GPU test — NoDeadlock runs single-host-thread). The R15-R17 pattern is that every never-run multi-GPU surface has hidden real bugs, and MeshBarrier multi-GPU is now effectively never-run (only the single-GPU tests exercise it; the event-poll loop has never been driven from real per-rank threads). Plan: (P1) build a real thread-per-rank multi-GPU MeshBarrier test (synchronize + synchronize_devices driven concurrently per rank) to expose defects and gather evidence; (P2) converge MeshBarrier onto the verified NcclBarrier layer (current_comm routing, sync/async preserved, single-GPU fallback kept) and flip the new tests on; (P3) distributed-ops harness robustness — isolate the tracked harness flake (issue-v17-dist-ops-harness-flake) and the R16 review HIGH-B shared-NcclContext poisoning if a rank exits a collective early (readiness/fault exchange hardening).",
+      "alternatives_rejected": "Skipping MeshBarrier and closing the milestone (it is the last unconverged v1.1 primitive and its multi-GPU path has never been genuinely exercised); converging barrier.cu wholesale before writing the per-rank test (the P1 evidence-driven flow worked for the three data ops in v2.17); opening a deep-dive milestone instead (the two open issues and the MeshBarrier gap scope this milestone more tightly)."
+    },
+    "TASK-001": {
+      "id": "TASK-001",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-08-12T02:19:45+00:00",
+      "updated_at": "2026-08-12T02:29:46+00:00",
+      "touched_round": 18,
+      "category": "core-feature",
+      "severity": 3,
+      "title": "MeshBarrier per-rank multi-GPU test harness (synchronize + synchronize_devices driven thread-per-rank)"
+    },
+    "TASK-002": {
+      "id": "TASK-002",
+      "type": "task",
+      "status": "active",
+      "version": 2,
+      "created_at": "2026-08-12T02:19:50+00:00",
+      "updated_at": "2026-08-12T02:29:46+00:00",
+      "touched_round": 18,
+      "category": "core-feature",
+      "severity": 3,
+      "title": "Converge MeshBarrier onto verified NcclBarrier layer (sync/async preserved, single-GPU fallback kept); flip multi-GPU tests on",
+      "lock_owner": "auto-r18",
+      "lock_until": "2026-08-12T04:29:46+00:00"
+    },
+    "TASK-003": {
+      "id": "TASK-003",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T02:19:56+00:00",
+      "updated_at": "2026-08-12T02:19:56+00:00",
+      "touched_round": 18,
+      "category": "stability",
+      "severity": 3,
+      "title": "Distributed-ops harness robustness: isolate harness flake + R16 HIGH-B shared-NcclContext poisoning hardening"
+    },
+    "HYP-001": {
+      "id": "HYP-001",
+      "type": "hypothesis",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T02:26:40+00:00",
+      "updated_at": "2026-08-12T02:26:40+00:00",
+      "touched_round": 18,
+      "confidence": 0.9,
+      "title": "Legacy MeshBarrier multi-GPU path (per-instance host event-poll on internal streams) does not enforce cross-rank arrival: events on empty streams fire immediately so a rank is released before all ranks reach the barrier"
+    },
+    "EV-001": {
+      "id": "EV-001",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T02:26:52+00:00",
+      "updated_at": "2026-08-12T02:26:52+00:00",
+      "touched_round": 18,
+      "source": "tests/distributed/distributed_ops_test.cu:493 (MultiGpu_BarrierRendezvous); MultiGpu_SynchronizeDevicesRendezvous:530,570",
+      "confidence": 1.0,
+      "title": "On 2x A100 both new per-rank MeshBarrier tests FAIL RED: rank 0 released before rank 1 reached the barrier (reached[1]==false after synchronize() returns) - legacy event-poll fires immediately on empty internal streams"
+    },
+    "CHG-001": {
+      "id": "CHG-001",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T02:29:34+00:00",
+      "updated_at": "2026-08-12T02:29:34+00:00",
+      "touched_round": 18,
+      "commit": "c5f302a",
+      "title": "test(distributed): per-rank MeshBarrier multi-GPU rendezvous tests (RED proof of legacy premature release)"
     }
   },
   "edges": [
@@ -615,6 +698,54 @@
       "to": "task-v17c-syncbn-multigpu-backward",
       "type": "implements",
       "created_at": "2026-08-12T00:57:24+00:00"
+    },
+    {
+      "from": "DEC-001",
+      "to": "comp-dist-ops",
+      "type": "governs",
+      "created_at": "2026-08-12T02:20:00+00:00"
+    },
+    {
+      "from": "TASK-001",
+      "to": "issue-v17-meshbarrier-multigpu",
+      "type": "addresses",
+      "created_at": "2026-08-12T02:20:00+00:00"
+    },
+    {
+      "from": "TASK-002",
+      "to": "TASK-001",
+      "type": "depends_on",
+      "created_at": "2026-08-12T02:20:00+00:00"
+    },
+    {
+      "from": "TASK-002",
+      "to": "issue-v17-meshbarrier-multigpu",
+      "type": "addresses",
+      "created_at": "2026-08-12T02:20:18+00:00"
+    },
+    {
+      "from": "TASK-003",
+      "to": "issue-v17-dist-ops-harness-flake",
+      "type": "addresses",
+      "created_at": "2026-08-12T02:20:18+00:00"
+    },
+    {
+      "from": "TASK-003",
+      "to": "TASK-002",
+      "type": "depends_on",
+      "created_at": "2026-08-12T02:20:18+00:00"
+    },
+    {
+      "from": "EV-001",
+      "to": "HYP-001",
+      "type": "validates",
+      "created_at": "2026-08-12T02:26:57+00:00"
+    },
+    {
+      "from": "CHG-001",
+      "to": "TASK-001",
+      "type": "implements",
+      "created_at": "2026-08-12T02:29:34+00:00"
     }
   ]
 }
