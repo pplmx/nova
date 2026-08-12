@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 21,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T10:26:09+00:00",
+  "updated_at": "2026-08-12T10:41:14+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -710,7 +710,7 @@
       "version": 1,
       "created_at": "2026-08-12T06:27:13+00:00",
       "updated_at": "2026-08-12T06:27:13+00:00",
-      "touched_round": 18,
+      "touched_round": 21,
       "title": "RingSequenceParallelism::ring_attention's multi-GPU path (NOVA_NCCL_ENABLED branch) is an empty no-op: it (void)s all arguments and does nothing; send_recv_kv is declared but never defined, so ring sequence parallelism computes nothing on multi-GPU.",
       "severity": 2
     },
@@ -981,6 +981,18 @@
       "touched_round": 20,
       "commit": "a404361 f04c689",
       "title": "v2.21: silu_and_mul kernel + weight-managed TensorParallelLayers (col shard / row AllReduce / gated MLP) replacing DEC-006 fail-fast stubs"
+    },
+    "TASK-014": {
+      "id": "TASK-014",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T10:33:20+00:00",
+      "updated_at": "2026-08-12T10:33:20+00:00",
+      "touched_round": 21,
+      "title": "Follow-up (feature, v2.22 candidate): implement RingSequenceParallelism multi-GPU ring attention for real — send_recv_kv over verified NCCL P2P + incremental softmax, reference parity vs the single-GPU sparse-KV attention; replaces the DEC-004 fail-fast disposition (issue-v19-ring-parallel-noop)",
+      "category": "core-feature",
+      "severity": 2
     }
   },
   "edges": [
@@ -1427,6 +1439,12 @@
       "to": "TASK-013",
       "type": "implements",
       "created_at": "2026-08-12T10:25:51+00:00"
+    },
+    {
+      "from": "TASK-014",
+      "to": "issue-v19-ring-parallel-noop",
+      "type": "addresses",
+      "created_at": "2026-08-12T10:41:14+00:00"
     }
   ]
 }
