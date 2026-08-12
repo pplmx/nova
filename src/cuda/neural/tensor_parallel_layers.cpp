@@ -79,6 +79,9 @@ ColumnParallelLayer::ColumnParallelLayer(
     int out_features)
     : ctx_(ctx), in_features_(in_features), out_features_(out_features) {
     const int tp = tp_degree();
+    if (in_features_ <= 0) {
+        throw_shape_error("ColumnParallelLayer requires a positive in_features");
+    }
     if (out_features_ <= 0) {
         throw_shape_error("ColumnParallelLayer requires a positive out_features");
     }
@@ -181,6 +184,9 @@ RowParallelLayer::RowParallelLayer(
     const int tp = tp_degree();
     if (in_features_ <= 0) {
         throw_shape_error("RowParallelLayer requires a positive in_features");
+    }
+    if (out_features_ <= 0) {
+        throw_shape_error("RowParallelLayer requires a positive out_features");
     }
     if (tp > 1 && in_features_ % tp != 0) {
         throw_shape_error(

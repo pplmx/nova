@@ -5,8 +5,10 @@
 #include "cuda/memory/buffer-inl.h"
 #include "cuda/stream/stream.h"
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #if defined(NOVA_NCCL_ENABLED)
@@ -349,8 +351,16 @@ inline void SequenceParallelAttention::all_reduce_sequence(
 inline RingSequenceParallelism::RingSequenceParallelism(
     const SequenceParallelConfig& config
 ) : config_(config) {
-    prev_rank_ = (config_.rank - 1 + config_.world_size) % config_.world_size;
-    next_rank_ = (config_.rank + 1) % config_.world_size;
+    // A ring needs at least 2 ranks; world_size 0/1 would make the modulo
+    // below UB (division by zero) or self-loops. The multi-GPU ring path also
+    // fails fast without a valid world_size, so these stay -1 and are never
+    // used on the single-GPU fallback.
+    prev_rank_ = -1;
+    next_rank_ = -1;
+    if (config_.world_size >= 2) {
+        prev_rank_ = (config_.rank - 1 + config_.world_size) % config_.world_size;
+        next_rank_ = (config_.rank + 1) % config_.world_size;
+    }
 }
 
 inline RingSequenceParallelism::~RingSequenceParallelism() = default;
@@ -384,9 +394,17 @@ inline void RingSequenceParallelism::send_recv_kv(
     const ncclResult_t group = ncclGroupEnd();
     if (r != ncclSuccess || r2 != ncclSuccess || r3 != ncclSuccess ||
         r4 != ncclSuccess || group != ncclSuccess) {
+        // Preserve the per-op ncclResult_t so a ring KV failure is diagnosable
+        // (which op + GPU it broke on). Full comm-poisoning recovery
+        // (mark_comm_aborted) needs an NcclContext reference the config does
+        // not carry — tracked as a library-level follow-up.
         throw std::runtime_error(
             "RingSequenceParallelism::send_recv_kv: NCCL send/recv failed "
-            "(ring KV exchange)");
+            "(ring KV exchange; send-K=" + std::to_string(r) +
+            " recv-K=" + std::to_string(r2) +
+            " send-V=" + std::to_string(r3) +
+            " recv-V=" + std::to_string(r4) +
+            " group=" + std::to_string(group) + ")");
     }
     CUDA_CHECK(cudaGetLastError());
 #else
@@ -437,15 +455,34 @@ inline void RingSequenceParallelism::ring_attention(
             "RingSequenceParallelism::ring_attention: multi-GPU ring requires "
             "a live communicator (config.comm)");
     }
-    const int local_seq = static_cast<int>(elems / static_cast<size_t>(hidden));
+    // The ring must walk exactly the gates' parallelism degree: a config whose
+    // world_size disagrees with sequence_parallel_size would silently attend
+    // only a prefix of the full sequence — fail fast instead (the class of
+    // "silent partial attention" this milestone set out to eliminate).
+    const int sp = config_.world_size;
+    if (sp < 2 || sp != config_.sequence_parallel_size) {
+        throw std::invalid_argument(
+            "RingSequenceParallelism::ring_attention: world_size and "
+            "sequence_parallel_size must be equal and >= 2 for the multi-GPU "
+            "ring");
+    }
+    const size_t local_seq_sz = elems / static_cast<size_t>(hidden);
+    if (local_seq_sz > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "RingSequenceParallelism::ring_attention: local sequence size "
+            "exceeds the supported int range");
+    }
+    const int local_seq = static_cast<int>(local_seq_sz);
     if (output.size() < elems) {
         output = memory::Buffer<float>(elems);
     }
 
+    // Buffer geometry in size_t so the intermediate sizes cannot overflow int.
+    const size_t block_elems = static_cast<size_t>(local_seq) * hidden;
     memory::Buffer<float> running_max(local_seq);
     memory::Buffer<float> running_l(local_seq);
-    memory::Buffer<float> cur_k(local_seq * hidden), cur_v(local_seq * hidden);
-    memory::Buffer<float> nx_k(local_seq * hidden), nx_v(local_seq * hidden);
+    memory::Buffer<float> cur_k(block_elems), cur_v(block_elems);
+    memory::Buffer<float> nx_k(block_elems), nx_v(block_elems);
     cur_k.copy_from(key.data(), elems);
     cur_v.copy_from(value.data(), elems);
 
@@ -453,7 +490,6 @@ inline void RingSequenceParallelism::ring_attention(
     ring_attn_init(output.data(), running_max.data(), running_l.data(),
                    local_seq, hidden, stream.get());
 
-    const int sp = config_.world_size;
     for (int step = 0; step < sp; ++step) {
         ring_attn_block(query.data(), cur_k.data(), cur_v.data(),
                         output.data(), running_max.data(), running_l.data(),

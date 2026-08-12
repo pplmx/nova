@@ -165,7 +165,9 @@ public:
      * @param output Output tensor [batch * seq x out_features]
      * @param batch Batch size
      * @param seq Sequence length
-     * @throws NcclException when the multi-GPU AllReduce fails / NCCL absent
+     * @throws std::invalid_argument when tp > 1 without an initialized NCCL
+     *        context (the replicated output cannot be reconstructed); throws
+     *        NcclException when the multi-GPU AllReduce itself fails
      */
     void forward(const float* input, float* output, int batch, int seq);
 
