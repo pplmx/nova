@@ -15,12 +15,14 @@
  * cudaSetDevice, all entering the operation together, and the result asserted
  * against a single-GPU reference.
  *
- * The tests are shipped DISABLED_* (P1 checkpoint convention): they are
- * expected RED — the milestone hypothesis HYP-002 is that the ColumnParallel
- * path's partition math (contiguous-slice B/C offsets against a row-major
- * matmul) produces numerically wrong output on real multi-GPU. They become the
- * acceptance tests for P2 and are renamed MultiGpu_* once the path is converged
- * onto the verified NCCL layer.
+ * P1 (round 19) shipped bug-finding variants of these as DISABLED_MultiGpu_*
+ * and proved them RED (HYP-002 / EV-004): the ColumnParallel partition math
+ * (contiguous-slice B/C offsets) produced wrong output against a row-major
+ * matmul, n % tp != 0 was silently dropped instead of rejected, and RowParallel
+ * ignored the rank index. P2 converged the implementation onto the corrected
+ * partition math (zero-padded strided block compute + a single AllReduce;
+ * per-rank row blocks; explicit shape rejection) — these renamed MultiGpu_*
+ * tests are the green acceptance gate.
  */
 
 #include <gtest/gtest.h>
@@ -101,15 +103,14 @@ protected:
 };
 
 // ============================================================================
-// P1 RED acceptance tests — TensorParallelMatmul on real multi-GPU
+// P2 acceptance tests — TensorParallelMatmul on real multi-GPU
 // ============================================================================
 
 // Column-parallel forward: every rank drives the genuine multi-GPU path with
 // the shared NcclContext singleton; the full result must match the single-GPU
-// reference on every rank. Expected RED (HYP-002): the implementation slices B
-// and C as contiguous blocks (column-major offsets) against a row-major matmul
-// and then AllReduce-sums disjoint output slices.
-TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelColumnParallel) {
+// reference on every rank (a 1e-2 bound absorbs fp32 accumulate-order
+// differences across the slice-then-AllReduce path).
+TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelColumnParallel) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
         GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU TP matmul test";
@@ -160,7 +161,7 @@ TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelColumnParalle
 
 // Same as above but through matmul_async on a per-rank stream (the path
 // collectives are ordered on).
-TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelColumnParallelAsync) {
+TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelColumnParallelAsync) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
         GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU TP matmul test";
@@ -214,13 +215,11 @@ TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelColumnParalle
     }
 }
 
-// Column-parallel with n NOT divisible by tp_degree. The current implementation
-// computes local_n = n / tp_degree and silently drops the remainder columns, so
-// a correct contraction contract must reject the shape explicitly (the library's
-// fail-fast convention — cf. MeshBarrier's subset-throws contract). This test
-// pins that contract: a non-divisible n must raise rather than silently emit
-// partial/wrong output. Expected RED: the current implementation never throws.
-TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelColumnParallelNonDivisible) {
+// Column-parallel with n NOT divisible by tp_degree. A correct contraction
+// contract must reject the shape explicitly (the library's fail-fast
+// convention — cf. MeshBarrier's subset-throws contract) rather than silently
+// dropping the remainder columns. This test pins that contract.
+TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelColumnParallelNonDivisible) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
         GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU TP matmul test";
@@ -269,7 +268,7 @@ TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelColumnParalle
 
 // RowParallel: each rank computes only its contiguous row block of C (no
 // communication). The union of the per-rank blocks must equal the reference.
-TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelRowParallel) {
+TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallel) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
         GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU TP matmul test";
@@ -309,7 +308,7 @@ TEST_F(TensorParallelMultiGpuTest, DISABLED_MultiGpu_TensorParallelRowParallel) 
 
         // Contract: rank r returns ITS contiguous row block in C[0, local_m*n).
         // (The current implementation ignores the rank index entirely and writes
-        // the same second block on every rank — expected RED.)
+        // the same second block on every rank — ——.)
         d_C.copy_to(h_results[d].data(), local_m * n);
     });
 

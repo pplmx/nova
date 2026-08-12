@@ -99,6 +99,7 @@ add_executable(nova-tests
     inference/integration_test.cpp
     distributed/sequence_parallel_test.cpp
     distributed/sequence_parallel_edge_test.cpp
+    distributed/sequence_parallel_multigpu_test.cu
     observability/timeline_test.cpp
     observability/bandwidth_tracker_test.cpp
     observability/kernel_stats_test.cpp

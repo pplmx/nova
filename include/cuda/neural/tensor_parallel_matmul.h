@@ -64,13 +64,15 @@ public:
         ::cuda::nccl::NcclContext& ctx,
         TensorParallelStrategy strategy);
 
-    // Non-copyable
+    ~TensorParallelMatmul();
+
+    // Non-copyable, non-movable: the NcclContext reference member and the
+    // non-movable NcclAllReduce (deleted base copy-ctor) forbid moves. Objects
+    // are constructed in place / under unique_ptr, so neither is ever needed.
     TensorParallelMatmul(const TensorParallelMatmul&) = delete;
     TensorParallelMatmul& operator=(const TensorParallelMatmul&) = delete;
-
-    // Movable
-    TensorParallelMatmul(TensorParallelMatmul&&) = default;
-    TensorParallelMatmul& operator=(TensorParallelMatmul&&) = default;
+    TensorParallelMatmul(TensorParallelMatmul&&) = delete;
+    TensorParallelMatmul& operator=(TensorParallelMatmul&&) = delete;
 
     /**
      * @brief Tensor-parallel matmul (synchronous)
@@ -138,6 +140,15 @@ public:
     }
 
 private:
+    // Lazily-created per-instance cuBLAS handle bound to the op's stream. A
+    // shared handle (get_cublas_handle) is not thread-safe and cannot be stream
+    // bound per rank; distinct instances (one per rank in the thread-per-rank
+    // harness) each own one, so the block GEMM orders correctly with the NCCL
+    // collective on the caller's stream.
+    cublasHandle_t handle_ = nullptr;
+
+    cublasHandle_t ensure_handle();
+
     ::cuda::nccl::NcclContext& ctx_;
     ::cuda::nccl::NcclAllReduce reducer_;
     TensorParallelStrategy strategy_;
