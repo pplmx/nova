@@ -6,16 +6,16 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.16 Distributed Multi-GPU Verification
 
-**Status:** Open (2026-08-11, RIL Round 17 — P1 in progress)
+**Status:** Complete (2026-08-12, RIL Round 17)
 
 **Milestone v2.17 — "Distributed Ops On Real Multi-GPU".** The high-level distributed API's
-multi-GPU paths (`DistributedReduce`, `DistributedAllGather`, `DistributedBroadcast`,
-`MeshBarrier`) are still never exercised: 10 tests skip "Requires single GPU", yet
-SyncBatchNorm's multi-GPU training path calls `DistributedReduce::all_reduce_async`. The
-recurring pattern (never-run multi-GPU path hides real bugs) applies to the legacy
-CPU-coordinated/P2P ops. Phases: P1 thread-per-rank harness + real multi-GPU tests
-(Round 17) → P2 converge on the verified NCCL layer (or fix per evidence) → P3 verify
-SyncBatchNorm multi-GPU gradient path. Decision: `decision-v17-dist-ops-real-multigpu`.
+multi-GPU paths were never exercised; they are now proven, converged, and gradient-verified:
+P1 thread-per-rank harness proved all 4 legacy paths broken (ev-v17-p1-dist-ops-failures);
+P2 converged `DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast` onto the
+verified NCCL layer (4/4 green, change-v17-p2 5c77d01); P3 corrected and verified the
+SyncBatchNorm multi-GPU gradient path against a global-batch host reference (change-v17-p3
+a8334d1), exposing a latent single-GPU mean double-centering bug. Full suite 1456/1423/0.
+Decision: `decision-v17-dist-ops-real-multigpu`. Follow-ups tracked: flake, MeshBarrier.
 
 ## Completed (v2.16 Distributed Multi-GPU Verification)
 

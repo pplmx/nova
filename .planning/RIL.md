@@ -9,16 +9,16 @@ Verification"** opened at Round 15 and **closed at Round 16** → **v2.17 "Distr
 Real Multi-GPU"** opened at Round 17 (P1 in progress).
 
 ## Latest round
-- **Round 17 (2026-08-11)** — milestone v2.17 kickoff; **P1 + P2 complete**. P1: built a
-  thread-per-rank harness + 4 real multi-GPU tests (`ev-v17-p1-dist-ops-failures`) proving all
-  4 legacy high-level ops multi-GPU paths fail for real (all-reduce wrong sum, all-gather
-  self-data, broadcast never arrives), committed `DISABLED_` as ready acceptance tests. P2
-  (`change-v17-p2` 5c77d01): converged `DistributedReduce`/`DistributedAllGather`/
-  `DistributedBroadcast` onto the verified NCCL layer (`current_comm` routing; async now
-  honors the caller's stream; legacy CPU-coordinated/P2P paths deleted); all 4 tests flipped ON
-  and pass (4/4, was 4/4 fail). Full suite 1455/1423/0 EXIT=0. Follow-ups tracked:
-  `issue-v17-dist-ops-harness-flake` (rare 2-GPU stall), `issue-v17-meshbarrier-multigpu`
-  (MeshBarrier convergence deferred). See `ril_autonomous_round17.md`.
+- **Round 17 (2026-08-11/12)** — milestone v2.17 kickoff through **close (P1+P2+P3)**. P1:
+  harness + 4 real multi-GPU tests (`ev-v17-p1-dist-ops-failures`) proving all 4 legacy
+  high-level ops multi-GPU paths fail. **P2** (`change-v17-p2` 5c77d01): converged
+  `DistributedReduce`/`DistributedAllGather`/`DistributedBroadcast` onto the verified NCCL
+  layer; 4/4 green. **P3** (`change-v17-p3` a8334d1): SyncBatchNorm multi-GPU path corrected
+  against a global-batch host reference — forward 1/R stat scaling + latent single-GPU mean
+  double-centering, backward global d_var/d_mean all-reduce; multi-GPU test 1/1, single-GPU
+  8/8, cross-suite 23/23, full suite 1456/1423/0 EXIT=0. `issue-v17-dist-ops-multigpu-untested`
+  resolved; milestone **closed**. Two tracked follow-ups: `issue-v17-dist-ops-harness-flake`,
+  `issue-v17-meshbarrier-multigpu`. See `ril_autonomous_round17.md`.
 - **Round 16 (2026-08-11)** — milestone v2.16 Phase 3: implemented the real distributed matmul
   multi-GPU path `DistributedMatmul::matmul_multi_gpu` (row-split compute + NCCL all-gather) and
   replaced the last unconditional distributed skip with three real multi-GPU tests
@@ -36,11 +36,11 @@ Real Multi-GPU"** opened at Round 17 (P1 in progress).
   `ril_autonomous_round15.md`.
 
 ## Active tasks (by priority_score; threshold 3.0)
-| score | task | status |
-|-------|------|--------|
-| 14.31 | task-v17c-syncbn-multigpu-backward (P3) | active — next focus |
+(none — milestone v2.17 closed)
 
 ## Resolved (v2.17)
+- `task-v17c-syncbn-multigpu-backward` RESOLVED by `change-v17-p3` (a8334d1) — SyncBatchNorm
+  multi-GPU gradient path corrected vs global-batch host reference.
 - `task-v17b-dist-ops-nccl-converge` RESOLVED by `change-v17-p2` (5c77d01) — high-level ops
   converged onto the verified NCCL layer; 4/4 multi-GPU ops tests green (was 4/4 fail in P1).
 - `task-v17a-dist-ops-harness` RESOLVED by `change-v17-p1` (4b2d10a) — thread-per-rank harness

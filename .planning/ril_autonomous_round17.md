@@ -140,3 +140,49 @@ still preserving its public API + single-GPU fallback:
 - `MeshBarrier` convergence deferred: it is a per-instance object with several live methods
   (`synchronize`, `synchronize_async`, `synchronize_devices`; `NoDeadlock` runs on multi-GPU);
   converging it needs a proper per-rank multi-GPU test first (tracked separately).
+
+## Round 17 — P3 (task-v17c-syncbn-multigpu-backward)
+
+### Execute
+
+Verified and fixed the SyncBatchNorm multi-GPU gradient path — the production consumer of
+`DistributedReduce::all_reduce_async` (3 call sites in forward + backward when
+`device_count > 1`). TDD: wrote `MultiGpu_MatchesGlobalBatchReference` (thread-per-rank, each
+rank over its own shard, asserting forward output / d_input / d_gamma / d_beta against an
+independent host reference over the GLOBAL concatenated batch). It **failed RED**, exposing
+three real defects:
+
+1. **Forward: missing 1/rank-count scaling.** The per-rank all-reduce of `saved_mean_` /
+   `saved_var_` summed R local statistics; normalization then used R x the true global stats.
+   Fixed with `scale_stats_kernel` (divide by device_count) after each all-reduce — for the
+   equal-shard data-parallel convention (documented).
+2. **Forward: latent single-GPU double centering.** `normalize_kernel` subtracted the mean
+   from input already centered by `subtract_mean_kernel`, yielding `(x - 2*mean)/std` — a
+   latent SINGLE-GPU bug masked by NaN-only assertions. Now normalizes by division only
+   (`(x - mean)/std`), the standard BN output.
+3. **Backward: per-rank d_var/d_mean were local, not global.** d_var and a new per-feature
+   sum(dxhat) are now all-reduced so d_var/d_mean are identical global quantities on every
+   rank; d_mean = `-1/sqrt(var+eps) * sum(dxhat)` (the `-dvar*2/N*sum(x-mean)` term is 0 over
+   the full batch); `inv_n` divided by device_count for the d_input path. d_gamma/d_beta
+   (bare sums) unchanged.
+
+Existing single-GPU forward/backward tests now gate to `device_count == 1`.
+
+### Verify (P3)
+
+- 2x A100: `MultiGpu_MatchesGlobalBatchReference` **1/1 pass** (was failing RED before fix);
+  single-GPU SBN suite 8/8 unaffected; cross-suite (SBN + ops 4 + NCCL 14 + matmul multi-GPU)
+  **23/23**; full suite **1456 ran / 1423 pass / 0 fail / EXIT=0** (1 new test env-skips on
+  single-GPU). cpp-review: **approve** (no CRITICAL/HIGH; MEDIUM equal-shard constraint
+  documented).
+
+### Learn (P3, graph)
+
+- `change-v17-p3` (a8334d1) implements `task-v17c-syncbn-multigpu-backward` (resolved);
+  `ev-v17-p3-syncbn-multigpu` records the host-reference verification.
+- `issue-v17-dist-ops-multigpu-untested` **resolved** — the high-level distributed ops'
+  multi-GPU paths are now real, converged on NCCL, and the training consumer (SyncBatchNorm)
+  is gradient-correct on 2+ GPUs.
+- **Milestone v2.17 closed**: 3/3 phases green, no active task above threshold. Two low-priority
+  tracked follow-ups: `issue-v17-dist-ops-harness-flake` (rare one-off 2-GPU stall) and
+  `issue-v17-meshbarrier-multigpu` (MeshBarrier convergence).
