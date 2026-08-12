@@ -47,7 +47,8 @@ NcclResult NcclBarrier::barrier_async(cudaStream_t stream) {
             return ncclAllReduce(dummy_ptr, dummy_ptr, 1, ncclInt32, ncclMin, comm, stream);
         },
         comm,
-        30000);
+        30000,
+        &ctx_);
 #endif
 }
 
@@ -72,7 +73,8 @@ NcclResult NcclBarrier::barrier_async(int device, cudaStream_t stream) {
             return ncclAllReduce(dummy_ptr, dummy_ptr, 1, ncclInt32, ncclMin, comm, stream);
         },
         get_comm(device),
-        30000);
+        30000,
+        &ctx_);
 #endif
 }
 

@@ -288,6 +288,30 @@ int NcclContext::rank_of_device(int device) const {
     return static_cast<int>(std::distance(device_ids_.begin(), it));
 }
 
+bool NcclContext::mark_comm_aborted(ncclComm_t comm) noexcept {
+    std::lock_guard<std::mutex> lock(init_mutex_);
+
+    if (comm == nullptr) {
+        return false;
+    }
+
+    // Null the aborted communicator out of the vector so destroy() never
+    // calls ncclCommDestroy on it (UB on an already-aborted comm) — the error
+    // layer already released it. Mark broken: has_nccl() goes false and
+    // subsequent collectives fail fast via NcclException.
+    bool found = false;
+    for (auto& c : communicators_) {
+        if (c == comm) {
+            c = nullptr;
+            found = true;
+        }
+    }
+    if (found) {
+        broken_.store(true, std::memory_order_release);
+    }
+    return found;
+}
+
 void NcclContext::destroy() {
     std::lock_guard<std::mutex> lock(init_mutex_);
 
@@ -304,7 +328,8 @@ void NcclContext::destroy() {
     streams_.clear();
 
 #if NOVA_NCCL_ENABLED
-    // Destroy NCCL communicators
+    // Destroy NCCL communicators (aborted ones were nulled by the error layer
+    // via mark_comm_aborted, so this only touches live comms).
     for (auto& comm : communicators_) {
         if (comm != nullptr) {
             ncclCommDestroy(comm);
@@ -315,6 +340,7 @@ void NcclContext::destroy() {
     communicators_.clear();
     device_count_ = 0;
     device_ids_.clear();
+    broken_.store(false, std::memory_order_release);
     initialized_ = false;
 }
 

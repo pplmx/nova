@@ -28,6 +28,8 @@
 #include "cuda/nccl/nccl_all_gather.h"
 #include "cuda/nccl/nccl_reduce_scatter.h"
 #include "cuda/nccl/nccl_group.h"
+
+#include "distributed_test_common.h"
 #include "cuda/nccl/nccl_ops.h"
 #include "cuda/nccl/nccl_error.h"
 
@@ -44,23 +46,13 @@ namespace {
 // posted its op waits for the others to post before any can complete, so the
 // first thread would otherwise burn part of safe_stream_wait's timeout while
 // the last thread is still starting up.
-class RankBarrier {
-public:
-    explicit RankBarrier(int count) : total_(count) {}
-
-    void wait() {
-        std::unique_lock<std::mutex> lk(mutex_);
-        ++arrived_;
-        cv_.wait(lk, [this] { return arrived_ >= total_; });
-        cv_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    int total_;
-    int arrived_ = 0;
-};
+//
+// The barrier is bounded (milestone v2.18 P3 / TASK-003 harness-robustness
+// fix, shared in distributed_test_common.h): a rank thread that dies before
+// reaching the barrier fails the suite with RankBarrierTimeout instead of
+// hanging the other ranks forever.
+using cuda::distributed::test::run_per_rank;
+using cuda::distributed::test::RankBarrierTimeout;
 
 // Runs `per_rank(d)` on one thread per visible device, each pinned to its own
 // device. cudaSetDevice is per-thread state, so this is the only way to issue
@@ -70,48 +62,6 @@ private:
 // collected and rethrown once after all threads join — rethrowing from inside
 // join() on the first thread would leave the others running and hit
 // std::terminate instead of producing a normal test failure.
-template <typename F>
-void run_per_rank(int device_count, F&& per_rank) {
-    RankBarrier barrier(device_count);
-    std::vector<std::thread> threads;
-    threads.reserve(device_count);
-    std::mutex error_mutex;
-    std::exception_ptr first_error;
-    for (int d = 0; d < device_count; ++d) {
-        threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
-            bool skipped = false;
-            try {
-                CUDA_CHECK(cudaSetDevice(d));
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-                skipped = true;
-            }
-            // Always signal the barrier: a rank that failed before reaching it
-            // must still let the others proceed, otherwise they hang forever.
-            barrier.wait();
-            if (skipped) {
-                return;
-            }
-            try {
-                per_rank(d);
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-            }
-        });
-    }
-    for (auto& t : threads) {
-        t.join();
-    }
-    if (first_error) {
-        std::rethrow_exception(first_error);
-    }
-}
 
 }  // namespace
 
@@ -297,6 +247,53 @@ TEST_F(NcclCollectivesTest, SafeNcclCallDetectsErrors) {
 
     EXPECT_FALSE(result.ok());
     EXPECT_FALSE(result.error_message.empty());
+}
+
+TEST_F(NcclCollectivesTest, AbortedCommPoisoningFailFast) {
+    // R16 review HIGH-B / milestone v2.18 P3 (TASK-003): when the error layer
+    // aborts a communicator (timeout / async error), the owning context must
+    // learn about it — has_nccl() goes false so later users fail fast instead
+    // of silently reusing the dead communicator and hanging. destroy() then
+    // resurrects a clean context (destructor skips the nulled comm, no
+    // double-free). The fixture's per-test NcclContext keeps this isolated
+    // from the shared singleton other suites use.
+    ASSERT_TRUE(context_->has_nccl());
+
+    // Faithfully model what safe_stream_wait / safe_nccl_call do on an abort:
+    // abort the communicator first (the error layer's action), then flag it
+    // dead on the context. Aborting first also releases the comm so destroy()
+    // skipping the nulled slot does not leak it.
+    ncclComm_t comm0 = context_->get_comm(0);
+    ASSERT_NE(comm0, nullptr);
+    ASSERT_EQ(ncclCommAbort(comm0), ncclSuccess);
+    ASSERT_TRUE(context_->mark_comm_aborted(comm0));
+
+    // The context is now broken: has_nccl() false, broken() true.
+    EXPECT_FALSE(context_->has_nccl());
+    EXPECT_TRUE(context_->broken());
+
+    // A collective on the dead context fails fast (NcclResult error), not hangs.
+    NcclAllReduce reduce(*context_);
+    cuda::memory::Buffer<float> send(16);
+    cuda::memory::Buffer<float> recv(16);
+    cudaStream_t stream = nullptr;
+    CUDA_CHECK(cudaStreamCreate(&stream));
+    auto result = reduce.all_reduce_async(
+        send.data(), recv.data(), 16, ncclFloat32, ncclSum, stream);
+    EXPECT_FALSE(result.ok());
+    CUDA_CHECK(cudaStreamDestroy(stream));
+
+    // destroy() clears the broken state and releases resources without
+    // double-freeing the aborted comm; a fresh initialize() recovers NCCL.
+    context_->destroy();
+    EXPECT_FALSE(context_->broken());
+    try {
+        context_->initialize();
+    } catch (const std::exception& e) {
+        FAIL() << "re-initialization after abort should succeed: " << e.what();
+    }
+    EXPECT_TRUE(context_->has_nccl());
+    EXPECT_FALSE(context_->broken());
 }
 
 // ============================================================================

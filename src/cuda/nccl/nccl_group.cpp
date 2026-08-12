@@ -57,7 +57,7 @@ void NcclGroupHandle::add_all_reduce(
             [&]() {
                 return ncclAllReduce(send_data, recv_data, count, dtype, op, comm, stream_);
             },
-            comm, 30000);
+            comm, 30000, &ctx_);
 #endif
     });
 }
@@ -88,7 +88,7 @@ void NcclGroupHandle::add_broadcast(
             [&]() {
                 return ncclBroadcast(send_data, recv_data, count, dtype, root, comm, stream_);
             },
-            comm, 30000);
+            comm, 30000, &ctx_);
 #endif
     });
 }
@@ -118,7 +118,7 @@ void NcclGroupHandle::add_all_gather(
             [&]() {
                 return ncclAllGather(send_data, recv_data, send_count, dtype, comm, stream_);
             },
-            comm, 30000);
+            comm, 30000, &ctx_);
 #endif
     });
 }
@@ -149,7 +149,7 @@ void NcclGroupHandle::add_reduce_scatter(
             [&]() {
                 return ncclReduceScatter(send_data, recv_data, recv_count, dtype, op, comm, stream_);
             },
-            comm, 30000);
+            comm, 30000, &ctx_);
 #endif
     });
 }

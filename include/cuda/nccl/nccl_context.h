@@ -29,6 +29,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -274,12 +275,40 @@ public:
      * @brief Check if NCCL is available and functional
      * @return true if context has valid communicators
      */
-    [[nodiscard]] bool has_nccl() const { return initialized_ && !communicators_.empty(); }
+    [[nodiscard]] bool has_nccl() const { return initialized_ && !broken_ && !communicators_.empty(); }
+
+    /**
+     * @brief Record that a communicator was aborted by the error layer
+     *
+     * Called by the communication-error layer (safe_nccl_call /
+     * safe_stream_wait) when it aborts a communicator after a timeout or
+     * async error. The communicator is nulled out so destroy() does not
+     * double-free it (ncclCommDestroy on an already-aborted comm is UB), and
+     * the context is marked broken — has_nccl() returns false so subsequent
+     * collectives fail fast instead of silently trusting dead communicators
+     * (the R16 review HIGH-B poisoning). Recovery requires destroy() + a
+     * fresh initialize().
+     *
+     * @param comm The aborted communicator (must belong to this context)
+     * @return true if @p comm was found and forgotten
+     */
+    bool mark_comm_aborted(ncclComm_t comm) noexcept;
+
+    /**
+     * @brief Check if a communicator was aborted by the error layer
+     *
+     * When true the context is broken: has_nccl() is false (collectives fail
+     * fast) and the aborted communicator cannot be reused.
+     *
+     * @return true if any communicator was aborted
+     */
+    [[nodiscard]] bool broken() const { return broken_.load(std::memory_order_acquire); }
 
     /**
      * @brief Destroy all communicators and release resources
      *
-     * Safe to call multiple times (idempotent after first call).
+     * Safe to call multiple times (idempotent after first call). Also clears
+     * any broken state so a subsequent initialize() starts on a clean slate.
      */
     void destroy();
 
@@ -299,6 +328,7 @@ private:
     std::vector<cudaStream_t> streams_;
     std::vector<int> device_ids_;
     bool initialized_ = false;
+    std::atomic<bool> broken_{false};
     mutable std::mutex init_mutex_;
 };
 

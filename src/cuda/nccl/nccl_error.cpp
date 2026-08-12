@@ -4,13 +4,14 @@
  */
 
 #include "cuda/nccl/nccl_error.h"
+#include "cuda/nccl/nccl_context.h"
 
 #include <thread>
 
 namespace cuda::nccl {
 
 NcclResult safe_stream_wait(ncclComm_t comm, cudaStream_t stream,
-                             int timeout_ms) {
+                             int timeout_ms, NcclContext* ctx) {
     NcclResult result;
 
 #if NOVA_NCCL_ENABLED
@@ -47,8 +48,13 @@ NcclResult safe_stream_wait(ncclComm_t comm, cudaStream_t stream,
             result.code = async_err;
             result.error_message = ncclGetErrorString(async_err);
 
-            // Abort communicator to prevent further hangs
+            // Abort communicator to prevent further hangs; flag the dead comm
+            // on its owning context so later collectives fail fast instead of
+            // silently reusing it.
             ncclCommAbort(comm);
+            if (ctx != nullptr) {
+                ctx->mark_comm_aborted(comm);
+            }
             return result;
         }
 
@@ -62,8 +68,11 @@ NcclResult safe_stream_wait(ncclComm_t comm, cudaStream_t stream,
     result.error_message = "Stream wait timed out after " +
                            std::to_string(timeout_ms) + "ms";
 
-    // Abort communicator on timeout
+    // Abort communicator on timeout; same never-reuse-dead-comm flagging.
     ncclCommAbort(comm);
+    if (ctx != nullptr) {
+        ctx->mark_comm_aborted(comm);
+    }
 
 #else
     result.code = static_cast<ncclResult_t>(-1);

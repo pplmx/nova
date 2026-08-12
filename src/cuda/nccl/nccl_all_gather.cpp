@@ -50,7 +50,8 @@ NcclResult NcclAllGather::all_gather_async(
                 dtype, comm, stream);
         },
         comm,
-        30000);
+        30000,
+        &ctx_);
 #endif
 }
 

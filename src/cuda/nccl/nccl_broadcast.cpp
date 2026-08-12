@@ -49,7 +49,8 @@ NcclResult NcclBroadcast::broadcast_async(
                 dtype, root_rank, comm, stream);
         },
         comm,
-        30000);
+        30000,
+        &ctx_);
 #endif
 }
 

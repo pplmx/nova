@@ -41,6 +41,12 @@
 #include <nccl.h>
 #endif
 
+// Included for the complete NcclContext type: safe_nccl_call (template)
+// calls ctx->mark_comm_aborted() and a pointer-to-incomplete member call does
+// not resolve at template definition time. nccl_context.h does not include
+// nccl_error.h, so there is no include cycle.
+#include "cuda/nccl/nccl_context.h"
+
 namespace cuda::nccl {
 
 /**
@@ -116,14 +122,19 @@ struct NcclResult {
  * @endcode
  */
 template<typename Fn>
-NcclResult safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000) {
+NcclResult safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000,
+                          NcclContext* ctx = nullptr) {
     NcclResult result;
 
 #if NOVA_NCCL_ENABLED
     // Execute the NCCL call
     result.code = fn();
 
-    // If call failed immediately, return
+    // If call failed immediately, return. The communicator is NOT aborted
+    // here — this is a synchronous caller error (e.g. ncclInvalidArgument),
+    // so the comm remains usable and the shared context must NOT be marked
+    // broken (a deliberate negative test would otherwise poison every later
+    // NCCL user in the process).
     if (result.code != ncclSuccess && result.code != ncclInProgress) {
         result.error_message = ncclGetErrorString(result.code);
         return result;
@@ -149,8 +160,14 @@ NcclResult safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000) {
             result.code = async_err;
             result.error_message = ncclGetErrorString(async_err);
 
-            // Abort the communicator to prevent further hangs
+            // Abort the communicator to prevent further hangs; a dead
+            // communicator must never be silently reused, so flag it on the
+            // owning context (has_nccl() goes false, later collectives fail
+            // fast instead of hanging).
             ncclCommAbort(comm);
+            if (ctx != nullptr) {
+                ctx->mark_comm_aborted(comm);
+            }
             return result;
         }
 
@@ -170,8 +187,11 @@ NcclResult safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000) {
     result.error_message = "NCCL operation timed out after " +
                            std::to_string(timeout_ms) + "ms";
 
-    // Abort communicator on timeout
+    // Abort communicator on timeout; same never-reuse-dead-comm flagging.
     ncclCommAbort(comm);
+    if (ctx != nullptr) {
+        ctx->mark_comm_aborted(comm);
+    }
 
 #else
     result.code = static_cast<ncclResult_t>(-1);
@@ -194,6 +214,7 @@ NcclResult safe_nccl_call(Fn&& fn, ncclComm_t comm, int timeout_ms = 30000) {
  * @return NcclResult with status
  */
 NcclResult safe_stream_wait(ncclComm_t comm, cudaStream_t stream,
-                             int timeout_ms = 30000);
+                             int timeout_ms = 30000,
+                             NcclContext* ctx = nullptr);
 
 }  // namespace cuda::nccl

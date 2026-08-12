@@ -30,6 +30,8 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 
+#include "distributed_test_common.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <numeric>
@@ -40,78 +42,29 @@
 using namespace cuda::distributed;
 using namespace cuda::mesh;
 
+// The thread-per-rank harness (RankBarrier + run_per_rank) lives in
+// distributed_test_common.h, shared with the NCCL suite, distributed ops, and
+// SyncBatchNorm tests. The bounded barrier is the milestone v2.18 P3 /
+// TASK-003 harness-robustness fix: a rank thread that dies before reaching
+// the barrier fails the suite with RankBarrierTimeout instead of hanging the
+// other ranks forever.
+using cuda::distributed::test::run_per_rank;
+using cuda::distributed::test::RankBarrierTimeout;
+
 namespace {
 
-// Barrier so every rank thread enters the collective together. NCCL
-// collectives are per-rank: every rank must post its op before any of them
-// completes, so a straggler start would otherwise burn safe_stream_wait's
-// timeout. Mirrors the identical helper in the NCCL collective suite.
-class RankBarrier {
-public:
-    explicit RankBarrier(int count) : total_(count) {}
-
-    void wait() {
-        std::unique_lock<std::mutex> lk(mutex_);
-        ++arrived_;
-        cv_.wait(lk, [this] { return arrived_ >= total_; });
-        cv_.notify_all();
+// Multi-GPU readiness for the shared NCCL singleton, self-healing a broken
+// context (TASK-003): after a genuine timeout/async abort the singleton is
+// broken and would otherwise turn every later matmul test into a silent skip.
+bool multigpu_nccl_ready() {
+    auto& ctx = cuda::nccl::NcclContext::instance();
+    try {
+        ctx.initialize();
+    } catch (const std::exception&) {
+        return false;
     }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    int total_;
-    int arrived_ = 0;
-};
-
-// Runs `per_rank(d)` on one thread per visible device, each pinned to its
-// own device. cudaSetDevice is per-thread state, so this is the only way to
-// issue each rank's part of a multi-device operation from one process.
-// Thread exceptions are collected and rethrown once after all threads join.
-template <typename F>
-void run_per_rank(int device_count, F&& per_rank) {
-    RankBarrier barrier(device_count);
-    std::vector<std::thread> threads;
-    threads.reserve(device_count);
-    std::mutex error_mutex;
-    std::exception_ptr first_error;
-    for (int d = 0; d < device_count; ++d) {
-        threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
-            bool skipped = false;
-            try {
-                CUDA_CHECK(cudaSetDevice(d));
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-                skipped = true;
-            }
-            // Always signal the barrier: a rank that failed before reaching it
-            // must still let the others proceed, otherwise they hang forever.
-            barrier.wait();
-            if (skipped) {
-                return;
-            }
-            try {
-                per_rank(d);
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-            }
-        });
-    }
-    for (auto& t : threads) {
-        t.join();
-    }
-    if (first_error) {
-        std::rethrow_exception(first_error);
-    }
+    return cuda::distributed::test::heal_and_ready(ctx);
 }
-
-}  // namespace
 
 // ============================================================================
 // Test Fixtures
@@ -406,16 +359,10 @@ TEST_F(DistributedMatmulTest, MultiGpu_RowSplitAllGather) {
         GTEST_SKIP() << "Multi-GPU matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
     }
 
-    // Initialize the shared NCCL context (per-device comms, one thread per rank).
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
     auto& ctx = cuda::nccl::NcclContext::instance();
-    try {
-        ctx.initialize();
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "NCCL initialization failed: " << e.what();
-    }
-    if (!ctx.has_nccl()) {
-        GTEST_SKIP() << "NCCL not enabled in this build";
-    }
 
     // Pick a shape where the last rank's partition is a proper partial block so
     // the test exercises the padded equal-size all-gather path, not just an even
@@ -478,15 +425,10 @@ TEST_F(DistributedMatmulTest, MultiGpu_AlphaBeta) {
         GTEST_SKIP() << "Multi-GPU matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
     }
 
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
     auto& ctx = cuda::nccl::NcclContext::instance();
-    try {
-        ctx.initialize();
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "NCCL initialization failed: " << e.what();
-    }
-    if (!ctx.has_nccl()) {
-        GTEST_SKIP() << "NCCL not enabled in this build";
-    }
 
     const int m = 6 * device_count - 1;
     const int n = 48, k = 32;
@@ -559,15 +501,10 @@ TEST_F(DistributedMatmulTest, MultiGpu_RejectsBadShapes) {
         GTEST_SKIP() << "Multi-GPU matmul requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
     }
 
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
     auto& ctx = cuda::nccl::NcclContext::instance();
-    try {
-        ctx.initialize();
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "NCCL initialization failed: " << e.what();
-    }
-    if (!ctx.has_nccl()) {
-        GTEST_SKIP() << "NCCL not enabled in this build";
-    }
 
     // m = 1 leaves the last rank with no rows (ceil(1/n) = 1 rows_per_gpu,
     // (n_dev-1)*1 >= 1). m < n_dev also exercises the same guard.
@@ -756,3 +693,5 @@ TEST_F(DistributedMatmulTest, MatmulSingleGpu) {
     EXPECT_TRUE(arrays_near(h_C_ref.data(), h_C.data(), m * n, kTolerance))
         << "matmul_single_gpu test failed";
 }
+
+}  // namespace

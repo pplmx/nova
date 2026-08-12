@@ -39,75 +39,21 @@
 #include "cuda/device/error.h"
 #include "cuda/nccl/nccl_context.h"
 
+#include "distributed_test_common.h"
+
 using namespace cuda::distributed;
 using namespace cuda::mesh;
 
+// The thread-per-rank harness (RankBarrier + run_per_rank) lives in
+// distributed_test_common.h, shared with the NCCL suite, distributed matmul,
+// and SyncBatchNorm tests. The bounded barrier is the milestone v2.18 P3 /
+// TASK-003 harness-robustness fix: a rank thread that dies before reaching
+// the barrier fails the suite with RankBarrierTimeout instead of hanging the
+// other ranks forever.
+using cuda::distributed::test::run_per_rank;
+using cuda::distributed::test::RankBarrierTimeout;
+
 namespace {
-
-// Same pattern as the NCCL suite and distributed matmul: a barrier so every
-// rank thread enters the collective together (a stray-rank start would
-// otherwise leave peers waiting on cross-thread work), then run `per_rank(d)`
-// on one thread per visible device, each pinned to its own device with
-// cudaSetDevice (per-thread state). First exception on any thread is rethrown
-// after all threads join.
-class RankBarrier {
-public:
-    explicit RankBarrier(int count) : total_(count) {}
-
-    void wait() {
-        std::unique_lock<std::mutex> lk(mutex_);
-        ++arrived_;
-        cv_.wait(lk, [this] { return arrived_ >= total_; });
-        cv_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    int total_;
-    int arrived_ = 0;
-};
-
-template <typename F>
-void run_per_rank(int device_count, F&& per_rank) {
-    RankBarrier barrier(device_count);
-    std::vector<std::thread> threads;
-    threads.reserve(device_count);
-    std::mutex error_mutex;
-    std::exception_ptr first_error;
-    for (int d = 0; d < device_count; ++d) {
-        threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
-            bool failed = false;
-            try {
-                CUDA_CHECK(cudaSetDevice(d));
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-                failed = true;
-            }
-            barrier.wait();
-            if (failed) {
-                return;
-            }
-            try {
-                per_rank(d);
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-            }
-        });
-    }
-    for (auto& t : threads) {
-        t.join();
-    }
-    if (first_error) {
-        std::rethrow_exception(first_error);
-    }
-}
 
 void fill_linear(float* data, size_t count, float base) {
     for (size_t i = 0; i < count; ++i) {
@@ -127,8 +73,10 @@ bool arrays_near(const float* a, const float* b, size_t count, float tol = 1e-3f
 // Gate + NCCL bootstrap shared by the real multi-GPU tests: returns true when
 // a genuine run is possible (>= 2 GPUs, NCCL-enabled build, shared NcclContext
 // initialized). Initialization is idempotent across tests (R15 design);
-// failures (e.g. no NCCL in this build) report false. GTEST_SKIP is a
-// void-return macro, so the callers — not this predicate — issue the skip.
+// failures (e.g. no NCCL in this build) report false. If the shared singleton
+// is broken (a prior genuine abort), it is self-healed first — a one-off flake
+// must not turn the rest of the suite into silent skips (TASK-003). GTEST_SKIP
+// is a void-return macro, so the callers — not this predicate — issue the skip.
 bool multigpu_nccl_ready() {
     if (DeviceMesh::instance().device_count() < 2) {
         return false;
@@ -143,7 +91,7 @@ bool multigpu_nccl_ready() {
     } catch (const std::exception&) {
         return false;
     }
-    return ctx.has_nccl();
+    return cuda::distributed::test::heal_and_ready(ctx);
 }
 
 }  // namespace

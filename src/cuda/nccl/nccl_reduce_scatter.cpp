@@ -51,7 +51,8 @@ NcclResult NcclReduceScatter::reduce_scatter_async(
                 dtype, op, comm, stream);
         },
         comm,
-        30000);
+        30000,
+        &ctx_);
 #endif
 }
 

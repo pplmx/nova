@@ -15,72 +15,17 @@
 #include <thread>
 #include <vector>
 
+#include "distributed_test_common.h"
+
 namespace cuda::neural {
 
 namespace {
 
-// Same thread-per-rank harness as the NCCL suite / distributed ops / matmul:
-// a barrier so every rank enters together, then `per_rank(d)` on one thread per
-// visible device, each pinned with cudaSetDevice (per-thread state). First
-// exception on any thread is rethrown after all threads join.
-class RankBarrier {
-public:
-    explicit RankBarrier(int count) : total_(count) {}
-
-    void wait() {
-        std::unique_lock<std::mutex> lk(mutex_);
-        ++arrived_;
-        cv_.wait(lk, [this] { return arrived_ >= total_; });
-        cv_.notify_all();
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    int total_;
-    int arrived_ = 0;
-};
-
-template <typename F>
-void run_per_rank(int device_count, F&& per_rank) {
-    RankBarrier barrier(device_count);
-    std::vector<std::thread> threads;
-    threads.reserve(device_count);
-    std::mutex error_mutex;
-    std::exception_ptr first_error;
-    for (int d = 0; d < device_count; ++d) {
-        threads.emplace_back([d, &barrier, &per_rank, &error_mutex, &first_error]() {
-            bool failed = false;
-            try {
-                CUDA_CHECK(cudaSetDevice(d));
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-                failed = true;
-            }
-            barrier.wait();
-            if (failed) {
-                return;
-            }
-            try {
-                per_rank(d);
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) {
-                    first_error = std::current_exception();
-                }
-            }
-        });
-    }
-    for (auto& t : threads) {
-        t.join();
-    }
-    if (first_error) {
-        std::rethrow_exception(first_error);
-    }
-}
+// The thread-per-rank harness (RankBarrier + run_per_rank) lives in
+// distributed_test_common.h, shared with the NCCL suite, distributed ops, and
+// distributed matmul. The bounded barrier (milestone v2.18 P3 / TASK-003) makes
+// a rank thread dying before the barrier a diagnosed failure instead of a hang.
+using cuda::distributed::test::run_per_rank;
 
 // Genuine multi-GPU run is possible when >= 2 GPUs, NCCL_TESTS_AVAILABLE="1",
 // and the shared NcclContext initializes (idempotent). GTEST_SKIP is a
@@ -101,7 +46,9 @@ bool multigpu_nccl_ready() {
     } catch (const std::exception&) {
         return false;
     }
-    return ctx.has_nccl();
+    // Self-heal a broken singleton so a one-off genuine abort does not sink
+    // the rest of the suite into silent skips (TASK-003).
+    return cuda::distributed::test::heal_and_ready(ctx);
 }
 
 }  // namespace
