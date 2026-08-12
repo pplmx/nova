@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.20
-milestone_name: TensorParallelMatmul Production Hardening
+milestone: v2.21
+milestone_name: Weight-Managed TensorParallelLayers
 status: Complete
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 20: P1-P2 complete, milestone closed
+last_activity: 2026-08-12 — Round 21: P1-P3 complete, milestone closed
 progress:
-  total_phases: 2
-  completed_phases: 2
+  total_phases: 3
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,11 +19,27 @@ progress:
 
 ## Current Position
 
-Milestone: v2.20 TensorParallelMatmul Production Hardening
-Status: Complete (Round 20)
-Last activity: 2026-08-12 — priority None: TP matmul closed the review BLOCK
-(rank_of_device + NcclResult propagation); TensorParallelLayers stubs fail fast
-instead of null-pointer crash
+Milestone: v2.21 Weight-Managed TensorParallelLayers
+Status: Complete (Round 21)
+Last activity: 2026-08-12 — priority: TASK-010 implemented (real weight
+shards), closing the DEC-006 fail-fast disposition of the v1.3 layer stubs
+
+## Milestone v2.21 — Weight-Managed TensorParallelLayers
+
+Replace the DEC-006 fail-fast disposition of the v1.3 layer stubs with real
+weight-sharded layers (TASK-010 / issue-v20-tp-layers-stubs):
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Reference-parity tests: single-GPU full-weight refs (col/row/MLP + silu) and multi-GPU thread-per-rank (col shard concat / row AllReduce / gated MLP parity; shape rejection); RED against the stubs | Complete (Round 21) — 4/4 layer + 2/2 silu single-GPU; 5/5 multi-GPU layer parity on 2 GPUs (EV-010/EV-011) |
+| 2 | Weight-managed implementation: per-rank device weight shards (set_weight slices via rank_of_device), col/row/gated-MLP forward, silu_and_mul kernel, per-instance cuBLAS handle, divisibility validation | Complete (Round 21) — 15/15 isolated NCCL cross-suite on 2 & 4 GPUs; full baseline EXIT=0 |
+| 3 | RIL close: issue + TASK-010/011/012/013 resolved, docs/round record | Complete (Round 21) |
+
+Decisions: DEC-007 (milestone direction — Megatron weight-shard semantics, new
+explicit in/out-features API, >300-line diff exception). NOTE: NCCL multi-GPU
+suites still hang when interleaved with `cudaDeviceReset` suites in one process
+(pre-existing issue-v19-shared-nccl-context-reset — use the isolated curated
+filter for cross-suite runs).
 
 ## Milestone v2.20 — TensorParallelMatmul Production Hardening
 
@@ -118,18 +134,35 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.16 Distributed Multi-GPU Verification | Complete | 2026-08-11 | 3 phases |
 | v2.17 Distributed Ops On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
 | v2.18 MeshBarrier On The Verified Layer + Distributed Robustness | Complete | 2026-08-12 | 3 phases |
+| v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism) | Complete | 2026-08-12 | 3 phases |
+| v2.20 TensorParallelMatmul Production Hardening | Complete | 2026-08-12 | 2 phases |
 
 ---
 
-## State updated: 2026-08-12 — Milestone v2.18 complete (RIL Round 18)
-3/3 phases green. MeshBarrier — the last unconverged high-level distributed op —
-was proven to have no cross-rank arrival semantics (per-instance host event-poll
-on empty internal streams) and converged onto the verified NcclBarrier layer;
-5/5 per-rank multi-GPU barrier tests green. Harness hardening: a bounded 120s
-thread-per-rank barrier turns a dead rank into a diagnosed RankBarrierTimeout
-(previously an unkillable >120s hang), and NcclContext now learns when a
-communicator is aborted (mark_comm_aborted) so dead comms fail fast and recover
-via destroy+reinit instead of poisoning the rest of the suite. Full-suite
-baseline 1461/1423/0; 2-GPU cross-suite 49/49 (14 env-skips); 5x+3x 2-GPU stress
-stable. Next milestone: TBD. Both v2.17 follow-ups resolved
-(issue-v17-meshbarrier-multigpu, issue-v17-dist-ops-harness-flake via DEC-002).
+## State updated: 2026-08-12 — Milestone v2.21 complete (RIL Round 21)
+
+TASK-010 / issue-v20-tp-layers-stubs resolved. The v1.3 TensorParallelLayers
+scaffolding (ColumnParallelLayer / RowParallelLayer / TensorParallelMLP) owned
+no weight storage and was disposed as fail-fast stubs in v2.20 (DEC-006). This
+milestone implements them for real with **weight-sharded Megatron semantics**:
+each layer owns its rank's shard of the weight on device; set_weight() uploads
+the full weight and slices the rank shard via NcclContext::rank_of_device (the
+v2.20 verified convention); ColumnParallelLayer::forward is a local shard
+matmul (sharded output, no comm), RowParallelLayer::forward is local matmul +
+one block-wise AllReduce (replicated output), TensorParallelMLP is a SiLU-gated
+FFN (gate/up column-parallel, down row-parallel). Per-instance stream-bound
+cuBLAS handle for thread-per-rank safety; divisibility validated at construction
+(backing the v2.19 finding that the pre-v2.20 shard math was broken). Added the
+`silu_and_mul` gated activation.
+
+Acceptance (real multi-GPU, CUDA_VISIBLE_DEVICES=2,3): column shard concat ==
+single-GPU full-weight reference; row AllReduce replicated == reference; gated
+MLP == single-GPU full-weight reference — 15/15 isolated NCCL cross-suite on 2
+and 4 GPUs (EV-010/EV-011), TP+layer+sequence multi-GPU green. Single-GPU tp<=1
+path: 6/6 (4 layer + 2 silu) reference parity. Full-suite baseline EXIT=0.
+NOTE: running the NCCL multi-GPU suites interleaved with cudaDeviceReset suites
+(ActivationTest) in one process still hangs/crashes — the pre-existing
+issue-v19-shared-nccl-context-reset (order/timing-sensitive); the NCCL cross
+-suite must be run via the isolated curated filter, per the documented
+disposition. API: layer ctors changed to explicit (ctx, in_features,
+out_features); zero external callers (verification grep clean).

@@ -4,7 +4,35 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.20 TensorParallelMatmul Production Hardening
+## Current Milestone: v2.21 Weight-Managed TensorParallelLayers
+
+**Status:** Complete (2026-08-12, RIL Round 21)
+
+**Milestone v2.21.** Implemented the previously-disposed (DEC-006) neural parallel-training
+layers for real with **weight-sharded Megatron semantics** (TASK-010 /
+issue-v20-tp-layers-stubs). P1 wrote reference-parity tests against the v2.20 stubs (RED:
+every functional forward threw). P2 replaced the stubs with weight-managed layers: each
+layer owns its rank's shard of the weight on device; `set_weight()` uploads the full
+weight and slices the rank shard via `NcclContext::rank_of_device` (the v2.20 verified
+membership convention — raw device indices stay wrong for non-default groups); a
+per-instance stream-bound cuBLAS handle keeps the thread-per-rank GEMMs safe (the shared
+handle is not thread-safe); `ColumnParallelLayer::forward` is a local shard matmul
+(sharded output, no comm), `RowParallelLayer::forward` adds one block-wise AllReduce
+(replicated output, `NcclResult` checked), `TensorParallelMLP` composes gate/up
+column-parallel projections + the new `silu_and_mul` gated activation + a row-parallel
+down projection; non-divisible in/out feature dims reject at construction (the v2.19
+finding that the pre-v2.20 shard math was broken is now pinned by parity tests). Green on
+real multi-GPU (2 & 4 GPUs, `CUDA_VISIBLE_DEVICES=2,3+`): column shard concat ==
+single-GPU full-weight reference, row AllReduce replicated == reference, gated MLP ==
+single-GPU full-weight reference — 15/15 isolated NCCL cross-suite, TP+layer+sequence
+multi-GPU green (EV-010/EV-011). Single-GPU (tp<=1) path 6/6; full-suite baseline EXIT=0.
+Note: the NCCL multi-GPU suites still hang when interleaved with `cudaDeviceReset` suites
+in one process (pre-existing issue-v19-shared-nccl-context-reset — run the cross-suite via
+the isolated curated filter). Decision: DEC-007 (milestone direction + new explicit
+in/out-features API + diff-size exception). API change is safe: zero callers in the tree.
+Host note: GPUs 0/1 externally loaded — use `CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.20 TensorParallelMatmul Production Hardening
 
 **Status:** Complete (2026-08-12, RIL Round 20)
 

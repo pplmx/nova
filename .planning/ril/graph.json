@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 20,
+  "round": 21,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T08:10:49+00:00",
+  "updated_at": "2026-08-12T10:26:09+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -813,11 +813,11 @@
     "issue-v20-tp-layers-stubs": {
       "id": "issue-v20-tp-layers-stubs",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T07:59:02+00:00",
-      "updated_at": "2026-08-12T07:59:02+00:00",
-      "touched_round": 19,
+      "updated_at": "2026-08-12T10:26:08+00:00",
+      "touched_round": 20,
       "title": "TensorParallelLayers (ColumnParallelLayer/RowParallelLayer/TensorParallelMLP) are non-functional skeletons: forward() passes B=nullptr to TP matmul (no weight storage exists - cuBLAS crash on a null pointer), and TensorParallelMLP::forward is an empty body. They were shipped in v1.3 but have zero tests/usages.",
       "severity": 3
     },
@@ -861,11 +861,11 @@
     "TASK-010": {
       "id": "TASK-010",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T08:06:59+00:00",
-      "updated_at": "2026-08-12T08:06:59+00:00",
-      "touched_round": 19,
+      "updated_at": "2026-08-12T10:26:08+00:00",
+      "touched_round": 20,
       "title": "Follow-up (feature): implement weight-managed ColumnParallelLayer/RowParallelLayer/TensorParallelMLP forward with real weight buffers and multi-GPU reference parity; replaces the fail-fast disposition (DEC-006)",
       "category": "core-feature",
       "severity": 2,
@@ -895,6 +895,92 @@
       "source": "v2.20 verification on CUDA_VISIBLE_DEVICES=2,3 NCCL_TESTS_AVAILABLE=1, 2026-08-12",
       "confidence": 1.0,
       "title": "v2.20 close verify: TP+NCCL suites 20/20 GREEN (rank_of_device + NcclResult-propagation fix); TP acceptance 5/5 at 4 GPUs; TensorParallelLayers fail-fast 3/3; neural/TP/SP regression smoke green"
+    },
+    "DEC-007": {
+      "id": "DEC-007",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T09:14:28+00:00",
+      "updated_at": "2026-08-12T09:14:28+00:00",
+      "touched_round": 20,
+      "title": "v2.21 milestone direction: real weight-managed TensorParallelLayers (Megatron weight-shard semantics)",
+      "rationale": "TASK-010 is the only active high-priority task: the v1.3 layer wrappers own no weights and forward() throws (DEC-006 fail-fast disposition). To close them we implement true weight-sharded layers: ColumnParallelLayer holds per-rank column shard [k x out/tp] (forward = local shard matmul -> sharded output, no comm); RowParallelLayer holds per-rank row shard [k/tp x n] (forward = local matmul on sharded input + block AllReduce -> replicated output); TensorParallelMLP = SiLU-gated FFN (gate/up ColumnParallel, down RowParallel). This is the only semantics that keeps the layer stack coherent (header docs match: col shards output, row consolidates to full width) and actually achieves weight sharding. Rank resolved via ctx.rank_of_device (v2.20 verified convention); per-instance stream-bound cuBLAS handle for thread-per-rank safety; shape rejection on non-divisible dims; single-GPU full-weight reference parity is the acceptance gate (v2.19/v2.20 pattern). API changes (explicit in_features/out_features instead of rigid 3*hidden_dim QKV) are safe: zero callers in the tree. Multi-commit diff exceeds the 300-line default because it replaces a stub surface + adds tests + a silu_and_mul kernel; exception documented per skill rule 8.",
+      "alternatives_rejected": "Keeping fail-fast (leaves dead surface); re-exposing the TensorParallelMatmul primitive with replicated full weights only (defeats weight sharding and cannot compose a coherent MLP: the verified RowParallel primitive is batch-split, not weight row-parallel); leaving the v1.3 3*hidden_dim QKV-only column API (too rigid for the MLP gate/up)."
+    },
+    "TASK-011": {
+      "id": "TASK-011",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-12T09:14:38+00:00",
+      "updated_at": "2026-08-12T09:56:30+00:00",
+      "touched_round": 20,
+      "title": "P1 evidence: functional reference-parity tests for weight-managed TensorParallelLayers (single-GPU full-weight refs; multi-GPU thread-per-rank col-shard concat / row AllReduce / gated MLP parity; shape rejection), RED against current fail-fast stubs",
+      "category": "test-quality",
+      "severity": 1,
+      "priority_score": 8.4
+    },
+    "TASK-012": {
+      "id": "TASK-012",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-12T09:14:38+00:00",
+      "updated_at": "2026-08-12T10:26:08+00:00",
+      "touched_round": 20,
+      "title": "P2 implementation: rewrite TensorParallelLayers with real weight shard storage (set_weight slices full weight via rank_of_device), ColumnParallelLayer sharded-output forward, RowParallelLayer local+AllReduce forward, TensorParallelMLP SiLU-gated (add silu_and_mul kernel), per-instance cuBLAS handle, shape validation",
+      "category": "core-feature",
+      "severity": 2,
+      "priority_score": 8.4
+    },
+    "TASK-013": {
+      "id": "TASK-013",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-12T09:14:38+00:00",
+      "updated_at": "2026-08-12T10:26:08+00:00",
+      "touched_round": 20,
+      "title": "P3 verification: full suite + NCCL-enabled multi-GPU cross-suite green, RIL close of issue-v20-tp-layers-stubs and TASK-010, docs/milestone record",
+      "category": "maintainability",
+      "severity": 1,
+      "priority_score": 8.0
+    },
+    "EV-010": {
+      "id": "EV-010",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T09:56:09+00:00",
+      "updated_at": "2026-08-12T09:56:09+00:00",
+      "touched_round": 20,
+      "source": "tests/neural/tensor_parallel_layers_test.cpp::4 tests GREEN (TP layers single-GPU tp=1 full-weight reference parity)",
+      "title": "v2.21 P1/P2: ColumnParallelLayer/RowParallelLayer/TensorParallelMLP tp-1 forward match single-GPU matmul reference; set_weight overwrites buffer; silu_and_mul matches host formula (2/2)",
+      "confidence": 1.0
+    },
+    "EV-011": {
+      "id": "EV-011",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T09:56:09+00:00",
+      "updated_at": "2026-08-12T09:56:09+00:00",
+      "touched_round": 20,
+      "source": "tests/neural/tensor_parallel_multigpu_test.cpp::5 tests GREEN on CUDA_VISIBLE_DEVICES=2,3 (and 15/15 isolated cross-suite on 2 & 4 GPUs)",
+      "title": "v2.21 multi-GPU parity: column shard concat == full-W reference; row AllReduce replicated == reference; gated MLP == single-GPU full-weight reference; non-divisible shapes reject at construction",
+      "confidence": 1.0
+    },
+    "CHG-009": {
+      "id": "CHG-009",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T10:24:17+00:00",
+      "updated_at": "2026-08-12T10:24:17+00:00",
+      "touched_round": 20,
+      "commit": "a404361 f04c689",
+      "title": "v2.21: silu_and_mul kernel + weight-managed TensorParallelLayers (col shard / row AllReduce / gated MLP) replacing DEC-006 fail-fast stubs"
     }
   },
   "edges": [
@@ -1299,6 +1385,48 @@
       "to": "issue-v20-tp-layers-stubs",
       "type": "addresses",
       "created_at": "2026-08-12T08:07:07+00:00"
+    },
+    {
+      "from": "TASK-011",
+      "to": "TASK-012",
+      "type": "depends_on",
+      "created_at": "2026-08-12T09:16:28+00:00"
+    },
+    {
+      "from": "TASK-012",
+      "to": "TASK-013",
+      "type": "depends_on",
+      "created_at": "2026-08-12T09:16:28+00:00"
+    },
+    {
+      "from": "DEC-007",
+      "to": "TASK-010",
+      "type": "governs",
+      "created_at": "2026-08-12T09:16:28+00:00"
+    },
+    {
+      "from": "TASK-011",
+      "to": "issue-v20-tp-layers-stubs",
+      "type": "addresses",
+      "created_at": "2026-08-12T09:56:30+00:00"
+    },
+    {
+      "from": "CHG-009",
+      "to": "TASK-012",
+      "type": "implements",
+      "created_at": "2026-08-12T10:25:51+00:00"
+    },
+    {
+      "from": "CHG-009",
+      "to": "issue-v20-tp-layers-stubs",
+      "type": "resolves",
+      "created_at": "2026-08-12T10:25:51+00:00"
+    },
+    {
+      "from": "CHG-009",
+      "to": "TASK-013",
+      "type": "implements",
+      "created_at": "2026-08-12T10:25:51+00:00"
     }
   ]
 }
