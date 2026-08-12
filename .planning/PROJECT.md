@@ -6,19 +6,21 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.22 Ring Sequence Parallelism On Real Multi-GPU
 
-**Status:** In Progress (2026-08-12, RIL Round 22 — milestone opened, P1 RED test running)
+**Status:** Complete (2026-08-12, RIL Round 22)
 
 **Milestone v2.22.** Implements `RingSequenceParallelism::ring_attention` for real
 (TASK-014 / issue-v19-ring-parallel-noop), replacing the DEC-004 fail-fast disposition.
-The multi-GPU ring path is currently a throw ("send_recv_kv undefined"); pre-DEC-004 it
-silently returned garbage. The real algorithm iterates P-1 NCCL P2P send/recv KV steps
-around the ring with online-softmax accumulation. Acceptance (TASK-015, P1 RED now):
-on real multi-GPU each rank's local-query output must equal standard scaled dot-product
-attention over the FULL KV sequence concatenated across all ranks (single-GPU host
-reference) — `MultiGpu_RingAttention_MatchesFullSequenceReference` is currently RED
-(throws). P2: implement send_recv_kv + online-softmax ring; P3: verify on 2 & 4 GPUs,
-drop the obsolete NotImplemented pin, close TASK-014. Decision: DEC-008. Host note: use
-`CUDA_VISIBLE_DEVICES=2,3+`.
+P1 shipped `MultiGpu_RingAttention_MatchesFullSequenceReference` RED (the old path
+threw "send_recv_kv undefined"). P2 (TASK-016) implemented the ring: each of the P-1
+steps sends the local KV block clockwise to next_rank while receiving prev_rank's block
+(NCCL P2P send/recv, wrapped in `ncclGroupStart/End` — **ungrouped P2P deadlocked the
+ring, a real finding**, EV-012), accumulating every block with online-softmax kernels
+(`src/cuda/distributed/ring_attention.cu`). Per-rank output now equals standard scaled
+dot-product attention over the FULL KV sequence across all ranks — GREEN on 2 & 4 GPUs
+(EV-012), isolated cross-suite 16/16 on both, single-GPU seq-parallel 33/33, full-suite
+baseline 1416/0 (EV-013). The obsolete NotImplemented pin was replaced by
+`RejectsMissingHiddenDim` (config.hidden_dim is now required by the multi-GPU ring
+path). Decisions: DEC-008. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Previous Milestone: v2.21 Weight-Managed TensorParallelLayers
 

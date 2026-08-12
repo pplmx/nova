@@ -2,13 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.22
 milestone_name: Ring Sequence Parallelism On Real Multi-GPU
-status: "In Progress"
+status: Complete
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 22: milestone v2.22 opened (TASK-014);
-P1 RED ring-attention full-sequence reference-parity test
+last_activity: 2026-08-12 — Round 22: P1-P3 complete, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -21,9 +20,9 @@ progress:
 ## Current Position
 
 Milestone: v2.22 Ring Sequence Parallelism On Real Multi-GPU
-Status: In Progress (Round 22)
-Last activity: 2026-08-12 — TASK-014 opened as v2.22; P1 RED test proves the
-ring path is not a real algorithm (throws not-implemented, DEC-004 disposition)
+Status: Complete (Round 22)
+Last activity: 2026-08-12 — ring attention GREEN on 2 & 4 GPUs; TASK-014 /
+issue-v19-ring-parallel-noop closed (DEC-008)
 
 ## Milestone v2.22 — Ring Sequence Parallelism On Real Multi-GPU
 
@@ -38,9 +37,9 @@ computed as a single-GPU/host reference.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Reference-parity RED test: per-rank local Q/K/V, ring_attention == full-sequence attention reference on real multi-GPU (currently throws → RED) | In Progress (Round 22) — `MultiGpu_RingAttention_MatchesFullSequenceReference` RED (throws not-implemented); fail-fast pin test still green |
-| 2 | Implement ring attention: send_recv_kv (NCCL P2P send/recv on the group comm) + online-softmax accumulate over P-1 remote KV blocks | Pending |
-| 3 | Verify: reference parity GREEN on 2 & 4 GPUs, full-suite baseline, RIL close of issue/TASK-014; remove the obsolete NotImplemented fail-fast pin | Pending |
+| 1 | Reference-parity RED test: per-rank local Q/K/V, ring_attention == full-sequence attention reference on real multi-GPU (currently throws → RED) | Complete (Round 22) — `MultiGpu_RingAttention_MatchesFullSequenceReference` RED against the DEC-004 throw; fail-fast pin green |
+| 2 | Implement ring attention: send_recv_kv (NCCL P2P send/recv on the group comm) + online-softmax accumulate over P-1 remote KV blocks | Complete (Round 22) — P-1 send/recv ring + online softmax kernels (ring_attention.cu); un-grouped NCCL P2P deadlock fixed with ncclGroupStart/End (EV-012); parity GREEN on 2 & 4 GPUs; obsolete NotImplemented pin replaced by `RejectsMissingHiddenDim` |
+| 3 | Verify: reference parity GREEN on 2 & 4 GPUs, full-suite baseline, RIL close of issue/TASK-014 | Complete (Round 22) — isolated cross-suite 16/16 on 2 & 4 GPUs; single-GPU seq-parallel 33/33; full-suite baseline 1416/0 (EV-013) |
 
 Decision: DEC-008 (milestone direction). Host note: GPUs 0/1 externally loaded —
 use `CUDA_VISIBLE_DEVICES=2,3+`.
@@ -157,8 +156,29 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.18 MeshBarrier On The Verified Layer + Distributed Robustness | Complete | 2026-08-12 | 3 phases |
 | v2.19 Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism) | Complete | 2026-08-12 | 3 phases |
 | v2.20 TensorParallelMatmul Production Hardening | Complete | 2026-08-12 | 2 phases |
+| v2.21 Weight-Managed TensorParallelLayers | Complete | 2026-08-12 | 3 phases |
 
 ---
+
+## State updated: 2026-08-12 — Milestone v2.22 complete (RIL Round 22)
+
+TASK-014 / issue-v19-ring-parallel-noop closed. `RingSequenceParallelism::ring_attention`
+multi-GPU — the last dispositioned-but-unimplemented parallel surface (DEC-004 fail-fast
+throw; pre-DEC-004 a silent garbage no-op) — is now a real ring algorithm: each of the
+P-1 steps sends the local KV block clockwise to next_rank while receiving prev_rank's
+block (NCCL P2P `ncclSend`/`ncclRecv` on the group comm, wrapped in
+`ncclGroupStart/End`), accumulating each block with online-softmax kernels in
+`src/cuda/distributed/ring_attention.cu`. `SequenceParallelConfig.hidden_dim` is now
+required by the multi-GPU ring path (interpret Q/K/V buffers; unset → fail fast).
+
+Key finding (EV-012): **ungrouped consecutive NCCL P2P ops deadlock the ring** —
+without `ncclGroupStart/End` the parity test hung (~100% CPU); the group wrap fixed it.
+Acceptance: per-rank local-query output == standard scaled dot-product attention over
+the FULL KV sequence (all ranks concatenated, host double-precision reference) — GREEN
+on 2 & 4 GPUs; isolated distributed cross-suite 16/16 on 2 & 4 GPUs; single-GPU
+seq-parallel 33/33; full-suite baseline 1416/0 (EV-012/EV-013). Votes: DEC-008.
+Note: the pre-existing issue-v19-shared-nccl-context-reset still hangs NCCL runs when
+`cudaDeviceReset` suites interleave — use the isolated curated filter.
 
 ## State updated: 2026-08-12 — Milestone v2.21 complete (RIL Round 21)
 

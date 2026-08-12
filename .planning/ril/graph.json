@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 21,
+  "round": 22,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T10:56:37+00:00",
+  "updated_at": "2026-08-12T11:40:47+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -706,10 +706,10 @@
     "issue-v19-ring-parallel-noop": {
       "id": "issue-v19-ring-parallel-noop",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T06:27:13+00:00",
-      "updated_at": "2026-08-12T06:27:13+00:00",
+      "updated_at": "2026-08-12T11:40:46+00:00",
       "touched_round": 21,
       "title": "RingSequenceParallelism::ring_attention's multi-GPU path (NOVA_NCCL_ENABLED branch) is an empty no-op: it (void)s all arguments and does nothing; send_recv_kv is declared but never defined, so ring sequence parallelism computes nothing on multi-GPU.",
       "severity": 2
@@ -985,10 +985,10 @@
     "TASK-014": {
       "id": "TASK-014",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T10:33:20+00:00",
-      "updated_at": "2026-08-12T10:33:20+00:00",
+      "updated_at": "2026-08-12T11:40:46+00:00",
       "touched_round": 21,
       "title": "Follow-up (feature, v2.22 candidate): implement RingSequenceParallelism multi-GPU ring attention for real — send_recv_kv over verified NCCL P2P + incremental softmax, reference parity vs the single-GPU sparse-KV attention; replaces the DEC-004 fail-fast disposition (issue-v19-ring-parallel-noop)",
       "category": "core-feature",
@@ -1009,10 +1009,10 @@
     "TASK-015": {
       "id": "TASK-015",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T10:56:37+00:00",
-      "updated_at": "2026-08-12T10:56:37+00:00",
+      "updated_at": "2026-08-12T11:33:28+00:00",
       "touched_round": 21,
       "title": "P1 evidence: full-sequence reference-parity RED test for ring ring_attention (per-rank local Q/K/V; each rank output == scaled dot-product attention over ALL ranks KV, host double-precision reference) on real multi-GPU; current ring path throws -> RED",
       "category": "test-quality",
@@ -1021,10 +1021,10 @@
     "TASK-016": {
       "id": "TASK-016",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T10:56:37+00:00",
-      "updated_at": "2026-08-12T10:56:37+00:00",
+      "updated_at": "2026-08-12T11:33:28+00:00",
       "touched_round": 21,
       "title": "P2 implementation: RingSequenceParallelism::ring_attention multi-GPU — send_recv_kv via NCCL P2P send/recv on the group comm (prev/next ranks), P-1 ring iterations accumulating partial attention with online softmax (max/denominator carries), single-GPU fallback preserved",
       "category": "core-feature",
@@ -1033,14 +1033,49 @@
     "TASK-017": {
       "id": "TASK-017",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T10:56:37+00:00",
-      "updated_at": "2026-08-12T10:56:37+00:00",
+      "updated_at": "2026-08-12T11:40:46+00:00",
       "touched_round": 21,
       "title": "P3 verification: reference parity GREEN on 2 & 4 GPUs, full-suite baseline, drop the obsolete MultiGpu_RingAttentionNotImplemented fail-fast pin, RIL close of issue-v19-ring-parallel-noop and TASK-014, docs/round record",
       "category": "maintainability",
       "severity": 1
+    },
+    "EV-012": {
+      "id": "EV-012",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T11:22:31+00:00",
+      "updated_at": "2026-08-12T11:22:31+00:00",
+      "touched_round": 21,
+      "source": "tests/distributed/sequence_parallel_multigpu_test.cu::MultiGpu_RingAttention_MatchesFullSequenceReference GREEN on CUDA_VISIBLE_DEVICES=2,3 and 2,3,4,5",
+      "title": "v2.22 ring attention: per-rank output equals full-sequence (all-ranks concat) attention reference on real multi-GPU; ring deadlock fixed by ncclGroupStart/End around the 4 P2P send/recv ops (un-grouped NCCL P2P serializes and deadlocks)",
+      "confidence": 1.0
+    },
+    "EV-013": {
+      "id": "EV-013",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T11:22:31+00:00",
+      "updated_at": "2026-08-12T11:22:31+00:00",
+      "touched_round": 21,
+      "source": "tests/distributed/sequence_parallel_multigpu_test.cu::MultiGpu_RingAttention_RejectsMissingHiddenDim GREEN; isolated cross-suite 16/16 on 2 & 4 GPUs; single-GPU sequence parallel 33/33",
+      "title": "v2.22 P2/P3 verification: hidden_dim validation pins the new input contract; TensorParallelMultiGpuTest+SequenceParallelMultiGpuTest 16/16 on 2 and 4 GPUs; no single-GPU regression",
+      "confidence": 1.0
+    },
+    "CHG-010": {
+      "id": "CHG-010",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-12T11:33:28+00:00",
+      "updated_at": "2026-08-12T11:33:28+00:00",
+      "touched_round": 21,
+      "commit": "9d91be1",
+      "title": "v2.22 P2: real multi-GPU ring attention (send_recv_kv NCCL P2P + online softmax kernels, ncclGroupStart/End deadlock fix, hidden_dim config); parity GREEN on 2 & 4 GPUs"
     }
   },
   "edges": [
@@ -1517,6 +1552,18 @@
       "to": "TASK-015",
       "type": "depends_on",
       "created_at": "2026-08-12T10:56:37+00:00"
+    },
+    {
+      "from": "CHG-010",
+      "to": "TASK-016",
+      "type": "implements",
+      "created_at": "2026-08-12T11:33:28+00:00"
+    },
+    {
+      "from": "CHG-010",
+      "to": "issue-v19-ring-parallel-noop",
+      "type": "resolves",
+      "created_at": "2026-08-12T11:33:28+00:00"
     }
   ]
 }

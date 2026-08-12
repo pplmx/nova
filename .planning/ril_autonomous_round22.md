@@ -41,8 +41,43 @@ On `CUDA_VISIBLE_DEVICES=2,3` + NCCL: the parity test is **RED** (ring_attention
 throws "not implemented"); the existing `MultiGpu_RingAttentionNotImplemented`
 fail-fast pin stays **green** (P2 will drop it when the real algorithm lands).
 
-## Milestone state
+## Execute — Phase 2 (TASK-016, `CHG-010` 9d91be1)
 
-v2.22 OPENED in STATE.md / PROJECT.md (In Progress). RIL: DEC-008,
-TASK-014/015/016/017 active, graph consistent (87 nodes, 79 edges), round=21.
-Next phase: P2 implementation (TASK-016) — send_recv_kv + online-softmax ring.
+- Added `SequenceParallelConfig.hidden_dim` (required by the multi-GPU ring path to
+  interpret Q/K/V buffers; unset → fail fast).
+- New `src/cuda/distributed/ring_attention.cu`: `ring_attn_init/block/finalize` —
+  online softmax with max-rescale (corr = expf(m - s) applied to running accumulation
+  and denominator), one thread per query token.
+- `RingSequenceParallelism::ring_attention` multi-GPU: P-1 steps, each sending the
+  local block clockwise to next_rank and receiving prev_rank's block (NCCL P2P
+  `ncclSend`/`ncclRecv` on the group comm), accumulating every block into the running
+  softmax state; `std::swap` buffers; finalize divides by l_i.
+- **Deadlock finding (EV-012)**: ungrouped consecutive NCCL P2P ops serialized on the
+  communicator and hung the parity test (~100% CPU); wrapping the four ops in
+  `ncclGroupStart/End` fixed it. This is a real bug the reference-parity RED test caught.
+- Replaced the obsolete `MultiGpu_RingAttentionNotImplemented` pin (its meaning died
+  with the throw) with `RejectsMissingHiddenDim`.
+
+## Verify — Phase 2/3 (EV-012 / EV-013)
+
+- `MultiGpu_RingAttention_MatchesFullSequenceReference` **GREEN** on 2 GPUs and on 4
+  GPUs (multi-hop ring, P=4) — per-rank local-query output == full-sequence attention.
+- Isolated distributed cross-suite (TensorParallelMultiGpuTest + SequenceParallelMultiGpuTest):
+  **16/16 on 2 GPUs and 4 GPUs**. Single-GPU seq-parallel regression **33/33**.
+- Full-suite baseline (NCCL unset): **1416 pass / 0 fail** (1 pre-existing DISABLED).
+
+## Learn
+
+- The parity RED test turned a subtle NCCL P2P deadlock into a 30-second diagnosis
+  (hang → group wrap → green): never run consecutive `ncclSend`/`ncclRecv` outside an
+  `ncclGroup` on the same communicator.
+- Online-softmax accumulation verified exactly matches a double-precision full softmax
+  within 1e-2 — the rescaled-max path is numerically sound for this scale.
+
+## Milestone close
+
+- `TASK-014`/`TASK-015`/`TASK-016`/`TASK-017` resolved; `issue-v19-ring-parallel-noop`
+  resolved; DEC-008; EV-012/EV-013; CHG-010. Round bumped.
+- Next milestone: TBD — the folded parallel-training stack (TP layers + SP attention +
+  ring attention) could now be composed/tested end-to-end, or attention integration into
+  the transformer block; a gradient/backward pass would extend to training.
