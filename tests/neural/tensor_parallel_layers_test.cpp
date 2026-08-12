@@ -107,6 +107,44 @@ protected:
     }
 };
 
+// Host double-precision matmul: C[m x n] = A[m x k] @ B[k x n] (row-major).
+void host_matmul(const float* A, const float* B, float* C, int m, int n, int k) {
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < n; ++j) {
+            double acc = 0.0;
+            for (int t = 0; t < k; ++t) {
+                acc += static_cast<double>(A[i * k + t]) *
+                       static_cast<double>(B[t * n + j]);
+            }
+            C[i * n + j] = static_cast<float>(acc);
+        }
+    }
+}
+
+// dW = X^T dY [k x n], dX = dY W^T [m x k] — analytic backward of Y = X W,
+// computed in double precision.
+void ref_linear_backward(const float* X, const float* W, const float* dY,
+                         float* dX, float* dW, int m, int k, int n) {
+    for (int a = 0; a < k; ++a) {
+        for (int b = 0; b < n; ++b) {
+            double acc = 0.0;
+            for (int i = 0; i < m; ++i) {
+                acc += static_cast<double>(X[i * k + a]) * dY[i * n + b];
+            }
+            dW[a * n + b] = static_cast<float>(acc);
+        }
+    }
+    for (int i = 0; i < m; ++i) {
+        for (int a = 0; a < k; ++a) {
+            double acc = 0.0;
+            for (int b = 0; b < n; ++b) {
+                acc += static_cast<double>(dY[i * n + b]) * W[a * n + b];
+            }
+            dX[i * k + a] = static_cast<float>(acc);
+        }
+    }
+}
+
 // With no NCCL context the layer must fall back to a plain full-weight matmul
 // (tp degree 1): ColumnParallelLayer output equals the single-GPU reference.
 TEST_F(TensorParallelLayersSingleGpuTest, ColumnParallelLayer_MatchesReference) {
@@ -211,4 +249,159 @@ TEST_F(TensorParallelLayersSingleGpuTest, SetWeightOverwritesBuffer) {
     layer.forward(d_A.data(), d_out.data(), m, 1);
     d_out.copy_to(out.data(), out.size());
     EXPECT_TRUE(arrays_near(ref_b.data(), out.data(), out.size(), 1e-3f));
+}
+
+// ============================================================================
+// v2.23 backward reference tests — milestone v2.23 P1 (TASK-019). These pin the
+// analytic gradient contract (dW = X^T dY, dX = dY W^T) on the tp<=1 path; they
+// are RED against the provisional throw-stub and go GREEN with the P2 backward.
+// ============================================================================
+
+TEST_F(TensorParallelLayersSingleGpuTest, ColumnParallelLayer_Backward_MatchesReference) {
+    const int m = 8, k = 16, n = 32;
+    std::vector<float> X(static_cast<size_t>(m) * k);
+    std::vector<float> W(static_cast<size_t>(k) * n);
+    std::vector<float> dY(static_cast<size_t>(m) * n);
+    fill_random(X.data(), X.size());
+    fill_random(W.data(), W.size());
+    fill_random(dY.data(), dY.size());
+
+    std::vector<float> ref_dX(static_cast<size_t>(m) * k);
+    std::vector<float> ref_dW(static_cast<size_t>(k) * n);
+    ref_linear_backward(X.data(), W.data(), dY.data(),
+                        ref_dX.data(), ref_dW.data(), m, k, n);
+
+    ColumnParallelLayer layer(uninitialized_ctx(), k, n);
+    layer.set_weight(W.data());
+
+    cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n), d_dX(m * k),
+        d_dW(k * n);
+    d_X.copy_from(X.data(), X.size());
+    d_dY.copy_from(dY.data(), dY.size());
+
+    std::vector<float> dX(static_cast<size_t>(m) * k);
+    std::vector<float> dW(static_cast<size_t>(k) * n);
+    layer.backward(d_X.data(), d_dY.data(), d_dX.data(), d_dW.data(), m, 1);
+    d_dX.copy_to(dX.data(), dX.size());
+    d_dW.copy_to(dW.data(), dW.size());
+
+    EXPECT_TRUE(arrays_near(ref_dX.data(), dX.data(), dX.size(), 1e-3f));
+    EXPECT_TRUE(arrays_near(ref_dW.data(), dW.data(), dW.size(), 1e-3f));
+}
+
+TEST_F(TensorParallelLayersSingleGpuTest, RowParallelLayer_Backward_MatchesReference) {
+    const int m = 8, k = 16, n = 32;
+    std::vector<float> X(static_cast<size_t>(m) * k);
+    std::vector<float> W(static_cast<size_t>(k) * n);
+    std::vector<float> dY(static_cast<size_t>(m) * n);
+    fill_random(X.data(), X.size());
+    fill_random(W.data(), W.size());
+    fill_random(dY.data(), dY.size());
+
+    std::vector<float> ref_dX(static_cast<size_t>(m) * k);
+    std::vector<float> ref_dW(static_cast<size_t>(k) * n);
+    ref_linear_backward(X.data(), W.data(), dY.data(),
+                        ref_dX.data(), ref_dW.data(), m, k, n);
+
+    RowParallelLayer layer(uninitialized_ctx(), k, n);
+    layer.set_weight(W.data());
+
+    cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n), d_dX(m * k),
+        d_dW(k * n);
+    d_X.copy_from(X.data(), X.size());
+    d_dY.copy_from(dY.data(), dY.size());
+
+    std::vector<float> dX(static_cast<size_t>(m) * k);
+    std::vector<float> dW(static_cast<size_t>(k) * n);
+    layer.backward(d_X.data(), d_dY.data(), d_dX.data(), d_dW.data(), m, 1);
+    d_dX.copy_to(dX.data(), dX.size());
+    d_dW.copy_to(dW.data(), dW.size());
+
+    EXPECT_TRUE(arrays_near(ref_dX.data(), dX.data(), dX.size(), 1e-3f));
+    EXPECT_TRUE(arrays_near(ref_dW.data(), dW.data(), dW.size(), 1e-3f));
+}
+
+// Reference for the SiLU-gated MLP backward
+// (out = down(silu(gate) .* up), all weights full on the tp<=1 path):
+//   dsub = dY W_d^T            dW_d = sub^T dY
+//   dgate = dsub .* up .* silu'(gate)   dup = dsub .* silu(gate)
+//   dX = dgate W_g^T + dup W_u^T   dW_g = X^T dgate   dW_u = X^T dup
+TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesReference) {
+    const int m = 8, h = 16, inter = 48;
+    std::vector<float> X(static_cast<size_t>(m) * h);
+    std::vector<float> W_g(static_cast<size_t>(h) * inter);
+    std::vector<float> W_u(static_cast<size_t>(h) * inter);
+    std::vector<float> W_d(static_cast<size_t>(inter) * h);
+    fill_random(X.data(), X.size());
+    fill_random(W_g.data(), W_g.size());
+    fill_random(W_u.data(), W_u.size());
+    fill_random(W_d.data(), W_d.size());
+    std::vector<float> dY(static_cast<size_t>(m) * h);
+    fill_random(dY.data(), dY.size());
+
+    // Host reference: recompute the forward activations, then analytic backward.
+    auto silu = [](double x) { return x / (1.0 + std::exp(-x)); };
+    auto silu_prime = [](double x) {
+        const double s = 1.0 / (1.0 + std::exp(-x));
+        return s * (1.0 + x * (1.0 - s));
+    };
+    std::vector<float> G(static_cast<size_t>(m) * inter);
+    std::vector<float> U(static_cast<size_t>(m) * inter);
+    std::vector<float> sub(static_cast<size_t>(m) * inter);
+    host_matmul(X.data(), W_g.data(), G.data(), m, inter, h);
+    host_matmul(X.data(), W_u.data(), U.data(), m, inter, h);
+    for (size_t i = 0; i < sub.size(); ++i) {
+        sub[i] = static_cast<float>(silu(G[i]) * U[i]);
+    }
+
+    std::vector<float> ref_dsub(static_cast<size_t>(m) * inter);
+    std::vector<float> ref_dW_d(static_cast<size_t>(inter) * h);
+    ref_linear_backward(sub.data(), W_d.data(), dY.data(),
+                        ref_dsub.data(), ref_dW_d.data(), m, inter, h);
+
+    std::vector<float> dgate(static_cast<size_t>(m) * inter);
+    std::vector<float> dup(static_cast<size_t>(m) * inter);
+    for (int i = 0; i < m * inter; ++i) {
+        dgate[i] = static_cast<float>(ref_dsub[i] * U[i] * silu_prime(G[i]));
+        dup[i] = static_cast<float>(ref_dsub[i] * silu(G[i]));
+    }
+
+    std::vector<float> ref_dX(static_cast<size_t>(m) * h);
+    std::vector<float> dXg(static_cast<size_t>(m) * h);
+    std::vector<float> dXu(static_cast<size_t>(m) * h);
+    std::vector<float> ref_dW_g(static_cast<size_t>(h) * inter);
+    std::vector<float> ref_dW_u(static_cast<size_t>(h) * inter);
+    ref_linear_backward(X.data(), W_g.data(), dgate.data(),
+                        dXg.data(), ref_dW_g.data(), m, h, inter);
+    ref_linear_backward(X.data(), W_u.data(), dup.data(),
+                        dXu.data(), ref_dW_u.data(), m, h, inter);
+    for (int i = 0; i < m * h; ++i) {
+        ref_dX[i] = dXg[i] + dXu[i];
+    }
+
+    TensorParallelMLP mlp(uninitialized_ctx(), h, inter);
+    mlp.set_weight(W_g.data(), W_u.data(), W_d.data());
+
+    cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_dX(m * h),
+        d_dWg(h * inter), d_dWu(h * inter), d_dWd(h * inter);
+    cuda::memory::Buffer<float> d_out(m * h);
+    d_X.copy_from(X.data(), X.size());
+    d_dY.copy_from(dY.data(), dY.size());
+    mlp.forward(d_X.data(), d_out.data(), m, 1);  // save activations in scratch
+
+    std::vector<float> dX(static_cast<size_t>(m) * h);
+    std::vector<float> dWg(static_cast<size_t>(h) * inter);
+    std::vector<float> dWu(static_cast<size_t>(h) * inter);
+    std::vector<float> dWd(static_cast<size_t>(inter) * h);
+    mlp.backward(d_X.data(), d_dY.data(), d_dX.data(),
+                 d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+    d_dX.copy_to(dX.data(), dX.size());
+    d_dWg.copy_to(dWg.data(), dWg.size());
+    d_dWu.copy_to(dWu.data(), dWu.size());
+    d_dWd.copy_to(dWd.data(), dWd.size());
+
+    EXPECT_TRUE(arrays_near(ref_dX.data(), dX.data(), dX.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dW_g.data(), dWg.data(), dWg.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dW_u.data(), dWu.data(), dWu.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dW_d.data(), dWd.data(), dWd.size(), 2e-3f));
 }

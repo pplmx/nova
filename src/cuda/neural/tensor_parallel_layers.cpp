@@ -77,7 +77,10 @@ ColumnParallelLayer::ColumnParallelLayer(
     ::cuda::nccl::NcclContext& ctx,
     int in_features,
     int out_features)
-    : ctx_(ctx), in_features_(in_features), out_features_(out_features) {
+    : ctx_(ctx),
+      in_features_(in_features),
+      out_features_(out_features),
+      reducer_(ctx) {
     const int tp = tp_degree();
     if (in_features_ <= 0) {
         throw_shape_error("ColumnParallelLayer requires a positive in_features");
@@ -159,6 +162,25 @@ void ColumnParallelLayer::forward(
     cuda::neural::matmul(input, weight_->data(), output,
                          m, n_local, in_features_, opts);
     CUDA_CHECK(cudaStreamSynchronize(stream));
+}
+
+void ColumnParallelLayer::backward(
+    const float* input,
+    const float* grad_output,
+    float* grad_input,
+    float* grad_weight,
+    int batch,
+    int seq) {
+    (void)input;
+    (void)grad_output;
+    (void)grad_input;
+    (void)grad_weight;
+    (void)batch;
+    (void)seq;
+    throw std::runtime_error(
+        "ColumnParallelLayer::backward is not implemented yet (TASK-020 "
+        "provisional stub — milestone v2.23 P1 is RED against this; the real "
+        "transposed-GEMM + grad-input AllReduce backward will replace it).");
 }
 
 int ColumnParallelLayer::in_features() const { return in_features_; }
@@ -281,6 +303,24 @@ void RowParallelLayer::forward(
     CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
+void RowParallelLayer::backward(
+    const float* input,
+    const float* grad_output,
+    float* grad_input,
+    float* grad_weight,
+    int batch,
+    int seq) {
+    (void)input;
+    (void)grad_output;
+    (void)grad_input;
+    (void)grad_weight;
+    (void)batch;
+    (void)seq;
+    throw std::runtime_error(
+        "RowParallelLayer::backward is not implemented yet (TASK-020 "
+        "provisional stub — milestone v2.23 P1 is RED against this).");
+}
+
 int RowParallelLayer::in_features() const { return in_features_; }
 
 int RowParallelLayer::out_features() const { return out_features_; }
@@ -351,6 +391,28 @@ void TensorParallelMLP::forward(
     cuda::neural::silu_and_mul(
         gate_buf_->data(), up_buf_->data(), sub_buf_->data(), m * inter_local);
     down_proj_->forward(sub_buf_->data(), output, batch, seq);
+}
+
+void TensorParallelMLP::backward(
+    const float* input,
+    const float* grad_output,
+    float* grad_input,
+    float* grad_gate_weight,
+    float* grad_up_weight,
+    float* grad_down_weight,
+    int batch,
+    int seq) {
+    (void)input;
+    (void)grad_output;
+    (void)grad_input;
+    (void)grad_gate_weight;
+    (void)grad_up_weight;
+    (void)grad_down_weight;
+    (void)batch;
+    (void)seq;
+    throw std::runtime_error(
+        "TensorParallelMLP::backward is not implemented yet (TASK-020 "
+        "provisional stub — milestone v2.23 P1 is RED against this).");
 }
 
 int TensorParallelMLP::hidden_dim() const { return hidden_dim_; }

@@ -1,13 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.22
-milestone_name: Ring Sequence Parallelism On Real Multi-GPU
-status: Complete
+milestone: v2.23
+milestone_name: Tensor-Parallel Layer Backward Passes
+status: "In Progress"
 last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 22: P1-P3 complete, milestone closed
+last_activity: 2026-08-12 — Round 23: milestone v2.23 opened (TASK-022, DEC-009);
+P1 RED backward reference-parity tests running
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,10 +20,25 @@ progress:
 
 ## Current Position
 
-Milestone: v2.22 Ring Sequence Parallelism On Real Multi-GPU
-Status: Complete (Round 22)
-Last activity: 2026-08-12 — ring attention GREEN on 2 & 4 GPUs; TASK-014 /
-issue-v19-ring-parallel-noop closed (DEC-008)
+Milestone: v2.23 Tensor-Parallel Layer Backward Passes
+Status: In Progress (Round 23)
+Last activity: 2026-08-12 — opened on the forward-only gap: the v2.21 weight-
+managed layers compute no gradients; backward adds the col-layer grad-input
+AllReduce (new never-run collective)
+
+## Milestone v2.23 — Tensor-Parallel Layer Backward Passes
+
+Give the v2.21 weight-managed layers a backward (gradient) path, the gap that
+keeps the parallel stack inference-only (TASK-022):
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Analytic reference-parity RED tests: single-GPU col/row/MLP backward vs host double-precision gradients; multi-GPU col grad-input AllReduce parity / row grad-slice parity / MLP chain parity | In Progress (Round 23) — RED against unimplemented backward stubs |
+| 2 | Implement backward: transposed GEMMs (dW = X^T dY, dX = dY W^T) on the per-instance stream-bound handle; col-layer grad-input AllReduce (NcclResult checked); silu_and_mul backward kernel; shard-sliced grad_weight writes | Pending |
+| 3 | Verify: backward parity GREEN on 2 & 4 GPUs, forward regression green, full-suite baseline, RIL close | Pending |
+
+Decision: DEC-009. Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Milestone v2.22 — Ring Sequence Parallelism On Real Multi-GPU
 

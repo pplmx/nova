@@ -90,6 +90,32 @@ public:
     void forward(const float* input, float* output, int batch, int seq);
 
     /**
+     * @brief Backward pass (synchronous; v2.23)
+     *
+     * The input is replicated, so the grad-input is the AllReduce (across
+     * ranks) of the per-rank dY W^T — the new never-run collective for the
+     * parallel stack. The grad-weight is the rank's column shard slice.
+     *
+     * @param input Forward input [batch*seq x in_features] (replicated)
+     * @param grad_output Upstream gradient [batch*seq x out_features/tp]
+     * @param grad_input Full grad-input [batch*seq x in_features] (replicated,
+     *        AllReduced across ranks)
+     * @param grad_weight Full grad-weight [in_features x out_features] row-major;
+     *        this rank writes its column-shard slice [.., rank*out/tp ..)
+     * @param batch Batch size
+     * @param seq Sequence length
+     * @throws std::invalid_argument when tp > 1 without an initialized NCCL
+     *        context; throws NcclException when the grad-input AllReduce fails
+     */
+    void backward(
+        const float* input,
+        const float* grad_output,
+        float* grad_input,
+        float* grad_weight,
+        int batch,
+        int seq);
+
+    /**
      * @brief Input dimension
      */
     [[nodiscard]] int in_features() const;
@@ -113,6 +139,9 @@ private:
     // Rank-local column shard [in_features x out_features/tp]; equals the full
     // weight when tp == 1.
     std::unique_ptr<cuda::memory::Buffer<float>> weight_;
+    // Used by backward to AllReduce the grad-input (replicated input => summed
+    // per-rank dY W^T contributions).
+    ::cuda::nccl::NcclAllReduce reducer_;
 };
 
 /**
@@ -170,6 +199,29 @@ public:
      *        NcclException when the multi-GPU AllReduce itself fails
      */
     void forward(const float* input, float* output, int batch, int seq);
+
+    /**
+     * @brief Backward pass (synchronous; v2.23)
+     *
+     * The input is sharded (matches the upstream column-parallel layout), so
+     * the grad-input is local (each rank's dY W_r^T is exactly its block of
+     * the full grad). The grad-weight is the rank's row shard slice.
+     *
+     * @param input Forward input [batch*seq x in_features/tp] (sharded)
+     * @param grad_output Upstream gradient [batch*seq x out_features]
+     * @param grad_input Grad-input shard [batch*seq x in_features/tp] (local)
+     * @param grad_weight Full grad-weight [in_features x out_features] row-major;
+     *        this rank writes its row-shard slice [rank*in/tp .., ..)
+     * @param batch Batch size
+     * @param seq Sequence length
+     */
+    void backward(
+        const float* input,
+        const float* grad_output,
+        float* grad_input,
+        float* grad_weight,
+        int batch,
+        int seq);
 
     /**
      * @brief Input dimension
@@ -247,6 +299,35 @@ public:
      * @param seq Sequence length
      */
     void forward(const float* input, float* output, int batch, int seq);
+
+    /**
+     * @brief Backward pass (synchronous; v2.23)
+     *
+     * Chains: down row-parallel backward (grad-sub sharded, grad-down-weight
+     * row slice) -> silu_and_mul backward (grad-gate / grad-up on the sharded
+     * intermediate) -> gate/up column-parallel backward, whose grad-inputs are
+     * summed and AllReduced to form the full replicated grad-input.
+     *
+     * @param input Forward input [batch*seq x hidden_dim] (replicated)
+     * @param grad_output Upstream gradient [batch*seq x hidden_dim]
+     * @param grad_input Full grad-input [batch*seq x hidden_dim] (replicated)
+     * @param grad_gate_weight Full grad-weight [hidden x intermediate] (rank
+     *        writes its column shard slice)
+     * @param grad_up_weight Full grad-weight [hidden x intermediate]
+     * @param grad_down_weight Full grad-weight [intermediate x hidden] (rank
+     *        writes its row shard slice)
+     * @param batch Batch size
+     * @param seq Sequence length
+     */
+    void backward(
+        const float* input,
+        const float* grad_output,
+        float* grad_input,
+        float* grad_gate_weight,
+        float* grad_up_weight,
+        float* grad_down_weight,
+        int batch,
+        int seq);
 
     /**
      * @brief Hidden (input/output) dimension
