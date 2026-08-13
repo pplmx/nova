@@ -60,6 +60,8 @@ add_executable(nova-tests
     neural/tensor_parallel_layers_test.cpp
     neural/micro_trainer_test.cpp
     neural/micro_trainer_multigpu_test.cpp
+    neural/tensor_parallel_attention_test.cpp
+    neural/tensor_parallel_attention_multigpu_test.cpp
     neural/fusion/fused_matmul_bias_act_test.cpp
     neural/fusion/fused_matmul_bias_act_edge_test.cpp
     neural/transformer/attention_test.cpp

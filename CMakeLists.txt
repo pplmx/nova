@@ -328,6 +328,7 @@ set(NEURAL_SOURCES
         ${CUDA_NEURAL_DIR}/sync_batch_norm.cu
         ${CUDA_NEURAL_DIR}/tensor_parallel_matmul.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_layers.cpp
+        ${CUDA_NEURAL_DIR}/tensor_parallel_attention.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_profile.cpp
         ${CUDA_NEURAL_DIR}/transformer/attention.cu
         ${CUDA_NEURAL_DIR}/loss/loss_functions.cu

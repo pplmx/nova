@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 26,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T14:44:44+00:00",
+  "updated_at": "2026-08-13T16:22:22+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -579,7 +579,7 @@
       "version": 1,
       "created_at": "2026-08-12T05:11:01+00:00",
       "updated_at": "2026-08-12T05:11:01+00:00",
-      "touched_round": 25,
+      "touched_round": 26,
       "title": "Neural parallel-training layer: TensorParallelMatmul (include/cuda/neural/tensor_parallel_matmul.{h,cpp}), TensorParallelLayers, SequenceParallelAttention / RingSequenceParallelism (include/cuda/distributed/sequence_parallel.h)"
     },
     "HYP-002": {
@@ -1399,6 +1399,102 @@
       "touched_round": 25,
       "title": "P2 v2.25: MicroTrainer end-to-end training driver (training.h/.cpp) + fix cross_entropy_loss running-sum softmax-denominator bug (issue-v24-ce-loss-running-sum)",
       "commit": "cc35094"
+    },
+    "issue-v24-mha-incomplete": {
+      "id": "issue-v24-mha-incomplete",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T14:53:13+00:00",
+      "updated_at": "2026-08-13T14:53:13+00:00",
+      "touched_round": 26,
+      "title": "MultiHeadAttention::forward (src/cuda/neural/transformer/attention.cu) is an incomplete shell: it scales the attn_weights buffer and returns without ever computing QK^T / softmax / V — the class exposes a forward() contract it does not fulfill (a dead/never-run surface of the kind this thread keeps finding)",
+      "severity": 2
+    },
+    "DEC-012": {
+      "id": "DEC-012",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T14:54:25+00:00",
+      "updated_at": "2026-08-13T14:54:25+00:00",
+      "touched_round": 26,
+      "title": "v2.26 milestone direction: implement a tensor-parallel Multi-Head Attention block (QKV column-parallel, multi-head SDPA, output row-parallel) with forward+backward on the weight-sharded conventions, then compose it with the verified TensorParallelMLP into a trainable mini-transformer block driven by MicroTrainer — acceptance = single-GPU/multi-GPU reference parity AND loss-descent training convergence (the DEC-010/011-rejected attention capstone, now that MicroTrainer can train it)",
+      "rationale": "v2.21-2.25 delivered weight-sharded layers, backward passes, a device CE-loss seed, per-shard AdamW stepping, and a MicroTrainer that provably converges on the parallel stack — but every model trained so far is a plain MLP; no attention exists on the tensor-parallel path (the single-GPU MultiHeadAttention is an incomplete shell, issue-v24-mha-incomplete). Attention is the piece that turns the trainable stack into a trainable transformer. The design reuses the verified conventions: QKV as ColumnParallelLayer (each rank owns contiguous head columns, no comm in forward), output as RowParallelLayer (one block-wise AllReduce), multi-head SDPA (QK^T/sqrt(d), softmax, V) as new kernels with full analytic backward (dQ/dK/dV via the standard scaled-dot-product chain); backward follows the v2.23 pattern (per-rank shard grads, col-layer grad-input AllReduced).",
+      "alternatives_rejected": "Device-native fused AdamW kernels (a performance task, orthogonal to capability; deferred); a full mini-language-model milestone (needs the attention block first — attention is the dependency, so it is this milestone); reusing the incomplete single-GPU MultiHeadAttention (fixing it is only single-GPU; the milestone is the TP path)."
+    },
+    "TASK-031": {
+      "id": "TASK-031",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T14:54:43+00:00",
+      "updated_at": "2026-08-13T14:54:43+00:00",
+      "touched_round": 26,
+      "title": "(umbrella v2.26) tensor-parallel Multi-Head Attention block (QKV col-parallel + multi-head SDPA fwd/bwd + output row-parallel) verified by single-GPU/multi-GPU reference parity, composed with TensorParallelMLP into a trainable block driven by MicroTrainer",
+      "category": "core-feature",
+      "severity": 2
+    },
+    "TASK-032": {
+      "id": "TASK-032",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T14:54:43+00:00",
+      "updated_at": "2026-08-13T14:54:43+00:00",
+      "touched_round": 26,
+      "title": "P1 RED: pin the TP-attention contracts — forward (QKV projections, per-head SDPA, row-parallel output) vs a host fp64 single-head-per-rank reference; backward (dQ/dK/dV analytic + shard grads) vs host; mini-transformer-block training (attention+MLP) loss descent via MicroTrainer",
+      "category": "test-quality",
+      "severity": 2
+    },
+    "TASK-033": {
+      "id": "TASK-033",
+      "type": "task",
+      "status": "active",
+      "version": 2,
+      "created_at": "2026-08-13T14:54:43+00:00",
+      "updated_at": "2026-08-13T14:55:04+00:00",
+      "touched_round": 26,
+      "title": "P2 implementation: TP MultiHeadAttention (orchestrated on the existing layer conventions) + multi-head SDPA forward/backward kernels (QK^T/sqrt(d) —> softmax —> V; dV=V^T dout, dP=... , dQ/dK/dV, col-layer grad-input AllReduce); mini-transformer block composing attention+verified MLP; MicroTrainer-driven training path",
+      "category": "core-feature",
+      "severity": 2,
+      "lock_owner": "graph-engineering:v2.26-p2",
+      "lock_until": "2026-08-13T16:55:04+00:00"
+    },
+    "TASK-034": {
+      "id": "TASK-034",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T14:54:43+00:00",
+      "updated_at": "2026-08-13T14:54:43+00:00",
+      "touched_round": 26,
+      "title": "P3 verify: forward/backward parity GREEN single-GPU and multi-GPU (2 & 4); mini-transformer-block loss descent (MicroTrainer); cross-suite + regression + full-suite baseline; RIL close",
+      "category": "test-quality",
+      "severity": 2
+    },
+    "EV-020": {
+      "id": "EV-020",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T16:22:22+00:00",
+      "updated_at": "2026-08-13T16:22:22+00:00",
+      "touched_round": 26,
+      "source": "test: TensorParallelAttentionTest.* / TensorParallelAttentionMultiGpuTest.* (2 & 4 GPUs)",
+      "title": "v2.26 GREEN: TP multi-head attention forward+backward match host fp64 reference on single-GPU (3/3 incl. mini-transformer training convergence: loss 106.6 -> 1.35, acc 0.06 -> 0.56) and real multi-GPU (2 & 4 GPUs, 3/3): assembled forward outputs, backward weight-grad shards, AND a K=12 mini-transformer (attention+MLP, 7 weight tensors/rank) trained sharded == single-GPU full-weight reference. Cross-suite 43/43 on 2 & 4 GPUs; single-GPU neural regression 43/43.",
+      "confidence": 1.0
+    },
+    "CHG-015": {
+      "id": "CHG-015",
+      "type": "change",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-13T16:22:22+00:00",
+      "updated_at": "2026-08-13T16:22:22+00:00",
+      "touched_round": 26,
+      "title": "P2 v2.26: TensorParallelMultiHeadAttention (QKV col-parallel -> multi-head SDPA -> output row-parallel) forward+backward on the verified layer conventions, with step() (one AdamW per weight tensor); mini-transformer (attention+MLP) training via the MicroTrainer chain; sdpa_forward/backward host-side correctness-first primitives. Also fixed issue-v24-mha-incomplete note.",
+      "commit": "<pending>"
     }
   },
   "edges": [
@@ -2061,6 +2157,54 @@
       "to": "issue-v24-ce-loss-running-sum",
       "type": "resolves",
       "created_at": "2026-08-13T14:07:05+00:00"
+    },
+    {
+      "from": "issue-v24-mha-incomplete",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-13T14:53:13+00:00"
+    },
+    {
+      "from": "DEC-012",
+      "to": "TASK-031",
+      "type": "governs",
+      "created_at": "2026-08-13T14:54:55+00:00"
+    },
+    {
+      "from": "DEC-012",
+      "to": "TASK-032",
+      "type": "governs",
+      "created_at": "2026-08-13T14:54:55+00:00"
+    },
+    {
+      "from": "DEC-012",
+      "to": "TASK-033",
+      "type": "governs",
+      "created_at": "2026-08-13T14:54:55+00:00"
+    },
+    {
+      "from": "DEC-012",
+      "to": "TASK-034",
+      "type": "governs",
+      "created_at": "2026-08-13T14:54:55+00:00"
+    },
+    {
+      "from": "TASK-031",
+      "to": "TASK-032",
+      "type": "depends_on",
+      "created_at": "2026-08-13T14:54:56+00:00"
+    },
+    {
+      "from": "TASK-032",
+      "to": "TASK-033",
+      "type": "depends_on",
+      "created_at": "2026-08-13T14:54:56+00:00"
+    },
+    {
+      "from": "TASK-033",
+      "to": "TASK-034",
+      "type": "depends_on",
+      "created_at": "2026-08-13T14:54:56+00:00"
     }
   ]
 }
