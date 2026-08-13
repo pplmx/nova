@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 25,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T06:08:39+00:00",
+  "updated_at": "2026-08-13T07:22:11+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1222,10 +1222,10 @@
     "TASK-023": {
       "id": "TASK-023",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T05:03:18+00:00",
-      "updated_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T07:22:03+00:00",
       "touched_round": 25,
       "title": "(umbrella v2.24) end-to-end training step on the tensor-parallel stack: device cross-entropy loss backward + per-layer AdamW shard step, verified by multi-GPU shard-step parity against a host double-precision full-weight reference",
       "category": "core-feature",
@@ -1234,10 +1234,10 @@
     "TASK-024": {
       "id": "TASK-024",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T05:03:18+00:00",
-      "updated_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T07:22:03+00:00",
       "touched_round": 25,
       "title": "P1 RED: pin the training contracts — device cross_entropy_logits_backward (dlogits=softmax-onehot) vs host double-precision analytic; layer step(AdamWOptimizer&, grad_weight_full, step) parity vs host AdamW over one analytic step (single-GPU); time-synced multi-GPU K-step shard parity vs host fp64 reference on 2 & 4 GPUs",
       "category": "test-quality",
@@ -1246,10 +1246,10 @@
     "TASK-025": {
       "id": "TASK-025",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 3,
       "created_at": "2026-08-13T05:03:18+00:00",
-      "updated_at": "2026-08-13T05:35:07+00:00",
+      "updated_at": "2026-08-13T07:22:11+00:00",
       "touched_round": 25,
       "title": "P2 implementation: cross_entropy_logits_backward device kernel (max-subtract softmax - onehot, /batch); ColumnParallelLayer/RowParallelLayer/TensorParallelMLP step(optimizer, grad_full, step) extracting the rank shard grad and applying AdamW to the private weight_ shard",
       "category": "core-feature",
@@ -1260,10 +1260,10 @@
     "TASK-026": {
       "id": "TASK-026",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T05:03:18+00:00",
-      "updated_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T07:22:03+00:00",
       "touched_round": 25,
       "title": "P3 verify: multi-GPU shard-step parity GREEN on 2 & 4 GPUs vs host fp64 full-weight reference, loss descent over K steps, single-GPU layer/regression green, full-suite baseline, RIL close",
       "category": "test-quality",
@@ -1296,13 +1296,13 @@
     "CHG-013": {
       "id": "CHG-013",
       "type": "change",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T06:08:39+00:00",
-      "updated_at": "2026-08-13T06:08:39+00:00",
+      "updated_at": "2026-08-13T07:21:52+00:00",
       "touched_round": 25,
       "title": "P2 v2.24: implement device cross_entropy_logits_backward kernel (dlogits=(softmax-onehot)/B, max-subtract) and per-layer AdamW shard step — ColumnParallelLayer/RowParallelLayer/TensorParallelMLP step(optimizer, grad_weight_full, step_no) extracting the rank shard grad (strided column slice / contiguous row block) and applying AdamW in place to the private weight_ shard; copy_weight_shard/copy_weights read-back",
-      "commit": "<pending>"
+      "commit": 3053189
     }
   },
   "edges": [
@@ -1881,6 +1881,24 @@
       "to": "TASK-026",
       "type": "depends_on",
       "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "CHG-013",
+      "to": "TASK-025",
+      "type": "implements",
+      "created_at": "2026-08-13T07:22:03+00:00"
+    },
+    {
+      "from": "CHG-013",
+      "to": "TASK-024",
+      "type": "implements",
+      "created_at": "2026-08-13T07:22:03+00:00"
+    },
+    {
+      "from": "CHG-013",
+      "to": "TASK-026",
+      "type": "implements",
+      "created_at": "2026-08-13T07:22:03+00:00"
     }
   ]
 }

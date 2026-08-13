@@ -13,6 +13,21 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 "End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED).
 
 ## Latest round
+- **Round 24 (2026-08-13)** — milestone **v2.24 "End-to-End Training Step On The
+  Tensor-Parallel Stack"** opened through **close (P1+P2+P3)** (`DEC-010`,
+  `TASK-024/025/026`, `CHG-013` 3053189). The v2.21-23 layers were forward+backward
+  capable but untrainable: `loss_functions.cu` was host-side with a forward-only scalar
+  (its device kernels were dead code), the `weight_` shards had no optimizer-step surface,
+  and no loop chained forward → loss → backward → optimizer. **P1** pinned 5 RED tests. **P2**
+  implemented the device `cross_entropy_logits_backward` kernel (dlogits=(softmax-onehot)/B)
+  and per-layer `step(AdamWOptimizer&, grad_weight_full, step_no)` applying AdamW in place
+  to the private rank shard (strided column slice / contiguous row block extraction for the
+  shard grad; one optimizer per weight tensor after the cpp-review HIGH — a shared
+  instance's per-element `m/v` would corrupt up/down moments). **P3 verified**: K-step
+  multi-GPU shard training == host fp64 full-weight reference GREEN on **2 & 4 GPUs**;
+  isolated NCCL cross-suite **39/39 on 2 & 4 GPUs**; single-GPU neural regression 37/37;
+  full-suite baseline 1426/0 (`EV-017/EV-018`). The stack is now trainable end-to-end.
+  See `ril_autonomous_round24.md`.
 - **Round 20 (2026-08-12)** — milestone v2.20 kickoff through **close (P1+P2)**. **P1**
   (`CHG-007` 2137cea): closed the cpp-review BLOCK on the v2.19 TP rewrite — rank resolved
   via `ctx_.rank_of_device()` (membership-validated, no raw-index rank), the column

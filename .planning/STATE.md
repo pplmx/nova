@@ -192,7 +192,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.21 Weight-Managed TensorParallelLayers | Complete | 2026-08-12 | 3 phases |
 | v2.22 Ring Sequence Parallelism On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
 | v2.23 Tensor-Parallel Layer Backward Passes | Complete | 2026-08-12 | 3 phases |
-| v2.24 End-to-End Training Step On The Tensor-Parallel Stack | In Progress | 2026-08-13 | 3 phases |
+| v2.24 End-to-End Training Step On The Tensor-Parallel Stack | Complete | 2026-08-13 | 3 phases |
 
 ---
 
