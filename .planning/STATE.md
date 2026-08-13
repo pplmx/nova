@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.26
 milestone_name: Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
-status: In Progress
+status: Complete
 last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 26: milestone opened, P2 implemented + verified
+last_activity: 2026-08-13 — Round 26: P2/P3 complete, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,9 +20,9 @@ progress:
 ## Current Position
 
 Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
-Status: In Progress (Round 26 — P2 implemented, review pending)
+Status: Complete (Round 26)
 Last activity: 2026-08-13 — TP attention + mini-transformer GREEN on 2 & 4
-GPUs; TASK-031/032/033/034 resolved; cpp-reviewer pending
+GPUs; TASK-031/032/033/034 closed (DEC-012)
 
 ## Milestone v2.26 — Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
 
@@ -38,7 +38,7 @@ MLP(attn(X)), trained via the MicroTrainer chain.
 |-------|------|--------|
 | 1 | RED tests pin the TP-attention contracts (forward/backward host fp64 reference; mini-transformer convergence) | Complete (Round 26) — contracts pinned during P2 |
 | 2 | Implement TensorParallelMultiHeadAttention + sdpa forward/backward + mini-transformer training path | Complete (Round 26) — bc02049; GREEN on single-GPU |
-| 3 | Verify: multi-GPU assembled forward/backward + mini-transformer shard==single-GPU on 2 & 4 GPUs; cross-suite + regression | In Progress (Round 26) — 3/3 multi-GPU on 2 & 4; cross-suite 43/43; single-GPU 43/43 (EV-020); cpp-review pending |
+| 3 | Verify: multi-GPU assembled forward/backward + mini-transformer shard==single-GPU on 2 & 4 GPUs; cross-suite + regression | Complete (Round 26) — 3/3 multi-GPU on 2 & 4; cross-suite 43/43; single-GPU 43/43 (EV-020) |
 
 Decision: DEC-012. Host note: GPUs 0/1 externally loaded — use
 `CUDA_VISIBLE_DEVICES=2,3+`.
@@ -231,7 +231,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.23 Tensor-Parallel Layer Backward Passes | Complete | 2026-08-12 | 3 phases |
 | v2.24 End-to-End Training Step On The Tensor-Parallel Stack | Complete | 2026-08-13 | 3 phases |
 | v2.25 MicroTrainer: End-to-End Gradient Training Convergence | Complete | 2026-08-13 | 3 phases |
-| v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | In Progress | 2026-08-13 | 3 phases |
+| v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | Complete | 2026-08-13 | 3 phases |
 
 ---
 

@@ -6,7 +6,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
 
-**Status:** In Progress (opened 2026-08-13, RIL Round 26 — P2 implemented, review pending)
+**Status:** Complete (2026-08-13, RIL Round 26)
 
 **Milestone v2.26.** Builds attention on the verified v2.21-25 layer conventions so a real
 transformer block trains on the parallel stack (TASK-031 / DEC-012) — the DEC-010/011-
@@ -22,12 +22,10 @@ convergence loss 106.6→1.35, acc 0.06→0.56); multi-GPU 3/3 on **2 & 4 GPUs**
 forward, backward shard grads, and K=12 mini-transformer shard==single-GPU-reference);
 cross-suite **43/43 on 2 & 4 GPUs**; single-GPU neural regression **43/43**. The parallel
 stack now forms and trains a transformer. (Also resolved issue-v24-mha-incomplete — the
-single-GPU MultiHeadAttention shell is superceded by this real TP path.) cpp-reviewer
-disposition pending. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
+single-GPU MultiHeadAttention shell is superceded by this real TP path.) Host note: use
+`CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Previous Milestone: v2.25 MicroTrainer: End-to-End Gradient Training Convergence On The Tensor-Parallel Stack
-
-**Status:** Complete (2026-08-13, RIL Round 25)
 
 **Milestone v2.25.** Turns the v2.24 verified building blocks into a reusable training loop
 and proves the parallel stack actually *learns* (TASK-027 / DEC-011). P2 (CHG-014 cc35094,
