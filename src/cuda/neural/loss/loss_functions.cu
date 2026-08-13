@@ -101,12 +101,22 @@ float cross_entropy_loss(
             max_logit = std::max(max_logit, predictions[b * num_classes + c]);
         }
 
+        // The softmax denominator must be the FULL sum over every class.
+        // Compute it first, then fill log_probs with it — using a running
+        // sum while filling (the pre-fix bug) made the "log-prob" for a target
+        // at position c use only the partial sum c' <= c, systematically
+        // under-reporting the loss for early targets (found by the v2.25
+        // MicroTrainer trajectory parity: device vs host fp64 loss diverged by
+        // ~1.7, the exact average of this bias over uniform targets).
         float sum_exp = 0.0f;
         for (int c = 0; c < num_classes; ++c) {
             float logit = predictions[b * num_classes + c] - max_logit;
-            float exp_logit = expf(logit);
-            sum_exp += exp_logit;
-            log_probs[b * num_classes + c] = logit - logf(sum_exp);
+            sum_exp += expf(logit);
+        }
+        const float log_sum_exp = logf(sum_exp);
+        for (int c = 0; c < num_classes; ++c) {
+            float logit = predictions[b * num_classes + c] - max_logit;
+            log_probs[b * num_classes + c] = logit - log_sum_exp;
         }
 
         int target_class = targets[b];
