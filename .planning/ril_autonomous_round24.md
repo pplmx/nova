@@ -70,6 +70,55 @@ matches a host fp64 full-weight reference on real multi-GPU (TASK-023).
 - 5/5 RED pins the contracts as written; P2 replaces the stubs with the device
   kernel + shard-step implementation.
 
+## Execute — Phase 2 (TASK-025) + P3 (TASK-026, EV-018)
+
+- Device `cross_entropy_logits_backward_kernel`: one thread per (b, c),
+  max-subtract per-row softmax recomputed redundantly per class (cheap for
+  C <= hundreds), `grad_logits[b*C+c] = (softmax_c - onehot(c==targets[b])) /
+  B` under reduction_mean (scale 1/B), `CUDA_CHECK(cudaGetLastError())` after
+  launch. Replaces the P1 stub.
+- `ColumnParallelLayer::step`: extracts the rank's column-slice of the caller's
+  full grad_weight via `cudaMemcpy2DAsync` into a shard-sized contiguous buffer
+  (tp==1: a plain device-to-device copy), then `AdamWOptimizer::step` on the
+  private `weight_` shard in place. Same shape for `RowParallelLayer::step`
+  (contiguous row-block copy). `TensorParallelMLP::step` chains
+  gate_proj_/up_proj_/down_proj_·step. Read-back helpers `copy_weight_shard` /
+  `copy_weights` mirror `set_weight` for the parity assertions.
+- Per-rank `AdamWOptimizer` instance is the concurrency unit: `m/v` are
+  per-instance host vectors, so each rank steps its own shard's moments with no
+  cross-rank state — exactly the per-element independence the shard-step parity
+  relies on.
+
+Verify (EV-018): 4 single-GPU training tests GREEN on device 0 (loss backward
+vs host fp64 analytic; col/row/MLP step vs host AdamW over one analytic step —
+the MLP check compares the stepped shards **directly** at 2e-4, not a
+tolerance-masked forward); multi-GPU `MultiGpu_TrainingStep_MatchesHostFullWeight`
+GREEN on **2 & 4 GPUs** (K=3 AdamW steps per rank, shards assembled == host fp64
+full-weight reference); isolated NCCL cross-suite **39/39 on 2 & 4 GPUs** (TP
+multi-GPU 14/14 incl the new training-step test, NCCL collectives 15/15,
+seq-parallel 6/6, distributed matmul multi-GPU 4/4); single-GPU neural
+regression 37/37 (layers/loss/activations/optimizers/matmul); full-suite
+baseline **1426/0 EXIT=0** (captured before the host's external GPU load
+appeared; a later full-suite re-run hit 54 device-0 OOMs from externally-owned
+GPUs 0/1/2.. — environmental, not a code regression; the multi-GPU suites still
+pass on the loaded devices 2-5).
+
+cpp-review disposition (CHG-013): the reviewer's **HIGH** was real and is fixed —
+`TensorParallelMLP::step` originally chained ONE AdamWOptimizer through
+gate→up→down; its `m/v` per-element moment buffers are keyed by element index,
+so up/down reused the gate moment history and the training-step tests passed
+only at 2e-2 tolerance (direct weights diverge ~1.4e-2). Fix: `step()` now takes
+**one optimizer per weight tensor** (gate/up/down); tests use three instances
+and assert the stepped shards against the host advis images at 2e-4, so a
+shared optimizer can no longer pass. The reviewer's CRITICAL (heap OOB "when
+shard sizes differ") does **not** apply: gate/up shard count `hidden*inter/tp`
+and down shard count `(inter/tp)*hidden` are the *same integer product*, so
+AdamW's first-call sizing always covers all three; no path indexes past
+`m/v`. LOW notes (NULL-stream ordering inside the test's forward/backward
+vs the CE kernel; AdamW ignoring its stream param) are safe because every layer
+call syncs before returning and each rank thread pins its device with
+`cudaSetDevice` — dispositioned as no-change.
+
 ## Learn
 
 - The loss file's `__global__` kernels were dead code — a useful signal that
@@ -79,8 +128,18 @@ matches a host fp64 full-weight reference on real multi-GPU (TASK-023).
 - AdamW moment buffers (`m_data_/v_data_`) are per-optimizer-instance and
   host-side, so a *per-rank* AdamW instance is the right concurrency unit for
   the shard-step (no cross-rank state) — the tiles-to-full-weight argument.
+- Stream discipline: the library AdamW step is synchronous (D2H/H2D
+  `cudaMemcpy` on the calling thread's current device), so each rank thread
+  pinned with `cudaSetDevice` steps exactly its own shard — the thread-per-rank
+  harness and the per-element AdamW math line up cleanly.
 
-## Milestone status (open)
+## Milestone close
 
-- P1 RED pinned (EV-017); P2 (TASK-025) = implement; P3 (TASK-026) = verify
-  multi-GPU GREEN on 2 & 4 GPUs + regression + full-suite baseline + close.
+- `TASK-023/024/025/026` resolved; DEC-010; EV-017/EV-018; CHG-013. Round
+  bumped to 25.
+- The parallel stack is now *trainable*: forward → device CE-logits backward →
+  layer backward → per-rank AdamW shard step reproduces a host fp64 full-weight
+  reference over K steps on real multi-GPU. Next (natural candidates): attention
+  block forward+backward integration (the DEC-010-rejected capstone), device-
+  native fused optimizer kernels (perf task), or a micro-trainer/end-to-end
+  mini-model milestone.

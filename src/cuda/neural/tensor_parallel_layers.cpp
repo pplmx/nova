@@ -254,12 +254,37 @@ void ColumnParallelLayer::step(
     const float* grad_weight,
     int step_no,
     cudaStream_t stream) {
-    (void)optimizer;
-    (void)grad_weight;
-    (void)step_no;
-    (void)stream;
-    throw std::runtime_error(
-        "ColumnParallelLayer::step not implemented (TASK-025)");
+    if (!weight_) {
+        throw std::runtime_error(
+            "ColumnParallelLayer::step called before set_weight");
+    }
+    const int tp = tp_degree();
+    const int n_local = tp <= 1 ? out_features_ : out_features_ / tp;
+    const size_t shard_elems = static_cast<size_t>(in_features_) * n_local;
+
+    // The rank's shard gradient is its column slice of the caller's full
+    // grad_weight buffer: cols [rank*n_local, +n_local) of each row. Extract it
+    // into a contiguous shard-sized buffer (tp==1: the full buffer is the
+    // shard, so a plain copy), then let AdamW step the private shard in place.
+    cuda::memory::Buffer<float> shard_grad(shard_elems);
+    if (tp <= 1) {
+        CUDA_CHECK(cudaMemcpyAsync(
+            shard_grad.data(), grad_weight, shard_elems * sizeof(float),
+            cudaMemcpyDeviceToDevice, stream));
+    } else {
+        const int rank = active_rank(ctx_);
+        CUDA_CHECK(cudaMemcpy2DAsync(
+            shard_grad.data(),
+            n_local * static_cast<size_t>(sizeof(float)),
+            grad_weight + static_cast<size_t>(rank) * n_local,
+            out_features_ * static_cast<size_t>(sizeof(float)),
+            n_local * static_cast<size_t>(sizeof(float)),
+            static_cast<size_t>(in_features_),
+            cudaMemcpyDeviceToDevice, stream));
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    optimizer.step(weight_->data(), shard_grad.data(), shard_elems, step_no,
+                   stream);
 }
 
 void ColumnParallelLayer::copy_weight_shard(float* host_out) const {
@@ -449,12 +474,28 @@ void RowParallelLayer::step(
     const float* grad_weight,
     int step_no,
     cudaStream_t stream) {
-    (void)optimizer;
-    (void)grad_weight;
-    (void)step_no;
-    (void)stream;
-    throw std::runtime_error(
-        "RowParallelLayer::step not implemented (TASK-025)");
+    if (!weight_) {
+        throw std::runtime_error(
+            "RowParallelLayer::step called before set_weight");
+    }
+    const int tp = tp_degree();
+    const int k_local = tp <= 1 ? in_features_ : in_features_ / tp;
+    const size_t shard_elems = static_cast<size_t>(k_local) * out_features_;
+
+    // The rank's shard gradient is its contiguous row block of the full
+    // grad_weight buffer: rows [rank*k_local, +k_local) (tp==1: the whole
+    // buffer). Copy it into a shard-sized buffer and let AdamW step the
+    // private row shard in place.
+    cuda::memory::Buffer<float> shard_grad(shard_elems);
+    const size_t row_off =
+        static_cast<size_t>(tp <= 1 ? 0 : active_rank(ctx_)) * k_local;
+    CUDA_CHECK(cudaMemcpyAsync(
+        shard_grad.data(),
+        grad_weight + row_off * static_cast<size_t>(out_features_),
+        shard_elems * sizeof(float), cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    optimizer.step(weight_->data(), shard_grad.data(), shard_elems, step_no,
+                   stream);
 }
 
 void RowParallelLayer::copy_weight_shard(float* host_out) const {
@@ -586,19 +627,20 @@ void TensorParallelMLP::backward(
 }
 
 void TensorParallelMLP::step(
-    ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+    ::cuda::neural::optimizers::AdamWOptimizer& gate_optimizer,
+    ::cuda::neural::optimizers::AdamWOptimizer& up_optimizer,
+    ::cuda::neural::optimizers::AdamWOptimizer& down_optimizer,
     const float* grad_gate,
     const float* grad_up,
     const float* grad_down,
     int step_no,
     cudaStream_t stream) {
-    (void)optimizer;
-    (void)grad_gate;
-    (void)grad_up;
-    (void)grad_down;
-    (void)step_no;
-    (void)stream;
-    throw std::runtime_error("TensorParallelMLP::step not implemented (TASK-025)");
+    // One AdamW per weight tensor: each shard's moments (m/v) are per-element
+    // and must belong to exactly one weight, or the up/down steps would reuse
+    // the gate history (cpp-review finding).
+    gate_proj_->step(gate_optimizer, grad_gate, step_no, stream);
+    up_proj_->step(up_optimizer, grad_up, step_no, stream);
+    down_proj_->step(down_optimizer, grad_down, step_no, stream);
 }
 
 void TensorParallelMLP::copy_weights(

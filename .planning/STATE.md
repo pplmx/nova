@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.24
 milestone_name: End-to-End Training Step On The Tensor-Parallel Stack
-status: In Progress
+status: Complete
 last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 24: milestone opened, P1 RED pinned
+last_activity: 2026-08-13 — Round 24: P1-P3 complete, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,10 +20,9 @@ progress:
 ## Current Position
 
 Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
-Status: In Progress (Round 24 — P1 RED)
-Last activity: 2026-08-13 — milestone opened; 5 RED tests pin the training
-contracts (device CE-logits backward + per-layer AdamW shard step, verified
-against host fp64); P2 implementation pending (TASK-025)
+Status: Complete (Round 24)
+Last activity: 2026-08-13 — training-step parity GREEN on 2 & 4 GPUs;
+TASK-023/024/025/026 closed (DEC-010)
 
 ## Milestone v2.24 — End-to-End Training Step On The Tensor-Parallel Stack
 
@@ -37,9 +36,9 @@ gradient layout makes this exact), on 2 & 4 GPUs (TASK-023).
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | RED tests pin the training contracts: device cross_entropy_logits_backward vs host fp64 analytic; single-GPU col/row/MLP step vs host AdamW over one analytic step; multi-GPU K-step shard parity vs host fp64 reference on 2 & 4 GPUs | In Progress (Round 24) — 5/5 RED against provisional throw-stubs (EV-017); build green |
-| 2 | Implement: cross_entropy_logits_backward device kernel (max-subtract softmax - onehot, /B); per-layer step() extracting the rank shard grad (strided column slice / contiguous row block) and applying AdamW to the private weight_ shard; TensorParallelMLP::step chains | Pending (TASK-025) |
-| 3 | Verify: multi-GPU shard-step parity GREEN on 2 & 4 GPUs, loss descent, single-GPU regression green, full-suite baseline, RIL close | Pending (TASK-026) |
+| 1 | RED tests pin the training contracts: device cross_entropy_logits_backward vs host fp64 analytic; single-GPU col/row/MLP step vs host AdamW over one analytic step; multi-GPU K-step shard parity vs host fp64 reference on 2 & 4 GPUs | Complete (Round 24) — 5/5 RED against provisional throw-stubs (EV-017) |
+| 2 | Implement: cross_entropy_logits_backward device kernel (max-subtract softmax - onehot, /B); per-layer step() extracting the rank shard grad (strided column slice / contiguous row block) and applying AdamW to the private weight_ shard; TensorParallelMLP::step chains | Complete (Round 24) — CHG-013; 4 single-GPU training tests GREEN (EV-018) |
+| 3 | Verify: multi-GPU shard-step parity GREEN on 2 & 4 GPUs, single-GPU regression green, full-suite baseline, RIL close | Complete (Round 24) — parity GREEN on 2 & 4 GPUs; cross-suite 39/39 on 2 & 4 GPUs; single-GPU regression 32/32; full-suite baseline 1426/0 |
 
 Decision: DEC-010. Host note: GPUs 0/1 externally loaded — use
 `CUDA_VISIBLE_DEVICES=2,3+`.

@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 25,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T05:30:00+00:00",
+  "updated_at": "2026-08-13T06:08:39+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1247,13 +1247,15 @@
       "id": "TASK-025",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 2,
       "created_at": "2026-08-13T05:03:18+00:00",
-      "updated_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T05:35:07+00:00",
       "touched_round": 25,
       "title": "P2 implementation: cross_entropy_logits_backward device kernel (max-subtract softmax - onehot, /batch); ColumnParallelLayer/RowParallelLayer/TensorParallelMLP step(optimizer, grad_full, step) extracting the rank shard grad and applying AdamW to the private weight_ shard",
       "category": "core-feature",
-      "severity": 2
+      "severity": 2,
+      "lock_owner": "graph-engineering:v2.24-p2",
+      "lock_until": "2026-08-13T07:35:07+00:00"
     },
     "TASK-026": {
       "id": "TASK-026",
@@ -1278,6 +1280,29 @@
       "source": "test: CrossEntropyLogitsBackwardDevice / ColumnParallelLayer_Step_MatchesHostAdamW / RowParallelLayer_Step_MatchesHostAdamW / TensorParallelMLP_Step_MatchesHostAdamW / MultiGpu_TrainingStep_MatchesHostFullWeight (all RED against throw-stubs)",
       "title": "P1 RED: the 5 training-contract tests fail against the provisional throw-stubs — device CE backward throws TASK-025 (grad output stays 0), the three single-GPU layer steps throw \"step not implemented (TASK-025)\", and the multi-GPU MLP training-step parity test throws cross_entropy_logits_backward not implemented on real 2-GPU (CUDA_VISIBLE_DEVICES=2,3)",
       "confidence": 1.0
+    },
+    "EV-018": {
+      "id": "EV-018",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:58:43+00:00",
+      "updated_at": "2026-08-13T05:58:43+00:00",
+      "touched_round": 25,
+      "source": "test: CrossEntropyLogitsBackwardDevice / ColumnParallelLayer_Step_MatchesHostAdamW / RowParallelLayer_Step_MatchesHostAdamW / TensorParallelMLP_Step_MatchesHostAdamW / MultiGpu_TrainingStep_MatchesHostFullWeight (all GREEN after P2)",
+      "title": "P2 GREEN: device CE-logits backward + per-layer AdamW shard step verified — 4 single-GPU tests GREEN on device 0; multi-GPU K=3 shard training == host fp64 full-weight reference GREEN on 2 GPUs (1363ms, TP suite 14/14, cross-suite 39/39) and 4 GPUs (1505ms, 14/14, cross-suite 39/39); single-GPU neural regression 32/32; full-suite baseline 1426/0",
+      "confidence": 1.0
+    },
+    "CHG-013": {
+      "id": "CHG-013",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T06:08:39+00:00",
+      "updated_at": "2026-08-13T06:08:39+00:00",
+      "touched_round": 25,
+      "title": "P2 v2.24: implement device cross_entropy_logits_backward kernel (dlogits=(softmax-onehot)/B, max-subtract) and per-layer AdamW shard step — ColumnParallelLayer/RowParallelLayer/TensorParallelMLP step(optimizer, grad_weight_full, step_no) extracting the rank shard grad (strided column slice / contiguous row block) and applying AdamW in place to the private weight_ shard; copy_weight_shard/copy_weights read-back",
+      "commit": "<pending>"
     }
   },
   "edges": [

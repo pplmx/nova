@@ -6,26 +6,29 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
 
-**Status:** In Progress (opened 2026-08-13, RIL Round 24 — P1 RED)
+**Status:** Complete (2026-08-13, RIL Round 24)
 
 **Milestone v2.24.** Makes the v2.21-23 forward+backward layers actually *trainable* on the
-parallel path (TASK-023 / DEC-010). The stack computes gradients but nothing can train it:
-`loss_functions.cu` is host-side with a forward-only scalar (its three `__global__` kernels
-are dead code — no `dlogits` seed exists), the `weight_` shards are private with no
-optimizer-step surface, and no loop chains forward → loss → backward → optimizer. P1
-(TASK-024) adds the contracts and pins them RED (EV-017):
-`cross_entropy_logits_backward` (device kernel: `dlogits = (softmax - onehot)/B`) +
-per-layer `step(AdamWOptimizer&, grad_weight_full, step_no)` applying AdamW in place to the
-private rank shard (with `copy_weight_shard`/`copy_weights` read-back for verification);
-`TensorParallelMLP::step` chains gate/up/down. 5/5 RED: device CE-logits backward vs host
-fp64 analytic; single-GPU col/row/MLP step vs host AdamW over one analytic gradient;
-multi-GPU `MultiGpu_TrainingStep_MatchesHostFullWeight` (K=3 AdamW steps per rank, shards
-assembled == host fp64 full-weight reference) on real 2-GPU (`CUDA_VISIBLE_DEVICES=2,3`).
+parallel path (TASK-023 / DEC-010). The stack computed gradients but nothing could train it:
+`loss_functions.cu` was host-side with a forward-only scalar (its three `__global__` kernels
+were dead code — no `dlogits` seed existed), the `weight_` shards were private with no
+optimizer-step surface, and no loop chained forward → loss → backward → optimizer. P1
+(TASK-024) added the contracts and pinned them RED (EV-017). P2 (CHG-013, TASK-025)
+implemented: device `cross_entropy_logits_backward` kernel (`dlogits = (softmax - onehot)/B`,
+max-subtract softmax recomputed per thread); per-layer `step(AdamWOptimizer&,
+grad_weight_full, step_no)` extracting the rank shard grad (strided column slice via
+`cudaMemcpy2DAsync` / contiguous row block) and applying AdamW in place to the private
+`weight_` shard (per-rank optimizer instance = no cross-rank state); `TensorParallelMLP::step`
+chains gate/up/down; read-back via `copy_weight_shard`/`copy_weights`.
+
 Key insight: the meshed gradient layout is exact (col grad-shard = column block of
-`X^T dY_full`; row grad-shard = row block), and AdamW is per-element — so stepping each
-rank shard tiles to the full-weight update, giving a clean K-step parity. P2 (TASK-025)
-implements the kernel + shard step; P3 (TASK-026) verifies GREEN on 2 & 4 GPUs.
-Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
+`X^T dY_full`; row grad-shard = row block) and AdamW is per-element — so stepping each rank
+shard tiles to the full-weight update, giving a clean K-step parity. Verified (EV-018):
+`MultiGpu_TrainingStep_MatchesHostFullWeight` (K=3 AdamW steps per rank, shards assembled ==
+host fp64 full-weight reference) GREEN on **2 & 4 GPUs**; single-GPU CE-logits backward +
+col/row/MLP step vs host fp64 4/4; isolated NCCL cross-suite **39/39 on 2 & 4 GPUs**;
+single-GPU neural regression 32/32; full-suite baseline **1426/0**. The parallel stack is now
+trainable end-to-end. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Previous Milestone: v2.23 Tensor-Parallel Layer Backward Passes
 

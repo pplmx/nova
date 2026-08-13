@@ -124,6 +124,43 @@ float cross_entropy_loss(
     return config.reduction_mean ? total_loss / batch_size : total_loss;
 }
 
+// Device cross-entropy-with-logits backward (v2.24 / TASK-025):
+//   grad_logits[b*C+c] = (softmax_c(logits_b) - [c == targets[b]]) * scale
+// with scale = 1/B for reduction_mean (matching the host forward), 1 otherwise.
+// One thread per (b, c); the per-row max/sum is recomputed redundantly per
+// class (C <= hundreds in practice, so the O(B*C^2) redundant work is cheap
+// and keeps the kernel grid-stride-free and dependency-light).
+template <typename T>
+__global__ void cross_entropy_logits_backward_kernel(
+    const T* logits,
+    const int* targets,
+    T* grad_logits,
+    int batch_size,
+    int num_classes,
+    T scale
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = batch_size * num_classes;
+    if (idx >= total) return;
+
+    const int b = idx / num_classes;
+    const int c = idx % num_classes;
+
+    T max_logit = -INFINITY;
+    for (int j = 0; j < num_classes; ++j) {
+        max_logit = max(max_logit, logits[b * num_classes + j]);
+    }
+
+    T sum_exp = static_cast<T>(0.0);
+    for (int j = 0; j < num_classes; ++j) {
+        sum_exp += exp(logits[b * num_classes + j] - max_logit);
+    }
+
+    const T softmax_c = exp(logits[idx] - max_logit) / sum_exp;
+    const T onehot = (c == targets[b]) ? static_cast<T>(1.0) : static_cast<T>(0.0);
+    grad_logits[idx] = (softmax_c - onehot) * scale;
+}
+
 void cross_entropy_logits_backward(
     const float* logits,
     const int* targets,
@@ -133,15 +170,21 @@ void cross_entropy_logits_backward(
     const CrossEntropyConfig& config,
     cudaStream_t stream
 ) {
-    (void)logits;
-    (void)targets;
-    (void)grad_logits;
-    (void)batch_size;
-    (void)num_classes;
-    (void)config;
-    (void)stream;
-    throw std::runtime_error(
-        "cross_entropy_logits_backward not implemented (TASK-025)");
+    if (batch_size <= 0 || num_classes <= 0) {
+        throw std::invalid_argument(
+            "cross_entropy_logits_backward requires positive batch_size and "
+            "num_classes");
+    }
+    const float scale =
+        config.reduction_mean ? 1.0f / static_cast<float>(batch_size) : 1.0f;
+    const int block_size = 256;
+    const int total = batch_size * num_classes;
+    const int grid_size = (total + block_size - 1) / block_size;
+    cross_entropy_logits_backward_kernel<float><<<grid_size, block_size, 0, stream>>>(
+        logits, targets, grad_logits, batch_size, num_classes, scale);
+    // async launch errors surface on the next sync; check immediately so a
+    // bad launch is reported here, not in a caller's later cudaStreamSync.
+    CUDA_CHECK(cudaGetLastError());
 }
 
 float focal_loss(

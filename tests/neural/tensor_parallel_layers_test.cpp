@@ -569,28 +569,28 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Step_MatchesHostAdam
                     static_cast<size_t>(inter) * h, 1, cfg.learning_rate,
                     cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
 
-    AdamWOptimizer opt(cfg);
+    // One optimizer per weight tensor: a shared AdamW would corrupt the up/down
+    // moments with the gate history (moment buffers are per-element and not
+    // per-tensor). The reference uses a fresh moment set per weight too.
+    AdamWOptimizer opt_g(cfg), opt_u(cfg), opt_d(cfg);
     cuda::memory::Buffer<float> d_g((size_t)h * inter), d_u((size_t)h * inter),
         d_d((size_t)inter * h);
     d_g.copy_from(dWg.data(), dWg.size());
     d_u.copy_from(dWu.data(), dWu.size());
     d_d.copy_from(dWd.data(), dWd.size());
-    EXPECT_NO_THROW(mlp.step(opt, d_g.data(), d_u.data(), d_d.data(), 1));
+    EXPECT_NO_THROW(mlp.step(opt_g, opt_u, opt_d,
+                             d_g.data(), d_u.data(), d_d.data(), 1));
 
-    // MLP weights are private: verify the stepped result by running the
-    // forward on a fresh input and comparing against the host reference MLP
-    // built from the host-stepped weights (the step must move the weights to
-    // exactly the AdamW images of the analytic grads).
-    std::vector<float> X2(static_cast<size_t>(m) * h);
-    fill_random(X2.data(), X2.size());
-    std::vector<float> ref_out(static_cast<size_t>(m) * h);
-    ref_gated_mlp(X2.data(), ref_g.data(), ref_u.data(), ref_d.data(),
-                  ref_out.data(), m, h, inter);
-
-    cuda::memory::Buffer<float> d_X2(m * h), d_out2(m * h);
-    d_X2.copy_from(X2.data(), X2.size());
-    mlp.forward(d_X2.data(), d_out2.data(), m, 1);
-    std::vector<float> out2(static_cast<size_t>(m) * h);
-    d_out2.copy_to(out2.data(), out2.size());
-    EXPECT_TRUE(arrays_near(ref_out.data(), out2.data(), out2.size(), 2e-2f));
+    // Read the stepped shards back (tp==1: each shard is the full weight) and
+    // compare directly against the host AdamW images — a stricter check than a
+    // tolerance-masked forward (the v2.24 shared-optimizer finding passed 2e-2
+    // on forward but diverged in the weights).
+    std::vector<float> g_out(static_cast<size_t>(h) * inter);
+    std::vector<float> u_out(static_cast<size_t>(h) * inter);
+    std::vector<float> down_out(static_cast<size_t>(inter) * h);
+    mlp.copy_weights(g_out.data(), u_out.data(), down_out.data());
+    EXPECT_TRUE(arrays_near(ref_g.data(), g_out.data(), g_out.size(), 2e-4f));
+    EXPECT_TRUE(arrays_near(ref_u.data(), u_out.data(), u_out.size(), 2e-4f));
+    EXPECT_TRUE(arrays_near(ref_d.data(), down_out.data(), down_out.size(),
+                            2e-4f));
 }

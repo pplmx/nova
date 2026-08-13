@@ -406,15 +406,24 @@ public:
      * backward (cross_entropy_logits_backward) -> backward() -> step() is a
      * complete training step on the tensor-parallel stack.
      *
-     * @param optimizer AdamW optimizer (per-rank instance)
+     * One AdamW instance per weight tensor: the optimizer's m/v moment buffers
+     * are sized and keyed per element of a single weight, so gate/up/down must
+     * each get their own instance (a shared instance would silently corrupt
+     * the up/down moments with the gate history — cpp-review finding).
+     *
+     * @param gate_optimizer AdamW for the gate shard [hidden x inter/tp]
+     * @param up_optimizer AdamW for the up shard [hidden x inter/tp]
+     * @param down_optimizer AdamW for the down shard [inter/tp x hidden]
      * @param grad_gate Full gate grad [hidden x intermediate]
      * @param grad_up Full up grad [hidden x intermediate]
      * @param grad_down Full down grad [intermediate x hidden]
-     * @param step_no Optimizer step counter
+     * @param step_no Optimizer step counter (same for all three)
      * @param stream CUDA stream
      */
     void step(
-        ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+        ::cuda::neural::optimizers::AdamWOptimizer& gate_optimizer,
+        ::cuda::neural::optimizers::AdamWOptimizer& up_optimizer,
+        ::cuda::neural::optimizers::AdamWOptimizer& down_optimizer,
         const float* grad_gate,
         const float* grad_up,
         const float* grad_down,

@@ -1166,7 +1166,9 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) 
 
         TensorParallelMLP mlp(ctx, h, inter);
         mlp.set_weight(Wg0.data(), Wu0.data(), Wd0.data());
-        AdamWOptimizer opt(opt_cfg);
+        // One optimizer per weight tensor — a shared AdamW would corrupt the
+        // up/down moment state with the gate history (per-element m/v).
+        AdamWOptimizer opt_g(opt_cfg), opt_u(opt_cfg), opt_d(opt_cfg);
         CrossEntropyConfig ce_cfg;
         ce_cfg.num_classes = h;
         ce_cfg.reduction_mean = true;
@@ -1181,8 +1183,9 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) 
                 m, h, ce_cfg, nullptr);
             mlp.backward(d_X.data(), d_dlogits.data(), d_dX.data(),
                          d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
-            EXPECT_NO_THROW(
-                mlp.step(opt, d_dWg.data(), d_dWu.data(), d_dWd.data(), s));
+            EXPECT_NO_THROW(mlp.step(opt_g, opt_u, opt_d,
+                                     d_dWg.data(), d_dWu.data(), d_dWd.data(),
+                                     s));
         }
 
         mlp.copy_weights(sg[d].data(), su[d].data(), sd[d].data());
