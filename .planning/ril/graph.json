@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 25,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T07:22:11+00:00",
+  "updated_at": "2026-08-13T07:26:53+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -638,11 +638,11 @@
     "issue-v19-tp-multigpu-unverified": {
       "id": "issue-v19-tp-multigpu-unverified",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-12T05:11:35+00:00",
-      "updated_at": "2026-08-12T05:11:35+00:00",
-      "touched_round": 19,
+      "updated_at": "2026-08-13T07:26:53+00:00",
+      "touched_round": 25,
       "title": "TensorParallelMatmul multi-GPU execution path has never been run on real multi-GPU (tests only buffer-size formulas); sequence-parallel tests pass comm=nullptr"
     },
     "EV-004": {
