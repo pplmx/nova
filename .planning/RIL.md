@@ -13,6 +13,17 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 "End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED).
 
 ## Latest round
+- **Round 26 (2026-08-13)** — milestone **v2.26 "Tensor-Parallel Multi-Head Attention +
+  Mini-Transformer Training"** opened (DEC-012, TASK-032/033/034) and P2 implemented
+  (CHG-015 bc02049). Added `TensorParallelMultiHeadAttention` (QKV column-parallel →
+  collective-free multi-head SDPA → output row-parallel; host-side
+  `sdpa_forward/backward`; backward per v2.23 with grad-input AllReduce; `step()` one
+  AdamW per weight tensor) — resolving the incomplete single-GPU MultiHeadAttention shell
+  (issue-v24-mha-incomplete). Mini-transformer (attention + verified MLP) trains sharded.
+  Test-reference fixes (position-major key/v stride; per-head softmax probs) came out of
+  reference parity. Verified (EV-020): single-GPU 3/3 (host fp64 fwd/bwd + convergence);
+  multi-GPU 3/3 on 2 & 4 GPUs incl. K=12 mini-transformer shard==single-GPU; cross-suite
+  43/43 on 2 & 4 GPUs; single-GPU neural 43/43. See `ril_autonomous_round26.md`.
 - **Round 25 (2026-08-13)** — milestone **v2.25 "MicroTrainer: End-to-End Gradient
   Training Convergence On The Tensor-Parallel Stack"** opened (DEC-011,
   TASK-028/029/030) and P2 implemented (CHG-014 cc35094). Added

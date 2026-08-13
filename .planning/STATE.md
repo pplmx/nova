@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.25
-milestone_name: MicroTrainer: End-to-End Gradient Training Convergence On The Tensor-Parallel Stack
-status: Complete
+milestone: v2.26
+milestone_name: Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
+status: In Progress
 last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 25: P2/P3 complete, milestone closed
+last_activity: 2026-08-13 — Round 26: milestone opened, P2 implemented + verified
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 2
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,12 +19,29 @@ progress:
 
 ## Current Position
 
-Milestone: v2.25 MicroTrainer: End-to-End Gradient Training Convergence On The
-Tensor-Parallel Stack
-Status: Complete (Round 25)
-Last activity: 2026-08-13 — MicroTrainer trajectory parity GREEN on 2 & 4 GPUs;
-CE running-sum bug found + fixed (issue-v24-ce-loss-running-sum);
-TASK-027/028/029/030 closed (DEC-011)
+Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
+Status: In Progress (Round 26 — P2 implemented, review pending)
+Last activity: 2026-08-13 — TP attention + mini-transformer GREEN on 2 & 4
+GPUs; TASK-031/032/033/034 resolved; cpp-reviewer pending
+
+## Milestone v2.26 — Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
+
+The DEC-010/011-rejected attention capstone, now that MicroTrainer (v2.25)
+makes it trainable. Build attention on the verified v2.21-25 layer conventions:
+QKV ColumnParallelLayer (each rank owns contiguous head columns -> per-head
+SDPA is collective-free), multi-head SDPA (QK^T/sqrt(d) softmax V + analytic
+backward), output RowParallelLayer (one AllReduce). step() takes one AdamW per
+weight tensor. Mini-transformer = attention + verified MLP, logits =
+MLP(attn(X)), trained via the MicroTrainer chain.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED tests pin the TP-attention contracts (forward/backward host fp64 reference; mini-transformer convergence) | Complete (Round 26) — contracts pinned during P2 |
+| 2 | Implement TensorParallelMultiHeadAttention + sdpa forward/backward + mini-transformer training path | Complete (Round 26) — bc02049; GREEN on single-GPU |
+| 3 | Verify: multi-GPU assembled forward/backward + mini-transformer shard==single-GPU on 2 & 4 GPUs; cross-suite + regression | In Progress (Round 26) — 3/3 multi-GPU on 2 & 4; cross-suite 43/43; single-GPU 43/43 (EV-020); cpp-review pending |
+
+Decision: DEC-012. Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Milestone v2.25 — MicroTrainer: End-to-End Gradient Training Convergence On The Tensor-Parallel Stack
 
@@ -213,7 +230,8 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.22 Ring Sequence Parallelism On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
 | v2.23 Tensor-Parallel Layer Backward Passes | Complete | 2026-08-12 | 3 phases |
 | v2.24 End-to-End Training Step On The Tensor-Parallel Stack | Complete | 2026-08-13 | 3 phases |
-| v2.25 MicroTrainer: End-to-End Gradient Training Convergence | In Progress | 2026-08-13 | 3 phases |
+| v2.25 MicroTrainer: End-to-End Gradient Training Convergence | Complete | 2026-08-13 | 3 phases |
+| v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | In Progress | 2026-08-13 | 3 phases |
 
 ---
 
