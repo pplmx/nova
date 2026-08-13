@@ -29,6 +29,38 @@ float cross_entropy_loss(
     cudaStream_t stream = nullptr
 );
 
+/**
+ * @brief Device cross-entropy-with-logits backward (milestone v2.24)
+ *
+ * The missing seed gradient of the training stack: the host-side
+ * cross_entropy_loss() computes only the scalar (its device kernels are
+ * unused / dead code), so no grad-logits exist to feed a layer backward
+ * chain. This kernel computes the standard softmax-CE gradient
+ *
+ *   grad_logits[b * C + c] = (softmax_c(logits_b) - [c == targets[b]]) / B
+ *
+ * for reduction_mean (or without the /B when sum reduction), where softmax is
+ * computed with max-subtraction for numerical stability. It is the layer
+ * backward chain's upstream seed in an end-to-end training step (TASK-025).
+ *
+ * @param logits Device logits [batch_size x num_classes]
+ * @param targets Device targets [batch_size]
+ * @param grad_logits Output device buffer [batch_size x num_classes]
+ * @param batch_size Batch size
+ * @param num_classes Number of classes
+ * @param config Cross-entropy config (reduction must match the forward pass)
+ * @param stream CUDA stream (default null = current stream)
+ */
+void cross_entropy_logits_backward(
+    const float* logits,
+    const int* targets,
+    float* grad_logits,
+    int batch_size,
+    int num_classes,
+    const CrossEntropyConfig& config = {},
+    cudaStream_t stream = nullptr
+);
+
 struct FocalLossConfig {
     int num_classes = 10;
     float alpha = 1.0f;

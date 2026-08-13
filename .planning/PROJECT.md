@@ -4,7 +4,30 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.23 Tensor-Parallel Layer Backward Passes
+## Current Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
+
+**Status:** In Progress (opened 2026-08-13, RIL Round 24 — P1 RED)
+
+**Milestone v2.24.** Makes the v2.21-23 forward+backward layers actually *trainable* on the
+parallel path (TASK-023 / DEC-010). The stack computes gradients but nothing can train it:
+`loss_functions.cu` is host-side with a forward-only scalar (its three `__global__` kernels
+are dead code — no `dlogits` seed exists), the `weight_` shards are private with no
+optimizer-step surface, and no loop chains forward → loss → backward → optimizer. P1
+(TASK-024) adds the contracts and pins them RED (EV-017):
+`cross_entropy_logits_backward` (device kernel: `dlogits = (softmax - onehot)/B`) +
+per-layer `step(AdamWOptimizer&, grad_weight_full, step_no)` applying AdamW in place to the
+private rank shard (with `copy_weight_shard`/`copy_weights` read-back for verification);
+`TensorParallelMLP::step` chains gate/up/down. 5/5 RED: device CE-logits backward vs host
+fp64 analytic; single-GPU col/row/MLP step vs host AdamW over one analytic gradient;
+multi-GPU `MultiGpu_TrainingStep_MatchesHostFullWeight` (K=3 AdamW steps per rank, shards
+assembled == host fp64 full-weight reference) on real 2-GPU (`CUDA_VISIBLE_DEVICES=2,3`).
+Key insight: the meshed gradient layout is exact (col grad-shard = column block of
+`X^T dY_full`; row grad-shard = row block), and AdamW is per-element — so stepping each
+rank shard tiles to the full-weight update, giving a clean K-step parity. P2 (TASK-025)
+implements the kernel + shard step; P3 (TASK-026) verifies GREEN on 2 & 4 GPUs.
+Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.23 Tensor-Parallel Layer Backward Passes
 
 **Status:** Complete (2026-08-12, RIL Round 23)
 

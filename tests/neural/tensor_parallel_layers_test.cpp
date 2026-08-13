@@ -32,6 +32,7 @@
 #include "cuda/memory/buffer-inl.h"
 
 using namespace cuda::neural;
+using namespace cuda::neural::optimizers;
 
 namespace {
 
@@ -404,4 +405,192 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
     EXPECT_TRUE(arrays_near(ref_dW_g.data(), dWg.data(), dWg.size(), 2e-3f));
     EXPECT_TRUE(arrays_near(ref_dW_u.data(), dWu.data(), dWu.size(), 2e-3f));
     EXPECT_TRUE(arrays_near(ref_dW_d.data(), dWd.data(), dWd.size(), 2e-3f));
+}
+
+// ============================================================================
+// v2.24 training-step reference tests (TASK-024, milestone P1). These pin the
+// step(optimizer, grad_weight_full, step) contract: with the analytic grad
+// (dW = X^T dY) of one forward/backward, applying AdamW via the layer must
+// leave the weight shard equal to a host double-precision AdamW on the same
+// full weight. RED against the provisional throw-stub.
+// ============================================================================
+
+namespace {
+
+// Host double-precision AdamW reference (mirrors the library formula in
+// optimizers.cpp exactly, computed in double to check the fp32 path).
+void host_adamw_step(const float* w, const float* dw, float* w_out,
+                     std::vector<double>& m, std::vector<double>& v,
+                     size_t n, int step, float lr, float beta1, float beta2,
+                     float eps, float wd) {
+    const double b1p = std::pow(static_cast<double>(beta1), step);
+    const double b2p = std::pow(static_cast<double>(beta2), step);
+    const double lr_t = static_cast<double>(lr) * std::sqrt(1.0 - b2p) / (1.0 - b1p);
+    for (size_t i = 0; i < n; ++i) {
+        const double g = dw[i];
+        m[i] = beta1 * m[i] + (1.0 - beta1) * g;
+        v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
+        const double m_hat = m[i] / (1.0 - b1p);
+        const double v_hat = v[i] / (1.0 - b2p);
+        double update = m_hat / (std::sqrt(v_hat) + eps) + wd * w[i];
+        w_out[i] = static_cast<float>(w[i] - lr_t * update);
+    }
+}
+
+}  // namespace
+
+TEST_F(TensorParallelLayersSingleGpuTest, ColumnParallelLayer_Step_MatchesHostAdamW) {
+    const int m = 8, k = 16, n = 32;
+    std::vector<float> X(static_cast<size_t>(m) * k);
+    std::vector<float> W(static_cast<size_t>(k) * n);
+    std::vector<float> dY(static_cast<size_t>(m) * n);
+    fill_random(X.data(), X.size());
+    fill_random(W.data(), W.size());
+    fill_random(dY.data(), dY.size());
+
+    std::vector<float> dW(static_cast<size_t>(k) * n);
+    {
+        std::vector<float> dX(static_cast<size_t>(m) * k);
+        ref_linear_backward(X.data(), W.data(), dY.data(),
+                            dX.data(), dW.data(), m, k, n);
+    }
+
+    // Host AdamW reference over one step.
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.01f;
+    std::vector<float> ref_w(static_cast<size_t>(k) * n);
+    std::vector<double> mom(static_cast<size_t>(k) * n, 0.0);
+    std::vector<double> mom_v(static_cast<size_t>(k) * n, 0.0);
+    host_adamw_step(W.data(), dW.data(), ref_w.data(), mom, mom_v,
+                    static_cast<size_t>(k) * n, 1, cfg.learning_rate,
+                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+
+    ColumnParallelLayer layer(uninitialized_ctx(), k, n);
+    layer.set_weight(W.data());
+    AdamWOptimizer opt(cfg);
+
+    cuda::memory::Buffer<float> d_dW(k * n);
+    d_dW.copy_from(dW.data(), dW.size());
+    // tp==1: the full grad buffer is the shard's grad directly.
+    EXPECT_NO_THROW(layer.step(opt, d_dW.data(), 1));
+
+    std::vector<float> w_out(static_cast<size_t>(k) * n);
+    layer.copy_weight_shard(w_out.data());
+    EXPECT_TRUE(arrays_near(ref_w.data(), w_out.data(), w_out.size(), 2e-4f));
+}
+
+TEST_F(TensorParallelLayersSingleGpuTest, RowParallelLayer_Step_MatchesHostAdamW) {
+    const int m = 8, k = 16, n = 32;
+    std::vector<float> X(static_cast<size_t>(m) * k);
+    std::vector<float> W(static_cast<size_t>(k) * n);
+    std::vector<float> dY(static_cast<size_t>(m) * n);
+    fill_random(X.data(), X.size());
+    fill_random(W.data(), W.size());
+    fill_random(dY.data(), dY.size());
+
+    std::vector<float> dW(static_cast<size_t>(k) * n);
+    {
+        std::vector<float> dX(static_cast<size_t>(m) * k);
+        ref_linear_backward(X.data(), W.data(), dY.data(),
+                            dX.data(), dW.data(), m, k, n);
+    }
+
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.01f;
+    std::vector<float> ref_w(static_cast<size_t>(k) * n);
+    std::vector<double> mom(static_cast<size_t>(k) * n, 0.0);
+    std::vector<double> mom_v(static_cast<size_t>(k) * n, 0.0);
+    host_adamw_step(W.data(), dW.data(), ref_w.data(), mom, mom_v,
+                    static_cast<size_t>(k) * n, 1, cfg.learning_rate,
+                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+
+    RowParallelLayer layer(uninitialized_ctx(), k, n);
+    layer.set_weight(W.data());
+    AdamWOptimizer opt(cfg);
+
+    cuda::memory::Buffer<float> d_dW(k * n);
+    d_dW.copy_from(dW.data(), dW.size());
+    EXPECT_NO_THROW(layer.step(opt, d_dW.data(), 1));
+
+    std::vector<float> w_out(static_cast<size_t>(k) * n);
+    layer.copy_weight_shard(w_out.data());
+    EXPECT_TRUE(arrays_near(ref_w.data(), w_out.data(), w_out.size(), 2e-4f));
+}
+
+// MLP step: chain gate/up/down shard steps. The reference applies host AdamW to
+// each full weight with the analytic per-weight grads from the v2.23 backward.
+TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Step_MatchesHostAdamW) {
+    const int m = 8, h = 16, inter = 48;
+    std::vector<float> X(static_cast<size_t>(m) * h);
+    std::vector<float> W_g(static_cast<size_t>(h) * inter);
+    std::vector<float> W_u(static_cast<size_t>(h) * inter);
+    std::vector<float> W_d(static_cast<size_t>(inter) * h);
+    fill_random(X.data(), X.size());
+    fill_random(W_g.data(), W_g.size());
+    fill_random(W_u.data(), W_u.size());
+    fill_random(W_d.data(), W_d.size());
+    std::vector<float> dY(static_cast<size_t>(m) * h);
+    fill_random(dY.data(), dY.size());
+
+    // Forward activations on device (scratch) and analytic grads on host.
+    TensorParallelMLP mlp(uninitialized_ctx(), h, inter);
+    mlp.set_weight(W_g.data(), W_u.data(), W_d.data());
+    cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_dX(m * h),
+        d_dWg(h * inter), d_dWu(h * inter), d_dWd(inter * h), d_out(m * h);
+    d_X.copy_from(X.data(), X.size());
+    d_dY.copy_from(dY.data(), dY.size());
+    mlp.forward(d_X.data(), d_out.data(), m, 1);
+
+    std::vector<float> dWg(static_cast<size_t>(h) * inter);
+    std::vector<float> dWu(static_cast<size_t>(h) * inter);
+    std::vector<float> dWd(static_cast<size_t>(inter) * h);
+    mlp.backward(d_X.data(), d_dY.data(), d_dX.data(),
+                 d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+
+    // Host AdamW reference over one step per weight.
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.01f;
+    std::vector<float> ref_g(static_cast<size_t>(h) * inter);
+    std::vector<float> ref_u(static_cast<size_t>(h) * inter);
+    std::vector<float> ref_d(static_cast<size_t>(inter) * h);
+    std::vector<double> mg(static_cast<size_t>(h) * inter, 0.0);
+    std::vector<double> vg(static_cast<size_t>(h) * inter, 0.0);
+    std::vector<double> mu(static_cast<size_t>(h) * inter, 0.0);
+    std::vector<double> vu(static_cast<size_t>(h) * inter, 0.0);
+    std::vector<double> md(static_cast<size_t>(inter) * h, 0.0);
+    std::vector<double> vd(static_cast<size_t>(inter) * h, 0.0);
+    host_adamw_step(W_g.data(), dWg.data(), ref_g.data(), mg, vg,
+                    static_cast<size_t>(h) * inter, 1, cfg.learning_rate,
+                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W_u.data(), dWu.data(), ref_u.data(), mu, vu,
+                    static_cast<size_t>(h) * inter, 1, cfg.learning_rate,
+                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W_d.data(), dWd.data(), ref_d.data(), md, vd,
+                    static_cast<size_t>(inter) * h, 1, cfg.learning_rate,
+                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+
+    AdamWOptimizer opt(cfg);
+    cuda::memory::Buffer<float> d_g((size_t)h * inter), d_u((size_t)h * inter),
+        d_d((size_t)inter * h);
+    d_g.copy_from(dWg.data(), dWg.size());
+    d_u.copy_from(dWu.data(), dWu.size());
+    d_d.copy_from(dWd.data(), dWd.size());
+    EXPECT_NO_THROW(mlp.step(opt, d_g.data(), d_u.data(), d_d.data(), 1));
+
+    // MLP weights are private: verify the stepped result by running the
+    // forward on a fresh input and comparing against the host reference MLP
+    // built from the host-stepped weights (the step must move the weights to
+    // exactly the AdamW images of the analytic grads).
+    std::vector<float> X2(static_cast<size_t>(m) * h);
+    fill_random(X2.data(), X2.size());
+    std::vector<float> ref_out(static_cast<size_t>(m) * h);
+    ref_gated_mlp(X2.data(), ref_g.data(), ref_u.data(), ref_d.data(),
+                  ref_out.data(), m, h, inter);
+
+    cuda::memory::Buffer<float> d_X2(m * h), d_out2(m * h);
+    d_X2.copy_from(X2.data(), X2.size());
+    mlp.forward(d_X2.data(), d_out2.data(), m, 1);
+    std::vector<float> out2(static_cast<size_t>(m) * h);
+    d_out2.copy_to(out2.data(), out2.size());
+    EXPECT_TRUE(arrays_near(ref_out.data(), out2.data(), out2.size(), 2e-2f));
 }

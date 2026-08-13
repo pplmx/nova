@@ -1,6 +1,12 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <cuda/neural/loss/loss_functions.h>
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
+
+#include <algorithm>
+#include <random>
+#include <vector>
 
 namespace cuda::neural::loss::test {
 
@@ -141,6 +147,69 @@ TEST_F(LossFunctionsTest, CrossEntropyConfig) {
     EXPECT_EQ(config.num_classes, 10);
     EXPECT_EQ(config.label_smoothing, 0.1f);
     EXPECT_TRUE(config.reduction_mean);
+}
+
+// ============================================================================
+// Milestone v2.24 / TASK-024 RED: device cross-entropy-with-logits backward.
+// The host cross_entropy_loss() computes only the scalar (its device kernels
+// are dead code), so no grad-logits exist to seed a layer backward chain. This
+// test pins the analytic contract grad_logits[b*C+c] = (softmax_c - onehot)/B
+// (reduction_mean) against a host double-precision reference. RED against the
+// provisional throw-stub; GREEN with the P2 device kernel.
+// ============================================================================
+TEST_F(LossFunctionsTest, CrossEntropyLogitsBackwardDevice) {
+    CrossEntropyConfig config;
+    config.num_classes = 10;
+    config.reduction_mean = true;
+
+    const int batch = 6;
+    const int C = 10;
+    std::vector<float> logits(static_cast<size_t>(batch) * C);
+    std::vector<int> targets(batch);
+    std::mt19937 rng(20260813);
+    std::normal_distribution<float> dist(0.0f, 2.0f);
+    for (size_t i = 0; i < logits.size(); ++i) {
+        logits[i] = dist(rng);
+    }
+    for (int b = 0; b < batch; ++b) {
+        targets[b] = static_cast<int>(rng() % C);
+    }
+
+    // Host double-precision analytic grad: softmax(logits) - onehot, /batch.
+    std::vector<float> ref(static_cast<size_t>(batch) * C);
+    for (int b = 0; b < batch; ++b) {
+        double m = logits[b * C];
+        for (int c = 1; c < C; ++c) {
+            m = std::max(m, static_cast<double>(logits[b * C + c]));
+        }
+        double sum = 0.0;
+        for (int c = 0; c < C; ++c) {
+            sum += std::exp(static_cast<double>(logits[b * C + c]) - m);
+        }
+        for (int c = 0; c < C; ++c) {
+            double sm = std::exp(static_cast<double>(logits[b * C + c]) - m) / sum;
+            double grad = sm - (c == targets[b] ? 1.0 : 0.0);
+            ref[b * C + c] = static_cast<float>(grad / batch);
+        }
+    }
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_grad(logits.size());
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    std::vector<float> grad(logits.size(), 12345.0f);
+    EXPECT_NO_THROW(
+        cross_entropy_logits_backward(
+            d_logits.data(), d_targets.data(), d_grad.data(),
+            batch, C, config, stream_));
+    d_grad.copy_to(grad.data(), grad.size());
+
+    for (size_t i = 0; i < grad.size(); ++i) {
+        EXPECT_NEAR(ref[i], grad[i], 1e-5f)
+            << "grad_logits mismatch at " << i;
+    }
 }
 
 }  // namespace cuda::neural::loss::test

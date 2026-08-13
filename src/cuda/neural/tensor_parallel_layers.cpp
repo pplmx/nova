@@ -249,6 +249,27 @@ void ColumnParallelLayer::backward(
     CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
+void ColumnParallelLayer::step(
+    ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+    const float* grad_weight,
+    int step_no,
+    cudaStream_t stream) {
+    (void)optimizer;
+    (void)grad_weight;
+    (void)step_no;
+    (void)stream;
+    throw std::runtime_error(
+        "ColumnParallelLayer::step not implemented (TASK-025)");
+}
+
+void ColumnParallelLayer::copy_weight_shard(float* host_out) const {
+    if (!weight_) {
+        throw std::runtime_error(
+            "ColumnParallelLayer::copy_weight_shard called before set_weight");
+    }
+    weight_->copy_to(host_out, weight_->size());
+}
+
 int ColumnParallelLayer::in_features() const { return in_features_; }
 
 int ColumnParallelLayer::out_features() const { return out_features_; }
@@ -423,6 +444,27 @@ void RowParallelLayer::backward(
     CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
+void RowParallelLayer::step(
+    ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+    const float* grad_weight,
+    int step_no,
+    cudaStream_t stream) {
+    (void)optimizer;
+    (void)grad_weight;
+    (void)step_no;
+    (void)stream;
+    throw std::runtime_error(
+        "RowParallelLayer::step not implemented (TASK-025)");
+}
+
+void RowParallelLayer::copy_weight_shard(float* host_out) const {
+    if (!weight_) {
+        throw std::runtime_error(
+            "RowParallelLayer::copy_weight_shard called before set_weight");
+    }
+    weight_->copy_to(host_out, weight_->size());
+}
+
 int RowParallelLayer::in_features() const { return in_features_; }
 
 int RowParallelLayer::out_features() const { return out_features_; }
@@ -541,6 +583,29 @@ void TensorParallelMLP::backward(
                        grad_up_weight, batch, seq);
     cuda::neural::elementwise_add(dXg.data(), dXu.data(), grad_input,
                                   m * hidden_dim_);
+}
+
+void TensorParallelMLP::step(
+    ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+    const float* grad_gate,
+    const float* grad_up,
+    const float* grad_down,
+    int step_no,
+    cudaStream_t stream) {
+    (void)optimizer;
+    (void)grad_gate;
+    (void)grad_up;
+    (void)grad_down;
+    (void)step_no;
+    (void)stream;
+    throw std::runtime_error("TensorParallelMLP::step not implemented (TASK-025)");
+}
+
+void TensorParallelMLP::copy_weights(
+    float* host_gate, float* host_up, float* host_down) const {
+    gate_proj_->copy_weight_shard(host_gate);
+    up_proj_->copy_weight_shard(host_up);
+    down_proj_->copy_weight_shard(host_down);
 }
 
 int TensorParallelMLP::hidden_dim() const { return hidden_dim_; }

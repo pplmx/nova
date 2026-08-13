@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.23
-milestone_name: Tensor-Parallel Layer Backward Passes
-status: Complete
-last_updated: "2026-08-12"
-last_activity: 2026-08-12 — Round 23: P1-P3 complete, milestone closed
+milestone: v2.24
+milestone_name: End-to-End Training Step On The Tensor-Parallel Stack
+status: In Progress
+last_updated: "2026-08-13"
+last_activity: 2026-08-13 — Round 24: milestone opened, P1 RED pinned
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -15,14 +15,34 @@ progress:
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-08-12
+**Last Updated:** 2026-08-13
 
 ## Current Position
 
-Milestone: v2.23 Tensor-Parallel Layer Backward Passes
-Status: Complete (Round 23)
-Last activity: 2026-08-12 — backward GREEN on 2 & 4 GPUs; TASK-022/019/020/021
-closed (DEC-009)
+Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
+Status: In Progress (Round 24 — P1 RED)
+Last activity: 2026-08-13 — milestone opened; 5 RED tests pin the training
+contracts (device CE-logits backward + per-layer AdamW shard step, verified
+against host fp64); P2 implementation pending (TASK-025)
+
+## Milestone v2.24 — End-to-End Training Step On The Tensor-Parallel Stack
+
+Make the v2.21-23 forward+backward layers actually *trainable* on the parallel
+path: a device cross-entropy-with-logits backward seeds the chain (the loss
+layer today is host-side with a forward-only scalar and dead device kernels),
+and each layer gains `step(AdamWOptimizer&, grad_weight_full, step_no)` that
+applies AdamW in place to the private rank shard. Acceptance: K-step multi-GPU
+shard training assembled == host fp64 full-weight reference (the meshed
+gradient layout makes this exact), on 2 & 4 GPUs (TASK-023).
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED tests pin the training contracts: device cross_entropy_logits_backward vs host fp64 analytic; single-GPU col/row/MLP step vs host AdamW over one analytic step; multi-GPU K-step shard parity vs host fp64 reference on 2 & 4 GPUs | In Progress (Round 24) — 5/5 RED against provisional throw-stubs (EV-017); build green |
+| 2 | Implement: cross_entropy_logits_backward device kernel (max-subtract softmax - onehot, /B); per-layer step() extracting the rank shard grad (strided column slice / contiguous row block) and applying AdamW to the private weight_ shard; TensorParallelMLP::step chains | Pending (TASK-025) |
+| 3 | Verify: multi-GPU shard-step parity GREEN on 2 & 4 GPUs, loss descent, single-GPU regression green, full-suite baseline, RIL close | Pending (TASK-026) |
+
+Decision: DEC-010. Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Milestone v2.23 — Tensor-Parallel Layer Backward Passes
 
@@ -172,6 +192,8 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.20 TensorParallelMatmul Production Hardening | Complete | 2026-08-12 | 2 phases |
 | v2.21 Weight-Managed TensorParallelLayers | Complete | 2026-08-12 | 3 phases |
 | v2.22 Ring Sequence Parallelism On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
+| v2.23 Tensor-Parallel Layer Backward Passes | Complete | 2026-08-12 | 3 phases |
+| v2.24 End-to-End Training Step On The Tensor-Parallel Stack | In Progress | 2026-08-13 | 3 phases |
 
 ---
 

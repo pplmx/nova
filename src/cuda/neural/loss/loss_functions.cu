@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 
 namespace cuda::neural::loss {
@@ -121,6 +122,26 @@ float cross_entropy_loss(
     }
 
     return config.reduction_mean ? total_loss / batch_size : total_loss;
+}
+
+void cross_entropy_logits_backward(
+    const float* logits,
+    const int* targets,
+    float* grad_logits,
+    int batch_size,
+    int num_classes,
+    const CrossEntropyConfig& config,
+    cudaStream_t stream
+) {
+    (void)logits;
+    (void)targets;
+    (void)grad_logits;
+    (void)batch_size;
+    (void)num_classes;
+    (void)config;
+    (void)stream;
+    throw std::runtime_error(
+        "cross_entropy_logits_backward not implemented (TASK-025)");
 }
 
 float focal_loss(

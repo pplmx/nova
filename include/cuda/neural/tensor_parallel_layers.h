@@ -25,6 +25,7 @@
  */
 
 #include "cuda/neural/matmul.h"
+#include "cuda/neural/optimizers/optimizers.h"
 #include "cuda/nccl/nccl_all_reduce.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
@@ -114,6 +115,40 @@ public:
         float* grad_weight,
         int batch,
         int seq);
+
+    /**
+     * @brief Apply one optimizer step to this rank's weight shard (v2.24)
+     *
+     * The end-to-end training surface: extracts this rank's column-slice of
+     * the caller's full grad_weight buffer (reverse of the backward scatter)
+     * and runs one AdamW step in place on the private rank shard. With the
+     * meshed gradient layout this shard step tiles to the full-weight update,
+     * so a parallel training run matches a single-GPU full-weight reference.
+     *
+     * @param optimizer AdamW optimizer (per-rank instance; moments are local)
+     * @param grad_weight Full grad-weight [in_features x out_features]
+     *        row-major, as produced by backward()
+     * @param step_no Optimizer step counter (AdamW bias correction uses it)
+     * @param stream CUDA stream
+     */
+    void step(
+        ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+        const float* grad_weight,
+        int step_no,
+        cudaStream_t stream = nullptr);
+
+    /**
+     * @brief Copy this rank's weight shard to host memory (v2.24)
+     *
+     * Reads back the shard in its storage layout (the rank's column slice of
+     * the full [in_features x out_features] weight; the full weight when tp
+     * is 1), mirroring set_weight(). Lets a training-step test compare the
+     * stepped shard against a host full-weight reference.
+     *
+     * @param host_out Host buffer of in_features * (out_features / tp)
+     *        elements
+     */
+    void copy_weight_shard(float* host_out) const;
 
     /**
      * @brief Input dimension
@@ -224,6 +259,38 @@ public:
         int seq);
 
     /**
+     * @brief Apply one optimizer step to this rank's weight shard (v2.24)
+     *
+     * End-to-end training surface for the row-parallel layer: extracts this
+     * rank's contiguous row-block of the caller's full grad_weight buffer and
+     * runs one AdamW step in place on the private rank shard. The shard step
+     * tiles to the full-weight update (see the class docs / DEC-010).
+     *
+     * @param optimizer AdamW optimizer (per-rank instance)
+     * @param grad_weight Full grad-weight [in_features x out_features]
+     *        row-major, as produced by backward()
+     * @param step_no Optimizer step counter
+     * @param stream CUDA stream
+     */
+    void step(
+        ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+        const float* grad_weight,
+        int step_no,
+        cudaStream_t stream = nullptr);
+
+    /**
+     * @brief Copy this rank's weight shard to host memory (v2.24)
+     *
+     * Reads back the shard in its storage layout (the rank's row block of the
+     * full [in_features x out_features] weight; the full weight when tp is 1),
+     * mirroring set_weight().
+     *
+     * @param host_out Host buffer of (in_features / tp) * out_features
+     *        elements
+     */
+    void copy_weight_shard(float* host_out) const;
+
+    /**
      * @brief Input dimension
      */
     [[nodiscard]] int in_features() const;
@@ -328,6 +395,46 @@ public:
         float* grad_down_weight,
         int batch,
         int seq);
+
+    /**
+     * @brief Apply one optimizer step to gate/up/down weight shards (v2.24)
+     *
+     * Chains step() over the three projections: the gate/up column-parallel
+     * shards and the down row-parallel shard each step in place from their
+     * slice of the caller's full grad-weight buffers (produced by backward()).
+     * This is the MLP-level end-to-end training surface — forward() -> loss
+     * backward (cross_entropy_logits_backward) -> backward() -> step() is a
+     * complete training step on the tensor-parallel stack.
+     *
+     * @param optimizer AdamW optimizer (per-rank instance)
+     * @param grad_gate Full gate grad [hidden x intermediate]
+     * @param grad_up Full up grad [hidden x intermediate]
+     * @param grad_down Full down grad [intermediate x hidden]
+     * @param step_no Optimizer step counter
+     * @param stream CUDA stream
+     */
+    void step(
+        ::cuda::neural::optimizers::AdamWOptimizer& optimizer,
+        const float* grad_gate,
+        const float* grad_up,
+        const float* grad_down,
+        int step_no,
+        cudaStream_t stream = nullptr);
+
+    /**
+     * @brief Copy this rank's gate/up/down weight shards to host memory
+     *        (v2.24)
+     *
+     * Reads back the three rank-local shards in their storage layouts (the
+     * column-parallel gate/up column slices and the row-parallel down row
+     * block), mirroring set_weight(). Lets a training-step test assemble the
+     * per-rank shards and compare against the host full-weight reference.
+     *
+     * @param host_gate Host buffer of hidden * (intermediate / tp)
+     * @param host_up Host buffer of hidden * (intermediate / tp)
+     * @param host_down Host buffer of (intermediate / tp) * hidden
+     */
+    void copy_weights(float* host_gate, float* host_up, float* host_down) const;
 
     /**
      * @brief Hidden (input/output) dimension

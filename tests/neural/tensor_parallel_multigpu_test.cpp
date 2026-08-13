@@ -31,6 +31,8 @@
 #include "cuda/neural/tensor_parallel_layers.h"
 #include "cuda/neural/matmul.h"
 #include "cuda/neural/activations.h"
+#include "cuda/neural/loss/loss_functions.h"
+#include "cuda/neural/optimizers/optimizers.h"
 #include "cuda/mesh/device_mesh.h"
 #include "cuda/nccl/nccl_context.h"
 #include "cuda/memory/buffer.h"
@@ -44,6 +46,8 @@
 #include <vector>
 
 using namespace cuda::neural;
+using namespace cuda::neural::optimizers;
+using namespace cuda::neural::loss;
 using namespace cuda::mesh;
 
 using cuda::distributed::test::run_per_rank;
@@ -992,4 +996,225 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_Backward_MatchesRe
     EXPECT_TRUE(arrays_near(ref_dWd.data(), assembled_dWd.data(), inter * h,
                             kTolerance))
         << "assembled MLP down grad-weight slices differ from the reference";
+}
+
+// ============================================================================
+// v2.24 end-to-end training-step acceptance (TASK-024, milestone P1). The
+// tensor-parallel stack has forward+backward but no way to train it: the loss
+// layer is host-side with no grad (its device kernels are dead code) and no
+// layer method steps the private weight shards. This test runs K identical
+// AdamW training steps on the sharded TensorParallelMLP on real multi-GPU —
+// forward -> cross_entropy_logits_backward (seed) -> MLP backward (full grad
+// buffers) -> step() (AdamW on each rank shard) — then assembles the per-rank
+// weight shards and compares against a host double-precision full-weight
+// reference trained over the same steps. RED against the throw-stubs.
+// ============================================================================
+
+namespace {
+
+// Host double-precision AdamW reference (identical formula to the library).
+struct HostAdamW {
+    std::vector<double> m, v;
+    void step(const float* w, const float* dw, float* w_out, size_t n,
+              int step, float lr, float beta1, float beta2, float eps,
+              float wd) {
+        if (m.size() != n) {
+            m.assign(n, 0.0);
+            v.assign(n, 0.0);
+        }
+        const double b1p = std::pow(static_cast<double>(beta1), step);
+        const double b2p = std::pow(static_cast<double>(beta2), step);
+        const double lr_t =
+            static_cast<double>(lr) * std::sqrt(1.0 - b2p) / (1.0 - b1p);
+        for (size_t i = 0; i < n; ++i) {
+            const double g = dw[i];
+            m[i] = beta1 * m[i] + (1.0 - beta1) * g;
+            v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
+            const double m_hat = m[i] / (1.0 - b1p);
+            const double v_hat = v[i] / (1.0 - b2p);
+            double update = m_hat / (std::sqrt(v_hat) + eps) + wd * w[i];
+            w_out[i] = static_cast<float>(w[i] - lr_t * update);
+        }
+    }
+};
+
+// One host fp64 training step of the gated MLP on full weights:
+// logits = down(silu(gate) .* up); dlogits = (softmax - onehot)/B; analytic
+// backward for dWg/dWu/dWd; then AdamW steps each full weight.
+void host_training_step(const float* X, const int* targets,
+                        float* Wg, float* Wu, float* Wd,
+                        HostAdamW& ag, HostAdamW& au, HostAdamW& ad,
+                        int m, int h, int inter, int step_no,
+                        float lr, float beta1, float beta2, float eps,
+                        float wd) {
+    auto silu = [](double x) { return x / (1.0 + std::exp(-x)); };
+    auto silu_prime = [](double x) {
+        const double s = 1.0 / (1.0 + std::exp(-x));
+        return s * (1.0 + x * (1.0 - s));
+    };
+    std::vector<float> G(m * inter), U(m * inter), sub(m * inter);
+    std::vector<float> logits(m * h);
+    host_matmul(X, Wg, G.data(), m, inter, h);
+    host_matmul(X, Wu, U.data(), m, inter, h);
+    for (size_t i = 0; i < sub.size(); ++i) {
+        sub[i] = static_cast<float>(silu(G[i]) * U[i]);
+    }
+    host_matmul(sub.data(), Wd, logits.data(), m, h, inter);
+
+    // dlogits = (softmax - onehot) / B (reduction_mean).
+    std::vector<float> dlogits(m * h);
+    for (int b = 0; b < m; ++b) {
+        double mm = logits[b * h];
+        for (int c = 1; c < h; ++c) {
+            mm = std::max(mm, static_cast<double>(logits[b * h + c]));
+        }
+        double sum = 0.0;
+        for (int c = 0; c < h; ++c) {
+            sum += std::exp(static_cast<double>(logits[b * h + c]) - mm);
+        }
+        for (int c = 0; c < h; ++c) {
+            double sm = std::exp(static_cast<double>(logits[b * h + c]) - mm) / sum;
+            dlogits[b * h + c] = static_cast<float>((sm - (c == targets[b])) / m);
+        }
+    }
+
+    // Analytic MLP backward to the full-weight grads.
+    std::vector<float> dsub(m * inter), dg(m * inter), du(m * inter);
+    std::vector<float> dWg(h * inter), dWu(h * inter), dWd(inter * h);
+    std::vector<float> dXg(m * h), dXu(m * h);
+    ref_linear_backward(sub.data(), Wd, dlogits.data(), dsub.data(),
+                        dWd.data(), m, inter, h);
+    for (int i = 0; i < m * inter; ++i) {
+        dg[i] = static_cast<float>(dsub[i] * U[i] * silu_prime(G[i]));
+        du[i] = static_cast<float>(dsub[i] * silu(G[i]));
+    }
+    std::vector<float> tmp_dx(m * h);  // unused grad-input
+    ref_linear_backward(X, Wg, dg.data(), tmp_dx.data(), dWg.data(), m, h, inter);
+    ref_linear_backward(X, Wu, du.data(), tmp_dx.data(), dWu.data(), m, h, inter);
+
+    ag.step(Wg, dWg.data(), Wg, static_cast<size_t>(h) * inter, step_no,
+            lr, beta1, beta2, eps, wd);
+    au.step(Wu, dWu.data(), Wu, static_cast<size_t>(h) * inter, step_no,
+            lr, beta1, beta2, eps, wd);
+    ad.step(Wd, dWd.data(), Wd, static_cast<size_t>(inter) * h, step_no,
+            lr, beta1, beta2, eps, wd);
+}
+
+}  // namespace
+
+TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU training-step test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU training-step requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    const int m = 8, h = 16, inter = 32;
+    const int K = 3;  // a few identical AdamW steps
+    std::vector<float> X(static_cast<size_t>(m) * h);
+    std::vector<int> targets(m);
+    std::vector<float> Wg0(static_cast<size_t>(h) * inter);
+    std::vector<float> Wu0(static_cast<size_t>(h) * inter);
+    std::vector<float> Wd0(static_cast<size_t>(inter) * h);
+    fill_random(X.data(), X.size());
+    fill_random(Wg0.data(), Wg0.size());
+    fill_random(Wu0.data(), Wu0.size());
+    fill_random(Wd0.data(), Wd0.size());
+    std::mt19937 rng(20260814);
+    for (int b = 0; b < m; ++b) {
+        targets[b] = static_cast<int>(rng() % h);
+    }
+
+    // Host fp64 full-weight reference: K identical training steps.
+    OptimizerConfig opt_cfg;
+    opt_cfg.learning_rate = 0.01f;
+    std::vector<float> rWg = Wg0, rWu = Wu0, rWd = Wd0;
+    HostAdamW ri_rg, ri_ru, ri_rd;
+    for (int s = 1; s <= K; ++s) {
+        host_training_step(X.data(), targets.data(),
+                           rWg.data(), rWu.data(), rWd.data(),
+                           ri_rg, ri_ru, ri_rd, m, h, inter, s,
+                           opt_cfg.learning_rate, opt_cfg.beta1,
+                           opt_cfg.beta2, opt_cfg.epsilon,
+                           opt_cfg.weight_decay);
+    }
+
+    // Device: each rank steps its own shard over the same K steps.
+    const int inter_local = inter / device_count;
+    std::vector<std::vector<float>> sg(device_count,
+                                      std::vector<float>(h * inter_local));
+    std::vector<std::vector<float>> su(device_count,
+                                      std::vector<float>(h * inter_local));
+    std::vector<std::vector<float>> sd(device_count,
+                                      std::vector<float>(inter_local * h));
+    run_per_rank(device_count, [&](int d) {
+        cuda::memory::Buffer<float> d_X(m * h), d_out(m * h),
+            d_dlogits(m * h);
+        cuda::memory::Buffer<int> d_targets(m);
+        cuda::memory::Buffer<float> d_dX(m * h);
+        cuda::memory::Buffer<float> d_dWg(h * inter), d_dWu(h * inter),
+            d_dWd(inter * h);
+        d_X.copy_from(X.data(), X.size());
+        d_targets.copy_from(targets.data(), m);
+
+        TensorParallelMLP mlp(ctx, h, inter);
+        mlp.set_weight(Wg0.data(), Wu0.data(), Wd0.data());
+        AdamWOptimizer opt(opt_cfg);
+        CrossEntropyConfig ce_cfg;
+        ce_cfg.num_classes = h;
+        ce_cfg.reduction_mean = true;
+
+        for (int s = 1; s <= K; ++s) {
+            mlp.forward(d_X.data(), d_out.data(), m, 1);
+            // Seed the chain. The MLP output is replicated (the down row layer
+            // AllReduces), so every rank computes the identical dlogits =
+            // (softmax - onehot)/B from the same full-width logits — no comm.
+            cross_entropy_logits_backward(
+                d_out.data(), d_targets.data(), d_dlogits.data(),
+                m, h, ce_cfg, nullptr);
+            mlp.backward(d_X.data(), d_dlogits.data(), d_dX.data(),
+                         d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+            EXPECT_NO_THROW(
+                mlp.step(opt, d_dWg.data(), d_dWu.data(), d_dWd.data(), s));
+        }
+
+        mlp.copy_weights(sg[d].data(), su[d].data(), sd[d].data());
+    });
+
+    // Assemble the per-rank shards into the full weights and compare to the
+    // host fp64 reference.
+    std::vector<float> aWg(h * inter), aWu(h * inter), aWd(inter * h);
+    for (int r = 0; r < device_count; ++r) {
+        for (int a = 0; a < h; ++a) {
+            for (int b = 0; b < inter_local; ++b) {
+                aWg[a * inter + r * inter_local + b] =
+                    sg[r][a * inter_local + b];
+                aWu[a * inter + r * inter_local + b] =
+                    su[r][a * inter_local + b];
+            }
+        }
+        for (int a = 0; a < inter_local; ++a) {
+            for (int b = 0; b < h; ++b) {
+                aWd[(r * inter_local + a) * h + b] =
+                    sd[r][a * h + b];
+            }
+        }
+    }
+    // 2e-2 absorbs fp32 accumulate-order + shard-step noise across K=3 steps.
+    EXPECT_TRUE(arrays_near(rWg.data(), aWg.data(), h * inter, 2e-2f))
+        << "multi-GPU trained gate weights differ from the host full-weight "
+           "reference";
+    EXPECT_TRUE(arrays_near(rWu.data(), aWu.data(), h * inter, 2e-2f))
+        << "multi-GPU trained up weights differ from the host full-weight "
+           "reference";
+    EXPECT_TRUE(arrays_near(rWd.data(), aWd.data(), inter * h, 2e-2f))
+        << "multi-GPU trained down weights differ from the host full-weight "
+           "reference";
 }

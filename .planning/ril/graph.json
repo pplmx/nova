@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 24,
+  "round": 25,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-12T15:48:21+00:00",
+  "updated_at": "2026-08-13T05:30:00+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1206,6 +1206,78 @@
       "source": "tests: single-GPU backward 3/3 + activation helpers 3/3; multi-GPU backward 3/3 on 2 & 4 GPUs; cross-suite 19/19 both; single-GPU regression 49/49",
       "title": "v2.23 P2 verified: col grad-input AllReduce, row local grad-slice, MLP gated chain all match analytic references on real multi-GPU (a test-side strided-block extraction bug was fixed, not an impl bug)",
       "confidence": 1.0
+    },
+    "DEC-010": {
+      "id": "DEC-010",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:02:56+00:00",
+      "updated_at": "2026-08-13T05:02:56+00:00",
+      "touched_round": 25,
+      "title": "v2.24 milestone direction: add an end-to-end training step on the tensor-parallel stack — device cross-entropy loss backward (dlogits = softmax - onehot) to seed the chain, plus a per-layer step() that applies the existing AdamW optimizer to the rank weight shard, verified by time-synced multi-GPU shard-step parity == host double-precision full-weight reference",
+      "rationale": "v2.23 made the layers forward+backward capable, but no loss gradient exists (loss_functions.cu is host-side, its device kernels are dead code) and no layer method can update the private weight shard: there is no way to train the parallel stack end-to-end. The meshed gradient layout is exact (col-layer grad-shard = column block of X^T dY_full; row-layer grad-shard = row block of X_r^T dY), so AdamW stepping each rank shard tiles to the full-weight update — provable by comparing multi-GPU assembled shards against a single-GPU/host reference over identical steps. This is the DEC-009-stated natural next milestone (loss -> backward -> optimizer stepping the parallel layers).",
+      "alternatives_rejected": "End-to-end TensorParallelAttention composition (fold all heads; heavier geometry, more integration harness than capability — remains the later capstone); device-native fused optimizer kernels (a performance task, orthogonal to the correctness milestone here; the existing host-side AdamW is sufficient and independently verified); a full autograd/DAG framework (too broad; reference-parity of one training step is the immediate need)."
+    },
+    "TASK-023": {
+      "id": "TASK-023",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T05:03:18+00:00",
+      "touched_round": 25,
+      "title": "(umbrella v2.24) end-to-end training step on the tensor-parallel stack: device cross-entropy loss backward + per-layer AdamW shard step, verified by multi-GPU shard-step parity against a host double-precision full-weight reference",
+      "category": "core-feature",
+      "severity": 2
+    },
+    "TASK-024": {
+      "id": "TASK-024",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T05:03:18+00:00",
+      "touched_round": 25,
+      "title": "P1 RED: pin the training contracts — device cross_entropy_logits_backward (dlogits=softmax-onehot) vs host double-precision analytic; layer step(AdamWOptimizer&, grad_weight_full, step) parity vs host AdamW over one analytic step (single-GPU); time-synced multi-GPU K-step shard parity vs host fp64 reference on 2 & 4 GPUs",
+      "category": "test-quality",
+      "severity": 2
+    },
+    "TASK-025": {
+      "id": "TASK-025",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T05:03:18+00:00",
+      "touched_round": 25,
+      "title": "P2 implementation: cross_entropy_logits_backward device kernel (max-subtract softmax - onehot, /batch); ColumnParallelLayer/RowParallelLayer/TensorParallelMLP step(optimizer, grad_full, step) extracting the rank shard grad and applying AdamW to the private weight_ shard",
+      "category": "core-feature",
+      "severity": 2
+    },
+    "TASK-026": {
+      "id": "TASK-026",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:03:18+00:00",
+      "updated_at": "2026-08-13T05:03:18+00:00",
+      "touched_round": 25,
+      "title": "P3 verify: multi-GPU shard-step parity GREEN on 2 & 4 GPUs vs host fp64 full-weight reference, loss descent over K steps, single-GPU layer/regression green, full-suite baseline, RIL close",
+      "category": "test-quality",
+      "severity": 2
+    },
+    "EV-017": {
+      "id": "EV-017",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T05:30:00+00:00",
+      "updated_at": "2026-08-13T05:30:00+00:00",
+      "touched_round": 25,
+      "source": "test: CrossEntropyLogitsBackwardDevice / ColumnParallelLayer_Step_MatchesHostAdamW / RowParallelLayer_Step_MatchesHostAdamW / TensorParallelMLP_Step_MatchesHostAdamW / MultiGpu_TrainingStep_MatchesHostFullWeight (all RED against throw-stubs)",
+      "title": "P1 RED: the 5 training-contract tests fail against the provisional throw-stubs — device CE backward throws TASK-025 (grad output stays 0), the three single-GPU layer steps throw \"step not implemented (TASK-025)\", and the multi-GPU MLP training-step parity test throws cross_entropy_logits_backward not implemented on real 2-GPU (CUDA_VISIBLE_DEVICES=2,3)",
+      "confidence": 1.0
     }
   },
   "edges": [
@@ -1742,6 +1814,48 @@
       "to": "TASK-019",
       "type": "implements",
       "created_at": "2026-08-12T15:43:29+00:00"
+    },
+    {
+      "from": "DEC-010",
+      "to": "TASK-023",
+      "type": "governs",
+      "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "DEC-010",
+      "to": "TASK-024",
+      "type": "governs",
+      "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "DEC-010",
+      "to": "TASK-025",
+      "type": "governs",
+      "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "DEC-010",
+      "to": "TASK-026",
+      "type": "governs",
+      "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "TASK-023",
+      "to": "TASK-024",
+      "type": "depends_on",
+      "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "TASK-024",
+      "to": "TASK-025",
+      "type": "depends_on",
+      "created_at": "2026-08-13T05:03:39+00:00"
+    },
+    {
+      "from": "TASK-025",
+      "to": "TASK-026",
+      "type": "depends_on",
+      "created_at": "2026-08-13T05:03:39+00:00"
     }
   ]
 }

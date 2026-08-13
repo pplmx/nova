@@ -3,13 +3,14 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 20).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 24).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
 Round 18 → **v2.19 "Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)"**
 closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** opened and
-**closed at Round 20**.
+**closed at Round 20** → v2.21/v2.22/v2.23 closed at Rounds 21/22/23 → **v2.24
+"End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED).
 
 ## Latest round
 - **Round 20 (2026-08-12)** — milestone v2.20 kickoff through **close (P1+P2)**. **P1**
