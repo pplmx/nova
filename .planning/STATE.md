@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.24
-milestone_name: End-to-End Training Step On The Tensor-Parallel Stack
+milestone: v2.25
+milestone_name: MicroTrainer: End-to-End Gradient Training Convergence On The Tensor-Parallel Stack
 status: Complete
 last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 24: P1-P3 complete, milestone closed
+last_activity: 2026-08-13 — Round 25: P2/P3 complete, milestone closed
 progress:
   total_phases: 3
   completed_phases: 3
@@ -19,10 +19,30 @@ progress:
 
 ## Current Position
 
-Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
-Status: Complete (Round 24)
-Last activity: 2026-08-13 — training-step parity GREEN on 2 & 4 GPUs;
-TASK-023/024/025/026 closed (DEC-010)
+Milestone: v2.25 MicroTrainer: End-to-End Gradient Training Convergence On The
+Tensor-Parallel Stack
+Status: Complete (Round 25)
+Last activity: 2026-08-13 — MicroTrainer trajectory parity GREEN on 2 & 4 GPUs;
+CE running-sum bug found + fixed (issue-v24-ce-loss-running-sum);
+TASK-027/028/029/030 closed (DEC-011)
+
+## Milestone v2.25 — MicroTrainer: End-to-End Gradient Training Convergence On The Tensor-Parallel Stack
+
+Turn the v2.24 verified building blocks into a reusable training loop and prove
+the parallel stack actually learns (TASK-027, DEC-011): a
+`training::MicroTrainer` owns the MLP + one AdamW per weight tensor + device
+scratch; the acceptance is real convergence — loss descent + accuracy rise on
+single-GPU, and a full K-step multi-GPU sharded run reproducing the host fp64
+full-weight training trajectory (weights AND loss curve) on 2 & 4 GPUs.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED tests pin the MicroTrainer contracts (train_step returns mean CE loss and steps shards; loss descent; accuracy rise; multi-GPU trajectory parity) | Complete (Round 25) — contracts pinned during P2 development |
+| 2 | Implement training.h/.cpp MicroTrainer (forward → device CE-logits backward → MLP backward → per-shard AdamW); fix cross_entropy_loss running-sum denominator bug | Complete (Round 25) — cc35094; issue-v24-ce-loss-running-sum fixed (dev loss == host fp64) |
+| 3 | Verify: loss descent + accuracy single-GPU; multi-GPU K-step trajectory parity GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close | Complete (Round 25) — parity GREEN on 2 & 4 GPUs (EV-019); cross-suite 40/40 on 2 GPUs; single-GPU 45/45 |
+
+Decision: DEC-011. Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Milestone v2.24 — End-to-End Training Step On The Tensor-Parallel Stack
 
@@ -193,6 +213,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.22 Ring Sequence Parallelism On Real Multi-GPU | Complete | 2026-08-12 | 3 phases |
 | v2.23 Tensor-Parallel Layer Backward Passes | Complete | 2026-08-12 | 3 phases |
 | v2.24 End-to-End Training Step On The Tensor-Parallel Stack | Complete | 2026-08-13 | 3 phases |
+| v2.25 MicroTrainer: End-to-End Gradient Training Convergence | In Progress | 2026-08-13 | 3 phases |
 
 ---
 

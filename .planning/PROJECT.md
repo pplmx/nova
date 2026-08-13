@@ -4,7 +4,30 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
+## Current Milestone: v2.25 MicroTrainer: End-to-End Gradient Training Convergence On The Tensor-Parallel Stack
+
+**Status:** In Progress (opened 2026-08-13, RIL Round 25 — P2 implemented)
+
+**Milestone v2.25.** Turns the v2.24 verified building blocks into a reusable training loop
+and proves the parallel stack actually *learns* (TASK-027 / DEC-011). P2 (CHG-014 cc35094,
+TASK-029) added `training::MicroTrainer` (`training.h/.cpp`): owns the TensorParallelMLP,
+one AdamW per weight tensor (gate/up/down — moments stay private per weight), and the device
+scratch; `train_step` chains forward → device `cross_entropy_logits_backward` → MLP backward
+→ per-shard AdamW and returns the mean CE loss (host scalar); `evaluate` adds top-1 accuracy.
+
+**Bug found & fixed** (`issue-v24-ce-loss-running-sum`): `cross_entropy_loss` filled
+`log_probs` while accumulating `sum_exp`, so the softmax denominator for a target at class c
+used the partial running sum over c' ≤ c — under-reporting loss for early targets (dev 2.18
+vs host fp64 3.91 on identical logits; exposed by the trajectory parity; masked in v2.24 by
+relative-only assertions and correct-gradient device CE-backward). Full-class sum now first.
+
+Verified (EV-019): single-GPU MicroTrainer converges (loss descends 60 steps, accuracy rises
+above chance 1/8); multi-GPU K=10 sharded MicroTrainer == host fp64 full-weight trajectory
+(assembled shards ≤ 2e-2 AND loss curve ≤ 0.1) **GREEN on 2 & 4 GPUs**; cross-suite
+**40/40 on 2 GPUs**; single-GPU neural regression **45/45**. The stack now demonstrably
+learns, sharded. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.24 End-to-End Training Step On The Tensor-Parallel Stack
 
 **Status:** Complete (2026-08-13, RIL Round 24)
 
@@ -27,7 +50,7 @@ shard tiles to the full-weight update, giving a clean K-step parity. Verified (E
 `MultiGpu_TrainingStep_MatchesHostFullWeight` (K=3 AdamW steps per rank, shards assembled ==
 host fp64 full-weight reference) GREEN on **2 & 4 GPUs**; single-GPU CE-logits backward +
 col/row/MLP step vs host fp64 4/4; isolated NCCL cross-suite **39/39 on 2 & 4 GPUs**;
-single-GPU neural regression 32/32; full-suite baseline **1426/0**. The parallel stack is now
+single-GPU neural regression 37/37; full-suite baseline **1426/0**. The parallel stack is now
 trainable end-to-end. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Previous Milestone: v2.23 Tensor-Parallel Layer Backward Passes

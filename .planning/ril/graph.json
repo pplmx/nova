@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 25,
+  "round": 26,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T14:05:01+00:00",
+  "updated_at": "2026-08-13T14:44:44+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1319,10 +1319,10 @@
     "TASK-027": {
       "id": "TASK-027",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T08:24:07+00:00",
-      "updated_at": "2026-08-13T08:24:07+00:00",
+      "updated_at": "2026-08-13T14:43:31+00:00",
       "touched_round": 25,
       "title": "(umbrella v2.25) MicroTrainer: reusable end-to-end gradient training driver on the tensor-parallel MLP with loss-descent convergence + multi-GPU trajectory parity vs host fp64",
       "category": "core-feature",
@@ -1331,10 +1331,10 @@
     "TASK-028": {
       "id": "TASK-028",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T08:24:08+00:00",
-      "updated_at": "2026-08-13T08:24:08+00:00",
+      "updated_at": "2026-08-13T14:43:31+00:00",
       "touched_round": 25,
       "title": "P1 RED: pin MicroTrainer contracts — train_step returns mean CE loss and steps the shards; single-GPU loss-descent over N steps to a threshold; accuracy rises toward the learnable-task ceiling; multi-GPU K-step full-run loss trajectory + assembled final shards == host fp64 reference on 2 & 4 GPUs",
       "category": "test-quality",
@@ -1343,10 +1343,10 @@
     "TASK-029": {
       "id": "TASK-029",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 3,
       "created_at": "2026-08-13T08:24:08+00:00",
-      "updated_at": "2026-08-13T08:25:11+00:00",
+      "updated_at": "2026-08-13T14:43:31+00:00",
       "touched_round": 25,
       "title": "P2 implementation: training.h/.cpp MicroTrainer — owns the MLP + per-tensor AdamW + device scratch (logits/dlogits/grad buffers), train_step chains forward -> cross_entropy_logits_backward -> mlp.backward -> per-shard step and returns the host-computed mean loss; evaluate() for loss+accuracy; copy_weights for parity",
       "category": "core-feature",
@@ -1357,10 +1357,10 @@
     "TASK-030": {
       "id": "TASK-030",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T08:24:08+00:00",
-      "updated_at": "2026-08-13T08:24:08+00:00",
+      "updated_at": "2026-08-13T14:43:31+00:00",
       "touched_round": 25,
       "title": "P3 verify: loss descent + accuracy GREEN single-GPU; multi-GPU MicroTrainer full-run parity GREEN on 2 & 4 GPUs; cross-suite + regression + full-suite baseline; RIL close",
       "category": "test-quality",
@@ -1369,10 +1369,10 @@
     "issue-v24-ce-loss-running-sum": {
       "id": "issue-v24-ce-loss-running-sum",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T13:56:57+00:00",
-      "updated_at": "2026-08-13T13:56:57+00:00",
+      "updated_at": "2026-08-13T14:07:05+00:00",
       "touched_round": 25,
       "title": "cross_entropy_loss used a running-sum softmax denominator (sum_exp accumulated while filling log_probs), so the reported loss for a target at class position c used the partial sum over c<=c — systematically under-reporting loss for early targets; masked in v2.24 by relative-only loss assertions and correct-gradient training, exposed by the v2.25 MicroTrainer device-vs-host-fp64 trajectory parity (device 2.18 vs host 3.91 on identical logits)",
       "severity": 2
@@ -1388,6 +1388,17 @@
       "source": "test: MicroTrainerSingleGpuTest.LossDescentsAndAccuracyRises / MultiGpu_MicroTrainer_MatchesHostFullWeight (2 & 4 GPUs) + debug cross-checks",
       "title": "v2.25 P2 GREEN + CE-loss-bug evidence: MicroTrainer converges (single-GPU loss descends 60 steps, accuracy rises above chance); multi-GPU K=10 sharded MicroTrainer reproduces the host fp64 full-weight trajectory — assembled shards within 2e-2 AND the loss curve within 0.1 on 2 & 4 GPUs. Debug cross-check (identical logits) exposed issue-v24-ce-loss-running-sum: cross_entropy_loss reported 2.18 vs correct 3.91 for the same data (running-sum denominator); after the fix device loss == host fp64 exactly (3.914220 == 3.914220).",
       "confidence": 1.0
+    },
+    "CHG-014": {
+      "id": "CHG-014",
+      "type": "change",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-13T14:07:05+00:00",
+      "updated_at": "2026-08-13T14:07:05+00:00",
+      "touched_round": 25,
+      "title": "P2 v2.25: MicroTrainer end-to-end training driver (training.h/.cpp) + fix cross_entropy_loss running-sum softmax-denominator bug (issue-v24-ce-loss-running-sum)",
+      "commit": "cc35094"
     }
   },
   "edges": [
@@ -2032,6 +2043,24 @@
       "to": "comp-neural-parallel",
       "type": "located_in",
       "created_at": "2026-08-13T13:56:57+00:00"
+    },
+    {
+      "from": "CHG-014",
+      "to": "TASK-029",
+      "type": "implements",
+      "created_at": "2026-08-13T14:07:05+00:00"
+    },
+    {
+      "from": "CHG-014",
+      "to": "TASK-028",
+      "type": "implements",
+      "created_at": "2026-08-13T14:07:05+00:00"
+    },
+    {
+      "from": "CHG-014",
+      "to": "issue-v24-ce-loss-running-sum",
+      "type": "resolves",
+      "created_at": "2026-08-13T14:07:05+00:00"
     }
   ]
 }

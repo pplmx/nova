@@ -13,6 +13,20 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 "End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED).
 
 ## Latest round
+- **Round 25 (2026-08-13)** — milestone **v2.25 "MicroTrainer: End-to-End Gradient
+  Training Convergence On The Tensor-Parallel Stack"** opened (DEC-011,
+  TASK-028/029/030) and P2 implemented (CHG-014 cc35094). Added
+  `training::MicroTrainer` — owns the MLP + one AdamW per weight tensor +
+  device scratch; `train_step` chains forward → device CE-logits backward →
+  MLP backward → per-shard AdamW and returns the host mean CE. **Found & fixed
+  `issue-v24-ce-loss-running-sum`**: `cross_entropy_loss` used a running-sum
+  softmax denominator (target at class c got the partial sum c'≤c), under-
+  reporting loss for early targets — masked in v2.24 by relative-only loss
+  assertions; exposed by the trajectory parity (dev 2.18 vs host fp64 3.91 on
+  identical logits). Verified (EV-019): single-GPU MicroTrainer converges; K=10
+  multi-GPU sharded run == host fp64 full-weight trajectory (weights + loss
+  curve) GREEN on 2 & 4 GPUs; cross-suite 40/40 on 2 GPUs; single-GPU neural
+  45/45. The stack now demonstrably learns. See `ril_autonomous_round25.md`.
 - **Round 24 (2026-08-13)** — milestone **v2.24 "End-to-End Training Step On The
   Tensor-Parallel Stack"** opened through **close (P1+P2+P3)** (`DEC-010`,
   `TASK-024/025/026`, `CHG-013` 3053189). The v2.21-23 layers were forward+backward
