@@ -333,6 +333,7 @@ set(NEURAL_SOURCES
         ${CUDA_NEURAL_DIR}/transformer/attention.cu
         ${CUDA_NEURAL_DIR}/loss/loss_functions.cu
         ${CUDA_NEURAL_DIR}/optimizers/optimizers.cpp
+        ${CUDA_NEURAL_DIR}/optimizers/optimizers_kernels.cu
         ${CUDA_NEURAL_DIR}/training.cpp
 )
 

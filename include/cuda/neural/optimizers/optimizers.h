@@ -1,8 +1,12 @@
 #pragma once
 
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
+
 #include <cuda_runtime.h>
-#include <vector>
 #include <cstddef>
+#include <memory>
+#include <vector>
 
 namespace cuda::neural::optimizers {
 
@@ -38,8 +42,10 @@ public:
 
 private:
     OptimizerConfig config_;
-    std::vector<float> m_data_;
-    std::vector<float> v_data_;
+    // Device moment buffers (v2.27): the update runs in a fused kernel instead
+    // of the former D2H -> host vector loop -> H2D.
+    std::unique_ptr<cuda::memory::Buffer<float>> m_data_;
+    std::unique_ptr<cuda::memory::Buffer<float>> v_data_;
     bool initialized_ = false;
 };
 
@@ -114,5 +120,22 @@ public:
 private:
     GradientClipConfig config_;
 };
+
+namespace detail {
+
+// Fused AdamW update kernel (v2.27): the per-element bias-corrected update the
+// host loop previously did, now run entirely on device.
+void adamw_step_device(
+    float* params, const float* grads, float* m, float* v, size_t n,
+    float lr_t, float beta1, float beta2, float eps, float wd,
+    float beta1_pow, float beta2_pow, cudaStream_t stream);
+
+// Device gradient norm (L2 or Inf) and clipping (v2.27).
+float gradient_norm_device(const float* grads, size_t n,
+                           GradientClipConfig::NormType norm_type,
+                           cudaStream_t stream);
+void clip_device(float* grads, size_t n, float scale, cudaStream_t stream);
+
+}  // namespace detail
 
 }  // namespace cuda::neural::optimizers

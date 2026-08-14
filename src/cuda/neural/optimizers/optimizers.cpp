@@ -1,17 +1,29 @@
+/**
+ * @file optimizers.cpp
+ * @brief Optimizer implementations (milestone v2.27)
+ *
+ * The per-element compute now runs on device (see optimizers_kernels.cu): AdamW
+ * m/v are device buffers updated by one fused kernel, the gradient norm uses a
+ * device reduction, and clipping scales on device — removing the D2H/H2D full
+ * round-trips the host loop previously did. LAMB keeps its host-side
+ * implementation (its layer-adaptation needs host-side layer-norm reads and
+ * per-element clamping) and is unaffected.
+ */
+
 #include "cuda/neural/optimizers/optimizers.h"
 
 #include "cuda/device/error.h"
 
-#include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace cuda::neural::optimizers {
 
 AdamWOptimizer::AdamWOptimizer(const OptimizerConfig& config)
     : config_(config), m_data_(), v_data_(), initialized_(false) {}
 
-AdamWOptimizer::~AdamWOptimizer() {}
+AdamWOptimizer::~AdamWOptimizer() = default;
 
 void AdamWOptimizer::step(
     float* params,
@@ -21,8 +33,10 @@ void AdamWOptimizer::step(
     cudaStream_t stream
 ) {
     if (!initialized_) {
-        m_data_.resize(num_elements, 0.0f);
-        v_data_.resize(num_elements, 0.0f);
+        m_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        v_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
         initialized_ = true;
     }
 
@@ -37,29 +51,10 @@ void AdamWOptimizer::step(
 
     float lr_t = lr * std::sqrt(1.0f - beta2_pow) / (1.0f - beta1_pow);
 
-    std::vector<float> h_grads(num_elements);
-    std::vector<float> h_params(num_elements);
-
-    CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_params.data(), params, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-
-    for (size_t i = 0; i < num_elements; ++i) {
-        float grad = h_grads[i];
-        float param = h_params[i];
-
-        m_data_[i] = beta1 * m_data_[i] + (1.0f - beta1) * grad;
-        v_data_[i] = beta2 * v_data_[i] + (1.0f - beta2) * grad * grad;
-
-        float m_hat = m_data_[i] / (1.0f - beta1_pow);
-        float v_hat = v_data_[i] / (1.0f - beta2_pow);
-
-        float update = m_hat / (std::sqrt(v_hat) + eps);
-        update += wd * param;
-
-        h_params[i] = param - lr_t * update;
-    }
-
-    CUDA_CHECK(cudaMemcpy(params, h_params.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice));
+    // The update runs entirely on device (v2.27): no D2H/H2D round-trip.
+    detail::adamw_step_device(params, grads, m_data_->data(), v_data_->data(),
+                              num_elements, lr_t, beta1, beta2, eps, wd,
+                              beta1_pow, beta2_pow, stream);
 }
 
 void AdamWOptimizer::set_learning_rate(float lr) {
@@ -71,8 +66,10 @@ void AdamWOptimizer::set_weight_decay(float wd) {
 }
 
 void AdamWOptimizer::zero_momentum() {
-    std::fill(m_data_.begin(), m_data_.end(), 0.0f);
-    std::fill(v_data_.begin(), v_data_.end(), 0.0f);
+    if (m_data_) {
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
+    }
 }
 
 void AdamWOptimizer::zero_grad() {}
@@ -173,14 +170,7 @@ float clip_gradients(
 
     if (norm > config.max_norm) {
         float scale = config.max_norm / norm;
-        std::vector<float> h_grads(num_elements);
-        CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-
-        for (size_t i = 0; i < num_elements; ++i) {
-            h_grads[i] *= scale;
-        }
-
-        CUDA_CHECK(cudaMemcpy(grads, h_grads.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice));
+        detail::clip_device(grads, num_elements, scale, stream);
     }
 
     return norm;
@@ -192,26 +182,8 @@ float compute_gradient_norm(
     GradientClipConfig::NormType norm_type,
     cudaStream_t stream
 ) {
-    if (norm_type == GradientClipConfig::NormType::Inf) {
-        float max_val = 0.0f;
-        std::vector<float> h_grads(num_elements);
-        CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-
-        for (size_t i = 0; i < num_elements; ++i) {
-            max_val = std::max(max_val, std::abs(h_grads[i]));
-        }
-        return max_val;
-    }
-
-    float sum_squares = 0.0f;
-    std::vector<float> h_grads(num_elements);
-    CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-
-    for (size_t i = 0; i < num_elements; ++i) {
-        sum_squares += h_grads[i] * h_grads[i];
-    }
-
-    return std::sqrt(sum_squares);
+    // Device reduction (v2.27): no D2H of the full gradient.
+    return detail::gradient_norm_device(grads, num_elements, norm_type, stream);
 }
 
 GradientClipper::GradientClipper(const GradientClipConfig& config)

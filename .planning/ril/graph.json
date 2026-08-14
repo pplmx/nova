@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 27,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T17:15:43+00:00",
+  "updated_at": "2026-08-14T01:58:47+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1536,13 +1536,15 @@
       "id": "TASK-037",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 2,
       "created_at": "2026-08-13T17:15:32+00:00",
-      "updated_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-14T01:58:47+00:00",
       "touched_round": 27,
       "title": "P2 implementation: AdamWOptimizer::step uses a device m/v + one fused kernel (lr_t, m_hat/v_hat, wd-offset update) on params/grads; compute_gradient_norm uses a reduction (L2/Inf); clip inverts the norm scale on device; API unchanged",
       "category": "performance",
-      "severity": 2
+      "severity": 2,
+      "lock_owner": "graph-engineering:v2.27-p2",
+      "lock_until": "2026-08-14T03:58:47+00:00"
     },
     "TASK-038": {
       "id": "TASK-038",
