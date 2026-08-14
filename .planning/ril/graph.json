@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 27,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-13T16:30:05+00:00",
+  "updated_at": "2026-08-13T17:15:43+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1495,6 +1495,66 @@
       "touched_round": 26,
       "title": "P2 v2.26: TensorParallelMultiHeadAttention (QKV col-parallel -> multi-head SDPA -> output row-parallel) forward+backward on the verified layer conventions, with step() (one AdamW per weight tensor); mini-transformer (attention+MLP) training via the MicroTrainer chain; sdpa_forward/backward host-side correctness-first primitives. Also fixed issue-v24-mha-incomplete note.",
       "commit": "bc02049"
+    },
+    "DEC-013": {
+      "id": "DEC-013",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-13T17:15:32+00:00",
+      "touched_round": 27,
+      "title": "v2.27 milestone direction: move the optimizer stack (AdamW update, gradient L2/Inf norm, gradient clipping) from host-side D2H->host-loop->H2D into CUDA kernels behind the SAME public API — AdamW m/v become device buffers and the per-element update (bias-corrected lr_t, m_hat/v_hat, decoupled wd) is one fused kernel; compute_gradient_norm/clip use reductions — so MicroTrainer (v2.25) and the TP training stack (v2.24-26) stop paying blocking host round-trips every step, validated by exact kernel==host-formula parity and the existing multi-GPU trajectory parity",
+      "rationale": "The v2.25 cpp-reviewer M2 findings: AdamWOptimizer::step copies full params+grads D2H, updates on the host, copies back — 9 blocking D2H/H2D memcpys per MicroTrainer step (3 weight tensors x 3 copies); compute_gradient_norm/clip_gradients do the same full-buffer copy. DEC-010/011/012 each deferred device-native fused optimizer kernels as \"a performance task, orthogonal to the correctness milestone\". Now that training converges (v2.25) and forms a transformer (v2.26), removing the host round-trip is the binding training improvement. Keeping the public API unchanged means every caller (layers step(), MicroTrainer, tests) accelerates without edits; parity is provable: the kernel computes the same formula as the host reference, so existing host-fp64 trajectory tests re-attest.",
+      "alternatives_rejected": "Rewriting the optimizer API (callers would fork; not needed — device path replaces the host loop in place); fusing AdamW into the layer step() (couples optimizers to layers; the optimizer should stay its own module); a full AMX/TensorCore optimizer (premature; a straightforward fused kernel already removes the round-trip)."
+    },
+    "TASK-035": {
+      "id": "TASK-035",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-13T17:15:32+00:00",
+      "touched_round": 27,
+      "title": "(umbrella v2.27) device-native optimizer kernels (AdamW update + gradient norm/clip) behind the existing API, removing host D2H/H2D round-trips from the training step",
+      "category": "performance",
+      "severity": 2
+    },
+    "TASK-036": {
+      "id": "TASK-036",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-13T17:15:32+00:00",
+      "touched_round": 27,
+      "title": "P1 RED/parity: pin device AdamW (m/v as device buffers, fused bias-corrected update), device compute_gradient_norm (L2 reduction / Inf max) and clip_gradients (scale) — each must equal the host-formula reference element-exactly; device==host over K steps; multi-GPU MicroTrainer trajectory parity still GREEN with the device optimizer",
+      "category": "performance",
+      "severity": 2
+    },
+    "TASK-037": {
+      "id": "TASK-037",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-13T17:15:32+00:00",
+      "touched_round": 27,
+      "title": "P2 implementation: AdamWOptimizer::step uses a device m/v + one fused kernel (lr_t, m_hat/v_hat, wd-offset update) on params/grads; compute_gradient_norm uses a reduction (L2/Inf); clip inverts the norm scale on device; API unchanged",
+      "category": "performance",
+      "severity": 2
+    },
+    "TASK-038": {
+      "id": "TASK-038",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-13T17:15:32+00:00",
+      "touched_round": 27,
+      "title": "P3 verify: kernel==host parity tests GREEN; K-step multi-GPU MicroTrainer parity and TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close",
+      "category": "performance",
+      "severity": 2
     }
   },
   "edges": [
@@ -2229,6 +2289,48 @@
       "to": "issue-v24-mha-incomplete",
       "type": "resolves",
       "created_at": "2026-08-13T16:29:50+00:00"
+    },
+    {
+      "from": "DEC-013",
+      "to": "TASK-035",
+      "type": "governs",
+      "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "DEC-013",
+      "to": "TASK-036",
+      "type": "governs",
+      "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "DEC-013",
+      "to": "TASK-037",
+      "type": "governs",
+      "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "DEC-013",
+      "to": "TASK-038",
+      "type": "governs",
+      "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "TASK-035",
+      "to": "TASK-036",
+      "type": "depends_on",
+      "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "TASK-036",
+      "to": "TASK-037",
+      "type": "depends_on",
+      "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "TASK-037",
+      "to": "TASK-038",
+      "type": "depends_on",
+      "created_at": "2026-08-13T17:15:43+00:00"
     }
   ]
 }

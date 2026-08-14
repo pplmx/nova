@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.26
-milestone_name: Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
-status: Complete
+milestone: v2.27
+milestone_name: Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
+status: In Progress
 last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 26: P2/P3 complete, milestone closed
+last_activity: 2026-08-13 — Round 27: milestone opened
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,10 +19,29 @@ progress:
 
 ## Current Position
 
-Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
-Status: Complete (Round 26)
-Last activity: 2026-08-13 — TP attention + mini-transformer GREEN on 2 & 4
-GPUs; TASK-031/032/033/034 closed (DEC-012)
+Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
+Status: In Progress (Round 27 — opened)
+Last activity: 2026-08-13 — milestone opened (DEC-013); the host-side optimizer
+round-trip is the binding training-perf constraint (v2.25 M2)
+
+## Milestone v2.27 — Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
+
+Move the optimizer stack (AdamW update, gradient L2/Inf norm, gradient
+clipping) from host-side D2H→host-loop→H2D into CUDA kernels behind the SAME
+public API — AdamW m/v become device buffers and the per-element
+bias-corrected update is one fused kernel; norm/clip use reductions. Every
+caller (layer step(), MicroTrainer, tests) accelerates without edits; parity is
+exact-element (kernel == host formula), so the existing host-fp64 trajectory
+tests re-attest (TASK-035).
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Parity tests: device AdamW over K steps == host formula (exact-element); device norm L2/Inf == host; device clip == host scale | In Progress (Round 27) — pinned once implemented (TASK-036) |
+| 2 | Implement device AdamW (m/v device buffers + fused kernel), compute_gradient_norm reduction, clip scale on device; API unchanged | Pending (TASK-037) |
+| 3 | Verify: parity GREEN; K-step multi-GPU MicroTrainer + TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close | Pending (TASK-038) |
+
+Decision: DEC-013. Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Milestone v2.26 — Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
 
@@ -232,6 +251,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.24 End-to-End Training Step On The Tensor-Parallel Stack | Complete | 2026-08-13 | 3 phases |
 | v2.25 MicroTrainer: End-to-End Gradient Training Convergence | Complete | 2026-08-13 | 3 phases |
 | v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | Complete | 2026-08-13 | 3 phases |
+| v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | In Progress | 2026-08-13 | 3 phases |
 
 ---
 

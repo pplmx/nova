@@ -4,7 +4,22 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
+## Current Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
+
+**Status:** In Progress (opened 2026-08-13, RIL Round 27)
+
+**Milestone v2.27.** Removes the binding training-performance constraint the v2.25 cpp-review
+flagged (M2): `AdamWOptimizer::step` copies full params+grads D2H, updates in a host loop,
+copies back — 9 blocking D2H/H2D memcpys per MicroTrainer step (3 weight tensors × 3
+copies), and `compute_gradient_norm`/`clip_gradients` do the same full-buffer round-trip.
+P2 (CHG-016) moves the optimizer to device kernels behind the **same** public API: AdamW m/v
+become device buffers with one fused per-element bias-corrected update kernel;
+`compute_gradient_norm` (L2/Inf) uses reductions; clip scales on device. Every caller
+(layer `step()`, MicroTrainer, the training tests) accelerates with no edits; parity is
+exact-element so the host-fp64 trajectory tests re-attest. Host note: use
+`CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Previous Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
 
 **Status:** Complete (2026-08-13, RIL Round 26)
 
