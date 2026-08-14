@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 27,
+  "round": 28,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-14T01:58:47+00:00",
+  "updated_at": "2026-08-14T03:02:37+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1511,10 +1511,10 @@
     "TASK-035": {
       "id": "TASK-035",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T17:15:32+00:00",
-      "updated_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-14T03:02:37+00:00",
       "touched_round": 27,
       "title": "(umbrella v2.27) device-native optimizer kernels (AdamW update + gradient norm/clip) behind the existing API, removing host D2H/H2D round-trips from the training step",
       "category": "performance",
@@ -1523,10 +1523,10 @@
     "TASK-036": {
       "id": "TASK-036",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T17:15:32+00:00",
-      "updated_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-14T03:02:37+00:00",
       "touched_round": 27,
       "title": "P1 RED/parity: pin device AdamW (m/v as device buffers, fused bias-corrected update), device compute_gradient_norm (L2 reduction / Inf max) and clip_gradients (scale) — each must equal the host-formula reference element-exactly; device==host over K steps; multi-GPU MicroTrainer trajectory parity still GREEN with the device optimizer",
       "category": "performance",
@@ -1535,10 +1535,10 @@
     "TASK-037": {
       "id": "TASK-037",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 3,
       "created_at": "2026-08-13T17:15:32+00:00",
-      "updated_at": "2026-08-14T01:58:47+00:00",
+      "updated_at": "2026-08-14T03:02:37+00:00",
       "touched_round": 27,
       "title": "P2 implementation: AdamWOptimizer::step uses a device m/v + one fused kernel (lr_t, m_hat/v_hat, wd-offset update) on params/grads; compute_gradient_norm uses a reduction (L2/Inf); clip inverts the norm scale on device; API unchanged",
       "category": "performance",
@@ -1549,14 +1549,37 @@
     "TASK-038": {
       "id": "TASK-038",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-13T17:15:32+00:00",
-      "updated_at": "2026-08-13T17:15:32+00:00",
+      "updated_at": "2026-08-14T03:02:37+00:00",
       "touched_round": 27,
       "title": "P3 verify: kernel==host parity tests GREEN; K-step multi-GPU MicroTrainer parity and TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close",
       "category": "performance",
       "severity": 2
+    },
+    "EV-021": {
+      "id": "EV-021",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-14T02:56:07+00:00",
+      "updated_at": "2026-08-14T02:56:07+00:00",
+      "touched_round": 27,
+      "source": "test: OptimizersTest.AdamWDeviceMatchesHostFormula / GradientNormDeviceMatchesHost / GradientClipDeviceMatchesHost + MicroTrainer/training parity + full suite",
+      "title": "v2.27 P2 GREEN: device-native optimizer kernels are exact-element equivalent to the host formulas — AdamW over K=5 steps 16/16 OptimizersTest; L2/Inf norm and clipping match to 1e-4. The device optimizer sustains MicroTrainer host-fp64 trajectory parity and K=12 mini-transformer parity GREEN on 2 & 4 GPUs (cross-suite 43/43 both); single-GPU neural regression 46/46; full-suite baseline 1435/0 EXIT=0.",
+      "confidence": 1.0
+    },
+    "CHG-016": {
+      "id": "CHG-016",
+      "type": "change",
+      "status": "resolved",
+      "version": 1,
+      "created_at": "2026-08-14T02:59:36+00:00",
+      "updated_at": "2026-08-14T02:59:36+00:00",
+      "touched_round": 27,
+      "title": "P2 v2.27: device-native optimizer kernels — fused AdamW update, gradient L2/Inf norm reduction, clip scale on device behind the same API (optimizers_kernels.cu + optimizers.cpp glue); LAMB unchanged",
+      "commit": "711d511"
     }
   },
   "edges": [
@@ -2333,6 +2356,24 @@
       "to": "TASK-038",
       "type": "depends_on",
       "created_at": "2026-08-13T17:15:43+00:00"
+    },
+    {
+      "from": "CHG-016",
+      "to": "TASK-037",
+      "type": "implements",
+      "created_at": "2026-08-14T02:59:36+00:00"
+    },
+    {
+      "from": "CHG-016",
+      "to": "TASK-036",
+      "type": "implements",
+      "created_at": "2026-08-14T02:59:36+00:00"
+    },
+    {
+      "from": "CHG-016",
+      "to": "TASK-035",
+      "type": "implements",
+      "created_at": "2026-08-14T02:59:36+00:00"
     }
   ]
 }

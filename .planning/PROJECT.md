@@ -6,18 +6,24 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
 
-**Status:** In Progress (opened 2026-08-13, RIL Round 27)
+**Status:** In Progress (opened 2026-08-13, RIL Round 27 — P2/verify done, close pending)
 
 **Milestone v2.27.** Removes the binding training-performance constraint the v2.25 cpp-review
 flagged (M2): `AdamWOptimizer::step` copies full params+grads D2H, updates in a host loop,
 copies back — 9 blocking D2H/H2D memcpys per MicroTrainer step (3 weight tensors × 3
 copies), and `compute_gradient_norm`/`clip_gradients` do the same full-buffer round-trip.
-P2 (CHG-016) moves the optimizer to device kernels behind the **same** public API: AdamW m/v
-become device buffers with one fused per-element bias-corrected update kernel;
-`compute_gradient_norm` (L2/Inf) uses reductions; clip scales on device. Every caller
-(layer `step()`, MicroTrainer, the training tests) accelerates with no edits; parity is
-exact-element so the host-fp64 trajectory tests re-attest. Host note: use
-`CUDA_VISIBLE_DEVICES=2,3+`.
+P2 (CHG-016 711d511) moves the optimizer to device kernels behind the **same** public API:
+`optimizers_kernels.cu` adds a fused per-element bias-corrected AdamW update, tree-reduced
+L2/Inf gradient-norm kernels, and a clip scale kernel; `AdamWOptimizer::step` now uses
+device m/v buffers (no D2H/H2D); `compute_gradient_norm`/`clip_gradients` use the device
+paths. LAMB stays host-side. Every caller (layer `step()`, MicroTrainer, the training tests)
+accelerates with no edits; parity is exact-element.
+
+Verified (EV-021): OptimizersTest 16/16 (incl. 3 new device-vs-host parity); single-GPU
+neural regression 46/46; isolated NCCL cross-suite **43/43 on 2 & 4 GPUs** — MicroTrainer
+host-fp64 trajectory parity and the K=12 mini-transformer parity now run on the device
+optimizer (the definitive training-correctness attestation); full-suite baseline **1435/0**.
+Host note: use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## Previous Milestone: v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training
 

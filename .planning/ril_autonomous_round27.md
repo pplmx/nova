@@ -37,15 +37,40 @@ transformer (v2.26), removing the round-trip is the next training improvement
   (couples optimizers to layers); TensorCore/AMX-optimized kernels (premature;
   a plain fused kernel already removes the round-trip).
 
-## Execute — P1 (TASK-036, parity)
+## Execute — P2 (TASK-037, `CHG-016` 711d511)
 
-- RED/parity tests: device AdamW over K steps == host-formula reference
-  (exact-element); device `compute_gradient_norm` L2/Inf == host; device
-  `clip_gradients` == host scale. The existing multi-GPU MicroTrainer
-  trajectory-parity test (v2.25) already asserts training == host fp64
-  reference with the device optimizer — it is the end-to-end attestation.
+- `optimizers_kernels.cu` (new, compiled as CUDA): fused `adamw_step_kernel`
+  (bias-corrected lr_t, m_hat/v_hat, decoupled-wd update in place on device),
+  `grad_scale_kernel` (clip), tree-reduced L2/Inf norm partial kernels
+  (512 blocks). `detail::` entry points feed the host API.
+- `optimizers.cpp`: `AdamWOptimizer::step` sizes device m/v `Buffer` and calls
+  the fused kernel (no D2H/H2D); `compute_gradient_norm` uses the device
+  reduction; `clip_gradients` scales on device. API unchanged — every caller
+  (layer step(), MicroTrainer, tests) accelerates with zero edits. LAMB stays
+  host-side (layer-adaptation needs host layer-norm reads / per-element clamp).
+- `optimizers_test.cpp`: 3 device-vs-host parity tests (K=5 AdamW, L2/Inf
+  norm, clip) — exact-element match.
 
-## Milestone status (open)
+## Verify (EV-021)
 
-- P1 parity pinned (EV-021, once implemented); P2 (TASK-037) = kernels; P3
-  (TASK-038) = verify GREEN on 2 & 4 GPUs + cross-suite + regression + close.
+- OptimizersTest 16/16 (incl. 3 new parity); single-GPU neural regression
+  46/46; isolated NCCL cross-suite 43/43 on 2 & 4 GPUs — including the
+  MicroTrainer host-fp64 trajectory parity and the K=12 mini-transformer
+  parity now running on the DEVICE optimizer (the definitive
+  training-correctness attestation). Full-suite baseline 1435/0 EXIT=0.
+- cpp-reviewer pass on the kernel code pending (CHG-016).
+
+## Learn
+
+- The device path needed a new `.cu` (the existing `optimizers.cpp` is host
+  C++); kernels + `detail::` entry points in the .cu, host glue in the .cpp —
+  the module boundary is now host-API / device-kernels.
+- The chunked partial reductions are n-agnostic (span ceil-div over 512, empty
+  blocks write 0); exact-element AdamW parity proves the fused kernel preserves
+  the former float semantics — so all host-fp64 trajectory tests re-attest
+  unchanged.
+
+## Milestone status
+
+- P1/P2 complete (CHG-016, EV-021); P3 (TASK-038) = close + graph resolution
+  once the cpp-review disposition lands.

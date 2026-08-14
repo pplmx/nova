@@ -36,9 +36,9 @@ tests re-attest (TASK-035).
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Parity tests: device AdamW over K steps == host formula (exact-element); device norm L2/Inf == host; device clip == host scale | In Progress (Round 27) — pinned once implemented (TASK-036) |
-| 2 | Implement device AdamW (m/v device buffers + fused kernel), compute_gradient_norm reduction, clip scale on device; API unchanged | Pending (TASK-037) |
-| 3 | Verify: parity GREEN; K-step multi-GPU MicroTrainer + TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close | Pending (TASK-038) |
+| 1 | Parity tests: device AdamW over K steps == host formula (exact-element); device norm L2/Inf == host; device clip == host scale | Complete (Round 27) — 3 device-vs-host parity tests GREEN (EV-021) |
+| 2 | Implement device AdamW (m/v device buffers + fused kernel), compute_gradient_norm reduction, clip scale on device; API unchanged | Complete (Round 27) — CHG-016 711d511; optimizers_kernels.cu |
+| 3 | Verify: parity GREEN; K-step multi-GPU MicroTrainer + TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close | In Progress (Round 27) — cross-suite 43/43 on 2 & 4 GPUs; single-GPU 46/46; full-suite 1435/0 (EV-021); cpp-review pending |
 
 Decision: DEC-013. Host note: GPUs 0/1 externally loaded — use
 `CUDA_VISIBLE_DEVICES=2,3+`.
