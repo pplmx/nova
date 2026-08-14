@@ -6,7 +6,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
 
-**Status:** In Progress (opened 2026-08-13, RIL Round 27 — P2/verify done, close pending)
+**Status:** Complete (2026-08-13, RIL Round 27)
 
 **Milestone v2.27.** Removes the binding training-performance constraint the v2.25 cpp-review
 flagged (M2): `AdamWOptimizer::step` copies full params+grads D2H, updates in a host loop,

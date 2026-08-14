@@ -14,12 +14,16 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 
 ## Latest round
 - **Round 27 (2026-08-13)** — milestone **v2.27 "Device-Native Optimizer Kernels (AdamW +
-  Gradient Norm/Clip)"** opened (DEC-013, TASK-036/037/038). The optimizer stack
-  (`optimizers.cpp`) is host-side: `AdamWOptimizer::step` D2H→host-loop→H2D full copies
-  (9 per MicroTrainer step), `compute_gradient_norm`/`clip_gradients` the same. The v2.25
-  cpp-review M2 flagged this as the binding training-perf constraint, deferred by
-  DEC-010/011/012. Milestone moves it to device kernels behind the same API (parity is
-  exact-element). See `ril_autonomous_round27.md`.
+  Gradient Norm/Clip)"** opened through **close (P1+P2+P3)** (DEC-013, TASK-036/037/038,
+  CHG-016 711d511). The optimizer stack was host-side: `AdamWOptimizer::step` D2H→host-loop→
+  H2D full copies (9 per MicroTrainer step), `compute_gradient_norm`/`clip_gradients` the
+  same — the v2.25 cpp-review M2 flagged it as the binding training-perf constraint, deferred
+  by DEC-010/011/012. Added `optimizers_kernels.cu` (fused AdamW update, L2/Inf norm
+  reduction, clip scale) behind the same API; `AdamWOptimizer::step` uses device m/v buffers
+  (no round-trip). Parity is exact-element (3 device-vs-host tests) and the existing
+  host-fp64 trajectory tests re-attest unchanged. Verified (EV-021): OptimizersTest 16/16;
+  cross-suite 43/43 on 2 & 4 GPUs; single-GPU neural 46/46; full-suite 1435/0. Milestone
+  **closed**. See `ril_autonomous_round27.md`.
 - **Round 26 (2026-08-13)** — milestone **v2.26 "Tensor-Parallel Multi-Head Attention +
   Mini-Transformer Training"** opened through **close (P1+P2+P3)** (DEC-012,
   TASK-032/033/034, CHG-015 bc02049). Added `TensorParallelMultiHeadAttention` (QKV

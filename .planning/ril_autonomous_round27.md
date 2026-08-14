@@ -70,7 +70,13 @@ transformer (v2.26), removing the round-trip is the next training improvement
   the former float semantics — so all host-fp64 trajectory tests re-attest
   unchanged.
 
-## Milestone status
+## Milestone close
 
-- P1/P2 complete (CHG-016, EV-021); P3 (TASK-038) = close + graph resolution
-  once the cpp-review disposition lands.
+- `TASK-035/036/037/038` resolved; DEC-013; EV-021; CHG-016 (711d511). Round
+  bumped to 28.
+- The training stack now runs its optimizer entirely on device (no blocking
+  D2H/H2D per step) with exact host-formula parity, sustained through the
+  MicroTrainer host-fp64 trajectory and mini-transformer parity tests. The
+  device-optimizer conversion is the last deferred perf item from DEC-010/011/
+  012; future work is capability (a deeper/multi-layer transformer, more
+  optimizer variants on device, LAMB kernelization).

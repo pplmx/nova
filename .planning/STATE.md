@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.27
 milestone_name: Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
-status: In Progress
+status: Complete
 last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 27: milestone opened
+last_activity: 2026-08-13 — Round 27: P1-P3 complete, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,9 +20,9 @@ progress:
 ## Current Position
 
 Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
-Status: In Progress (Round 27 — opened)
-Last activity: 2026-08-13 — milestone opened (DEC-013); the host-side optimizer
-round-trip is the binding training-perf constraint (v2.25 M2)
+Status: Complete (Round 27)
+Last activity: 2026-08-13 — device optimizer kernels exact-element parity +
+training sustained on 2 & 4 GPUs; TASK-035/036/037/038 closed (DEC-013)
 
 ## Milestone v2.27 — Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
 
@@ -38,7 +38,7 @@ tests re-attest (TASK-035).
 |-------|------|--------|
 | 1 | Parity tests: device AdamW over K steps == host formula (exact-element); device norm L2/Inf == host; device clip == host scale | Complete (Round 27) — 3 device-vs-host parity tests GREEN (EV-021) |
 | 2 | Implement device AdamW (m/v device buffers + fused kernel), compute_gradient_norm reduction, clip scale on device; API unchanged | Complete (Round 27) — CHG-016 711d511; optimizers_kernels.cu |
-| 3 | Verify: parity GREEN; K-step multi-GPU MicroTrainer + TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close | In Progress (Round 27) — cross-suite 43/43 on 2 & 4 GPUs; single-GPU 46/46; full-suite 1435/0 (EV-021); cpp-review pending |
+| 3 | Verify: parity GREEN; K-step multi-GPU MicroTrainer + TP training still GREEN on 2 & 4 GPUs; cross-suite + regression; RIL close | Complete (Round 27) — cross-suite 43/43 on 2 & 4 GPUs; single-GPU 46/46; full-suite 1435/0 (EV-021) |
 
 Decision: DEC-013. Host note: GPUs 0/1 externally loaded — use
 `CUDA_VISIBLE_DEVICES=2,3+`.
@@ -251,7 +251,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.24 End-to-End Training Step On The Tensor-Parallel Stack | Complete | 2026-08-13 | 3 phases |
 | v2.25 MicroTrainer: End-to-End Gradient Training Convergence | Complete | 2026-08-13 | 3 phases |
 | v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | Complete | 2026-08-13 | 3 phases |
-| v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | In Progress | 2026-08-13 | 3 phases |
+| v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | Complete | 2026-08-13 | 3 phases |
 
 ---
 
