@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 28,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-14T03:02:37+00:00",
+  "updated_at": "2026-08-18T17:34:33+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -579,7 +579,7 @@
       "version": 1,
       "created_at": "2026-08-12T05:11:01+00:00",
       "updated_at": "2026-08-12T05:11:01+00:00",
-      "touched_round": 26,
+      "touched_round": 28,
       "title": "Neural parallel-training layer: TensorParallelMatmul (include/cuda/neural/tensor_parallel_matmul.{h,cpp}), TensorParallelLayers, SequenceParallelAttention / RingSequenceParallelism (include/cuda/distributed/sequence_parallel.h)"
     },
     "HYP-002": {
@@ -1580,6 +1580,86 @@
       "touched_round": 27,
       "title": "P2 v2.27: device-native optimizer kernels — fused AdamW update, gradient L2/Inf norm reduction, clip scale on device behind the same API (optimizers_kernels.cu + optimizers.cpp glue); LAMB unchanged",
       "commit": "711d511"
+    },
+    "DEC-014": {
+      "id": "DEC-014",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-18T16:34:52+00:00",
+      "updated_at": "2026-08-18T16:34:52+00:00",
+      "touched_round": 28,
+      "title": "v2.28 milestone direction: normalization + residual on the parallel stack — device LayerNorm forward+backward with trainable gamma/beta (the layer_norm module today is forward-only and untrainable), a pre-LN residual TransformerBlock (LN→MHA→+x→LN→MLP→+x), and an N-block deep mini-transformer proven to train: single-GPU convergence and 2/4-GPU shard==single-GPU full-weight parity",
+      "rationale": "v2.21-27 delivered weight-sharded layers (fwd+bwd), device CE-loss seed, per-shard AdamW, MicroTrainer, TP attention, and device-native optimizers — but the only transformer that trains is a single unnormalized block (attention→MLP, no LayerNorm, no residual). The layer_norm module (layer_norm.h/.cu) is a forward-only orphan: no backward pass, so untrainable; its means/variances are never validated against a reference; unused by the parallel stack. No residual connection exists anywhere in the stack, and no model can stack more than one block. Round-27 LEARN names 'a deeper/multi-layer transformer' as the next capability; normalization+residual are its prerequisite.",
+      "alternatives_rejected": "LAMB kernelization (a performance task orthogonal to capability — deferred, as AdamW was in DEC-012; the optimistic plan adopts the MicroTrainer-parity verification style for it later); a full GPT-scale language model (needs the normalized block first — normalization/residual IS the dependency, so it is this milestone); reusing the forward-only LayerNorm as-is (untrainable — superseded by a backward+affine-capable layer, keeping exact-element parity style); fusing LayerNorm into the attention/MLP layers (couples modules — LN stays its own layer with its own optimizer steps, matching the one-AdamW-per-tensor convention)"
+    },
+    "issue-v28-layer-norm-untrainable": {
+      "id": "issue-v28-layer-norm-untrainable",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-18T16:35:15+00:00",
+      "updated_at": "2026-08-18T16:35:15+00:00",
+      "touched_round": 28,
+      "title": "layer_norm module is forward-only and untrainable: no backward pass, no validated reference, the TP transformer has no LayerNorm and no residual connections, and no model stacks more than one block",
+      "severity": 2
+    },
+    "TASK-039": {
+      "id": "TASK-039",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-18T16:35:23+00:00",
+      "updated_at": "2026-08-18T16:35:23+00:00",
+      "touched_round": 28,
+      "category": "core-feature",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "unlock_factor": 1.5,
+      "title": "(umbrella v2.28) normalized transformer blocks — device LayerNorm forward+backward with trainable gamma/beta, pre-LN residual TransformerBlock (LN→MHA→+x→LN→MLP→+x), and an N-block deep mini-transformer verified by single-GPU convergence and 2/4-GPU shard==single-GPU full-weight parity"
+    },
+    "TASK-040": {
+      "id": "TASK-040",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-18T16:55:21+00:00",
+      "updated_at": "2026-08-18T16:55:21+00:00",
+      "touched_round": 28,
+      "category": "core-feature",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P1 RED/parity: pin device LayerNorm forward against a host-fp64 reference and analytic backward (d_x, d_gamma, d_beta — finite-difference/pass-consistency checked); pin the pre-LN residual TransformerBlock forward/backward against a host-fp64 block reference; pin the deep N-block mini-transformer training contract (loss descent + accuracy rise) and the K-step multi-GPU trajectory parity contract on 2 & 4 GPUs"
+    },
+    "TASK-041": {
+      "id": "TASK-041",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-18T16:56:18+00:00",
+      "updated_at": "2026-08-18T16:56:18+00:00",
+      "touched_round": 28,
+      "category": "core-feature",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "title": "P2 implementation: device LayerNorm backward kernels + affine gamma/beta wired into the layer_norm API (making the forward-only orphan trainable); a TransformerBlock composing pre-LN attention + pre-LN MLP with residual adds and one AdamW per weight tensor incl. each LN gamma/beta; an N-block stack + training driver on the MicroTrainer conventions"
+    },
+    "TASK-042": {
+      "id": "TASK-042",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-18T16:58:11+00:00",
+      "updated_at": "2026-08-18T16:58:11+00:00",
+      "touched_round": 28,
+      "category": "core-feature",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P3 verify: LayerNorm fwd/bwd parity GREEN; single-GPU N-block convergence; multi-GPU K-step N-block shard==single-GPU full-weight parity GREEN on 2 & 4 GPUs; cross-suite + single-GPU regression + full-suite baseline; cpp-reviewer pass; RIL close"
     }
   },
   "edges": [
@@ -2374,6 +2454,60 @@
       "to": "TASK-035",
       "type": "implements",
       "created_at": "2026-08-14T02:59:36+00:00"
+    },
+    {
+      "from": "DEC-014",
+      "to": "TASK-039",
+      "type": "governs",
+      "created_at": "2026-08-18T17:29:50+00:00"
+    },
+    {
+      "from": "DEC-014",
+      "to": "TASK-040",
+      "type": "governs",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "DEC-014",
+      "to": "TASK-041",
+      "type": "governs",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "DEC-014",
+      "to": "TASK-042",
+      "type": "governs",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "TASK-039",
+      "to": "TASK-040",
+      "type": "depends_on",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "TASK-040",
+      "to": "TASK-041",
+      "type": "depends_on",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "TASK-041",
+      "to": "TASK-042",
+      "type": "depends_on",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "TASK-039",
+      "to": "issue-v28-layer-norm-untrainable",
+      "type": "addresses",
+      "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "issue-v28-layer-norm-untrainable",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-18T17:34:33+00:00"
     }
   ]
 }

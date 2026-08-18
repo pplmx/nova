@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.27
-milestone_name: Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
-status: Complete
-last_updated: "2026-08-13"
-last_activity: 2026-08-13 — Round 27: P1-P3 complete, milestone closed
+milestone: v2.28
+milestone_name: Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
+status: In Progress
+last_updated: "2026-08-18"
+last_activity: 2026-08-18 — Round 28: milestone opened (TASK-039/040/041/042, DEC-014)
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -15,14 +15,42 @@ progress:
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-08-13
+**Last Updated:** 2026-08-18
 
 ## Current Position
 
-Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
-Status: Complete (Round 27)
-Last activity: 2026-08-13 — device optimizer kernels exact-element parity +
-training sustained on 2 & 4 GPUs; TASK-035/036/037/038 closed (DEC-013)
+Milestone: v2.28 Normalized Transformer Blocks (LayerNorm + Residual) + Deep
+Multi-Layer Training
+Status: In Progress (Round 28)
+Last activity: 2026-08-18 — milestone opened (TASK-039/040/041/042, DEC-014);
+P1 RED tests next
+
+## Milestone v2.28 — Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
+
+Round-27 LEARN named "a deeper/multi-layer transformer" as the next capability.
+Today the stack trains exactly ONE model — an unnormalized single block
+(attention → MLP, logits = MLP(attn(X))): the `layer_norm` module is a
+forward-only orphan (no backward → untrainable, never validated against a
+reference), no residual connection exists, and no model stacks more than one
+block (TASK-039). This milestone adds the normalization+residual foundation and
+proves a deep N-block transformer trains sharded: device LayerNorm forward AND
+backward with trainable gamma/beta (collective-free — block activations are
+replicated, so per-row norm is identical on every rank; the only comm in the
+block stays the output projection's AllReduce), a pre-LN residual
+`TransformerBlock` (LN→MHA→+x→LN→MLP→+x, one AdamW per weight tensor incl.
+each LN gamma/beta), and an N-block stack verified by single-GPU convergence
+and 2/4-GPU shard==single-GPU full-weight parity.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: device LayerNorm forward vs host-fp64 reference + analytic backward (d_x, d_gamma, d_beta); pre-LN residual TransformerBlock fwd/bwd vs host-fp64 block reference; deep N-block convergence + K-step multi-GPU trajectory parity on 2 & 4 GPUs | In progress (TASK-040) |
+| 2 | Implement: device LayerNorm backward kernels + affine gamma/beta (making the forward-only orphan trainable); TransformerBlock (pre-LN attention + pre-LN MLP, residual adds, one AdamW per weight tensor incl. LN gamma/beta); N-block stack + training loop on the MicroTrainer conventions | Planned (TASK-041) |
+| 3 | Verify: LN parity GREEN; single-GPU N-block convergence; multi-GPU K-step N-block shard==single-GPU parity GREEN on 2 & 4 GPUs; cross-suite + regression + full baseline; cpp-reviewer; RIL close | Planned (TASK-042) |
+
+Decision: DEC-014. Host note: GPUs 0/1 externally loaded — use
+`CUDA_VISIBLE_DEVICES=2,3+`.
+
+## Milestone v2.27 — Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
 
 ## Milestone v2.27 — Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
 
@@ -252,8 +280,23 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.25 MicroTrainer: End-to-End Gradient Training Convergence | Complete | 2026-08-13 | 3 phases |
 | v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | Complete | 2026-08-13 | 3 phases |
 | v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | Complete | 2026-08-13 | 3 phases |
+| v2.28 Normalized Transformer Blocks + Deep Multi-Layer Training | In Progress | 2026-08-18 | 3 phases |
 
 ---
+
+## State updated: 2026-08-18 — Milestone v2.28 opened (RIL Round 28)
+
+TASK-039/040/041/042 created, DEC-014, issue-v28-layer-norm-untrainable. The
+stack now trains exactly one model — an unnormalized single block
+(attention→MLP): the `layer_norm` module is a forward-only orphan (no backward,
+untrainable, never validated vs a reference), no residual connection exists,
+and nothing stacks >1 block. v2.28 adds device LayerNorm fwd/bwd with trainable
+gamma/beta (collective-free on replicated activations), a pre-LN residual
+TransformerBlock, and a deep N-block mini-transformer verified converged on
+single-GPU and shard==single-GPU parity on 2 & 4 GPUs. RN: use
+`CUDA_VISIBLE_DEVICES=2,3+` (note: as of 2026-08-18 all 8 GPUs show ~76GB used
+— only ~5.8GB free each; the tiny neural tests still fit, but re-check
+nvidia-smi before multi-GPU runs).
 
 ## State updated: 2026-08-12 — Milestone v2.23 complete (RIL Round 23)
 

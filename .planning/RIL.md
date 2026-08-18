@@ -3,16 +3,30 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 24).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 28).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
 Round 18 → **v2.19 "Parallel Training On Real Multi-GPU (Tensor + Sequence Parallelism)"**
 closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** opened and
 **closed at Round 20** → v2.21/v2.22/v2.23 closed at Rounds 21/22/23 → **v2.24
-"End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED).
+"End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED) →
+v2.25/26/27 closed at Rounds 25/26/27 → **v2.28 "Normalized Transformer Blocks (LayerNorm +
+Residual) + Deep Multi-Layer Training"** opened at Round 28 (P1 RED pending).
 
 ## Latest round
+- **Round 28 (2026-08-18)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
+  Residual) + Deep Multi-Layer Training"** opened (DEC-014, TASK-039/040/041/042). The stack
+  trains exactly one model — an unnormalized single block (attention→MLP): the `layer_norm`
+  module is a forward-only orphan (no backward → untrainable, never validated vs a reference),
+  no residual connection exists, no model stacks >1 block (Round-27 LEARN named "a deeper/
+  multi-layer transformer" as the next capability). This milestone adds device LayerNorm
+  forward+backward with trainable gamma/beta (collective-free — replicated activations make
+  per-row norm identical on every rank; the only comm in the block stays the output-projection
+  AllReduce), a pre-LN residual `TransformerBlock` (LN→MHA→+x→LN→MLP→+x, one AdamW per weight
+  tensor incl. LN gamma/beta), and an N-block stack verified by single-GPU convergence and
+  2/4-GPU shard==single-GPU full-weight parity. Registered `issue-v28-layer-norm-untrainable`.
+  P1 RED tests pending. See `ril_autonomous_round28.md`.
 - **Round 27 (2026-08-13)** — milestone **v2.27 "Device-Native Optimizer Kernels (AdamW +
   Gradient Norm/Clip)"** opened through **close (P1+P2+P3)** (DEC-013, TASK-036/037/038,
   CHG-016 711d511). The optimizer stack was host-side: `AdamWOptimizer::step` D2H→host-loop→

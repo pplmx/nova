@@ -4,7 +4,35 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
+## Current Milestone: v2.28 Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
+
+**Status:** In Progress (2026-08-18, RIL Round 28)
+
+**Milestone v2.28.** Round-27 LEARN named "a deeper/multi-layer transformer" as the next
+capability. Today the stack trains exactly ONE model — an unnormalized single block
+(attention → MLP, logits = MLP(attn(X))). `layer_norm.h/.cu` is a forward-only orphan (no
+backward pass → untrainable; its kernels were never validated against a reference; nothing
+in the parallel stack uses it), no residual connection exists anywhere, and no model stacks
+more than one block (TASK-039 / DEC-014). This milestone adds the normalization+residual
+foundation and proves a deep N-block transformer trains sharded: device LayerNorm forward
+AND backward with trainable gamma/beta — collective-free by construction (block activations
+are replicated `[m x hidden]` on every rank, so a per-row norm over the full hidden dim is
+identical on each rank; the only comm in the block stays the v2.26 output-projection
+AllReduce); a pre-LN residual `TransformerBlock` (LN→MHA→+x→LN→MLP→+x) with one AdamW per
+weight tensor incl. each LN gamma/beta; and an N-block stack verified by single-GPU
+convergence and 2/4-GPU shard==single-GPU full-weight parity.
+
+Phases: **P1 (TASK-040)** RED/parity — device LayerNorm forward vs host-fp64 reference and
+analytic backward (d_x, d_gamma, d_beta); pre-LN residual block fwd/bwd vs host-fp64 block
+reference; deep N-block convergence + K-step multi-GPU trajectory parity. **P2 (TASK-041)**
+implementation — LayerNorm backward kernels + affine gamma/beta (making the orphan
+trainable), TransformerBlock, N-block stack + training loop on the MicroTrainer conventions.
+**P3 (TASK-042)** verify — LN parity, single-GPU convergence, 2/4-GPU parity, cross-suite +
+regression + full baseline, cpp-reviewer, RIL close. Host note: use
+`CUDA_VISIBLE_DEVICES=2,3+` (as of 2026-08-18 all 8 GPUs show ~76GB used — re-check
+`nvidia-smi` before multi-GPU runs).
+
+## Previous Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)
 
 **Status:** Complete (2026-08-13, RIL Round 27)
 
