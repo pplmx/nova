@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <numeric>
+#include <stdexcept>
 
 namespace cuda::neural {
 
@@ -165,5 +166,52 @@ void layer_norm_inference(
     );
     CUDA_CHECK(cudaGetLastError());
 }
+
+// ============================================================================
+// v2.28 trainable LayerNorm. P1-RED: provisional throwing stubs — the parity
+// tests pin the forward/backward/step contracts and go RED here; the real
+// device kernels land in P2 (TASK-041).
+// ============================================================================
+
+void layer_norm_backward(
+    const float*, const float*, const float*, float*, float*, float*, int,
+    int, float, cudaStream_t) {
+    throw std::runtime_error("layer_norm_backward: not implemented (P1 RED stub)");
+}
+
+LayerNorm::LayerNorm(int hidden, float eps) : hidden_(hidden), eps_(eps) {
+    if (hidden_ <= 0) {
+        throw std::invalid_argument("LayerNorm: hidden must be positive");
+    }
+    d_gamma_ = std::make_unique<cuda::memory::Buffer<float>>(hidden_);
+    d_beta_ = std::make_unique<cuda::memory::Buffer<float>>(hidden_);
+}
+
+LayerNorm::~LayerNorm() = default;
+
+void LayerNorm::set_weight(const float*, const float*) {
+    throw std::runtime_error("LayerNorm::set_weight: not implemented (P1 RED stub)");
+}
+
+void LayerNorm::forward(const float*, float*, int, cudaStream_t) {
+    throw std::runtime_error("LayerNorm::forward: not implemented (P1 RED stub)");
+}
+
+void LayerNorm::backward(const float*, const float*, float*, float*, float*,
+                         int, cudaStream_t) {
+    throw std::runtime_error("LayerNorm::backward: not implemented (P1 RED stub)");
+}
+
+void LayerNorm::copy_weights(float*, float*) const {
+    throw std::runtime_error("LayerNorm::copy_weights: not implemented (P1 RED stub)");
+}
+
+void LayerNorm::step(optimizers::AdamWOptimizer&, optimizers::AdamWOptimizer&,
+                     const float*, const float*, int, cudaStream_t) {
+    throw std::runtime_error("LayerNorm::step: not implemented (P1 RED stub)");
+}
+
+int LayerNorm::hidden() const { return hidden_; }
+float LayerNorm::eps() const { return eps_; }
 
 }  // namespace cuda::neural

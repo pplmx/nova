@@ -329,12 +329,14 @@ set(NEURAL_SOURCES
         ${CUDA_NEURAL_DIR}/tensor_parallel_matmul.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_layers.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_attention.cpp
+        ${CUDA_NEURAL_DIR}/tensor_parallel_block.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_profile.cpp
         ${CUDA_NEURAL_DIR}/transformer/attention.cu
         ${CUDA_NEURAL_DIR}/loss/loss_functions.cu
         ${CUDA_NEURAL_DIR}/optimizers/optimizers.cpp
         ${CUDA_NEURAL_DIR}/optimizers/optimizers_kernels.cu
         ${CUDA_NEURAL_DIR}/training.cpp
+        ${CUDA_NEURAL_DIR}/training_transformer.cpp
 )
 
 set(MESH_SOURCES
