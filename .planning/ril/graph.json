@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 30,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-19T11:45:31+00:00",
+  "updated_at": "2026-08-19T15:09:30+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1797,31 +1797,31 @@
       "id": "TASK-045",
       "type": "task",
       "status": "active",
-      "version": 2,
+      "version": 3,
       "created_at": "2026-08-19T10:20:15+00:00",
-      "updated_at": "2026-08-19T10:48:55+00:00",
+      "updated_at": "2026-08-19T11:46:45+00:00",
       "touched_round": 30,
       "category": "performance",
       "severity": 2,
       "confidence": 1.0,
       "effort": 3,
-      "title": "P2 implementation: attention_kernels.cu device SDPA forward + analytic backward kernels (per-row shared-memory softmax, block reductions), wire sdpa_forward/sdpa_backward to the device path and delete the host round-trip + dead CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through the block-reduction path",
-      "lock_owner": "grace-l29",
-      "lock_until": "2026-08-19T11:48:55+00:00"
+      "title": "P2 implementation: attention_kernels.cu device SDPA forward + analytic backward kernels (per-row shared-memory softmax, block reductions), wire sdpa_forward/sdpa_backward to the device path and delete the host round-trip + dead CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through the block-reduction path"
     },
     "TASK-046": {
       "id": "TASK-046",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 2,
       "created_at": "2026-08-19T10:20:15+00:00",
-      "updated_at": "2026-08-19T10:20:15+00:00",
+      "updated_at": "2026-08-19T11:47:45+00:00",
       "touched_round": 30,
       "category": "test-quality",
       "severity": 2,
       "confidence": 1.0,
       "effort": 1,
-      "title": "P3 verify: attention_kernels + parallelized-LN parity GREEN; all existing neural single-GPU suites GREEN (LayerNormTrainableTest, TransformerBlockTest, attention, MicroTrainer); neural cross-suite 19/19 on 2 & 4 GPUs (deep-block K-step trajectory parity unchanged by device SDPA); cpp-reviewer pass; RIL close"
+      "title": "P3 verify: attention_kernels + parallelized-LN parity GREEN; all existing neural single-GPU suites GREEN (LayerNormTrainableTest, TransformerBlockTest, attention, MicroTrainer); neural cross-suite 19/19 on 2 & 4 GPUs (deep-block K-step trajectory parity unchanged by device SDPA); cpp-reviewer pass; RIL close",
+      "lock_owner": "grace-l29",
+      "lock_until": "2026-08-19T12:32:45+00:00"
     },
     "EV-025": {
       "id": "EV-025",
@@ -1839,11 +1839,11 @@
       "id": "CHG-020",
       "type": "change",
       "status": "active",
-      "version": 1,
+      "version": 2,
       "created_at": "2026-08-19T11:45:31+00:00",
-      "updated_at": "2026-08-19T11:45:31+00:00",
+      "updated_at": "2026-08-19T11:46:45+00:00",
       "touched_round": 30,
-      "commit": "v2.29 P2 (pending)",
+      "commit": "3af650a",
       "title": "v2.29 P2: device SDPA forward + analytic backward kernels (attention_kernels.cu, per-(row,head) block, shared softmax + block reductions; dV/dK global atomics across query positions; no cross-block scratch — P/dP recomputed); wired into sdpa_forward/sdpa_backward, host D2H/H2D round-trips + CPU impls deleted; parallelized trainable LayerNorm kernels (block/warp reductions for row mean/var/stats) routed through detail::layer_norm_forward_trainable/backward_trainable; LayerNorm::forward/backward + free layer_norm_backward use the block-reduction path"
     },
     "EV-026": {
@@ -1856,6 +1856,29 @@
       "touched_round": 30,
       "source": "v2.29 P2 verify (2026-08-19): AttentionKernelsTest 4/4 (fwd/bwd vs fp64, max_abs ~3e-8); LayerNormTrainableTest.Parallel* 2/2 (h=512/1024, max_abs ~5e-7); neural single-GPU regression 79/79; neural multi-GPU cross-suite 23/23 on 2 GPUs + 18/18 on 4 GPUs; DeepBlockMultiGpuPinnedTest 1/1 on 2 & 4 GPUs (K-step shard==single-GPU trajectory parity through device SDPA + parallel LN)",
       "title": "P2 GREEN: the new device kernels match fp64 references essentially exactly and the existing deep-transformer 2/4-GPU trajectory parity is unchanged",
+      "confidence": 1.0
+    },
+    "CHG-021": {
+      "id": "CHG-021",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T15:09:29+00:00",
+      "updated_at": "2026-08-19T15:09:29+00:00",
+      "touched_round": 30,
+      "commit": "v2.29 review fixes (pending)",
+      "title": "v2.29 cpp-reviewer fixes: HIGH block-reduction cross-call shared race on red[0] fixed with load-bearing entry __syncthreads in block_reduce_sum/block_reduce_max/ln_block_reduce_sum (compute-sanitizer racecheck-verified); MEDIUM signed-int overflow in SDPA grids and LayerNorm m*h element counts/grids fixed with 64-bit products + gridDim.x guard (layer_norm_bwd_grid); LOW shared over-allocation + include hygiene"
+    },
+    "EV-027": {
+      "id": "EV-027",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T15:09:29+00:00",
+      "updated_at": "2026-08-19T15:09:29+00:00",
+      "touched_round": 30,
+      "source": "v2.29 post-review-fix verify (2026-08-19): neural single-GPU regression 79/79 (LayerNormTrainableTest 8/8 incl. parallel h=512/1024, AttentionKernelsTest 4/4, TransformerBlockTest, TensorParallelAttentionTest, MicroTrainerTest); neural multi-GPU cross-suite + deep-block 19/19 on 2 GPUs and 19/19 on 4 GPUs",
+      "title": "Post-fix GREEN: with the reduction-race barrier + 64-bit grid fixes, all v2.29 single-GPU and 2/4-GPU trajectory-parity contracts still pass",
       "confidence": 1.0
     }
   },
@@ -2819,6 +2842,12 @@
       "to": "issue-v29-ln-one-thread-per-row",
       "type": "resolves",
       "created_at": "2026-08-19T11:45:31+00:00"
+    },
+    {
+      "from": "CHG-021",
+      "to": "TASK-045",
+      "type": "implements",
+      "created_at": "2026-08-19T15:09:30+00:00"
     }
   ]
 }

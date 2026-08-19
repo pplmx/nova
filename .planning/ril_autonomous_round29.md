@@ -83,6 +83,34 @@ Phases (TASK-043 umbrella, TASK-044/045/046):
   RIL close. Full-suite baseline still not reproducible in this environment
   (env memory).
 
+## P3 verify + cpp-reviewer (TASK-046, EV-026/027)
+
+- cpp-reviewer pass on 377209e..3af650a caught **1 HIGH (racecheck-verified,
+  compute-sanitizer `--tool racecheck`)**: every block-reduction helper
+  (`block_reduce_sum`/`block_reduce_max` in attention_kernels.cu,
+  `ln_block_reduce_sum` in layer_norm.cu) both returns `red[0]` after its
+  final `__syncthreads()` AND writes `red[wid]` at its start — so a
+  *subsequent* call on the same buffer could overwrite `red[0]` while other
+  threads still read the previous call's result. Masked natively by warp
+  lockstep (25/25 runs green), the reviewer reproduced a numeric failure on
+  the large-seq backward under instrumentation. Fixed by adding a load-bearing
+  entry `__syncthreads()` at the top of all three helpers. The reviewer also
+  confirmed-OK the shuffle masks, shared atomics, global dk/dv atomics, layout,
+  and edge cases (m/h < block, m not a multiple of block).
+- **MEDIUM** (signed `int` overflow): `m * local_heads` (SDPA grids) and
+  `m * h` (LayerNorm element counts/grids) computed in `int` could wrap and
+  silently under-cover the grid. Fixed with 64-bit products + a
+  `gridDim.x`-max guard (`layer_norm_bwd_grid` helper, `sdpa_*_device` grid
+  validation).
+- **LOW**: forward shared over-allocation dropped; `-1e30f` sentinel kept
+  (parity-exact with the deleted host code); include hygiene (`<string>` added,
+  unused `buffer.h`/`<numeric>` dropped).
+- Verify after fixes (EV-027): neural single-GPU regression **79/79**; neural
+  multi-GPU cross-suite + deep-block **19/19 on 2 GPUs and 19/19 on 4 GPUs**
+  (DeepBlockMultiGpuPinnedTest 1/1 on 2 & 4 GPUs — K-step shard==single-GPU
+  trajectory parity unchanged through device SDPA + parallel LN). Milestone
+  **closed** (CHG-021 fix commit).
+
 ## Graph additions (Round 29, opening)
 
 - `DEC-015` (decision, milestone direction); `TASK-043/044/045/046` (umbrella,
@@ -106,4 +134,38 @@ Phases (TASK-043 umbrella, TASK-044/045/046):
   existing LayerNormTrainableTest tests + TensorParallelAttentionTest still
   pass — the public `sdpa_forward`/`sdpa_backward`/`LayerNorm` paths are
   untouched (only the new detail:: entries throw).
-- Commit `test(neural) P1 RED for milestone v2.29 ...`.
+- Commit `test(neural) P1 RED for milestone v2.29 ...` (377209e).
+
+## P2 implementation (TASK-045, CHG-020 3af650a)
+
+- `attention_kernels.cu`: device `sdpa_forward_kernel` (per-(position,head)
+  block; per-row max over keys chunked by 256-thread blocks with one block
+  reduction, then exp-normalized V accumulation into a shared out-accumulator
+  with float atomics; m bounded only by the key count) and
+  `sdpa_backward_kernel` (3 passes: max, esum + weighted-num, then dscore and
+  dV/dK global-atomics across query positions with dQ shared-reduced; P and
+  dP are RECOMPUTED in the final pass rather than stored — a shared scratch
+  would be raced by concurrent (position, head) blocks, found during P2).
+  `sdpa_forward`/`sdpa_backward` route to the detail:: entries; the host
+  D2H/H2D round-trips + CPU implementations deleted (issue-v29-
+  sdpa-host-roundtrip resolved).
+- `layer_norm.cu`: `ln_forward_trainable_kernel` and `ln_backward_stats_kernel`
+  switched from one-thread-per-row to one-BLOCK-per-row (kLnBlock=256) with an
+  `ln_block_reduce_sum` shuffle+shared reduction for the row mean/variance and
+  the backward stats; `LayerNorm::forward/backward`, the free
+  `layer_norm_backward`, and the new `detail::layer_norm_forward_trainable` /
+  `layer_norm_backward_trainable` all use the block-reduction path
+  (issue-v29-ln-one-thread-per-row resolved). Debugging caught two real bugs:
+  forward's variance was used UN-reduced (thread 0's partial) making inv ~25x
+  too large — fixed by `var = ln_block_reduce_sum(var, red)`, and the same
+  latent fault in the backward stats kernel; both confirmed by a temporary
+  device printf before the fix.
+- GREEN (EV-026): the 6 P1 contracts 6/6 — AttentionKernelsTest 4/4
+  (max_abs ~3e-8 vs the fp64 references after the scratch-race fix; before it
+  the large backward showed ~0.1 errors from the cross-block psave/dpsave
+  race), LayerNormTrainableTest.Parallel\* 2/2 (max_abs ~5e-7); neural
+  single-GPU regression 79/79; neural multi-GPU cross-suite 23/23 on 2 GPUs
+  and 18/18 on 4 GPUs; DeepBlockMultiGpuPinnedTest
+  (MultiGpu_DeepTransformer_MatchesSingleGpu) 1/1 on 2 & 4 GPUs — the K-step
+  shard==single-GPU trajectory parity is UNCHANGED through the device SDPA +
+  parallel LN (the definitive proof the new kernels don't perturb training).

@@ -21,23 +21,24 @@
  * exp-normalized weighted sum of V accumulated into a shared accumulator with
  * float atomics), so m is bounded only by the number of keys, not the block.
  *
- * Backward: one block per (position, head). The softmax probs P[j] and
- * dP[j] = dout . v[j] are stored to per-call scratch so dscore[j] =
- * P[j]*(dP[j] - sum_k P[k]dP[k])/sqrt(d) can use the cross-key weighted sum;
- * dV[j,:] (+= P[j] dout) and dK[j,:] (+= dscore[j] q) accumulate across query
- * positions with global atomics (dQ is per-query-row, so it reduces in shared
- * then writes once). The wrapper zeros dq/dk/dv first — the public API
- * overwrites them, exactly like the host vectors did.
+ * Backward: one block per (position, head). P[j] and dP[j] = dout . v[j] are
+ * RECOMPUTED per pass rather than stored (they are query-row-specific, so any
+ * shared scratch would be raced by concurrent (position, head) blocks); the
+ * cross-key weighted sum sum_k P[k]dP[k] comes from a block reduction of the
+ * exp-weighted dP. dV[j,:] (+= P[j] dout) and dK[j,:] (+= dscore[j] q)
+ * accumulate across query positions with global atomics (dQ is
+ * per-query-row, so it reduces in shared then writes once). The wrapper zeros
+ * dq/dk/dv first — the public API overwrites them, exactly like the host
+ * vectors did.
  */
 
 #include "cuda/neural/tensor_parallel_attention.h"
 
 #include "cuda/device/error.h"
-#include "cuda/memory/buffer.h"
-#include "cuda/memory/buffer-inl.h"
 
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace cuda::neural {
 
@@ -49,7 +50,15 @@ constexpr float kMinusInf = -1e30f;
 // Lane collapse of a per-thread sum/max across the block. `red` must hold at
 // least blockDim/32 floats; the reduced value is valid in ALL threads on
 // return (kSdpaBlock threads are always active, so no partial-warp UB).
+//
+// The entry __syncthreads() is load-bearing: this helper both returns `red[0]`
+// (a read every thread issues after the final barrier) AND writes `red[wid]`
+// (lane 0's STS) at its start. Kernels call it several times on the same
+// buffer, so without the entry barrier the first writer of the next call races
+// the last reader of the previous call (compute-sanitizer racecheck-verified;
+// masked natively only by warp lockstep).
 __device__ float block_reduce_sum(float v, float* red) {
+    __syncthreads();
     constexpr unsigned kFull = 0xffffffffu;
     for (int o = 16; o > 0; o >>= 1) v += __shfl_down_sync(kFull, v, o);
     const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
@@ -65,6 +74,7 @@ __device__ float block_reduce_sum(float v, float* red) {
 }
 
 __device__ float block_reduce_max(float v, float* red) {
+    __syncthreads();
     constexpr unsigned kFull = 0xffffffffu;
     for (int o = 16; o > 0; o >>= 1) v = fmaxf(v, __shfl_down_sync(kFull, v, o));
     const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
@@ -225,8 +235,14 @@ void sdpa_forward_device(const float* q, const float* k, const float* v,
                          float* out, int m, int local_heads, int head_dim,
                          cudaStream_t stream) {
     validate_sdpa_dims(m, local_heads, head_dim, "sdpa_forward_device");
-    const int grid = m * local_heads;
-    const int shared = (kSdpaBlock / 32 + kSdpaBlock + head_dim) * sizeof(float);
+    const size_t grid_size =
+        static_cast<size_t>(m) * static_cast<size_t>(local_heads);
+    if (grid_size > 0x7fffffffu) {
+        throw std::invalid_argument(
+            "sdpa_forward_device: m * local_heads exceeds the gridDim.x max");
+    }
+    const int grid = static_cast<int>(grid_size);
+    const int shared = (kSdpaBlock / 32 + head_dim) * sizeof(float);
     sdpa_forward_kernel<<<grid, kSdpaBlock, shared, stream>>>(
         q, k, v, out, m, local_heads, head_dim);
     CUDA_CHECK(cudaGetLastError());
@@ -244,7 +260,13 @@ void sdpa_backward_device(const float* q, const float* k, const float* v,
     CUDA_CHECK(cudaMemsetAsync(dq, 0, n * sizeof(float), stream));
     CUDA_CHECK(cudaMemsetAsync(dk, 0, n * sizeof(float), stream));
     CUDA_CHECK(cudaMemsetAsync(dv, 0, n * sizeof(float), stream));
-    const int grid = m * local_heads;
+    const size_t grid_size =
+        static_cast<size_t>(m) * static_cast<size_t>(local_heads);
+    if (grid_size > 0x7fffffffu) {
+        throw std::invalid_argument(
+            "sdpa_backward_device: m * local_heads exceeds the gridDim.x max");
+    }
+    const int grid = static_cast<int>(grid_size);
     const int shared = (kSdpaBlock / 32 + head_dim) * sizeof(float);
     sdpa_backward_kernel<<<grid, kSdpaBlock, shared, stream>>>(
         q, k, v, dout, dq, dk, dv, m, local_heads, head_dim);

@@ -3,7 +3,7 @@
 #include "cuda/device/error.h"
 
 #include <cmath>
-#include <numeric>
+#include <cstdint>
 #include <stdexcept>
 
 namespace cuda::neural {
@@ -151,7 +151,15 @@ constexpr int kLnBlock = 256;  // block size for the per-row trainable kernels
 // Block-wide sum over kLnBlock lanes (all threads active; kLnBlock % 32 == 0
 // so the full-warp shuffle masks are valid). `red` must hold kLnBlock/32
 // floats; the reduced value is broadcast to ALL threads on return.
+//
+// The entry __syncthreads() is load-bearing: this helper both returns `red[0]`
+// (a read every thread issues after the final barrier) AND writes `red[wid]`
+// (lane 0's STS) at its start. Kernels call it several times on the same
+// buffer, so without the entry barrier the first writer of the next call races
+// the last reader of the previous call (attention_kernels.cu had the same
+// fault — cpp-reviewer, compute-sanitizer racecheck-verified).
 __device__ float ln_block_reduce_sum(float v, float* red) {
+    __syncthreads();
     constexpr unsigned kFull = 0xffffffffu;
     for (int o = 16; o > 0; o >>= 1) v += __shfl_down_sync(kFull, v, o);
     const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
@@ -244,7 +252,7 @@ __global__ void ln_backward_input_kernel(
     const float* x, const float* gamma, const float* dy, const float* stats,
     float* dx, int m, int h) {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= m * h) return;
+    if (idx >= static_cast<int64_t>(m) * h) return;
     const int row = idx / h;
     const int j = idx % h;
     const float* s = stats + row * 4;
@@ -255,6 +263,19 @@ __global__ void ln_backward_input_kernel(
     const float xhat = (x[idx] - mean) * inv;
     const float dxhat = dy[idx] * gamma[j];
     dx[idx] = inv * (dxhat - sdx / h - xhat * (sdxh / h));
+}
+
+// ceil(batch*hidden / 256) grid count computed in 64-bit so the product can't
+// wrap (a wrapped grid would launch too few blocks and silently compute nothing
+// for the remaining elements).
+int layer_norm_bwd_grid(int m, int h) {
+    const int64_t total = static_cast<int64_t>(m) * h;
+    const int64_t grid = (total + 255) / 256;
+    if (grid > static_cast<int64_t>(2147483647)) {
+        throw std::invalid_argument(
+            "layer_norm_backward: batch * hidden exceeds the gridDim.x max");
+    }
+    return static_cast<int>(grid);
 }
 
 }  // namespace
@@ -310,7 +331,7 @@ void LayerNorm::backward(const float* input, const float* grad_output,
     ln_backward_stats_kernel<<<batch, kLnBlock, 0, stream>>>(
         input, d_gamma_->data(), grad_output, grad_gamma, grad_beta,
         d_stats_->data(), batch, hidden_, eps_);
-    const int grid = (batch * hidden_ + 255) / 256;
+    const int grid = layer_norm_bwd_grid(batch, hidden_);
     ln_backward_input_kernel<<<grid, 256, 0, stream>>>(
         input, d_gamma_->data(), grad_output, d_stats_->data(), grad_input,
         batch, hidden_);
@@ -360,7 +381,7 @@ void layer_norm_backward_trainable(const float* x, const float* gamma,
     CUDA_CHECK(cudaMemsetAsync(dbeta, 0, sizeof(float) * h, stream));
     ln_backward_stats_kernel<<<m, kLnBlock, 0, stream>>>(
         x, gamma, dy, dgamma, dbeta, stats.data(), m, h, eps);
-    const int grid = (m * h + 255) / 256;
+    const int grid = layer_norm_bwd_grid(m, h);
     ln_backward_input_kernel<<<grid, 256, 0, stream>>>(
         x, gamma, dy, stats.data(), dx, m, h);
     CUDA_CHECK(cudaGetLastError());
