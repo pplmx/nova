@@ -13,20 +13,27 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 "End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED) →
 v2.25/26/27 closed at Rounds 25/26/27 → **v2.28 "Normalized Transformer Blocks (LayerNorm +
 Residual) + Deep Multi-Layer Training"** closed at Round 29 → **v2.29 "Device-Native
-Scaled-Dot-Product Attention + LayerNorm Training Kernels"** opened at Round 30 (P1 RED pending).
+Scaled-Dot-Product Attention + LayerNorm Training Kernels"** opened at Round 30 and
+**closed at Round 31**.
 
 ## Latest round
-- **Round 30 (2026-08-19)** — milestone **v2.29 "Device-Native SDPA + LayerNorm
-  Training Kernels"** opened (DEC-015, TASK-043/044/045/046). Round-28 LEARN
-  named the performance round: the v2.28 deep trainer round-trips attention
-  through the host (`sdpa_forward`/`sdpa_backward` = 10 blocking D2H/H2D per
-  block per step, the D2H/H2D family v2.27 removed from the optimizer; the
-  v2.26 header deferred SDPA to "a later performance pass"), and the trainable
-  LayerNorm kernels launch one thread per row. Milestone moves SDPA fwd/bwd to
-  device kernels behind the same API (`attention_kernels.cu` detail module,
-  mirroring `optimizers_kernels.cu`) + parallelizes the LN training kernels
-  with block/warp reductions; verified by GPU-vs-fp64 parity and the existing
-  2/4-GPU deep-block trajectory parity. P1 RED pending.
+- **Round 30/31 (2026-08-19)** — milestone **v2.29 "Device-Native SDPA + LayerNorm
+  Training Kernels"** opened through **close (P1+P2+P3)** (DEC-015,
+  TASK-043/044/045/046, CHG-020/021, EV-025/026/027). Round-28 LEARN named the
+  performance round: the v2.28 deep trainer round-tripped attention through the
+  host (`sdpa_forward`/`sdpa_backward` = 10 blocking D2H/H2D per block per
+  step, the D2H/H2D family v2.27 removed from the optimizer; the v2.26 header
+  deferred SDPA to "a later performance pass"), and the trainable LayerNorm
+  kernels launched one thread per row. P1 RED pinned 6 device-kernel contracts
+  vs fp64 references (EV-025); P2 moved SDPA fwd/bwd to device kernels behind
+  the same API (`attention_kernels.cu` detail module, mirroring
+  `optimizers_kernels.cu`) + parallelized the LN training kernels with
+  block/warp reductions, deleting the host round-trips (EV-026); P3 verified —
+  neural single-GPU 79/79, multi-GPU cross-suite + deep-block K-step trajectory
+  parity 19/19 on 2 & 4 GPUs (EV-027). cpp-reviewer caught a real HIGH
+  (cross-call shared race on the block-reduction buffer, compute-sanitizer
+  racecheck-verified — fixed with entry barriers, CHG-021) and MEDIUM (signed
+  int overflow in grids — 64-bit guard). Milestone **closed**.
 - **Round 29 (2026-08-19)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
   Residual) + Deep Multi-Layer Training"** opened through **close (P1+P2+P3)** (DEC-014,
   TASK-039/040/041/042, CHG-017/018/019, EV-022/023/024). The stack previously trained one

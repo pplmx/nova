@@ -6,34 +6,41 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.29 Device-Native SDPA + LayerNorm Training Kernels
 
-**Status:** In progress (2026-08-19, RIL Round 30, opened — P1 RED pending)
+**Status:** Complete (2026-08-19, RIL Rounds 30/31)
 
 **Milestone v2.29.** Round-28 LEARN named this as the next milestone: "a
 device-native attention + LN training kernels performance round on the v2.28
-stack". The v2.28 stack trains a deep normalized transformer correctly but
-slowly — every train_step round-trips attention through the host
+stack". The v2.28 stack trained a deep normalized transformer correctly but
+slowly — every train_step round-tripped attention through the host
 (`sdpa_forward`/`sdpa_backward`: 3+3 D2H/H2D copies + host loops over
 m×local_heads×m×head_dim per block; 30 blocking memcpys for a 3-block trainer,
 the same D2H/H2D family v2.27 removed from the optimizer; the v2.26 header
 deferred it to "a later performance pass"), and the trainable LayerNorm
-kernels launch one thread per row (M2). This milestone moves multi-head
+kernels launched one thread per row (M2). This milestone moved multi-head
 scaled-dot-product attention forward+backward to device kernels behind the
 same `sdpa_forward`/`sdpa_backward` API (a standalone `attention_kernels.cu`
-module mirroring `optimizers_kernels.cu`), parallelizes the trainable LayerNorm
-kernels with block/warp reductions, deletes the host round-trips + dead CPU
-implementations, and verifies by GPU-vs-fp64-reference parity and the existing
+module mirroring `optimizers_kernels.cu`), parallelized the trainable LayerNorm
+kernels with block/warp reductions, deleted the host round-trips + dead CPU
+implementations, and verified by GPU-vs-fp64-reference parity and the existing
 2/4-GPU shard==single-GPU K-step training-trajectory parity (unchanged).
 
-Phases: **P1 (TASK-044)** pin the new contract surface RED against
-throw-stubs (device SDPA fwd/bwd vs fp64 reference at seq>1/heads>1/head_dim>1;
-parallelized LN fwd/bwd vs fp64 at hidden∈{512,1024}). **P2 (TASK-045)**
-implement `attention_kernels.cu` (device SDPA forward + analytic backward,
-per-row shared-memory softmax, block reductions) and wire
-`sdpa_forward`/`sdpa_backward` to it; parallelize the LN training kernels and
-route `LayerNorm::forward/backward` + the free `layer_norm_backward` through
-them. **P3 (TASK-046)** verify: kernel parity GREEN, all existing neural
-single-GPU suites GREEN, neural multi-GPU cross-suite 19/19 on 2 & 4 GPUs
-(deep-block trajectory parity unchanged), cpp-reviewer, RIL close.
+Phases: **P1 (TASK-044)** pinned the new contract surface RED against
+throw-stubs (6/6 — device SDPA fwd/bwd vs fp64 reference at seq>1/heads>1/
+head_dim>1; parallelized LN fwd/bwd vs fp64 at hidden∈{512,1024}, EV-025).
+**P2 (TASK-045, CHG-020 3af650a + CHG-021 fix 6a466db)** implemented
+`attention_kernels.cu` (device SDPA forward + analytic backward, per-row
+shared-memory softmax, block reductions, dV/dK global atomics across query
+positions) and wired `sdpa_forward`/`sdpa_backward` to it, deleting the host
+round-trip + CPU impls; parallelized the LN training kernels and routed
+`LayerNorm::forward/backward` + the free `layer_norm_backward` through them.
+**P3 (TASK-046, EV-026/027)** verified: 6/6 kernel parity GREEN (max_abs
+~3e-8 SDPA / ~5e-7 LN vs fp64), neural single-GPU 79/79, neural multi-GPU
+cross-suite + deep-block K-step trajectory parity **19/19 on 2 & 4 GPUs**
+(unchanged by the device SDPA + parallel LN). cpp-reviewer caught a real
+**HIGH** (cross-call shared race on the block-reduction buffer red[0],
+compute-sanitizer racecheck-verified — fixed with load-bearing entry
+`__syncthreads`) and **MEDIUM** (signed-int overflow in grids — 64-bit +
+gridDim.x guard), both fixed with re-verification (CHG-021, 6a466db).
 
 ## Previous Milestone: v2.28 Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
 

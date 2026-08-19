@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.29
 milestone_name: Device-Native SDPA + LayerNorm Training Kernels
-status: In Progress
+status: Complete
 last_updated: "2026-08-19"
-last_activity: 2026-08-19 — Round 30: milestone v2.29 opened (DEC-015, TASK-043/044/045/046), P1 RED pending
+last_activity: 2026-08-19 — Round 30/31: P1 RED (TASK-044) -> P2 device kernels (TASK-045) -> P3 verify + cpp-reviewer HIGH/MEDIUM fixed, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,9 +20,11 @@ progress:
 ## Current Position
 
 Milestone: v2.29 Device-Native SDPA + LayerNorm Training Kernels
-Status: In progress (Round 30, opened — P1 RED pending)
-Last activity: 2026-08-19 — milestone opened (DEC-015, TASK-043/044/045/046);
-Round-28 LEARN named the next milestone (device-native attention + LN kernels)
+Status: Complete (Rounds 30/31)
+Last activity: 2026-08-19 — P1 RED (6 contracts) -> P2 device SDPA + parallel
+LN kernels (all GREEN) -> P3 verify (79/79 + 19/19 on 2 & 4 GPUs);
+cpp-reviewer HIGH (reduction-buffer race) + MEDIUM (int overflow) fixed;
+milestone closed
 
 ## Milestone v2.29 — Device-Native SDPA + LayerNorm Training Kernels
 
@@ -43,9 +45,9 @@ implementations, and verifies by GPU-vs-fp64-reference parity plus the existing
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | RED/parity: detail::sdpa_forward_device/sdpa_backward_device vs in-test fp64 SDPA reference (seq>1, heads>1, head_dim>1); parallelized trainable LayerNorm fwd/bwd (block-reduction path) vs fp64 reference at hidden∈{512,1024}, rows>1 | Pending (Round 30) — throw-stubs |
-| 2 | Implement: attention_kernels.cu device SDPA forward + analytic backward (per-row shared-memory softmax, block reductions); wire sdpa_forward/sdpa_backward to device, delete host round-trip + CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through them | Pending (Round 30) |
-| 3 | Verify: kernel parity GREEN; all existing neural single-GPU suites GREEN; neural multi-GPU cross-suite 19/19 on 2 & 4 GPUs (deep-block trajectory unchanged); cpp-reviewer pass; RIL close | Pending (Round 30) |
+| 1 | RED/parity: detail::sdpa_forward_device/sdpa_backward_device vs in-test fp64 SDPA reference (seq>1, heads>1, head_dim>1); parallelized trainable LayerNorm fwd/bwd (block-reduction path) vs fp64 reference at hidden∈{512,1024}, rows>1 | Complete (Round 30) — 6/6 RED against throw-stubs (EV-025) |
+| 2 | Implement: attention_kernels.cu device SDPA forward + analytic backward (per-row shared-memory softmax, block reductions); wire sdpa_forward/sdpa_backward to device, delete host round-trip + CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through them | Complete (Round 30) — CHG-020 3af650a + CHG-021 fix 6a466db; 6/6 GREEN; max_abs ~3e-8 (SDPA) / ~5e-7 (LN) (EV-026/027) |
+| 3 | Verify: kernel parity GREEN; all existing neural single-GPU suites GREEN; neural multi-GPU cross-suite 19/19 on 2 & 4 GPUs (deep-block trajectory unchanged); cpp-reviewer pass; RIL close | Complete (Round 30/31) — neural single-GPU 79/79; multi-GPU + deep-block 19/19 on 2 & 4 GPUs (EV-027); cpp-reviewer HIGH (reduction-buffer race, racecheck-verified) + MEDIUM (int overflow) fixed (CHG-021 6a466db) |
 
 Decision: DEC-015. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`; all 8 GPUs
 ~76GB used — re-check nvidia-smi before multi-GPU runs.
@@ -306,8 +308,28 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | Complete | 2026-08-13 | 3 phases |
 | v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | Complete | 2026-08-13 | 3 phases |
 | v2.28 Normalized Transformer Blocks + Deep Multi-Layer Training | Complete | 2026-08-19 | 3 phases |
+| v2.29 Device-Native SDPA + LayerNorm Training Kernels | Complete | 2026-08-19 | 3 phases |
 
 ---
+
+## State updated: 2026-08-19 — Milestone v2.29 complete (RIL Rounds 30/31)
+
+TASK-043/044/045/046 resolved, DEC-015, issue-v29-sdpa-host-roundtrip +
+issue-v29-ln-one-thread-per-row resolved (CHG-020/021). The Round-28 LEARN
+performance round is done: multi-head SDPA forward/backward moved from the host
+D2H/H2D round-trip to device kernels (`attention_kernels.cu` — per-(position,
+head) blocks, shared max-subtracted softmax, block reductions, dV/dK global
+atomics across query positions), wired behind the same `sdpa_forward`/
+`sdpa_backward` API; the trainable LayerNorm kernels parallelized from one
+thread per row to block/warp reductions. Verified: 6 P1 contracts GREEN
+(max_abs ~3e-8 SDPA / ~5e-7 LN vs fp64 references), neural single-GPU 79/79,
+neural multi-GPU cross-suite + deep-block K-step trajectory parity 19/19 on 2 &
+4 GPUs (unchanged by the new kernels). cpp-reviewer caught a real HIGH
+(cross-call shared race on the block-reduction buffer, compute-sanitizer
+racecheck-verified, fixed with entry barriers) + MEDIUM (signed int overflow in
+grids, 64-bit + gridDim.x guard) — both fixed with re-verification (CHG-021,
+EV-027). Only TASK-018 (maintainability, 1.50 < 3.0) remains active — stop
+conditions hold. RN: use `CUDA_VISIBLE_DEVICES=2,3+`.
 
 ## State updated: 2026-08-19 — Milestone v2.28 complete (RIL Round 28)
 
