@@ -63,6 +63,11 @@ void fill_random(float* data, size_t count, unsigned seed) {
 }
 
 class DeepBlockMultiGpuPinnedTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        DeviceMesh::instance().initialize();  // device_count() needs it set
+    }
+
 public:
     static testing::AssertionResult arrays_near(const float* expected,
                                                 const float* actual,
