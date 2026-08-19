@@ -75,12 +75,15 @@ void TransformerBlock::set_weight(const float* ln1_gamma, const float* ln1_beta,
 
 void TransformerBlock::forward(const float* input, float* output, int batch,
                                int seq) {
-    ensure_scratch(batch);
-    const int total = batch * hidden_;
-    ln1_->forward(input, h1_->data(), batch);
+    // All activations are [batch*seq x hidden]; LayerNorm normalizes per row
+    // (sequence positions are independent rows), so the row count is m.
+    const int m = batch * seq;
+    ensure_scratch(m);
+    const int total = m * hidden_;
+    ln1_->forward(input, h1_->data(), m);
     attn_->forward(h1_->data(), a_->data(), batch, seq);
     cuda::neural::elementwise_add(input, a_->data(), h2_->data(), total);
-    ln2_->forward(h2_->data(), h3_->data(), batch);
+    ln2_->forward(h2_->data(), h3_->data(), m);
     mlp_->forward(h3_->data(), m_out_->data(), batch, seq);
     cuda::neural::elementwise_add(h2_->data(), m_out_->data(), output, total);
 }
@@ -90,8 +93,10 @@ void TransformerBlock::backward(
     float* dln1_gamma, float* dln1_beta, float* dwq, float* dwk, float* dwv,
     float* dwo, float* dln2_gamma, float* dln2_beta, float* dwg, float* dwu,
     float* dwd, int batch, int seq) {
-    ensure_scratch(batch);
-    const int total = batch * hidden_;
+    // Same m = batch*seq row semantics as forward (LayerNorm is per-row).
+    const int m = batch * seq;
+    ensure_scratch(m);
+    const int total = m * hidden_;
     // out = h2 + m_out with m_out = MLP(h3), h3 = LN2(h2):
     //   MLP backward consumes dout (dL/dm_out), giving dL/dh3 (MLP grad-input)
     //   and the MLP weight grads.
@@ -100,7 +105,7 @@ void TransformerBlock::backward(
     // LN2 backward: input h2, grad dL/dh3 -> dL/dh2 via LN2 (d_r1ln_) + LN2
     // affine grads.
     ln2_->backward(h2_->data(), d_mlp_gi_->data(), d_r1ln_->data(),
-                   dln2_gamma, dln2_beta, batch);
+                   dln2_gamma, dln2_beta, m);
     // dL/dh2 = dout (residual path) + d_r1ln_.
     cuda::neural::elementwise_add(grad_output, d_r1ln_->data(), d_h2_->data(),
                                   total);
@@ -112,7 +117,7 @@ void TransformerBlock::backward(
     // LN1 backward: input x, grad dL/dh1 -> dL/dx via LN1 (d_xln_) + LN1 affine
     // grads.
     ln1_->backward(input, d_attn_gi_->data(), d_xln_->data(), dln1_gamma,
-                   dln1_beta, batch);
+                   dln1_beta, m);
     // dL/dx = dL/dh2 (residual direct to x) + d_xln_.
     cuda::neural::elementwise_add(d_h2_->data(), d_xln_->data(), grad_input,
                                   total);

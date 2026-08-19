@@ -574,6 +574,156 @@ TEST_F(TransformerBlockTest, BlockBackwardMatchesHostReference) {
         << "block grad-input differs from the host fp64 reference";
 }
 
+// The block must also be correct when seq > 1 (batch*seq rows): LayerNorm and
+// the residual adds normalize/sum over every [batch*seq x hidden] row, and the
+// MHA/MLP consume all m = batch*seq rows. Regression for the reviewer C1 fix
+// (TransformerBlock had used batch as the row count -> device OOB at seq > 1).
+TEST_F(TransformerBlockTest, BlockForwardMatchesHostReferenceSeq2) {
+    const int batch = 2, seq = 4, m = batch * seq;
+    const int hidden = 8, heads = 4, hd = 2, inter = 16, qkv = hidden;
+    const float eps = 1e-5f;
+    std::vector<float> X(static_cast<size_t>(m) * hidden);
+    std::vector<float> l1g(hidden), l1b(hidden), l2g(hidden), l2b(hidden);
+    std::vector<float> Wq(static_cast<size_t>(hidden) * qkv),
+        Wk(static_cast<size_t>(hidden) * qkv), Wv(static_cast<size_t>(hidden) * qkv),
+        Wo(static_cast<size_t>(qkv) * hidden);
+    std::vector<float> Wg(static_cast<size_t>(hidden) * inter),
+        Wu(static_cast<size_t>(hidden) * inter),
+        Wd(static_cast<size_t>(inter) * hidden);
+    fill_random(X.data(), X.size(), 501);
+    fill_random(l1g.data(), l1g.size(), 502);
+    fill_random(l1b.data(), l1b.size(), 503);
+    fill_random(l2g.data(), l2g.size(), 504);
+    fill_random(l2b.data(), l2b.size(), 505);
+    fill_random(Wq.data(), Wq.size(), 506);
+    fill_random(Wk.data(), Wk.size(), 507);
+    fill_random(Wv.data(), Wv.size(), 508);
+    fill_random(Wo.data(), Wo.size(), 509);
+    fill_random(Wg.data(), Wg.size(), 510);
+    fill_random(Wu.data(), Wu.size(), 511);
+    fill_random(Wd.data(), Wd.size(), 512);
+
+    std::vector<float> ref(static_cast<size_t>(m) * hidden);
+    host_block_forward(X.data(), l1g.data(), l1b.data(), Wq.data(), Wk.data(),
+                       Wv.data(), Wo.data(), l2g.data(), l2b.data(), Wg.data(),
+                       Wu.data(), Wd.data(), ref.data(), m, heads, hd, hidden,
+                       inter, eps);
+
+    TransformerBlock block(uninitialized_ctx(), hidden, heads, hd, inter, eps);
+    block.set_weight(l1g.data(), l1b.data(), Wq.data(), Wk.data(), Wv.data(),
+                     Wo.data(), l2g.data(), l2b.data(), Wg.data(), Wu.data(),
+                     Wd.data());
+    cuda::memory::Buffer<float> d_x(m * hidden), d_y(m * hidden);
+    d_x.copy_from(X.data(), X.size());
+    block.forward(d_x.data(), d_y.data(), batch, seq);
+    std::vector<float> out(static_cast<size_t>(m) * hidden);
+    d_y.copy_to(out.data(), out.size());
+
+    EXPECT_TRUE(arrays_near(ref.data(), out.data(), out.size(), 2e-3f))
+        << "block forward (seq=2, batch*seq rows) differs from the host fp64 reference";
+}
+
+TEST_F(TransformerBlockTest, BlockBackwardMatchesHostReferenceSeq2) {
+    const int batch = 2, seq = 4, m = batch * seq;
+    const int hidden = 8, heads = 4, hd = 2, inter = 16, qkv = hidden;
+    const float eps = 1e-5f;
+    std::vector<float> X(static_cast<size_t>(m) * hidden),
+        dout(static_cast<size_t>(m) * hidden);
+    std::vector<float> l1g(hidden), l1b(hidden), l2g(hidden), l2b(hidden);
+    std::vector<float> Wq(static_cast<size_t>(hidden) * qkv),
+        Wk(static_cast<size_t>(hidden) * qkv), Wv(static_cast<size_t>(hidden) * qkv),
+        Wo(static_cast<size_t>(qkv) * hidden);
+    std::vector<float> Wg(static_cast<size_t>(hidden) * inter),
+        Wu(static_cast<size_t>(hidden) * inter),
+        Wd(static_cast<size_t>(inter) * hidden);
+    fill_random(X.data(), X.size(), 601);
+    fill_random(dout.data(), dout.size(), 602);
+    fill_random(l1g.data(), l1g.size(), 603);
+    fill_random(l1b.data(), l1b.size(), 604);
+    fill_random(l2g.data(), l2g.size(), 605);
+    fill_random(l2b.data(), l2b.size(), 606);
+    fill_random(Wq.data(), Wq.size(), 607);
+    fill_random(Wk.data(), Wk.size(), 608);
+    fill_random(Wv.data(), Wv.size(), 609);
+    fill_random(Wo.data(), Wo.size(), 610);
+    fill_random(Wg.data(), Wg.size(), 611);
+    fill_random(Wu.data(), Wu.size(), 612);
+    fill_random(Wd.data(), Wd.size(), 613);
+
+    std::vector<float> ref_dX(static_cast<size_t>(m) * hidden),
+        ref_dl1g(hidden), ref_dl1b(hidden), ref_dl2g(hidden), ref_dl2b(hidden),
+        ref_dWq(static_cast<size_t>(hidden) * qkv),
+        ref_dWk(static_cast<size_t>(hidden) * qkv),
+        ref_dWv(static_cast<size_t>(hidden) * qkv),
+        ref_dWo(static_cast<size_t>(qkv) * hidden),
+        ref_dWg(static_cast<size_t>(hidden) * inter),
+        ref_dWu(static_cast<size_t>(hidden) * inter),
+        ref_dWd(static_cast<size_t>(inter) * hidden);
+    host_block_backward(
+        X.data(), l1g.data(), l1b.data(), Wq.data(), Wk.data(), Wv.data(),
+        Wo.data(), l2g.data(), l2b.data(), Wg.data(), Wu.data(), Wd.data(),
+        dout.data(), ref_dX.data(), ref_dl1g.data(), ref_dl1b.data(),
+        ref_dWq.data(), ref_dWk.data(), ref_dWv.data(), ref_dWo.data(),
+        ref_dl2g.data(), ref_dl2b.data(), ref_dWg.data(), ref_dWu.data(),
+        ref_dWd.data(), m, heads, hd, hidden, inter, eps);
+
+    TransformerBlock block(uninitialized_ctx(), hidden, heads, hd, inter, eps);
+    block.set_weight(l1g.data(), l1b.data(), Wq.data(), Wk.data(), Wv.data(),
+                     Wo.data(), l2g.data(), l2b.data(), Wg.data(), Wu.data(),
+                     Wd.data());
+    cuda::memory::Buffer<float> d_x(m * hidden), d_dout(m * hidden),
+        d_dx(m * hidden), d_out(m * hidden);
+    cuda::memory::Buffer<float> d_dl1g(hidden), d_dl1b(hidden),
+        d_dl2g(hidden), d_dl2b(hidden);
+    cuda::memory::Buffer<float> d_dWq((size_t)hidden * qkv),
+        d_dWk((size_t)hidden * qkv), d_dWv((size_t)hidden * qkv),
+        d_dWo((size_t)qkv * hidden);
+    cuda::memory::Buffer<float> d_dWg((size_t)hidden * inter),
+        d_dWu((size_t)hidden * inter), d_dWd((size_t)inter * hidden);
+    d_x.copy_from(X.data(), X.size());
+    d_dout.copy_from(dout.data(), dout.size());
+    block.forward(d_x.data(), d_out.data(), batch, seq);  // scratch
+    block.backward(d_x.data(), d_dout.data(), d_dx.data(), d_dl1g.data(),
+                   d_dl1b.data(), d_dWq.data(), d_dWk.data(), d_dWv.data(),
+                   d_dWo.data(), d_dl2g.data(), d_dl2b.data(), d_dWg.data(),
+                   d_dWu.data(), d_dWd.data(), batch, seq);
+
+    std::vector<float> dX(static_cast<size_t>(m) * hidden), dl1g(hidden),
+        dl1b(hidden), dl2g(hidden), dl2b(hidden);
+    std::vector<float> dWq(static_cast<size_t>(hidden) * qkv),
+        dWk(static_cast<size_t>(hidden) * qkv), dWv(static_cast<size_t>(hidden) * qkv),
+        dWo(static_cast<size_t>(qkv) * hidden);
+    std::vector<float> dWg(static_cast<size_t>(hidden) * inter),
+        dWu(static_cast<size_t>(hidden) * inter),
+        dWd(static_cast<size_t>(inter) * hidden);
+    d_dx.copy_to(dX.data(), dX.size());
+    d_dl1g.copy_to(dl1g.data(), dl1g.size());
+    d_dl1b.copy_to(dl1b.data(), dl1b.size());
+    d_dl2g.copy_to(dl2g.data(), dl2g.size());
+    d_dl2b.copy_to(dl2b.data(), dl2b.size());
+    d_dWq.copy_to(dWq.data(), dWq.size());
+    d_dWk.copy_to(dWk.data(), dWk.size());
+    d_dWv.copy_to(dWv.data(), dWv.size());
+    d_dWo.copy_to(dWo.data(), dWo.size());
+    d_dWg.copy_to(dWg.data(), dWg.size());
+    d_dWu.copy_to(dWu.data(), dWu.size());
+    d_dWd.copy_to(dWd.data(), dWd.size());
+
+    EXPECT_TRUE(arrays_near(ref_dWq.data(), dWq.data(), dWq.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dWk.data(), dWk.data(), dWk.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dWv.data(), dWv.data(), dWv.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dWo.data(), dWo.data(), dWo.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dWg.data(), dWg.data(), dWg.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dWu.data(), dWu.data(), dWu.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dWd.data(), dWd.data(), dWd.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dl1g.data(), dl1g.data(), dl1g.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dl1b.data(), dl1b.data(), dl1b.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dl2g.data(), dl2g.data(), dl2g.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dl2b.data(), dl2b.data(), dl2b.size(), 2e-3f));
+    EXPECT_TRUE(arrays_near(ref_dX.data(), dX.data(), dX.size(), 2e-3f))
+        << "block grad-input (seq=2) differs from the host fp64 reference";
+}
+
 // ============================================================================
 // v2.28 capstone single-GPU (TASK-040): a DEEP (N-block, pre-LN, residual)
 // mini-transformer — final LN head, logits == the [m x hidden] head output —
@@ -660,4 +810,77 @@ TEST_F(TransformerBlockTest, DeepTransformerTrainingConverges) {
     EXPECT_LT(loss_k, loss_0) << "deep transformer loss must descend over training";
     EXPECT_GT(acc_k, 0.5f) << "deep transformer accuracy must rise well above chance (1/8)";
     EXPECT_GT(acc_k, acc_0 + 0.1f);
+}
+
+// seq > 1 must work through the whole trainer (regression for the reviewer C1
+// fix: blocks previously sized/normalized on batch rows only, an OOB at
+// batch*seq rows). A few seq=2 train_steps must return finite losses that
+// actually move (the teacher task is learnable at fixed seq).
+TEST_F(TransformerBlockTest, TrainerSupportsSeqGreaterThanOne) {
+    const int batch = 4, seq = 2, m = batch * seq;
+    const int hidden = 8, heads = 4, hd = 2, inter = 16;
+    const int blocks = 2;
+    std::vector<float> X;
+    std::vector<int> targets;
+    {
+        std::mt19937 rng(20260822);
+        std::normal_distribution<float> norm(0.0f, 1.0f);
+        std::vector<float> T(static_cast<size_t>(hidden) * hidden);
+        for (auto& t : T) t = norm(rng);
+        X.assign(static_cast<size_t>(m) * hidden, 0.0f);
+        targets.assign(m, 0);
+        for (int i = 0; i < m; ++i) {
+            for (int d = 0; d < hidden; ++d) X[i * hidden + d] = norm(rng);
+            double best = -1e30;
+            int argmax = 0;
+            for (int c = 0; c < hidden; ++c) {
+                double acc = 0.0;
+                for (int d = 0; d < hidden; ++d)
+                    acc += static_cast<double>(X[i * hidden + d]) * T[c * hidden + d];
+                if (acc > best) { best = acc; argmax = c; }
+            }
+            targets[i] = argmax;
+        }
+    }
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.05f;
+    TransformerTrainer trainer(uninitialized_ctx(), blocks, hidden, heads, hd,
+                               inter, cfg);
+    const int qkv = hidden;
+    unsigned seed = 700;
+    for (int b = 0; b < blocks; ++b) {
+        std::vector<float> l1g(hidden), l1b(hidden), l2g(hidden), l2b(hidden);
+        std::vector<float> Wq(hidden * qkv), Wk(hidden * qkv), Wv(hidden * qkv),
+            Wo(qkv * hidden), Wg(hidden * inter), Wu(hidden * inter),
+            Wd(inter * hidden);
+        fill_random(l1g.data(), l1g.size(), seed++);
+        fill_random(l1b.data(), l1b.size(), seed++);
+        fill_random(l2g.data(), l2g.size(), seed++);
+        fill_random(l2b.data(), l2b.size(), seed++);
+        fill_random(Wq.data(), Wq.size(), seed++);
+        fill_random(Wk.data(), Wk.size(), seed++);
+        fill_random(Wv.data(), Wv.size(), seed++);
+        fill_random(Wo.data(), Wo.size(), seed++);
+        fill_random(Wg.data(), Wg.size(), seed++);
+        fill_random(Wu.data(), Wu.size(), seed++);
+        fill_random(Wd.data(), Wd.size(), seed++);
+        trainer.set_block_weight(b, l1g.data(), l1b.data(), Wq.data(),
+                                 Wk.data(), Wv.data(), Wo.data(), l2g.data(),
+                                 l2b.data(), Wg.data(), Wu.data(), Wd.data());
+    }
+    std::vector<float> fg(hidden, 1.0f), fb(hidden, 0.0f);
+    trainer.set_final_ln_weight(fg.data(), fb.data());
+
+    cuda::memory::Buffer<float> d_X(m * hidden);
+    d_X.copy_from(X.data(), X.size());
+
+    float l0 = trainer.evaluate(d_X.data(), targets.data(), batch, seq, nullptr);
+    EXPECT_TRUE(std::isfinite(l0));
+    float l1 = trainer.train_step(d_X.data(), targets.data(), batch, seq, 1);
+    float lk = l1;
+    for (int s = 2; s <= 8; ++s) {
+        lk = trainer.train_step(d_X.data(), targets.data(), batch, seq, s);
+        EXPECT_TRUE(std::isfinite(lk));
+    }
+    EXPECT_LT(lk, l0) << "seq=2 deep transformer must learn (loss descend)";
 }
