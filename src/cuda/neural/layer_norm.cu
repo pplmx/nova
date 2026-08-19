@@ -93,35 +93,6 @@ __global__ void layer_norm_kernel(
     }
 }
 
-__global__ void layer_norm_inference_kernel(
-    const float* input,
-    const float* gamma,
-    const float* beta,
-    float* output,
-    int batch_size,
-    int normalized_shape,
-    float eps,
-    const float* mean,
-    const float* variance
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= batch_size * normalized_shape) return;
-
-    int batch_idx = idx / normalized_shape;
-    int inner_idx = idx % normalized_shape;
-
-    float mean_val = mean[batch_idx];
-    float var_val = variance[batch_idx];
-    float inv_std = rsqrtf(var_val + eps);
-
-    float normalized = (input[idx] - mean_val) * inv_std;
-    if (gamma && beta) {
-        output[idx] = gamma[inner_idx] * normalized + beta[inner_idx];
-    } else {
-        output[idx] = normalized;
-    }
-}
-
 }  // anonymous namespace
 
 void layer_norm(
@@ -156,15 +127,15 @@ void layer_norm_inference(
     float eps,
     cudaStream_t stream
 ) {
-    int block_size = 256;
-    int grid_size = (batch_size * normalized_shape + block_size - 1) / block_size;
-
-    layer_norm_inference_kernel<<<grid_size, block_size, 0, stream>>>(
-        input, gamma, beta, output,
-        batch_size, normalized_shape, eps,
-        nullptr, nullptr
-    );
-    CUDA_CHECK(cudaGetLastError());
+    // Inference normalizes with internally computed per-row stats (the API
+    // takes no mean/variance). Route through layer_norm() with scratch — the
+    // previous dedicated kernel dereferenced null mean/var unconditionally (a
+    // latent device fault if ever called; dead in-tree — fixed while the file
+    // was in the v2.28 review surface).
+    cuda::memory::Buffer<float> mean(batch_size);
+    cuda::memory::Buffer<float> var(batch_size);
+    layer_norm(input, gamma, beta, output, mean.data(), var.data(),
+               batch_size, normalized_shape, eps, stream);
 }
 
 // ============================================================================

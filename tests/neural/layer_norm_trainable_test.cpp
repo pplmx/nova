@@ -284,6 +284,37 @@ TEST_F(LayerNormTrainableTest, CopyWeightsRoundTrips) {
     EXPECT_EQ(ln.hidden(), h);
 }
 
+// The legacy layer_norm_inference used to launch a kernel that dereferenced
+// null mean/variance (a guaranteed device fault on any call). It now routes
+// through layer_norm() with internal stats — must match the host fp64 forward
+// without crashing.
+TEST_F(LayerNormTrainableTest, LegacyInferenceMatchesHostReference) {
+    const int m = 8, h = 8;
+    const float eps = 1e-5f;
+    std::vector<float> x(static_cast<size_t>(m) * h);
+    std::vector<float> g(h), b(h);
+    fill_random(x.data(), x.size(), 901);
+    fill_random(g.data(), g.size(), 902, 0.5f, 1.5f);
+    fill_random(b.data(), b.size(), 903);
+
+    std::vector<float> ref(static_cast<size_t>(m) * h);
+    host_ln_forward(x.data(), g.data(), b.data(), ref.data(), m, h, eps);
+
+    // LayerNorm kernels take device gamma/beta (the legacy free functions do
+    // not upload host weights — the caller must).
+    cuda::memory::Buffer<float> d_x(m * h), d_y(m * h), d_g(h), d_b(h);
+    d_x.copy_from(x.data(), x.size());
+    d_g.copy_from(g.data(), g.size());
+    d_b.copy_from(b.data(), b.size());
+    layer_norm_inference(d_x.data(), d_g.data(), d_b.data(), d_y.data(), m, h,
+                         eps);
+    std::vector<float> y(static_cast<size_t>(m) * h);
+    d_y.copy_to(y.data(), y.size());
+
+    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f))
+        << "layer_norm_inference differs from the host fp64 reference";
+}
+
 // One AdamW step on gamma/beta must actually move them (trainable surface).
 TEST_F(LayerNormTrainableTest, StepMovesGammaBeta) {
     const int h = 8;
