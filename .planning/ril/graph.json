@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 28,
+  "round": 29,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-18T22:05:57+00:00",
+  "updated_at": "2026-08-19T03:54:43+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1596,10 +1596,10 @@
     "issue-v28-layer-norm-untrainable": {
       "id": "issue-v28-layer-norm-untrainable",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-18T16:35:15+00:00",
-      "updated_at": "2026-08-18T16:35:15+00:00",
+      "updated_at": "2026-08-19T03:53:07+00:00",
       "touched_round": 28,
       "title": "layer_norm module is forward-only and untrainable: no backward pass, no validated reference, the TP transformer has no LayerNorm and no residual connections, and no model stacks more than one block",
       "severity": 2
@@ -1607,10 +1607,10 @@
     "TASK-039": {
       "id": "TASK-039",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-18T16:35:23+00:00",
-      "updated_at": "2026-08-18T16:35:23+00:00",
+      "updated_at": "2026-08-19T03:53:06+00:00",
       "touched_round": 28,
       "category": "core-feature",
       "severity": 2,
@@ -1622,26 +1622,24 @@
     "TASK-040": {
       "id": "TASK-040",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-08-18T16:55:21+00:00",
-      "updated_at": "2026-08-18T17:43:20+00:00",
+      "updated_at": "2026-08-19T03:53:07+00:00",
       "touched_round": 28,
       "category": "core-feature",
       "severity": 2,
       "confidence": 1.0,
       "effort": 2,
-      "title": "P1 RED/parity: pin device LayerNorm forward against a host-fp64 reference and analytic backward (d_x, d_gamma, d_beta — finite-difference/pass-consistency checked); pin the pre-LN residual TransformerBlock forward/backward against a host-fp64 block reference; pin the deep N-block mini-transformer training contract (loss descent + accuracy rise) and the K-step multi-GPU trajectory parity contract on 2 & 4 GPUs",
-      "lock_owner": "graph-engineering:v2.28-p1",
-      "lock_until": "2026-08-18T19:43:20+00:00"
+      "title": "P1 RED/parity: pin device LayerNorm forward against a host-fp64 reference and analytic backward (d_x, d_gamma, d_beta — finite-difference/pass-consistency checked); pin the pre-LN residual TransformerBlock forward/backward against a host-fp64 block reference; pin the deep N-block mini-transformer training contract (loss descent + accuracy rise) and the K-step multi-GPU trajectory parity contract on 2 & 4 GPUs"
     },
     "TASK-041": {
       "id": "TASK-041",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-18T16:56:18+00:00",
-      "updated_at": "2026-08-18T16:56:18+00:00",
+      "updated_at": "2026-08-19T03:53:06+00:00",
       "touched_round": 28,
       "category": "core-feature",
       "severity": 2,
@@ -1652,10 +1650,10 @@
     "TASK-042": {
       "id": "TASK-042",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-18T16:58:11+00:00",
-      "updated_at": "2026-08-18T16:58:11+00:00",
+      "updated_at": "2026-08-19T03:53:07+00:00",
       "touched_round": 28,
       "category": "core-feature",
       "severity": 2,
@@ -1674,6 +1672,63 @@
       "source": "tests/neural/layer_norm_trainable_test.cpp + tensor_parallel_block_test.cpp (P1, Round 28)",
       "confidence": 1.0,
       "title": "P1 RED: 7/7 device parity/convergence contracts RED against provisional throw-stubs — LayerNorm fwd/bwd/copy/step (4), TransformerBlock fwd/bwd (2), deep N-block convergence (1); the host-fp64 LayerNorm backward reference self-checked GREEN vs central finite differences (the analytic formula is validated, so RED is the unimplemented device path, not a wrong reference)"
+    },
+    "CHG-017": {
+      "id": "CHG-017",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T02:19:01+00:00",
+      "updated_at": "2026-08-19T02:19:01+00:00",
+      "touched_round": 28,
+      "commit": "cde8ad7",
+      "title": "v2.28 P2: real device LayerNorm (forward + analytic backward kernels, trainable gamma/beta, one AdamW per affine tensor), pre-LN residual TransformerBlock composition, deep TransformerTrainer (N blocks + final LN head, 11N+2 per-tensor AdamW)"
+    },
+    "EV-023": {
+      "id": "EV-023",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T02:26:50+00:00",
+      "updated_at": "2026-08-19T02:26:50+00:00",
+      "touched_round": 28,
+      "source": "tests/neural/* (Round 28, single-GPU + NCCL multi-GPU runs)",
+      "confidence": 1.0,
+      "title": "v2.28 P2/P3 GREEN: LayerNormTrainableTest 5/5 (fwd/bwd parity vs host-fp64; backward self-checked vs central finite differences), TransformerBlockTest 3/3 (block fwd/bwd vs independent host-fp64 whole-block reference; N=3 deep convergence), neural multi-GPU cross-suite 19/19 on 2 GPUs and 19/19 on 4 GPUs (deep transformer shard==single-GPU parity + v2.26/25 regressions). Full-suite baseline not reproducible in the current environment: ~20 memory-heavy tests OOM (only ~5.8GB free/GPU now) or hit device-ordinal issues under CUDA_VISIBLE_DEVICES remap — none touch neural/v2.28 code; one pre-existing unrelated flake (LossFunctionsTest.CrossEntropyLogitsBackwardDevice) reproduced without v2.28"
+    },
+    "EV-024": {
+      "id": "EV-024",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T03:49:45+00:00",
+      "updated_at": "2026-08-19T03:49:45+00:00",
+      "touched_round": 28,
+      "source": "cpp-reviewer pass on v2.28 P2 surface (a5287758)",
+      "confidence": 1.0,
+      "title": "cpp-review verdict: math/wiring/atomics verified correct; C1 CRITICAL fixed — TransformerBlock used batch rows for LayerNorm/residuals instead of batch*seq (latent device OOB at seq>1), fixed 799812e with 3 seq>1 regression tests; L2 fixed — layer_norm_inference passed null mean/var to a kernel that dereferences them, routed through layer_norm() with internal stats (81edd9d). MEDIUM/LOW (one-thread-per-row LN, per-call stats buffer, host-side SDPA, blocking copies, legacy LayerNormResult) deferred as perf/cleanup"
+    },
+    "CHG-018": {
+      "id": "CHG-018",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T03:49:46+00:00",
+      "updated_at": "2026-08-19T03:49:46+00:00",
+      "touched_round": 28,
+      "commit": "799812e",
+      "title": "TransformerBlock seq>1 fix (cpp-review C1): m = batch*seq for LayerNorm rows, scratch and residual adds; + 3 seq>1 regression tests"
+    },
+    "CHG-019": {
+      "id": "CHG-019",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T03:49:46+00:00",
+      "updated_at": "2026-08-19T03:49:46+00:00",
+      "touched_round": 28,
+      "commit": "81edd9d",
+      "title": "layer_norm_inference null mean/var device-fault fix (cpp-review L2): route through layer_norm() with internal stats; delete dead kernel; + LegacyInferenceMatchesHostReference"
     }
   },
   "edges": [
@@ -2522,6 +2577,36 @@
       "to": "comp-neural-parallel",
       "type": "located_in",
       "created_at": "2026-08-18T17:34:33+00:00"
+    },
+    {
+      "from": "CHG-017",
+      "to": "TASK-040",
+      "type": "implements",
+      "created_at": "2026-08-19T02:19:50+00:00"
+    },
+    {
+      "from": "CHG-017",
+      "to": "TASK-041",
+      "type": "implements",
+      "created_at": "2026-08-19T02:19:50+00:00"
+    },
+    {
+      "from": "CHG-017",
+      "to": "issue-v28-layer-norm-untrainable",
+      "type": "resolves",
+      "created_at": "2026-08-19T02:19:50+00:00"
+    },
+    {
+      "from": "CHG-018",
+      "to": "TASK-041",
+      "type": "implements",
+      "created_at": "2026-08-19T03:50:40+00:00"
+    },
+    {
+      "from": "CHG-019",
+      "to": "TASK-041",
+      "type": "implements",
+      "created_at": "2026-08-19T03:50:40+00:00"
     }
   ]
 }

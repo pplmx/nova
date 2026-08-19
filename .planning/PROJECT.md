@@ -6,30 +6,36 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.28 Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
 
-**Status:** In Progress (2026-08-18, RIL Round 28)
+**Status:** Complete (2026-08-19, RIL Round 28)
 
 **Milestone v2.28.** Round-27 LEARN named "a deeper/multi-layer transformer" as the next
-capability. Today the stack trains exactly ONE model — an unnormalized single block
-(attention → MLP, logits = MLP(attn(X))). `layer_norm.h/.cu` is a forward-only orphan (no
-backward pass → untrainable; its kernels were never validated against a reference; nothing
-in the parallel stack uses it), no residual connection exists anywhere, and no model stacks
-more than one block (TASK-039 / DEC-014). This milestone adds the normalization+residual
-foundation and proves a deep N-block transformer trains sharded: device LayerNorm forward
-AND backward with trainable gamma/beta — collective-free by construction (block activations
-are replicated `[m x hidden]` on every rank, so a per-row norm over the full hidden dim is
-identical on each rank; the only comm in the block stays the v2.26 output-projection
+capability. The stack previously trained exactly ONE model — an unnormalized single block
+(attention → MLP); `layer_norm.h/.cu` was a forward-only orphan (no backward → untrainable;
+its kernels were never validated against a reference; unused by the parallel stack), no
+residual connection existed, and no model stacked more than one block (TASK-039 / DEC-014).
+This milestone added the normalization+residual foundation and proved a deep N-block
+transformer trains sharded: device LayerNorm forward AND backward with trainable gamma/beta
+(collective-free — block activations are replicated `[m x hidden]`, so per-row norm is
+identical on every rank; the only comm in the block stays the v2.26 output-projection
 AllReduce); a pre-LN residual `TransformerBlock` (LN→MHA→+x→LN→MLP→+x) with one AdamW per
-weight tensor incl. each LN gamma/beta; and an N-block stack verified by single-GPU
-convergence and 2/4-GPU shard==single-GPU full-weight parity.
+weight tensor incl. each LN gamma/beta; and a `TransformerTrainer` (N blocks + final LN
+head, 11N+2 per-tensor optimizers).
 
-Phases: **P1 (TASK-040)** RED/parity — device LayerNorm forward vs host-fp64 reference and
-analytic backward (d_x, d_gamma, d_beta); pre-LN residual block fwd/bwd vs host-fp64 block
-reference; deep N-block convergence + K-step multi-GPU trajectory parity. **P2 (TASK-041)**
-implementation — LayerNorm backward kernels + affine gamma/beta (making the orphan
-trainable), TransformerBlock, N-block stack + training loop on the MicroTrainer conventions.
-**P3 (TASK-042)** verify — LN parity, single-GPU convergence, 2/4-GPU parity, cross-suite +
-regression + full baseline, cpp-reviewer, RIL close. Host note: use
-`CUDA_VISIBLE_DEVICES=2,3+` (as of 2026-08-18 all 8 GPUs show ~76GB used — re-check
+Phases: **P1 (TASK-040)** pinned 8 single-GPU contracts RED against provisional
+throw-stubs (EV-022) — the host-fp64 LN backward reference was self-checked via central
+finite differences. **P2 (TASK-041, CHG-017 cde8ad7)** implemented the real device path:
+`ln_forward_trainable_kernel` + analytic backward (`ln_backward_stats_kernel` atomics +
+`ln_backward_input_kernel`), TransformerBlock composition with residual adds, and the deep
+training loop. **P3 (TASK-042, EV-023/024)** verified: LayerNormTrainableTest 6/6 +
+TransformerBlockTest 6/6 (incl. seq>1 regressions), neural multi-GPU cross-suite **19/19 on
+2 & 4 GPUs** (deep-transformer shard==single-GPU parity), single-GPU neural regression green
+(1 pre-existing unrelated ordering flake in LossFunctionsTest, reproduced without v2.28).
+cpp-reviewer caught **C1** (block sized LayerNorm/residuals on batch rows instead of
+batch*seq — latent device OOB at seq>1) and **L2** (`layer_norm_inference` passed null
+mean/var to a kernel that dereferences them) — both fixed with regression tests (799812e,
+81edd9d). The full-suite baseline is not reproducible in the current environment (~20
+memory-heavy non-neural tests OOM with only ~5.8GB free/GPU — not v2.28). Host note: use
+`CUDA_VISIBLE_DEVICES=2,3+` (all 8 GPUs ~76GB used as of 2026-08-18 — re-check
 `nvidia-smi` before multi-GPU runs).
 
 ## Previous Milestone: v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip)

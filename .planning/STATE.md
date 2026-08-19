@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.28
 milestone_name: Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
-status: In Progress
-last_updated: "2026-08-18"
-last_activity: 2026-08-18 — Round 28: milestone opened (TASK-039/040/041/042, DEC-014)
+status: Complete
+last_updated: "2026-08-19"
+last_activity: 2026-08-19 — Round 28: P1-P3 complete + cpp-review C1/L2 fixed, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -15,15 +15,16 @@ progress:
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-08-18
+**Last Updated:** 2026-08-19
 
 ## Current Position
 
 Milestone: v2.28 Normalized Transformer Blocks (LayerNorm + Residual) + Deep
 Multi-Layer Training
-Status: In Progress (Round 28)
-Last activity: 2026-08-18 — milestone opened (TASK-039/040/041/042, DEC-014);
-P1 RED tests next
+Status: Complete (Round 28)
+Last activity: 2026-08-19 — P1 RED (7 contracts) -> P2 (8/8 GREEN) -> P3
+multi-GPU parity 19/19 on 2 & 4 GPUs; cpp-review C1 (seq>1 rows) + L2
+(inference null mean/var) fixed with regression tests; milestone closed
 
 ## Milestone v2.28 — Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
 
@@ -43,9 +44,9 @@ and 2/4-GPU shard==single-GPU full-weight parity.
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | RED/parity: device LayerNorm forward vs host-fp64 reference + analytic backward (d_x, d_gamma, d_beta); pre-LN residual TransformerBlock fwd/bwd vs host-fp64 block reference; deep N-block convergence + K-step multi-GPU trajectory parity on 2 & 4 GPUs | In progress (TASK-040) |
-| 2 | Implement: device LayerNorm backward kernels + affine gamma/beta (making the forward-only orphan trainable); TransformerBlock (pre-LN attention + pre-LN MLP, residual adds, one AdamW per weight tensor incl. LN gamma/beta); N-block stack + training loop on the MicroTrainer conventions | Planned (TASK-041) |
-| 3 | Verify: LN parity GREEN; single-GPU N-block convergence; multi-GPU K-step N-block shard==single-GPU parity GREEN on 2 & 4 GPUs; cross-suite + regression + full baseline; cpp-reviewer; RIL close | Planned (TASK-042) |
+| 1 | RED/parity: device LayerNorm forward vs host-fp64 reference + analytic backward (d_x, d_gamma, d_beta); pre-LN residual TransformerBlock fwd/bwd vs host-fp64 block reference; deep N-block convergence + K-step multi-GPU trajectory parity on 2 & 4 GPUs | Complete (Round 28) — 7/7 device contracts RED against throw-stubs; host-fp64 LN backward self-checked vs central finite differences (EV-022) |
+| 2 | Implement: device LayerNorm backward kernels + affine gamma/beta (making the forward-only orphan trainable); TransformerBlock (pre-LN attention + pre-LN MLP, residual adds, one AdamW per weight tensor incl. LN gamma/beta); N-block stack + training loop on the MicroTrainer conventions | Complete (Round 28) — CHG-017 cde8ad7; LayerNormTrainableTest 5/5 + TransformerBlockTest 3/3 GREEN (EV-023) |
+| 3 | Verify: LN parity GREEN; single-GPU N-block convergence; multi-GPU K-step N-block shard==single-GPU parity GREEN on 2 & 4 GPUs; cross-suite + regression + full baseline; cpp-reviewer; RIL close | Complete (Round 28) — 2/4-GPU cross-suite 19/19 each; cpp-reviewer: C1 (block seq>1 rows) + L2 (inference null mean/var) fixed w/ regression tests (EV-024); full-suite baseline blocked by env memory (~5.8GB free/GPU, 20 OOM in memory-heavy non-neural suites — not v2.28) (EV-023) |
 
 Decision: DEC-014. Host note: GPUs 0/1 externally loaded — use
 `CUDA_VISIBLE_DEVICES=2,3+`.
@@ -280,23 +281,26 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.25 MicroTrainer: End-to-End Gradient Training Convergence | Complete | 2026-08-13 | 3 phases |
 | v2.26 Tensor-Parallel Multi-Head Attention + Mini-Transformer Training | Complete | 2026-08-13 | 3 phases |
 | v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | Complete | 2026-08-13 | 3 phases |
-| v2.28 Normalized Transformer Blocks + Deep Multi-Layer Training | In Progress | 2026-08-18 | 3 phases |
+| v2.28 Normalized Transformer Blocks + Deep Multi-Layer Training | Complete | 2026-08-19 | 3 phases |
 
 ---
 
-## State updated: 2026-08-18 — Milestone v2.28 opened (RIL Round 28)
+## State updated: 2026-08-19 — Milestone v2.28 complete (RIL Round 28)
 
-TASK-039/040/041/042 created, DEC-014, issue-v28-layer-norm-untrainable. The
-stack now trains exactly one model — an unnormalized single block
-(attention→MLP): the `layer_norm` module is a forward-only orphan (no backward,
-untrainable, never validated vs a reference), no residual connection exists,
-and nothing stacks >1 block. v2.28 adds device LayerNorm fwd/bwd with trainable
-gamma/beta (collective-free on replicated activations), a pre-LN residual
-TransformerBlock, and a deep N-block mini-transformer verified converged on
-single-GPU and shard==single-GPU parity on 2 & 4 GPUs. RN: use
-`CUDA_VISIBLE_DEVICES=2,3+` (note: as of 2026-08-18 all 8 GPUs show ~76GB used
-— only ~5.8GB free each; the tiny neural tests still fit, but re-check
-nvidia-smi before multi-GPU runs).
+TASK-039/040/041/042 resolved, DEC-014, issue-v28-layer-norm-untrainable
+resolved (CHG-017). The stack can now train a DEEP (N-block, pre-LN, residual)
+transformer: device LayerNorm fwd/bwd with trainable gamma/beta
+(collective-free — replicated activations, one AdamW per affine tensor), a
+pre-LN residual TransformerBlock (LN→MHA→+x→LN→MLP→+x, 11 weight tensors), and
+a TransformerTrainer (N blocks + final LN head, 11N+2 per-tensor optimizers).
+Verified: LayerNormTrainableTest 6/6 + TransformerBlockTest 6/6 (incl. seq>1
+regressions), neural multi-GPU cross-suite 19/19 on 2 & 4 GPUs (deep-transformer
+shard==single-GPU parity). cpp-reviewer caught C1 (block sized LayerNorm/
+residuals on batch rows instead of batch*seq — latent OOB at seq>1) and L2
+(layer_norm_inference null mean/var device-fault) — both fixed with regression
+tests (799812e, 81edd9d). Full-suite baseline not reproducible: all 8 GPUs
+~76GB used, ~20 memory-heavy non-neural tests OOM (environment, not v2.28).
+RN: use `CUDA_VISIBLE_DEVICES=2,3+`; re-check nvidia-smi before multi-GPU runs.
 
 ## State updated: 2026-08-12 — Milestone v2.23 complete (RIL Round 23)
 

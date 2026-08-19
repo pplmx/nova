@@ -15,18 +15,21 @@ v2.25/26/27 closed at Rounds 25/26/27 → **v2.28 "Normalized Transformer Blocks
 Residual) + Deep Multi-Layer Training"** opened at Round 28 (P1 RED pending).
 
 ## Latest round
-- **Round 28 (2026-08-18)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
-  Residual) + Deep Multi-Layer Training"** opened (DEC-014, TASK-039/040/041/042). The stack
-  trains exactly one model — an unnormalized single block (attention→MLP): the `layer_norm`
-  module is a forward-only orphan (no backward → untrainable, never validated vs a reference),
-  no residual connection exists, no model stacks >1 block (Round-27 LEARN named "a deeper/
-  multi-layer transformer" as the next capability). This milestone adds device LayerNorm
-  forward+backward with trainable gamma/beta (collective-free — replicated activations make
-  per-row norm identical on every rank; the only comm in the block stays the output-projection
-  AllReduce), a pre-LN residual `TransformerBlock` (LN→MHA→+x→LN→MLP→+x, one AdamW per weight
-  tensor incl. LN gamma/beta), and an N-block stack verified by single-GPU convergence and
-  2/4-GPU shard==single-GPU full-weight parity. Registered `issue-v28-layer-norm-untrainable`.
-  P1 RED tests pending. See `ril_autonomous_round28.md`.
+- **Round 28 (2026-08-18/19)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
+  Residual) + Deep Multi-Layer Training"** opened through **close (P1+P2+P3)** (DEC-014,
+  TASK-039/040/041/042, CHG-017/018/019, EV-022/023/024). The stack previously trained one
+  unnormalized single block — the `layer_norm` module was a forward-only orphan (untrainable),
+  no residuals existed, nothing stacked >1 block. Added device LayerNorm fwd/bwd (trainable
+  gamma/beta, collective-free on replicated activations), a pre-LN residual `TransformerBlock`
+  (LN→MHA→+x→LN→MLP→+x, one AdamW per weight tensor), and a `TransformerTrainer` (N blocks +
+  final LN head). P1 RED pinned the contracts (host-fp64 backward reference self-checked vs
+  central finite differences, EV-022); P2 implemented (CHG-017); P3 verified — LayerNormTest+
+  BlockTest 12/12 (incl. seq>1 regressions), neural multi-GPU cross-suite **19/19 on 2 & 4
+  GPUs** (deep-transformer shard==single-GPU parity, EV-023). cpp-reviewer caught C1 (block
+  seq>1 rows -> latent OOB, fixed 799812e) and L2 (layer_norm_inference null mean/var device
+  fault, fixed 81edd9d) — both with regression tests (EV-024). Full-suite baseline not
+  reproducible (env memory: ~20 non-neural OOM with ~5.8GB free/GPU). Milestone **closed**.
+  See `ril_autonomous_round28.md`.
 - **Round 27 (2026-08-13)** — milestone **v2.27 "Device-Native Optimizer Kernels (AdamW +
   Gradient Norm/Clip)"** opened through **close (P1+P2+P3)** (DEC-013, TASK-036/037/038,
   CHG-016 711d511). The optimizer stack was host-side: `AdamWOptimizer::step` D2H→host-loop→
