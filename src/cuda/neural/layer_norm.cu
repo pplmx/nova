@@ -168,15 +168,111 @@ void layer_norm_inference(
 }
 
 // ============================================================================
-// v2.28 trainable LayerNorm. P1-RED: provisional throwing stubs — the parity
-// tests pin the forward/backward/step contracts and go RED here; the real
-// device kernels land in P2 (TASK-041).
+// v2.28 trainable LayerNorm (TASK-041 / DEC-014): device forward + analytic
+// backward with trainable affine gamma/beta. Collective-free — each row
+// normalizes independently over the (replicated) hidden dim.
 // ============================================================================
 
+namespace {
+
+// Forward: y = gamma * xhat + beta per row, one block per row.
+__global__ void ln_forward_trainable_kernel(
+    const float* x, const float* gamma, const float* beta, float* y, int m,
+    int h, float eps) {
+    const int row = blockIdx.x;
+    if (row >= m) return;
+    const float* xr = x + row * h;
+    float sum = 0.0f;
+    for (int j = 0; j < h; ++j) sum += xr[j];
+    const float mean = sum / h;
+    float var = 0.0f;
+    for (int j = 0; j < h; ++j) {
+        const float d = xr[j] - mean;
+        var += d * d;
+    }
+    const float inv = rsqrtf(var / h + eps);
+    float* yr = y + row * h;
+    for (int j = 0; j < h; ++j) {
+        const float xhat = (xr[j] - mean) * inv;
+        yr[j] = gamma[j] * xhat + beta[j];
+    }
+}
+
+// Backward pass 1 (one block per row): row mean/var/inv + the row sums
+// sum_dxhat and sum_dxhat*xhat that dL/dx needs (stats[4*row …]), and the
+// dgamma/dbeta row contributions accumulated with atomics (the affine grads
+// are sums over the batch rows; float atomicAdd order only perturbs the sum at
+// ~ulp level, far inside the parity tolerance).
+__global__ void ln_backward_stats_kernel(
+    const float* x, const float* gamma, const float* dy, float* dgamma,
+    float* dbeta, float* stats, int m, int h, float eps) {
+    const int row = blockIdx.x;
+    if (row >= m) return;
+    const float* xr = x + row * h;
+    const float* dyr = dy + row * h;
+    float sum = 0.0f;
+    for (int j = 0; j < h; ++j) sum += xr[j];
+    const float mean = sum / h;
+    float var = 0.0f;
+    for (int j = 0; j < h; ++j) {
+        const float d = xr[j] - mean;
+        var += d * d;
+    }
+    const float inv = rsqrtf(var / h + eps);
+    float sdx = 0.0f, sdxh = 0.0f;
+    for (int j = 0; j < h; ++j) {
+        const float xhat = (xr[j] - mean) * inv;
+        const float dxhat = dyr[j] * gamma[j];
+        sdx += dxhat;
+        sdxh += dxhat * xhat;
+        atomicAdd(&dgamma[j], dyr[j] * xhat);
+        atomicAdd(&dbeta[j], dyr[j]);
+    }
+    float* s = stats + row * 4;
+    s[0] = mean;
+    s[1] = inv;
+    s[2] = sdx;
+    s[3] = sdxh;
+}
+
+// Backward pass 2 (element-wise): dL/dx = inv*(dxhat - mean(dxhat) -
+// xhat*mean(dxhat*xhat)).
+__global__ void ln_backward_input_kernel(
+    const float* x, const float* gamma, const float* dy, const float* stats,
+    float* dx, int m, int h) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= m * h) return;
+    const int row = idx / h;
+    const int j = idx % h;
+    const float* s = stats + row * 4;
+    const float mean = s[0];
+    const float inv = s[1];
+    const float sdx = s[2];
+    const float sdxh = s[3];
+    const float xhat = (x[idx] - mean) * inv;
+    const float dxhat = dy[idx] * gamma[j];
+    dx[idx] = inv * (dxhat - sdx / h - xhat * (sdxh / h));
+}
+
+}  // namespace
+
 void layer_norm_backward(
-    const float*, const float*, const float*, float*, float*, float*, int,
-    int, float, cudaStream_t) {
-    throw std::runtime_error("layer_norm_backward: not implemented (P1 RED stub)");
+    const float* input, const float* gamma, const float* grad_output,
+    float* grad_input, float* grad_gamma, float* grad_beta, int batch_size,
+    int normalized_shape, float eps, cudaStream_t stream) {
+    cuda::memory::Buffer<float> stats(static_cast<size_t>(batch_size) * 4);
+    CUDA_CHECK(cudaMemsetAsync(grad_gamma, 0, sizeof(float) * normalized_shape,
+                               stream));
+    CUDA_CHECK(cudaMemsetAsync(grad_beta, 0, sizeof(float) * normalized_shape,
+                               stream));
+    ln_backward_stats_kernel<<<batch_size, 1, 0, stream>>>(
+        input, gamma, grad_output, grad_gamma, grad_beta, stats.data(),
+        batch_size, normalized_shape, eps);
+    const int grid = (batch_size * normalized_shape + 255) / 256;
+    ln_backward_input_kernel<<<grid, 256, 0, stream>>>(
+        input, gamma, grad_output, stats.data(), grad_input, batch_size,
+        normalized_shape);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 LayerNorm::LayerNorm(int hidden, float eps) : hidden_(hidden), eps_(eps) {
@@ -189,26 +285,52 @@ LayerNorm::LayerNorm(int hidden, float eps) : hidden_(hidden), eps_(eps) {
 
 LayerNorm::~LayerNorm() = default;
 
-void LayerNorm::set_weight(const float*, const float*) {
-    throw std::runtime_error("LayerNorm::set_weight: not implemented (P1 RED stub)");
+void LayerNorm::ensure_stats(int batch) {
+    if (d_stats_ && stats_batch_ >= batch) return;
+    d_stats_ = std::make_unique<cuda::memory::Buffer<float>>(
+        static_cast<size_t>(batch) * 4);
+    stats_batch_ = batch;
 }
 
-void LayerNorm::forward(const float*, float*, int, cudaStream_t) {
-    throw std::runtime_error("LayerNorm::forward: not implemented (P1 RED stub)");
+void LayerNorm::set_weight(const float* gamma, const float* beta) {
+    d_gamma_->copy_from(gamma, hidden_);
+    d_beta_->copy_from(beta, hidden_);
 }
 
-void LayerNorm::backward(const float*, const float*, float*, float*, float*,
-                         int, cudaStream_t) {
-    throw std::runtime_error("LayerNorm::backward: not implemented (P1 RED stub)");
+void LayerNorm::forward(const float* input, float* output, int batch,
+                        cudaStream_t stream) {
+    ln_forward_trainable_kernel<<<batch, 1, 0, stream>>>(
+        input, d_gamma_->data(), d_beta_->data(), output, batch, hidden_, eps_);
+    CUDA_CHECK(cudaGetLastError());
 }
 
-void LayerNorm::copy_weights(float*, float*) const {
-    throw std::runtime_error("LayerNorm::copy_weights: not implemented (P1 RED stub)");
+void LayerNorm::backward(const float* input, const float* grad_output,
+                         float* grad_input, float* grad_gamma,
+                         float* grad_beta, int batch, cudaStream_t stream) {
+    ensure_stats(batch);
+    CUDA_CHECK(cudaMemsetAsync(grad_gamma, 0, sizeof(float) * hidden_, stream));
+    CUDA_CHECK(cudaMemsetAsync(grad_beta, 0, sizeof(float) * hidden_, stream));
+    ln_backward_stats_kernel<<<batch, 1, 0, stream>>>(
+        input, d_gamma_->data(), grad_output, grad_gamma, grad_beta,
+        d_stats_->data(), batch, hidden_, eps_);
+    const int grid = (batch * hidden_ + 255) / 256;
+    ln_backward_input_kernel<<<grid, 256, 0, stream>>>(
+        input, d_gamma_->data(), grad_output, d_stats_->data(), grad_input,
+        batch, hidden_);
+    CUDA_CHECK(cudaGetLastError());
 }
 
-void LayerNorm::step(optimizers::AdamWOptimizer&, optimizers::AdamWOptimizer&,
-                     const float*, const float*, int, cudaStream_t) {
-    throw std::runtime_error("LayerNorm::step: not implemented (P1 RED stub)");
+void LayerNorm::copy_weights(float* gamma, float* beta) const {
+    d_gamma_->copy_to(gamma, hidden_);
+    d_beta_->copy_to(beta, hidden_);
+}
+
+void LayerNorm::step(optimizers::AdamWOptimizer& opt_gamma,
+                     optimizers::AdamWOptimizer& opt_beta,
+                     const float* grad_gamma, const float* grad_beta,
+                     int step_no, cudaStream_t stream) {
+    opt_gamma.step(d_gamma_->data(), grad_gamma, hidden_, step_no, stream);
+    opt_beta.step(d_beta_->data(), grad_beta, hidden_, step_no, stream);
 }
 
 int LayerNorm::hidden() const { return hidden_; }

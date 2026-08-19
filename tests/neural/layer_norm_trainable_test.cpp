@@ -224,20 +224,12 @@ TEST_F(LayerNormTrainableTest, ForwardMatchesHostReference) {
     std::vector<float> y(static_cast<size_t>(m) * h);
     d_y.copy_to(y.data(), y.size());
 
-    // fp32 vs fp64 over 8 dims: mean/var in fp32 lose ~1e-6 relative.
+    // fp32 vs fp64 over 8 dims: mean/var in fp32 lose ~1e-6 relative. The
+    // whole-row parity against the host fp64 reference IS the contract (the
+    // affine gamma/beta are arbitrary random here, so neither a zero-mean nor
+    // a unit-variance output property holds).
     EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f))
         << "device LayerNorm forward differs from host fp64 reference";
-    // Host stats of the device output: each row has ~unit variance.
-    for (int i = 0; i < m; ++i) {
-        double s = 0.0, v = 0.0;
-        for (int j = 0; j < h; ++j) s += y[i * h + j];
-        const double mean = s / h;
-        for (int j = 0; j < h; ++j) {
-            const double d = y[i * h + j] - mean;
-            v += d * d;
-        }
-        EXPECT_NEAR(v / h, 1.0, 1e-3) << "row " << i << " variance not ~1";
-    }
 }
 
 // Device backward == host fp64 analytic backward (d_input, d_gamma, d_beta).
@@ -303,7 +295,11 @@ TEST_F(LayerNormTrainableTest, StepMovesGammaBeta) {
     optimizers::OptimizerConfig cfg;
     cfg.learning_rate = 0.1f;
     optimizers::AdamWOptimizer og(cfg), ob(cfg);
-    ln.step(og, ob, dg.data(), db.data(), 1);
+    // Grads must be device buffers (the v2.27 fused kernel runs on device).
+    cuda::memory::Buffer<float> d_dg(h), d_db(h);
+    d_dg.copy_from(dg.data(), h);
+    d_db.copy_from(db.data(), h);
+    ln.step(og, ob, d_dg.data(), d_db.data(), 1);
 
     std::vector<float> g2(h), b2(h);
     ln.copy_weights(g2.data(), b2.data());

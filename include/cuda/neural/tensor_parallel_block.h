@@ -176,6 +176,11 @@ public:
      */
     [[nodiscard]] int intermediate_size() const;
 
+    /**
+     * @brief TP degree (max(1, NCCL context device count))
+     */
+    [[nodiscard]] int tp_degree() const;
+
 private:
     void ensure_scratch(int m);
 
@@ -187,12 +192,19 @@ private:
     std::unique_ptr<TensorParallelMultiHeadAttention> attn_;
     std::unique_ptr<LayerNorm> ln2_;                  // pre-MLP norm
     std::unique_ptr<TensorParallelMLP> mlp_;
-    // Scratch (forward intermediates for backward) sized to the current batch.
+    // Forward intermediates (kept for backward) sized to the current batch.
     std::unique_ptr<cuda::memory::Buffer<float>> h1_;   // LN1(x)
     std::unique_ptr<cuda::memory::Buffer<float>> a_;    // MHA(h1)
     std::unique_ptr<cuda::memory::Buffer<float>> h2_;   // x + a (LN2 input)
     std::unique_ptr<cuda::memory::Buffer<float>> h3_;   // LN2(h2) (MLP input)
     std::unique_ptr<cuda::memory::Buffer<float>> m_out_; // MLP(h3)
+    // Backward scratch: MLP grad-input, LN2-path grad-input, residual sums,
+    // attention grad-input, LN1-path grad-input (all [m x hidden]).
+    std::unique_ptr<cuda::memory::Buffer<float>> d_mlp_gi_;
+    std::unique_ptr<cuda::memory::Buffer<float>> d_r1ln_;
+    std::unique_ptr<cuda::memory::Buffer<float>> d_h2_;
+    std::unique_ptr<cuda::memory::Buffer<float>> d_attn_gi_;
+    std::unique_ptr<cuda::memory::Buffer<float>> d_xln_;
     int scratch_m_ = 0;
 };
 

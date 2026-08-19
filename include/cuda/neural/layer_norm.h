@@ -189,10 +189,16 @@ public:
     [[nodiscard]] float eps() const;
 
 private:
+    void ensure_stats(int batch);
+
     int hidden_ = 0;
     float eps_ = 1e-5f;
     std::unique_ptr<cuda::memory::Buffer<float>> d_gamma_;
     std::unique_ptr<cuda::memory::Buffer<float>> d_beta_;
+    // Backward per-row stats scratch: [mean, inv, sum_dxhat, sum_dxhat*xhat]
+    // per row (4 * batch floats), sized on demand.
+    std::unique_ptr<cuda::memory::Buffer<float>> d_stats_;
+    int stats_batch_ = 0;
 };
 
 }  // namespace cuda::neural

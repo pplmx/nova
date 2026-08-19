@@ -163,10 +163,15 @@ private:
     std::vector<std::array<std::unique_ptr<optimizers::AdamWOptimizer>, 11>>
         block_opts_;
     std::array<std::unique_ptr<optimizers::AdamWOptimizer>, 2> final_opts_;
-    // Device scratch: activation chain + grads sized to the current batch.
-    std::vector<std::unique_ptr<cuda::memory::Buffer<float>>> h_bufs_;  // per block fwd in/out
-    std::unique_ptr<cuda::memory::Buffer<float>> d_logits_, d_dlogits_;
-    std::vector<std::unique_ptr<cuda::memory::Buffer<float>>> dgrads_;  // per block grad-input
+    // Device scratch sized to the current batch.
+    std::vector<std::unique_ptr<cuda::memory::Buffer<float>>> h_bufs_;  // N block outputs
+    std::unique_ptr<cuda::memory::Buffer<float>> d_logits_, d_dlogits_;  // final-LN out + grad
+    std::vector<std::unique_ptr<cuda::memory::Buffer<float>>> grad_bufs_;  // N+1 block grad-inputs
+    std::vector<std::array<std::unique_ptr<cuda::memory::Buffer<float>>, 11>>
+        b_grads_;  // per-block full weight grads
+    std::array<std::unique_ptr<cuda::memory::Buffer<float>>, 2> f_grads_;  // final-LN affine grads
+    std::unique_ptr<cuda::memory::Buffer<int>> d_targets_;
+    loss::CrossEntropyConfig ce_cfg_;
     int scratch_m_ = 0;
 };
 
