@@ -329,6 +329,7 @@ set(NEURAL_SOURCES
         ${CUDA_NEURAL_DIR}/tensor_parallel_matmul.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_layers.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_attention.cpp
+        ${CUDA_NEURAL_DIR}/attention_kernels.cu
         ${CUDA_NEURAL_DIR}/tensor_parallel_block.cpp
         ${CUDA_NEURAL_DIR}/tensor_parallel_profile.cpp
         ${CUDA_NEURAL_DIR}/transformer/attention.cu

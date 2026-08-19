@@ -62,6 +62,7 @@ add_executable(nova-tests
     neural/micro_trainer_multigpu_test.cpp
     neural/tensor_parallel_attention_test.cpp
     neural/tensor_parallel_attention_multigpu_test.cpp
+    neural/attention_kernels_test.cpp
     neural/layer_norm_trainable_test.cpp
     neural/tensor_parallel_block_test.cpp
     neural/tensor_parallel_block_multigpu_test.cpp

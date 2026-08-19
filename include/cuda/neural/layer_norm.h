@@ -201,4 +201,22 @@ private:
     int stats_batch_ = 0;
 };
 
+namespace detail {
+// v2.29 parallelized trainable LayerNorm compute (TASK-044/045): the P1 RED
+// contract surface for the block/warp-reduction kernels that replace the
+// one-thread-per-row ln_forward_trainable_kernel / ln_backward_stats_kernel
+// (Round-28 LEARN M2 — fine at hidden<=64, a per-row serialization bottleneck
+// at hidden>=512). Same semantics as LayerNorm::forward/backward and the free
+// functions: x/y/dy/dx are [m x h] device buffers (replicated rows),
+// gamma/beta/dgamma/dbeta are [h] vectors, h must be positive.
+void layer_norm_forward_trainable(const float* x, const float* gamma,
+                                  const float* beta, float* y, int m, int h,
+                                  float eps, cudaStream_t stream = nullptr);
+
+void layer_norm_backward_trainable(const float* x, const float* gamma,
+                                   const float* dy, float* dx, float* dgamma,
+                                   float* dbeta, int m, int h, float eps,
+                                   cudaStream_t stream = nullptr);
+}  // namespace detail
+
 }  // namespace cuda::neural

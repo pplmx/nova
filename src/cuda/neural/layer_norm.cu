@@ -307,4 +307,31 @@ void LayerNorm::step(optimizers::AdamWOptimizer& opt_gamma,
 int LayerNorm::hidden() const { return hidden_; }
 float LayerNorm::eps() const { return eps_; }
 
+namespace detail {
+
+void layer_norm_forward_trainable(const float* x, const float* gamma,
+                                  const float* beta, float* y, int m, int h,
+                                  float eps, cudaStream_t stream) {
+    (void)x; (void)gamma; (void)beta; (void)y; (void)m; (void)h; (void)eps;
+    (void)stream;
+    throw std::logic_error(
+        "detail::layer_norm_forward_trainable: not implemented (milestone "
+        "v2.29 P1 stub — the block/warp-reduction kernels land in P2, "
+        "TASK-045)");
+}
+
+void layer_norm_backward_trainable(const float* x, const float* gamma,
+                                   const float* dy, float* dx, float* dgamma,
+                                   float* dbeta, int m, int h, float eps,
+                                   cudaStream_t stream) {
+    (void)x; (void)gamma; (void)dy; (void)dx; (void)dgamma; (void)dbeta;
+    (void)m; (void)h; (void)eps; (void)stream;
+    throw std::logic_error(
+        "detail::layer_norm_backward_trainable: not implemented (milestone "
+        "v2.29 P1 stub — the block/warp-reduction kernels land in P2, "
+        "TASK-045)");
+}
+
+}  // namespace detail
+
 }  // namespace cuda::neural

@@ -88,3 +88,22 @@ Phases (TASK-043 umbrella, TASK-044/045/046):
 - `DEC-015` (decision, milestone direction); `TASK-043/044/045/046` (umbrella,
   P1/P2/P3); `issue-v29-sdpa-host-roundtrip`, `issue-v29-ln-one-thread-per-row`
   (the two addressed debts).
+
+## P1 RED (TASK-044, EV-025)
+
+- Added the contract surface with provisional throw-stubs: `detail::` device
+  entries in `tensor_parallel_attention.h` (`sdpa_forward_device` /
+  `sdpa_backward_device`) and `layer_norm.h`
+  (`layer_norm_forward_trainable` / `layer_norm_backward_trainable`), a new
+  `attention_kernels.cu` module (throw-stubs, wired into CMake, mirroring
+  `optimizers_kernels.cu`), new `attention_kernels_test.cpp` (host-fp64 SDPA
+  forward/backward references) + 2 parallel-LN tests appended to
+  `layer_norm_trainable_test.cpp`.
+- RED run (EV-025): 6/6 contract tests fail for the right reason — 4
+  `AttentionKernelsTest` (fwd/bwd at m=6 seq>1 heads=3 hd=8, and large m=128
+  heads=2 hd=16) + 2 `LayerNormTrainableTest.Parallel*` (fwd at hidden=512,
+  bwd at hidden=1024) all throw "not implemented (v2.29 P1 stub)". All 6
+  existing LayerNormTrainableTest tests + TensorParallelAttentionTest still
+  pass — the public `sdpa_forward`/`sdpa_backward`/`LayerNorm` paths are
+  untouched (only the new detail:: entries throw).
+- Commit `test(neural) P1 RED for milestone v2.29 ...`.

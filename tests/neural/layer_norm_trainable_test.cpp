@@ -337,3 +337,73 @@ TEST_F(LayerNormTrainableTest, StepMovesGammaBeta) {
     EXPECT_NE(g2[0], 1.0f) << "gamma must move under AdamW";
     EXPECT_NE(b2[0], 0.0f) << "beta must move under AdamW";
 }
+
+// v2.29 parallelized trainable LayerNorm forward (TASK-044): the
+// block/warp-reduction kernels replace the one-thread-per-row path (fine at
+// hidden<=64, a per-row serialization bottleneck at scale). Pin them at
+// hidden=512 with rows>1 against the host fp64 reference; hidden well above a
+// warp/block is what exercises the reduction path.
+TEST_F(LayerNormTrainableTest, ParallelForwardMatchesHostFp64LargeHidden) {
+    const int m = 8, h = 512;
+    const float eps = 1e-5f;
+    std::vector<float> x(static_cast<size_t>(m) * h);
+    std::vector<float> g(h), b(h);
+    fill_random(x.data(), x.size(), 701);
+    fill_random(g.data(), g.size(), 702, 0.5f, 1.5f);
+    fill_random(b.data(), b.size(), 703);
+
+    std::vector<float> ref(static_cast<size_t>(m) * h);
+    host_ln_forward(x.data(), g.data(), b.data(), ref.data(), m, h, eps);
+
+    cuda::memory::Buffer<float> d_x(m * h), d_y(m * h), d_g(h), d_b(h);
+    d_x.copy_from(x.data(), x.size());
+    d_g.copy_from(g.data(), g.size());
+    d_b.copy_from(b.data(), b.size());
+    detail::layer_norm_forward_trainable(d_x.data(), d_g.data(), d_b.data(),
+                                         d_y.data(), m, h, eps, nullptr);
+    std::vector<float> y(static_cast<size_t>(m) * h);
+    d_y.copy_to(y.data(), y.size());
+
+    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 3e-4f))
+        << "parallel LayerNorm forward differs from the host fp64 reference";
+}
+
+// Parallelized trainable LayerNorm backward at hidden=1024 (d_input, d_gamma,
+// d_beta) — exercises the block-reduction stats pass at scale. The 1e-4 affine
+// tolerance is loosened to 2e-4 for dgamma/dbeta: at h=1024 the fp32
+// block-reduced row contribution sums differ from the fp64 serial reference at
+// the ~ulp*rows level.
+TEST_F(LayerNormTrainableTest, ParallelBackwardMatchesHostFp64LargeHidden) {
+    const int m = 6, h = 1024;
+    const float eps = 1e-5f;
+    std::vector<float> x(static_cast<size_t>(m) * h);
+    std::vector<float> g(h), b(h), dy(static_cast<size_t>(m) * h);
+    fill_random(x.data(), x.size(), 801);
+    fill_random(g.data(), g.size(), 802, 0.5f, 1.5f);
+    fill_random(b.data(), b.size(), 803);
+    fill_random(dy.data(), dy.size(), 804);
+
+    std::vector<float> ref_dx(static_cast<size_t>(m) * h), ref_dg(h), ref_db(h);
+    host_ln_backward(x.data(), g.data(), dy.data(), ref_dx.data(),
+                     ref_dg.data(), ref_db.data(), m, h, eps);
+
+    cuda::memory::Buffer<float> d_x(m * h), d_g(h), d_dy(m * h);
+    cuda::memory::Buffer<float> d_dx(m * h), d_dg(h), d_db(h);
+    d_x.copy_from(x.data(), x.size());
+    d_g.copy_from(g.data(), g.size());
+    d_dy.copy_from(dy.data(), dy.size());
+    detail::layer_norm_backward_trainable(d_x.data(), d_g.data(), d_dy.data(),
+                                          d_dx.data(), d_dg.data(),
+                                          d_db.data(), m, h, eps, nullptr);
+    std::vector<float> dx(static_cast<size_t>(m) * h), dg(h), db(h);
+    d_dx.copy_to(dx.data(), dx.size());
+    d_dg.copy_to(dg.data(), h);
+    d_db.copy_to(db.data(), h);
+
+    EXPECT_TRUE(arrays_near(ref_dx.data(), dx.data(), dx.size(), 3e-4f))
+        << "parallel LayerNorm d_input differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_dg.data(), dg.data(), h, 2e-4f))
+        << "parallel LayerNorm d_gamma differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), h, 2e-4f))
+        << "parallel LayerNorm d_beta differs from the host fp64 reference";
+}

@@ -210,4 +210,24 @@ void sdpa_backward(const float* q, const float* k, const float* v,
                    float* dv, int m, int local_heads, int head_dim,
                    cudaStream_t stream = nullptr);
 
+namespace detail {
+// v2.29 device multi-head SDPA (TASK-044/045): the GPU kernels that replace
+// the host D2H/H2D round-trip in sdpa_forward/sdpa_backward (the v2.26 header
+// deferred them to 'a later performance pass'; Round-28 LEARN M3 named the
+// per-block host round-trip the binding deep-trainer latency). Same semantics
+// and layout as the public functions — q/k/v/dq/dk/dv/out are [m x
+// local_heads*head_dim] device buffers, self-attention over m keys, dims must
+// be positive. This is the P1 RED contract surface: tested directly against
+// fp64 references in attention_kernels_test.cpp, then wired into the public
+// API in P2 (attention_kernels.cu).
+void sdpa_forward_device(const float* q, const float* k, const float* v,
+                         float* out, int m, int local_heads, int head_dim,
+                         cudaStream_t stream = nullptr);
+
+void sdpa_backward_device(const float* q, const float* k, const float* v,
+                          const float* dout, float* dq, float* dk, float* dv,
+                          int m, int local_heads, int head_dim,
+                          cudaStream_t stream = nullptr);
+}  // namespace detail
+
 }  // namespace cuda::neural
