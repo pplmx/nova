@@ -146,24 +146,51 @@ void layer_norm_inference(
 
 namespace {
 
-// Forward: y = gamma * xhat + beta per row, one block per row.
+constexpr int kLnBlock = 256;  // block size for the per-row trainable kernels
+
+// Block-wide sum over kLnBlock lanes (all threads active; kLnBlock % 32 == 0
+// so the full-warp shuffle masks are valid). `red` must hold kLnBlock/32
+// floats; the reduced value is broadcast to ALL threads on return.
+__device__ float ln_block_reduce_sum(float v, float* red) {
+    constexpr unsigned kFull = 0xffffffffu;
+    for (int o = 16; o > 0; o >>= 1) v += __shfl_down_sync(kFull, v, o);
+    const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
+    if (lane == 0) red[wid] = v;
+    __syncthreads();
+    if (threadIdx.x < 32) {
+        float acc = (threadIdx.x < kLnBlock / 32) ? red[threadIdx.x] : 0.0f;
+        for (int o = 16; o > 0; o >>= 1) acc += __shfl_down_sync(kFull, acc, o);
+        if (lane == 0) red[0] = acc;
+    }
+    __syncthreads();
+    return red[0];
+}
+
+// Forward: y = gamma * xhat + beta per row, one BLOCK per row (v2.29, TASK-045).
+// The row mean/variance are block reductions over the hidden dim instead of
+// the v2.28 one-thread-per-row serial sums (fine at hidden<=64, a per-row
+// serialization bottleneck at hidden>=512 — Round-28 LEARN M2). The reduction
+// order differs from the serial sum only at ~ulp level, inside the parity
+// tolerance.
 __global__ void ln_forward_trainable_kernel(
     const float* x, const float* gamma, const float* beta, float* y, int m,
     int h, float eps) {
     const int row = blockIdx.x;
     if (row >= m) return;
-    const float* xr = x + row * h;
+    const float* xr = x + static_cast<size_t>(row) * h;
+    float* yr = y + static_cast<size_t>(row) * h;
+    __shared__ float red[kLnBlock / 32];
     float sum = 0.0f;
-    for (int j = 0; j < h; ++j) sum += xr[j];
-    const float mean = sum / h;
+    for (int j = threadIdx.x; j < h; j += kLnBlock) sum += xr[j];
+    const float mean = ln_block_reduce_sum(sum, red) / h;
     float var = 0.0f;
-    for (int j = 0; j < h; ++j) {
+    for (int j = threadIdx.x; j < h; j += kLnBlock) {
         const float d = xr[j] - mean;
         var += d * d;
     }
+    var = ln_block_reduce_sum(var, red);
     const float inv = rsqrtf(var / h + eps);
-    float* yr = y + row * h;
-    for (int j = 0; j < h; ++j) {
+    for (int j = threadIdx.x; j < h; j += kLnBlock) {
         const float xhat = (xr[j] - mean) * inv;
         yr[j] = gamma[j] * xhat + beta[j];
     }
@@ -173,25 +200,28 @@ __global__ void ln_forward_trainable_kernel(
 // sum_dxhat and sum_dxhat*xhat that dL/dx needs (stats[4*row …]), and the
 // dgamma/dbeta row contributions accumulated with atomics (the affine grads
 // are sums over the batch rows; float atomicAdd order only perturbs the sum at
-// ~ulp level, far inside the parity tolerance).
+// ~ulp level, far inside the parity tolerance). Stats are block reductions
+// (v2.29, TASK-045), same ~ulp deviation budget as forward.
 __global__ void ln_backward_stats_kernel(
     const float* x, const float* gamma, const float* dy, float* dgamma,
     float* dbeta, float* stats, int m, int h, float eps) {
     const int row = blockIdx.x;
     if (row >= m) return;
-    const float* xr = x + row * h;
-    const float* dyr = dy + row * h;
+    const float* xr = x + static_cast<size_t>(row) * h;
+    const float* dyr = dy + static_cast<size_t>(row) * h;
+    __shared__ float red[kLnBlock / 32];
     float sum = 0.0f;
-    for (int j = 0; j < h; ++j) sum += xr[j];
-    const float mean = sum / h;
+    for (int j = threadIdx.x; j < h; j += kLnBlock) sum += xr[j];
+    const float mean = ln_block_reduce_sum(sum, red) / h;
     float var = 0.0f;
-    for (int j = 0; j < h; ++j) {
+    for (int j = threadIdx.x; j < h; j += kLnBlock) {
         const float d = xr[j] - mean;
         var += d * d;
     }
+    var = ln_block_reduce_sum(var, red);
     const float inv = rsqrtf(var / h + eps);
     float sdx = 0.0f, sdxh = 0.0f;
-    for (int j = 0; j < h; ++j) {
+    for (int j = threadIdx.x; j < h; j += kLnBlock) {
         const float xhat = (xr[j] - mean) * inv;
         const float dxhat = dyr[j] * gamma[j];
         sdx += dxhat;
@@ -199,7 +229,9 @@ __global__ void ln_backward_stats_kernel(
         atomicAdd(&dgamma[j], dyr[j] * xhat);
         atomicAdd(&dbeta[j], dyr[j]);
     }
-    float* s = stats + row * 4;
+    sdx = ln_block_reduce_sum(sdx, red);
+    sdxh = ln_block_reduce_sum(sdxh, red);
+    float* s = stats + static_cast<size_t>(row) * 4;
     s[0] = mean;
     s[1] = inv;
     s[2] = sdx;
@@ -231,19 +263,13 @@ void layer_norm_backward(
     const float* input, const float* gamma, const float* grad_output,
     float* grad_input, float* grad_gamma, float* grad_beta, int batch_size,
     int normalized_shape, float eps, cudaStream_t stream) {
-    cuda::memory::Buffer<float> stats(static_cast<size_t>(batch_size) * 4);
-    CUDA_CHECK(cudaMemsetAsync(grad_gamma, 0, sizeof(float) * normalized_shape,
-                               stream));
-    CUDA_CHECK(cudaMemsetAsync(grad_beta, 0, sizeof(float) * normalized_shape,
-                               stream));
-    ln_backward_stats_kernel<<<batch_size, 1, 0, stream>>>(
-        input, gamma, grad_output, grad_gamma, grad_beta, stats.data(),
-        batch_size, normalized_shape, eps);
-    const int grid = (batch_size * normalized_shape + 255) / 256;
-    ln_backward_input_kernel<<<grid, 256, 0, stream>>>(
-        input, gamma, grad_output, stats.data(), grad_input, batch_size,
-        normalized_shape);
-    CUDA_CHECK(cudaGetLastError());
+    // Routes through the v2.29 device entry (block-reduction kernels). This
+    // stateless free function allocates its per-call stats scratch inside the
+    // detail:: entry (the M1 per-call-buffer debt); the LayerNorm class keeps
+    // its cached stats buffer below.
+    detail::layer_norm_backward_trainable(
+        input, gamma, grad_output, grad_input, grad_gamma, grad_beta,
+        batch_size, normalized_shape, eps, stream);
 }
 
 LayerNorm::LayerNorm(int hidden, float eps) : hidden_(hidden), eps_(eps) {
@@ -270,9 +296,9 @@ void LayerNorm::set_weight(const float* gamma, const float* beta) {
 
 void LayerNorm::forward(const float* input, float* output, int batch,
                         cudaStream_t stream) {
-    ln_forward_trainable_kernel<<<batch, 1, 0, stream>>>(
-        input, d_gamma_->data(), d_beta_->data(), output, batch, hidden_, eps_);
-    CUDA_CHECK(cudaGetLastError());
+    detail::layer_norm_forward_trainable(input, d_gamma_->data(),
+                                         d_beta_->data(), output, batch,
+                                         hidden_, eps_, stream);
 }
 
 void LayerNorm::backward(const float* input, const float* grad_output,
@@ -281,7 +307,7 @@ void LayerNorm::backward(const float* input, const float* grad_output,
     ensure_stats(batch);
     CUDA_CHECK(cudaMemsetAsync(grad_gamma, 0, sizeof(float) * hidden_, stream));
     CUDA_CHECK(cudaMemsetAsync(grad_beta, 0, sizeof(float) * hidden_, stream));
-    ln_backward_stats_kernel<<<batch, 1, 0, stream>>>(
+    ln_backward_stats_kernel<<<batch, kLnBlock, 0, stream>>>(
         input, d_gamma_->data(), grad_output, grad_gamma, grad_beta,
         d_stats_->data(), batch, hidden_, eps_);
     const int grid = (batch * hidden_ + 255) / 256;
@@ -312,24 +338,32 @@ namespace detail {
 void layer_norm_forward_trainable(const float* x, const float* gamma,
                                   const float* beta, float* y, int m, int h,
                                   float eps, cudaStream_t stream) {
-    (void)x; (void)gamma; (void)beta; (void)y; (void)m; (void)h; (void)eps;
-    (void)stream;
-    throw std::logic_error(
-        "detail::layer_norm_forward_trainable: not implemented (milestone "
-        "v2.29 P1 stub — the block/warp-reduction kernels land in P2, "
-        "TASK-045)");
+    if (m <= 0 || h <= 0) {
+        throw std::invalid_argument(
+            "layer_norm_forward_trainable requires positive m and h");
+    }
+    ln_forward_trainable_kernel<<<m, kLnBlock, 0, stream>>>(x, gamma, beta, y,
+                                                            m, h, eps);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void layer_norm_backward_trainable(const float* x, const float* gamma,
                                    const float* dy, float* dx, float* dgamma,
                                    float* dbeta, int m, int h, float eps,
                                    cudaStream_t stream) {
-    (void)x; (void)gamma; (void)dy; (void)dx; (void)dgamma; (void)dbeta;
-    (void)m; (void)h; (void)eps; (void)stream;
-    throw std::logic_error(
-        "detail::layer_norm_backward_trainable: not implemented (milestone "
-        "v2.29 P1 stub — the block/warp-reduction kernels land in P2, "
-        "TASK-045)");
+    if (m <= 0 || h <= 0) {
+        throw std::invalid_argument(
+            "layer_norm_backward_trainable requires positive m and h");
+    }
+    cuda::memory::Buffer<float> stats(static_cast<size_t>(m) * 4);
+    CUDA_CHECK(cudaMemsetAsync(dgamma, 0, sizeof(float) * h, stream));
+    CUDA_CHECK(cudaMemsetAsync(dbeta, 0, sizeof(float) * h, stream));
+    ln_backward_stats_kernel<<<m, kLnBlock, 0, stream>>>(
+        x, gamma, dy, dgamma, dbeta, stats.data(), m, h, eps);
+    const int grid = (m * h + 255) / 256;
+    ln_backward_input_kernel<<<grid, 256, 0, stream>>>(
+        x, gamma, dy, stats.data(), dx, m, h);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 }  // namespace detail

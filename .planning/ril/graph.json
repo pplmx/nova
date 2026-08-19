@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 30,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-19T10:38:58+00:00",
+  "updated_at": "2026-08-19T11:45:31+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1783,31 +1783,31 @@
       "id": "TASK-044",
       "type": "task",
       "status": "active",
-      "version": 2,
+      "version": 3,
       "created_at": "2026-08-19T10:20:15+00:00",
-      "updated_at": "2026-08-19T10:29:28+00:00",
+      "updated_at": "2026-08-19T10:48:55+00:00",
       "touched_round": 30,
       "category": "test-quality",
       "severity": 2,
       "confidence": 1.0,
       "effort": 2,
-      "title": "P1 RED/parity: pin detail::sdpa_forward_device/sdpa_backward_device (new attention_kernels module) against an in-test fp64 SDPA reference at seq>1, heads>1, head_dim>1; pin parallelized trainable LayerNorm forward/backward (block-reduction path) against the fp64 reference at hidden in {512, 1024}, m>1; RED against throw-stubs",
-      "lock_owner": "grace-l29",
-      "lock_until": "2026-08-19T11:14:28+00:00"
+      "title": "P1 RED/parity: pin detail::sdpa_forward_device/sdpa_backward_device (new attention_kernels module) against an in-test fp64 SDPA reference at seq>1, heads>1, head_dim>1; pin parallelized trainable LayerNorm forward/backward (block-reduction path) against the fp64 reference at hidden in {512, 1024}, m>1; RED against throw-stubs"
     },
     "TASK-045": {
       "id": "TASK-045",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 2,
       "created_at": "2026-08-19T10:20:15+00:00",
-      "updated_at": "2026-08-19T10:20:15+00:00",
+      "updated_at": "2026-08-19T10:48:55+00:00",
       "touched_round": 30,
       "category": "performance",
       "severity": 2,
       "confidence": 1.0,
       "effort": 3,
-      "title": "P2 implementation: attention_kernels.cu device SDPA forward + analytic backward kernels (per-row shared-memory softmax, block reductions), wire sdpa_forward/sdpa_backward to the device path and delete the host round-trip + dead CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through the block-reduction path"
+      "title": "P2 implementation: attention_kernels.cu device SDPA forward + analytic backward kernels (per-row shared-memory softmax, block reductions), wire sdpa_forward/sdpa_backward to the device path and delete the host round-trip + dead CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through the block-reduction path",
+      "lock_owner": "grace-l29",
+      "lock_until": "2026-08-19T11:48:55+00:00"
     },
     "TASK-046": {
       "id": "TASK-046",
@@ -1833,6 +1833,29 @@
       "touched_round": 30,
       "source": "v2.29 P1 RED run (2026-08-19): CUDA_VISIBLE_DEVICES=2 ./build/bin/nova-tests --gtest_filter='AttentionKernelsTest.*:LayerNormTrainableTest.Parallel*'",
       "title": "P1 RED: 6 contract tests fail against the v2.29 throw-stubs for the right reason (4 detail::sdpa_*_device vs fp64 SDPA reference incl. seq>1/heads>1/head_dim>1 and large-seq=128; 2 detail:: layer_norm trainable fwd/bwd vs fp64 at hidden 512/1024); all existing LayerNormTrainableTest + TensorParallelAttentionTest still pass (public APIs untouched)",
+      "confidence": 1.0
+    },
+    "CHG-020": {
+      "id": "CHG-020",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T11:45:31+00:00",
+      "updated_at": "2026-08-19T11:45:31+00:00",
+      "touched_round": 30,
+      "commit": "v2.29 P2 (pending)",
+      "title": "v2.29 P2: device SDPA forward + analytic backward kernels (attention_kernels.cu, per-(row,head) block, shared softmax + block reductions; dV/dK global atomics across query positions; no cross-block scratch — P/dP recomputed); wired into sdpa_forward/sdpa_backward, host D2H/H2D round-trips + CPU impls deleted; parallelized trainable LayerNorm kernels (block/warp reductions for row mean/var/stats) routed through detail::layer_norm_forward_trainable/backward_trainable; LayerNorm::forward/backward + free layer_norm_backward use the block-reduction path"
+    },
+    "EV-026": {
+      "id": "EV-026",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T11:45:31+00:00",
+      "updated_at": "2026-08-19T11:45:31+00:00",
+      "touched_round": 30,
+      "source": "v2.29 P2 verify (2026-08-19): AttentionKernelsTest 4/4 (fwd/bwd vs fp64, max_abs ~3e-8); LayerNormTrainableTest.Parallel* 2/2 (h=512/1024, max_abs ~5e-7); neural single-GPU regression 79/79; neural multi-GPU cross-suite 23/23 on 2 GPUs + 18/18 on 4 GPUs; DeepBlockMultiGpuPinnedTest 1/1 on 2 & 4 GPUs (K-step shard==single-GPU trajectory parity through device SDPA + parallel LN)",
+      "title": "P2 GREEN: the new device kernels match fp64 references essentially exactly and the existing deep-transformer 2/4-GPU trajectory parity is unchanged",
       "confidence": 1.0
     }
   },
@@ -2778,6 +2801,24 @@
       "to": "issue-v29-ln-one-thread-per-row",
       "type": "addresses",
       "created_at": "2026-08-19T10:38:58+00:00"
+    },
+    {
+      "from": "CHG-020",
+      "to": "TASK-045",
+      "type": "implements",
+      "created_at": "2026-08-19T11:45:31+00:00"
+    },
+    {
+      "from": "CHG-020",
+      "to": "issue-v29-sdpa-host-roundtrip",
+      "type": "resolves",
+      "created_at": "2026-08-19T11:45:31+00:00"
+    },
+    {
+      "from": "CHG-020",
+      "to": "issue-v29-ln-one-thread-per-row",
+      "type": "resolves",
+      "created_at": "2026-08-19T11:45:31+00:00"
     }
   ]
 }
