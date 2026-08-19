@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.28
-milestone_name: Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
-status: Complete
+milestone: v2.29
+milestone_name: Device-Native SDPA + LayerNorm Training Kernels
+status: In Progress
 last_updated: "2026-08-19"
-last_activity: 2026-08-19 — Round 28: P1-P3 complete + cpp-review C1/L2 fixed, milestone closed
+last_activity: 2026-08-19 — Round 30: milestone v2.29 opened (DEC-015, TASK-043/044/045/046), P1 RED pending
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,12 +19,36 @@ progress:
 
 ## Current Position
 
-Milestone: v2.28 Normalized Transformer Blocks (LayerNorm + Residual) + Deep
-Multi-Layer Training
-Status: Complete (Round 28)
-Last activity: 2026-08-19 — P1 RED (7 contracts) -> P2 (8/8 GREEN) -> P3
-multi-GPU parity 19/19 on 2 & 4 GPUs; cpp-review C1 (seq>1 rows) + L2
-(inference null mean/var) fixed with regression tests; milestone closed
+Milestone: v2.29 Device-Native SDPA + LayerNorm Training Kernels
+Status: In progress (Round 30, opened — P1 RED pending)
+Last activity: 2026-08-19 — milestone opened (DEC-015, TASK-043/044/045/046);
+Round-28 LEARN named the next milestone (device-native attention + LN kernels)
+
+## Milestone v2.29 — Device-Native SDPA + LayerNorm Training Kernels
+
+Round-28 LEARN named "a device-native attention + LN training kernels
+performance round on the v2.28 stack" as the next milestone. The v2.28 deep
+transformer trains correctly but each train_step round-trips attention through
+the host (`sdpa_forward`/`sdpa_backward`: 10 blocking D2H/H2D copies + host
+loops over m×local_heads×m×head_dim per block; 30 blocking memcpys for a
+3-block trainer — the same D2H/H2D family v2.27 removed from the optimizer,
+deferred by the v2.26 header to "a later performance pass"), and the trainable
+LayerNorm kernels launch one thread per row (M2). This milestone moves
+scaled-dot-product attention forward+backward to device kernels behind the same
+`sdpa_forward`/`sdpa_backward` API (a standalone `attention_kernels.cu` detail
+module mirroring `optimizers_kernels.cu`), parallelizes the trainable LayerNorm
+kernels with block/warp reductions, deletes the host round-trips + dead CPU
+implementations, and verifies by GPU-vs-fp64-reference parity plus the existing
+2/4-GPU shard==single-GPU K-step trajectory parity (unchanged) (TASK-043).
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: detail::sdpa_forward_device/sdpa_backward_device vs in-test fp64 SDPA reference (seq>1, heads>1, head_dim>1); parallelized trainable LayerNorm fwd/bwd (block-reduction path) vs fp64 reference at hidden∈{512,1024}, rows>1 | Pending (Round 30) — throw-stubs |
+| 2 | Implement: attention_kernels.cu device SDPA forward + analytic backward (per-row shared-memory softmax, block reductions); wire sdpa_forward/sdpa_backward to device, delete host round-trip + CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through them | Pending (Round 30) |
+| 3 | Verify: kernel parity GREEN; all existing neural single-GPU suites GREEN; neural multi-GPU cross-suite 19/19 on 2 & 4 GPUs (deep-block trajectory unchanged); cpp-reviewer pass; RIL close | Pending (Round 30) |
+
+Decision: DEC-015. Host note: use `CUDA_VISIBLE_DEVICES=2,3+`; all 8 GPUs
+~76GB used — re-check nvidia-smi before multi-GPU runs.
 
 ## Milestone v2.28 — Normalized Transformer Blocks (LayerNorm + Residual) + Deep Multi-Layer Training
 

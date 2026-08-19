@@ -12,10 +12,22 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 **closed at Round 20** → v2.21/v2.22/v2.23 closed at Rounds 21/22/23 → **v2.24
 "End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED) →
 v2.25/26/27 closed at Rounds 25/26/27 → **v2.28 "Normalized Transformer Blocks (LayerNorm +
-Residual) + Deep Multi-Layer Training"** opened at Round 28 (P1 RED pending).
+Residual) + Deep Multi-Layer Training"** closed at Round 29 → **v2.29 "Device-Native
+Scaled-Dot-Product Attention + LayerNorm Training Kernels"** opened at Round 30 (P1 RED pending).
 
 ## Latest round
-- **Round 28 (2026-08-18/19)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
+- **Round 30 (2026-08-19)** — milestone **v2.29 "Device-Native SDPA + LayerNorm
+  Training Kernels"** opened (DEC-015, TASK-043/044/045/046). Round-28 LEARN
+  named the performance round: the v2.28 deep trainer round-trips attention
+  through the host (`sdpa_forward`/`sdpa_backward` = 10 blocking D2H/H2D per
+  block per step, the D2H/H2D family v2.27 removed from the optimizer; the
+  v2.26 header deferred SDPA to "a later performance pass"), and the trainable
+  LayerNorm kernels launch one thread per row. Milestone moves SDPA fwd/bwd to
+  device kernels behind the same API (`attention_kernels.cu` detail module,
+  mirroring `optimizers_kernels.cu`) + parallelizes the LN training kernels
+  with block/warp reductions; verified by GPU-vs-fp64 parity and the existing
+  2/4-GPU deep-block trajectory parity. P1 RED pending.
+- **Round 29 (2026-08-19)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
   Residual) + Deep Multi-Layer Training"** opened through **close (P1+P2+P3)** (DEC-014,
   TASK-039/040/041/042, CHG-017/018/019, EV-022/023/024). The stack previously trained one
   unnormalized single block — the `layer_norm` module was a forward-only orphan (untrainable),

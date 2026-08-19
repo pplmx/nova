@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 29,
+  "round": 30,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-19T03:54:43+00:00",
+  "updated_at": "2026-08-19T10:21:17+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1729,6 +1729,97 @@
       "touched_round": 28,
       "commit": "81edd9d",
       "title": "layer_norm_inference null mean/var device-fault fix (cpp-review L2): route through layer_norm() with internal stats; delete dead kernel; + LegacyInferenceMatchesHostReference"
+    },
+    "DEC-015": {
+      "id": "DEC-015",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T10:19:14+00:00",
+      "updated_at": "2026-08-19T10:19:14+00:00",
+      "touched_round": 30,
+      "title": "v2.29 milestone direction: device-native SDPA + LayerNorm training kernels on the v2.28 stack — GPU scaled-dot-product-attention forward+backward kernels replace the host D2H/H2D round-trip that runs N times per deep-transformer train_step, and the one-thread-per-row trainable LayerNorm kernels become block/warp-reduction kernels; same public APIs, verified by GPU-vs-fp64-reference parity and unchanged K-step training-trajectory parity on 2 & 4 GPUs",
+      "rationale": "Round-28 LEARN (EV-024, M1-M3) names 'a device-native attention + LN training kernels performance round on the v2.28 stack' as the next milestone; the v2.26 attention header explicitly deferred SDPA to 'a later performance pass'. Today each train_step runs sdpa_forward (3 D2H + host loop over m x local_heads x m x head_dim + 3 H2D) and sdpa_backward (4 D2H + 3 H2D) once per block — 10 blocking memcpys per block per step, the binding constraint as blocks x seq x heads scale (the same D2H/H2D family v2.27 removed from the optimizer). ln_forward_trainable_kernel/ln_backward_stats_kernel launch 1 thread per row (fine at hidden<=64, a serialization bottleneck at hidden>=512). This is v2.27's device-native-kernels round applied to attention+LN.",
+      "alternatives_rejected": "LAMB kernelization (orthogonal performance task, still deferred as in DEC-014); deeper scale-up (more blocks/longer seq) before this would multiply the host round-trip — the bottleneck grows with the training workload, so it comes after; fusing SDPA into the TP attention layer (couples modules; SDPA stays a standalone detail:: kernel module like optimizers_kernels behind the same public sdpa_forward/sdpa_backward API); keeping the host CPU SDPA as a fallback path (dead code — the reference copies live in the tests)"
+    },
+    "issue-v29-sdpa-host-roundtrip": {
+      "id": "issue-v29-sdpa-host-roundtrip",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T10:19:41+00:00",
+      "updated_at": "2026-08-19T10:19:41+00:00",
+      "touched_round": 30,
+      "title": "Multi-head SDPA forward/backward round-trips the whole Q/K/V/out buffer through the host every block every train_step (D2H + host loops + H2D), the binding deep-transformer training-latency constraint as blocks x seq x heads scale (v2.26 deferred; Round-28 LEARN M3)"
+    },
+    "issue-v29-ln-one-thread-per-row": {
+      "id": "issue-v29-ln-one-thread-per-row",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T10:19:41+00:00",
+      "updated_at": "2026-08-19T10:19:41+00:00",
+      "touched_round": 30,
+      "title": "LayerNorm training kernels (ln_forward_trainable_kernel, ln_backward_stats_kernel) launch one thread per row — serial per-row sums over the hidden dim, a bottleneck at hidden>=512 (fine at hidden<=64; Round-28 LEARN M2)"
+    },
+    "TASK-043": {
+      "id": "TASK-043",
+      "type": "task",
+      "status": "active",
+      "version": 2,
+      "created_at": "2026-08-19T10:20:14+00:00",
+      "updated_at": "2026-08-19T10:21:17+00:00",
+      "touched_round": 30,
+      "category": "core-feature",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "unlock_factor": 1.5,
+      "title": "(umbrella v2.29) device-native SDPA + LayerNorm training kernels — GPU scaled-dot-product-attention forward+backward behind the same sdpa_forward/sdpa_backward API (removing the per-block host round-trip) plus parallelized trainable LayerNorm forward/backward kernels (block/warp reductions), verified by GPU-vs-fp64-reference parity, unchanged K-step training-trajectory parity on 2 & 4 GPUs, neural regression + cpp-reviewer",
+      "lock_owner": "grace-l29",
+      "lock_until": "2026-08-19T10:51:17+00:00"
+    },
+    "TASK-044": {
+      "id": "TASK-044",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T10:20:15+00:00",
+      "updated_at": "2026-08-19T10:20:15+00:00",
+      "touched_round": 30,
+      "category": "test-quality",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P1 RED/parity: pin detail::sdpa_forward_device/sdpa_backward_device (new attention_kernels module) against an in-test fp64 SDPA reference at seq>1, heads>1, head_dim>1; pin parallelized trainable LayerNorm forward/backward (block-reduction path) against the fp64 reference at hidden in {512, 1024}, m>1; RED against throw-stubs"
+    },
+    "TASK-045": {
+      "id": "TASK-045",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T10:20:15+00:00",
+      "updated_at": "2026-08-19T10:20:15+00:00",
+      "touched_round": 30,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "title": "P2 implementation: attention_kernels.cu device SDPA forward + analytic backward kernels (per-row shared-memory softmax, block reductions), wire sdpa_forward/sdpa_backward to the device path and delete the host round-trip + dead CPU impls; parallelize ln_forward_trainable_kernel/ln_backward_stats_kernel with block/warp reductions and route LayerNorm::forward/backward + free layer_norm_backward through the block-reduction path"
+    },
+    "TASK-046": {
+      "id": "TASK-046",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-19T10:20:15+00:00",
+      "updated_at": "2026-08-19T10:20:15+00:00",
+      "touched_round": 30,
+      "category": "test-quality",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 1,
+      "title": "P3 verify: attention_kernels + parallelized-LN parity GREEN; all existing neural single-GPU suites GREEN (LayerNormTrainableTest, TransformerBlockTest, attention, MicroTrainer); neural cross-suite 19/19 on 2 & 4 GPUs (deep-block K-step trajectory parity unchanged by device SDPA); cpp-reviewer pass; RIL close"
     }
   },
   "edges": [
@@ -2607,6 +2698,60 @@
       "to": "TASK-041",
       "type": "implements",
       "created_at": "2026-08-19T03:50:40+00:00"
+    },
+    {
+      "from": "DEC-015",
+      "to": "TASK-043",
+      "type": "governs",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "DEC-015",
+      "to": "TASK-044",
+      "type": "governs",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "DEC-015",
+      "to": "TASK-045",
+      "type": "governs",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "DEC-015",
+      "to": "TASK-046",
+      "type": "governs",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "TASK-043",
+      "to": "TASK-044",
+      "type": "depends_on",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "TASK-044",
+      "to": "TASK-045",
+      "type": "depends_on",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "TASK-045",
+      "to": "TASK-046",
+      "type": "depends_on",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "TASK-043",
+      "to": "issue-v29-sdpa-host-roundtrip",
+      "type": "addresses",
+      "created_at": "2026-08-19T10:20:39+00:00"
+    },
+    {
+      "from": "TASK-043",
+      "to": "issue-v29-ln-one-thread-per-row",
+      "type": "addresses",
+      "created_at": "2026-08-19T10:20:40+00:00"
     }
   ]
 }
