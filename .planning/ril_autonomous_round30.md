@@ -135,3 +135,17 @@ free/GPU" full-suite gap can now be re-tested.
 Active tasks: TASK-018 (pre-existing, 1.50 < 3.0). v2.30 tasks resolved,
 issue-v30-ce-loss-host-roundtrip resolved (CHG-022), DEC-016 governs the
 milestone.
+
+## LEARN (Round 30 close) — next milestone candidate
+
+With the loss round-trip gone, the training hot path is fully device-native but
+still launches ~100+ kernels (and several NCCL AllReduces) per train_step with
+host-side step orchestration between each phase — the residual launch-overhead
+constraint. DEC-016 explicitly deferred "CUDA-graph-capturing the trainer"
+because "the copy dominates at this size"; v2.30 removed the copy, so the graph
+capture of a full device train_step (forward → loss → backward → AdamW) is the
+natural next performance round — verify by graph-replay == eager K-step
+trajectory parity (identical kernels, identical memory addresses: buffers are
+already allocated once in ensure_scratch and reused). TASK-018 (NCCL P2P/TP
+failure routing, 1.50) remains the only active non-milestone task below the
+3.0 threshold. Env: all 8 GPUs free.
