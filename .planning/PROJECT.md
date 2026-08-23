@@ -4,7 +4,36 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.30 Device-Native Cross-Entropy Loss Reduction
+## Current Milestone: v2.31 Device-Native LAMB Optimizer Kernel
+
+**Status:** Complete (2026-08-24, RIL Round 31)
+
+**Milestone v2.31.** Round-30's LEARN candidate was CUDA-graph capture of the
+device train_step, but an empirical probe (EV-034) refuted it — the training
+stack launches kernels on the legacy default stream and creates per-call op
+streams inside the layers, neither capturable without a wide stream-parametric
+rewrite plus NCCL-in-capture. The chosen round completes the v2.27 optimizer
+family: `LAMBOptimizer::step` was the last D2H→host-loop→H2D in the stack
+(per-element `std::vector` m/v, grads+params copied to host every call —
+optimizers.cpp, "LAMB keeps its host-side implementation" per the v2.27 header,
+deferred through DEC-014/015). v2.31 adds a fused `lamb_step_kernel`
+(bias-corrected m/v + trust-ratio update, host-computed phi_1/phi_2 as a scalar
+arg, per-element clamp) behind `detail::lamb_step_device`; m/v become device
+buffers; `step()` routes through it and the round-trip is gone. Public API
+unchanged; verified by exact-element device-vs-host parity over K steps.
+
+Phases: **P1 (TASK-052)** pinned `detail::lamb_step_device` RED against a
+throw-stub (2/2 — layer-adaptation on/off vs a `host_lamb` oracle, EV-035).
+**P2 (TASK-053, CHG-023)** implemented the fused kernel and rerouted
+`LAMBOptimizer::step` (EV-036). **P3 (TASK-054)** verified: exact-element
+parity GREEN, OptimizersTest 18/18, neural single-GPU **101/101**, multi-GPU
+deep-block K-step trajectory **2/2 on 2 GPUs** (unchanged — LAMB doesn't touch
+NCCL), compute-sanitizer memcheck **0 errors** + racecheck **0 hazards** on the
+kernel (EV-037), cpp-reviewer pass. Also: the Round-30 full-suite baseline
+(1603/1618) confirmed the GPU environment is healthy again after the v2.28 ~20-
+OOM gap. Env: all 8 GPUs free.
+
+## Previous Milestone: v2.30 Device-Native Cross-Entropy Loss Reduction
 
 **Status:** Complete (2026-08-23, RIL Rounds 30/32)
 

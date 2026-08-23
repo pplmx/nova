@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-23T17:52:01+00:00",
+  "updated_at": "2026-08-23T20:54:00+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2039,6 +2039,145 @@
       "touched_round": 32,
       "commit": "70b79df",
       "title": "v2.30: device cross_entropy_loss_device (ce_loss_rows_kernel per-row block max/exp-sum + atomicAdd into pre-zeroed scalar, v2.29 entry-barrier convention) + accuracy_device (per-row argmax atomic count); MicroTrainer/TransformerTrainer train_step/evaluate routed through them, whole-buffer logits D2H + host O(m*C) loop deleted (issue-v30-ce-loss-host-roundtrip)"
+    },
+    "EV-034": {
+      "id": "EV-034",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T18:39:41+00:00",
+      "updated_at": "2026-08-23T18:39:41+00:00",
+      "touched_round": 32,
+      "source": "CUDA-graph-capture feasibility probe (2026-08-23, /tmp/graph_probe.cu + graph_probe2.cu): REFUTES capturing the current train_step — (1) kernels launched on the legacy default (null) stream during a THREAD_LOCAL capture of another stream fail cudaStreamEndCapture with \"operation would make the legacy stream depend on a capturing blocking stream\"; (2) cudaStreamBeginCapture(cudaStreamLegacy,...) itself fails with \"operation not permitted when stream is capturing\". The neural stack creates per-call op streams inside the layers (tensor_parallel_layers.cpp StreamGuard) and launches kernels on the null stream throughout, so graph capture needs a full capture-stream-parametric rewrite of every layer + NCCL-in-capture — the wide refactor DEC-016 rejected. Direction revised to LAMB kernelization (the v2.27-family host-side member).",
+      "confidence": 1.0
+    },
+    "DEC-017": {
+      "id": "DEC-017",
+      "type": "decision",
+      "status": "active",
+      "version": 2,
+      "created_at": "2026-08-23T18:47:49+00:00",
+      "updated_at": "2026-08-23T20:54:00+00:00",
+      "touched_round": 32,
+      "rationale": "v2.30 close + EV-034 refute CUDA-graph capture of train_step (null-stream kernels cannot be capture streams; per-call op streams inside layers make capture-stream-parametric rewrite a wide, NCCL-risky refactor — DEC-016 already rejected it). The next family-completion target is LAMB: AdamW (v2.27) got device kernels but LAMB kept its full D2H->host-loop->H2D step (optimizers.cpp:82), deferred through DEC-014/015. v2.31 kernelizes LAMB behind the same public LAMBOptimizer::step API — per-element bias-corrected moments + trust-ratio (host-scalar rtw + per-element r clamp), m/v become device buffers, one fused kernel mirroring adamw_step_device; verified by exact-element device-vs-host parity (the host loop stays as the reference oracle) + existing OptimizersTest regression",
+      "alternatives_rejected": "stream-parametric train_step +CUDA graph capture (EV-034 empirically refuted; wide API rewrite + NCCL-in-capture); TASK-018 NCCL P2P/TP failure routing (below 3.0 threshold, orthogonal maintainability); issue-v19 shared-NCCL-context-reset (driver-level undetectable per EV-008); fusing LAMB into the layers (couples optimizer and layer modules; LAMB stays a standalone optimizer with its own step API)"
+    },
+    "issue-v31-lamb-host-roundtrip": {
+      "id": "issue-v31-lamb-host-roundtrip",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-23T18:49:14+00:00",
+      "updated_at": "2026-08-23T20:52:28+00:00",
+      "touched_round": 32,
+      "title": "LAMBOptimizer::step round-trips the full params+grads through the host every call: cudaMemcpy grads D2H + params D2H, a host O(n) loop over every element (with per-element m/v in std::vector), then H2D back — the v2.27-family D2H/H2D debt explicitly deferred (DEC-017: \"LAMB keeps its host-side implementation\") because its layer-adaptation reads host scalars; but rtw is just two host scalars (kernel args) and the trust ratio r is per-element — kernelizable exactly like adamw_step_device"
+    },
+    "TASK-051": {
+      "id": "TASK-051",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-23T18:49:14+00:00",
+      "updated_at": "2026-08-23T20:52:28+00:00",
+      "touched_round": 32,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "unlock_factor": 1,
+      "title": "(umbrella v2.31) device-native LAMB optimizer kernel — a fused lamb_step_device kernel (per-element bias-corrected m/v + trust-ratio update with host-scalar rtw and per-element clamp) replaces the full D2H->host-loop->H2D in LAMBOptimizer::step, behind the same public API; m/v become device buffers; verified by exact-element device-vs-host parity and the OptimizersTest regression"
+    },
+    "TASK-052": {
+      "id": "TASK-052",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-23T18:50:48+00:00",
+      "updated_at": "2026-08-23T20:52:28+00:00",
+      "touched_round": 32,
+      "category": "test-quality",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P1 RED/parity: pin detail::lamb_step_device against a host fp64 LAMB reference (per-element trust-ratio update over K steps, layer-adaptation on/off, clamp on/off) — RED against a throw-stub",
+      "lock_owner": "nova-v31-l30",
+      "lock_until": "2026-08-23T19:24:34+00:00"
+    },
+    "TASK-053": {
+      "id": "TASK-053",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-23T18:50:48+00:00",
+      "updated_at": "2026-08-23T20:52:28+00:00",
+      "touched_round": 32,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "title": "P2 implementation: optimizers_kernels.cu gains lamb_step_kernel (fused bias-corrected moments, per-element trust-ratio r=param/update clamped to [1/clamp_val, clamp_val], host-scalar rtw as kernel arg); LAMBOptimizer m/v become device Buffers; step() routes through detail::lamb_step_device and drops the D2H/H2D",
+      "lock_owner": "nova-v31-l30",
+      "lock_until": "2026-08-23T19:38:08+00:00"
+    },
+    "TASK-054": {
+      "id": "TASK-054",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-23T18:50:49+00:00",
+      "updated_at": "2026-08-23T20:52:28+00:00",
+      "touched_round": 32,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P3 verify: LAMB device-vs-host exact-element parity GREEN over K steps (incl. layer-adaptation + clamp); OptimizersTest regression GREEN; cpp-reviewer pass; RIL close",
+      "lock_owner": "nova-v31-l30",
+      "lock_until": "2026-08-23T19:53:14+00:00"
+    },
+    "EV-035": {
+      "id": "EV-035",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T19:08:08+00:00",
+      "updated_at": "2026-08-23T19:08:08+00:00",
+      "touched_round": 32,
+      "source": "v2.31 P1 RED (2026-08-23): 2/2 LAMB device contracts fail against the throw-stub for the right reason — LAMBDeviceMatchesHostFormulaWithLayerAdaptation (n=256, K=5, rtw=1.2, clamp=10, use_layer_adaptation=true) and NoLayerAdaptation (n=128, K=3, rtw=1.0) both throw \"lamb_step_device not implemented (v2.31 P1 stub)\". 16/16 OptimizersTest baseline GREEN before adding the new contracts (5 LAMB-related existing tests still pass).",
+      "confidence": 1.0
+    },
+    "EV-036": {
+      "id": "EV-036",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T19:23:14+00:00",
+      "updated_at": "2026-08-23T19:23:14+00:00",
+      "touched_round": 32,
+      "source": "v2.31 P2 (2026-08-23): lamb_step_kernel (fused bias-corrected m/v + trust-ratio update with host-scalar rtw + per-element clamp) replaces the throw-stub in optimizers_kernels.cu; LAMBOptimizer m/v become device Buffers and step() routes through detail::lamb_step_device, dropping the full D2H->host-loop->H2D (issue-v31-lamb-host-roundtrip). Both P1 contracts GREEN exact-element (with layer-adaptation rtw=1.2/clamp=10 K=5; no-layer-adaptation rtw=1.0 K=3); existing LAMBOptimizerLayerAdaptation/zero-momentum/setters/construction + AdamW all still pass; Optimizers+trainer regression 26/26.",
+      "confidence": 1.0
+    },
+    "EV-037": {
+      "id": "EV-037",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T20:03:38+00:00",
+      "updated_at": "2026-08-23T20:03:38+00:00",
+      "touched_round": 32,
+      "source": "v2.31 sanitizer verification (2026-08-23): compute-sanitizer memcheck 0 errors AND racecheck 0 hazards on both LAMB kernel tests (WithLayerAdaptation + NoLayerAdaptation) — the fused lamb_step_kernel is a single-writer-per-element kernel with no shared memory, so racecheck cleanliness is expected but independently confirms no m/v/param aliasing hazard.",
+      "confidence": 1.0
+    },
+    "CHG-023": {
+      "id": "CHG-023",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T20:50:05+00:00",
+      "updated_at": "2026-08-23T20:50:05+00:00",
+      "touched_round": 32,
+      "commit": "905c197",
+      "title": "v2.31: fused lamb_step_kernel (bias-corrected m/v + per-element trust-ratio with host rtw scalar + clamp) behind detail::lamb_step_device; LAMBOptimizer m/v become device Buffers and step() routes through it, D2H/host-loop/H2D deleted (issue-v31-lamb-host-roundtrip)"
     }
   },
   "edges": [
@@ -3079,6 +3218,78 @@
       "to": "issue-v30-ce-loss-host-roundtrip",
       "type": "resolves",
       "created_at": "2026-08-23T17:52:01+00:00"
+    },
+    {
+      "from": "TASK-051",
+      "to": "issue-v31-lamb-host-roundtrip",
+      "type": "addresses",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "TASK-051",
+      "to": "TASK-052",
+      "type": "depends_on",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "TASK-051",
+      "to": "TASK-053",
+      "type": "depends_on",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "TASK-051",
+      "to": "TASK-054",
+      "type": "depends_on",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "TASK-052",
+      "to": "TASK-053",
+      "type": "depends_on",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "TASK-053",
+      "to": "TASK-054",
+      "type": "depends_on",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "issue-v31-lamb-host-roundtrip",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "DEC-017",
+      "to": "TASK-051",
+      "type": "governs",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "DEC-017",
+      "to": "comp-neural-parallel",
+      "type": "governs",
+      "created_at": "2026-08-23T18:53:29+00:00"
+    },
+    {
+      "from": "CHG-023",
+      "to": "TASK-053",
+      "type": "implements",
+      "created_at": "2026-08-23T20:50:55+00:00"
+    },
+    {
+      "from": "CHG-023",
+      "to": "TASK-051",
+      "type": "implements",
+      "created_at": "2026-08-23T20:50:55+00:00"
+    },
+    {
+      "from": "CHG-023",
+      "to": "issue-v31-lamb-host-roundtrip",
+      "type": "resolves",
+      "created_at": "2026-08-23T20:50:55+00:00"
     }
   ]
 }

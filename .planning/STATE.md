@@ -1,10 +1,10 @@
 ----
 gsd_state_version: 1.0
-milestone: v2.30
-milestone_name: Device-Native Cross-Entropy Loss Reduction
+milestone: v2.31
+milestone_name: Device-Native LAMB Optimizer Kernel
 status: Complete
-last_updated: "2026-08-23"
-last_activity: 2026-08-23 — Round 30/32: P1 RED (TASK-048) -> P2 device loss/reduce (TASK-049) -> P3 verify + cpp-reviewer M1/M2/L1 addressed, milestone closed
+last_updated: "2026-08-24"
+last_activity: 2026-08-24 — Round 31: P1 RED (TASK-052) -> P2 native LAMB kernel (TASK-053) -> P3 verify (101/101 + sanitizer clean) + cpp-reviewer, milestone closed
 progress:
   total_phases: 3
   completed_phases: 3
@@ -19,11 +19,35 @@ progress:
 
 ## Current Position
 
-Milestone: v2.30 Device-Native Cross-Entropy Loss Reduction
-Status: Complete (Rounds 30/32)
-Last activity: 2026-08-23 — P1 RED (4 loss contracts) -> P2 device CE-loss +
-accuracy kernels -> P3 verify (99/99 + 19/19 on 2 & 4 GPUs + 1603/1618 full
-baseline); cpp-reviewer APPROVE (MEDIUM/LOW addressed); milestone closed
+Milestone: v2.31 Device-Native LAMB Optimizer Kernel
+Status: Complete (Round 31)
+Last activity: 2026-08-24 — P1 RED (2 LAMB contracts) -> P2 fused LAMB kernel ->
+P3 verify (101/101 neural, 2/2 multi-GPU trajectory unchanged, sanitizer clean);
+cpp-reviewer APPROVE; milestone closed
+
+## Milestone v2.31 — Device-Native LAMB Optimizer Kernel
+
+The v2.27 optimizer round kernelized AdamW + norm/clip but left LAMB host-side
+("LAMB keeps its host-side implementation" per the v2.27 header; DEC-014/015
+deferred it). This closes the last optimizer D2H round-trip: every
+`LAMBOptimizer::step` copied grads+params D2H, ran an O(n) host loop with
+per-element `std::vector` m/v, and copied H2D back (optimizers.cpp). v2.31 adds
+a fused `lamb_step_kernel` (bias-corrected m/v, trust-ratio update with the
+host-computed phi_1/phi_2 as a scalar arg, per-element clamp) behind
+`detail::lamb_step_device`; m/v become device buffers; the round-trip is gone.
+Public API unchanged. The Round-30 LEARN candidate (CUDA-graph capture of
+train_step) was empirically refuted first (EV-034: the null-stream / per-call
+op-stream stack can't be captured without a wide stream-parametric rewrite),
+so LAMB was chosen as the family-completion round.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: detail::lamb_step_device vs host LAMB reference (exact-element over K steps; layer-adaptation on/off); RED against throw-stub | Complete (Round 31) — 2/2 RED (EV-035); 16/16 OptimizersTest baseline GREEN before |
+| 2 | Implement: lamb_step_kernel (fused m/v + trust-ratio, rtw scalar arg) + detail::lamb_step_device; LAMBOptimizer m/v -> device Buffers; step() routes through it, D2H/H2D dropped | Complete (Round 31) — CHG-023; exact-element parity GREEN (EV-036); Optimizers+trainer 26/26 |
+| 3 | Verify: parity GREEN over K steps; OptimizersTest 18/18; neural single-GPU 101/101; multi-GPU deep-block trajectory unchanged (2/2 on 2 GPUs); compute-sanitizer memcheck 0 / racecheck 0 (EV-037); cpp-reviewer; RIL close | Complete (Round 31) |
+
+Decision: DEC-017 (also records the EV-034 CUDA-graph-capture refutation). Env:
+all 8 GPUs free.
 
 ## Milestone v2.30 — Device-Native Cross-Entropy Loss Reduction
 
@@ -332,6 +356,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.28 Normalized Transformer Blocks + Deep Multi-Layer Training | Complete | 2026-08-19 | 3 phases |
 | v2.29 Device-Native SDPA + LayerNorm Training Kernels | Complete | 2026-08-19 | 3 phases |
 | v2.30 Device-Native Cross-Entropy Loss Reduction | Complete | 2026-08-23 | 3 phases |
+| v2.31 Device-Native LAMB Optimizer Kernel | Complete | 2026-08-24 | 3 phases |
 
 ---
 

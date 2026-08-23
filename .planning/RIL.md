@@ -3,7 +3,7 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 30).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 31).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
@@ -15,7 +15,8 @@ v2.25/26/27 closed at Rounds 25/26/27 → **v2.28 "Normalized Transformer Blocks
 Residual) + Deep Multi-Layer Training"** closed at Round 29 → **v2.29 "Device-Native
 Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 →
 **v2.30 "Device-Native Cross-Entropy Loss Reduction"** opened and
-**closed at Round 30/32**.
+**closed at Round 30/32** → **v2.31 "Device-Native LAMB Optimizer
+Kernel"** opened and **closed at Round 31**.
 
 ## Latest round
 - **Round 30/32 (2026-08-23)** — milestone **v2.30 "Device-Native Cross-Entropy
@@ -35,16 +36,21 @@ Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 
   full-suite baseline 1603/1618 (99%; 15 -j8 device-0 OOM contention in
   memory-heavy inference suites, each passing in isolation — the pre-existing
   environment limitation now much reduced from the v2.28 ~20-OOM gap since all
-  8 GPUs are free again). cpp-reviewer pass. Milestone **closed**. P1 RED pinned 6 device-kernel contracts
-  vs fp64 references (EV-025); P2 moved SDPA fwd/bwd to device kernels behind
-  the same API (`attention_kernels.cu` detail module, mirroring
-  `optimizers_kernels.cu`) + parallelized the LN training kernels with
-  block/warp reductions, deleting the host round-trips (EV-026); P3 verified —
-  neural single-GPU 79/79, multi-GPU cross-suite + deep-block K-step trajectory
-  parity 19/19 on 2 & 4 GPUs (EV-027). cpp-reviewer caught a real HIGH
-  (cross-call shared race on the block-reduction buffer, compute-sanitizer
-  racecheck-verified — fixed with entry barriers, CHG-021) and MEDIUM (signed
-  int overflow in grids — 64-bit guard). Milestone **closed**.
+  8 GPUs are free again). cpp-reviewer APPROVE (MEDIUM 2^24-bound doc + M2
+  accuracy/C>256 tests; LOW memset checks addressed). Milestone **closed**.
+- **Round 31 (2026-08-24)** — milestone **v2.31 "Device-Native LAMB Optimizer
+  Kernel"** opened through **close (P1+P2+P3)** (DEC-017, TASK-051/052/053/054,
+  CHG-023, EV-034/035/036/037). Round-30's CUDA-graph-capture candidate was
+  empirically refuted first (EV-034: the null-stream / per-call-op-stream
+  training stack can't be captured without a wide stream-parametric rewrite),
+  so the round completed the v2.27 optimizer family: `LAMBOptimizer::step` is
+  now a fused `lamb_step_kernel` (bias-corrected m/v + trust-ratio, host rtw
+  scalar, per-element clamp) behind `detail::lamb_step_device`, m/v on device,
+  the D2H→host-loop→H2D gone (issue-v31-lamb-host-roundtrip). P1 RED 2/2
+  (EV-035); P2 exact-element parity over K steps GREEN (EV-036); P3 verified —
+  OptimizersTest 18/18, neural single-GPU 101/101, multi-GPU deep-block K-step
+  trajectory unchanged 2/2 on 2 GPUs, compute-sanitizer memcheck 0 / racecheck
+  0 on the kernel (EV-037), cpp-reviewer pass. Milestone **closed**.
 - **Round 29 (2026-08-19)** — milestone **v2.28 "Normalized Transformer Blocks (LayerNorm +
   Residual) + Deep Multi-Layer Training"** opened through **close (P1+P2+P3)** (DEC-014,
   TASK-039/040/041/042, CHG-017/018/019, EV-022/023/024). The stack previously trained one
