@@ -3,7 +3,7 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 32).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 33).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
@@ -17,9 +17,21 @@ Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 
 **v2.30 "Device-Native Cross-Entropy Loss Reduction"** opened and
 **closed at Round 30/32** → **v2.31 "Device-Native LAMB Optimizer
 Kernel"** opened and **closed at Round 31** → **v2.32 "Model Checkpointing
-(Weights + Optimizer State)"** opened and **closed at Round 32**.
+(Weights + Optimizer State)"** closed at Round 32 → **v2.33 "Multi-GPU
+Rank-Shard Checkpoint Restore"** opened at Round 33 (in progress).
 
 ## Latest round
+- **Round 33 (2026-08-24)** — milestone **v2.33 "Multi-GPU Rank-Shard
+  Checkpoint Restore"** **opened** (DEC-019, TASK-059/060/061/062,
+  EV-041/EV-042). v2.32 shipped exact tp=1 checkpointing but guarded tp>1
+  (copy_* returns rank shards while set_* takes full weights — asymmetric
+  restore). v2.33 removes the guard: no-slice shard uploaders
+  (ColumnParallelLayer/RowParallelLayer::set_weight_shard,
+  TensorParallelMLP::set_weight_shards, TransformerBlock::set_weight_shards),
+  rank-aware save/load sizing from dims/tp, geometry-validated count-tagged
+  restore. P1 RED 2/2: CheckpointMultiGpuTest RankLocalCheckpoint contracts
+  (MicroTrainer + TransformerTrainer, thread-per-rank on real 2 GPUs) fail the
+  tp>1 guard (EV-041/EV-042). In progress.
 - **Round 32 (2026-08-24)** — milestone **v2.32 "Model Checkpointing (Weights +
   Optimizer State)"** opened through **close (P1+P2+P3)** (DEC-018,
   TASK-055/056/057/058, CHG-024/CHG-025, EV-038/039/040, ISS-001,

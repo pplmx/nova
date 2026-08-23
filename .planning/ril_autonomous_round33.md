@@ -1,0 +1,87 @@
+# RIL — Round 32 (2026-08-24) — milestone v2.33 "Multi-GPU Rank-Shard Checkpoint Restore"
+
+## Round focus
+
+**Open milestone v2.33** — completes the v2.32 persistence milestone on the
+multi-GPU path. v2.32 shipped exact trainer checkpointing (save_state /
+load_state + AdamW moment export/import, NSCK v1) but **explicitly guarded
+tp > 1**: with TP>1 the `copy_*` readbacks expose rank shards while the `set_*`
+uploaders take *full* weights and slice this rank's shard (ColumnParallelLayer
+slices by rank, RowParallelLayer by input), so `copy_*`→`set_*` is asymmetric
+away from tp=1 — and a rank-local checkpoint could not restore. That guard was
+documented as the genuine follow-up (TASK-059, 6.0). This round removes it:
+rank-shard checkpoint restore on real multi-GPU.
+
+## Observation / Model
+
+- **M1 (binding)**: `save_state`/`load_state` throw on tp > 1 (the v2.32
+  guard). A 2+ GPU training run cannot persist or resume — the very
+  interruption-resume use case checkpointing exists for. Same core-feature
+  family as v2.32 (ISS-001's remaining half).
+- **M2 (shard layout)**: each trainer's rank shards are derivable from the
+  geometry — MicroTrainer gate/up `hidden×(inter/tp)`, down `(inter/tp)×hidden`;
+  TransformerBlock wq/wk/wv `hidden×(qkv/tp)`, wo `(qkv/tp)×hidden`, wg/wu
+  `hidden×(inter/tp)`, wd `(inter/tp)×hidden`, LN gamma/beta replicated `hidden`
+  (verified against ColumnParallelLayer / RowParallelLayer / TP-attention
+  layouts in P2 OBSERVE). `copy_weight*` already returns exactly these;
+  the optimizer moment capacity equals the shard size too.
+- **M3 (restore primitive)**: a no-slice shard uploader is literally the
+  tp=1 branch of the existing `ColumnParallelLayer::set_weight` / row layer —
+  extract it as `set_weight_shard`, then `TensorParallelMLP::set_weight_shards`
+  (3) and `TransformerBlock::set_weight_shards` (11: 4 replicated LN + 7
+  sharded matmul) compose them. `load_state` reads the count-tagged NSCK-v1
+  records (count = this trainer's shard counts at tp>1, full at tp=1),
+  validates, then applies via the shard setters.
+- **M4 (semantics)**: rank-local same-topology restore — a checkpoint written
+  on a given topology loads onto an identically-geometried trainer (the
+  resume-after-interruption case); the cross-topology "distribute a tp=1
+  checkpoint onto N ranks" (full→shard) and the "gather 1 checkpoint" (NCCL
+  all-gather on save) features stay out of scope. Count-tagged records reject
+  a geometry mismatch (a tp=1 file into a tp>1 trainer, or vice versa), so no
+  silent mis-restore.
+
+## Decisions
+
+- **DEC-019**: milestone direction — remove the tp>1 checkpoint guard: rank
+  shard setters (`ColumnParallelLayer`/`RowParallelLayer::set_weight_shard`,
+  `TensorParallelMLP::set_weight_shards`, `TransformerBlock::set_weight_shards`)
+  + rank-aware `save_state`/`load_state` (sizes from dims/tp; load applies via
+  the shard setters, geometry-validated). Verified by byte-exact per-rank
+  roundtrip + resumed-vs-uninterrupted on real 2-GPU trains (MicroTrainer
+  single-trainer-over-ctx style; deep transformer thread-per-rank style),
+  and the existing tp=1 CheckpointTest suite still byte-identical at tp=1.
+  Rejected: full-weight cross-rank gather via NCCL on save (in-scope only for
+  a single-checkpoint-per-cluster feature — separate follow-up); leaving the
+  guard in place (the interruption-resume use case is the point of the
+  preceding milestone); cross-topology load (distributing tp=1 checkpoints —
+  out of scope).
+
+## Milestone definition (opened)
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: 2 multi-GPU checkpoint contracts (MicroTrainer rank-local save-load roundtrip + resumed-vs-uninterrupted; TransformerTrainer per-rank same) fail against the tp>1 guard | In progress (Round 33) |
+| 2 | Implement: layer shard setters + TensorParallelMLP/TransformerBlock set_weight_shards; rank-aware save/load sizing; drop the tp>1 guards; route load through shard setters | Pending |
+| 3 | Verify: 2-GPU checkpoint contracts GREEN; tp=1 CheckpointTest 8/8 unchanged; neural single-GPU + multi-GPU regressions; cpp-reviewer; RIL close; ISS-001 resolved | Pending |
+
+**Graph additions (Round 33, opening):**
+- `DEC-019` (decision, milestone direction); `TASK-060` (P1) / `TASK-061`
+  (P2) / `TASK-062` (P3), each depends_on the TASK-059 umbrella (which also
+  keeps its address to ISS-001).
+
+## P1 RED (TASK-060)
+
+- Added `CheckpointMultiGpuTest` (tests/neural/checkpoint_multigpu_test.cpp,
+  registered in tests/CMakeLists.txt) with 2 contracts over a real 2-GPU NCCL
+  context (thread-per-rank via run_per_rank, matching the MicroTrainerMultiGpu
+  / DeepBlockMultiGpu style):
+  - `MultiGpu_MicroTrainer_RankLocalCheckpoint`: per-rank MicroTrainer, train
+    K steps, save_state -> fresh same-rank trainer load_state, rank-shard
+    copy_weights byte-identical, resumed losses == uninterrupted holdout.
+  - `MultiGpu_TransformerTrainer_RankLocalCheckpoint`: per-rank
+    TransformerTrainer, same contract over all 11N+2 tensors (shard-sized
+    matmul + replicated LN), resumed deep trajectory matches.
+- RED run (EV-041): 2/2 fail for the right reason — both hit the tp>1
+  save_state guard ("...v2.32 follow-up (TASK)..."). Harness detail recorded
+  as EV-042: the fixture SetUp must `DeviceMesh::instance().initialize()`
+  (device_count reads 0 before init), same as MicroTrainerMultiGpuTest.

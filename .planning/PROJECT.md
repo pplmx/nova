@@ -4,7 +4,30 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
+## Current Milestone: v2.33 Multi-GPU Rank-Shard Checkpoint Restore
+
+**Status:** In Progress (2026-08-24, RIL Round 33)
+
+**Milestone v2.33** (DEC-019). v2.32 shipped exact trainer checkpointing but
+explicitly guarded `tp > 1`: with TP>1 the `copy_*` readbacks expose rank
+shards while `set_*` takes full weights, so a rank-local checkpoint couldn't
+restore — the exact interruption-resume use case checkpointing exists for.
+v2.33 removes the guard via no-slice shard uploaders
+(`ColumnParallelLayer`/`RowParallelLayer::set_weight_shard`, then
+`TensorParallelMLP::set_weight_shards` + `TransformerBlock::set_weight_shards`),
+rank-aware `save_state`/`load_state` sizing (from dims/tp), and
+geometry-validated count-tagged restore onto an identically-geometried trainer
+(rank-local same-topology semantics; cross-topology/gather features stay out of
+scope). Verified by byte-exact per-rank roundtrip + resumed-vs-uninterrupted
+on real 2-GPU trains; the tp=1 CheckpointTest suite must stay byte-identical.
+
+Phases: **P1 (TASK-060)** pins the two multi-GPU contracts RED (2/2 fail the
+tp>1 guard, EV-041). **P2 (TASK-061)** implements the shard setters +
+rank-aware save/load. **P3 (TASK-062)** verifies — 2-GPU contracts GREEN,
+tp=1 suite 8/8 unchanged, regressions, cpp-reviewer, RIL close (ISS-001
+resolved).
+
+## Previous Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
 
 **Status:** Complete (2026-08-24, RIL Round 32)
 

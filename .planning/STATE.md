@@ -1,13 +1,13 @@
 ----
 gsd_state_version: 1.0
-milestone: v2.32
-milestone_name: Model Checkpointing (Weights + Optimizer State)
-status: Complete
+milestone: v2.33
+milestone_name: Multi-GPU Rank-Shard Checkpoint Restore
+status: In Progress
 last_updated: "2026-08-24"
-last_activity: 2026-08-24 — Round 32: P1 RED -> P2 implement -> cpp-reviewer MEDIUM fixes -> P3 verify + RIL close, milestone closed
+last_activity: 2026-08-24 — Round 33: milestone opened (DEC-019, TASK-059..062); P1 RED in progress
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -19,12 +19,31 @@ progress:
 
 ## Current Position
 
-Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
-Status: Complete (Round 32)
-Last activity: 2026-08-24 — P1 RED (6 contracts + stubs) -> P2 NSCK-v1
-save_state/load_state + AdamW moment API -> cpp-reviewer MEDIUM fixes
-(transactional load, n!=capacity rejection) -> P3 verify (8/8, 115/115, 5/5
-multi-GPU) + RIL close; tp>1 rank-shard restore opened as TASK-059
+Milestone: v2.33 Multi-GPU Rank-Shard Checkpoint Restore
+Status: In Progress (Round 33)
+Last activity: 2026-08-24 — milestone opened (DEC-019): remove the tp>1
+checkpoint guard via layer shard setters + rank-aware save/load; P1 RED in
+progress
+
+## Milestone v2.33 — Multi-GPU Rank-Shard Checkpoint Restore
+
+v2.32 shipped exact trainer checkpointing but explicitly guarded tp>1: with
+TP>1 the copy_* readbacks expose rank shards while set_* takes full weights, so
+a rank-local checkpoint couldn't restore — the interruption-resume use case
+checkpointing exists for. v2.33 removes the guard: no-slice shard uploaders
+(ColumnParallelLayer/RowParallelLayer::set_weight_shard, then
+TensorParallelMLP::set_weight_shards + TransformerBlock::set_weight_shards),
+rank-aware save_state/load_state sizing (from dims/tp), geometry-validated
+count-tagged restore onto an identically-geometried trainer. Verified by
+byte-exact per-rank roundtrip + resume-vs-uninterrupted on real 2-GPU trains
+(all checkpoint_multigpu_test.cpp); the tp=1 CheckpointTest suite must stay
+byte-identical.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: 2 multi-GPU checkpoint contracts (MicroTrainer rank-local roundtrip; TransformerTrainer per-rank) fail against the tp>1 guard | In progress (Round 33) |
+| 2 | Implement: layer shard setters + set_weight_shards; rank-aware save/load sizing; drop tp>1 guards; load through shard setters | Pending |
+| 3 | Verify: 2-GPU contracts GREEN; tp=1 CheckpointTest 8/8; neural single-GPU + multi-GPU regressions; cpp-reviewer; RIL close; ISS-001 resolved | Pending |
 
 ## Milestone v2.32 — Model Checkpointing (Weights + Optimizer State)
 

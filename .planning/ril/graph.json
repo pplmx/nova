@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-23T23:11:18+00:00",
+  "updated_at": "2026-08-23T23:35:59+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2329,6 +2329,78 @@
       "source": "cpp-reviewer agent aba7274412a746e17 + re-verification run",
       "title": "cpp-reviewer APPROVE (no CRITICAL/HIGH) with 3 MEDIUM: (1) load_state not transactional -> fixed two-phase read-then-apply + RejectedLoadLeavesTrainerUntouched; (2) step counter not serialized -> documented step_no is caller-managed; (3) copy_moments n!=capacity underspecified -> reject both directions + AdamWMomentCapacityMismatchRejected. LOWs: check-before-write, kMaxCount, load tp>1 guard, endianness doc, kBlockTensorCount. Re-verified 8/8 + 115/115 + 5/5.",
       "confidence": 1.0
+    },
+    "DEC-019": {
+      "id": "DEC-019",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-23T23:25:40+00:00",
+      "touched_round": 32,
+      "title": "milestone direction v2.33: remove the tp>1 checkpoint guard — rank-shard checkpoint restore on real multi-GPU via shard setters (set_weight_shard on column/row layers, set_weight_shards on TensorParallelMLP/TransformerBlock), rank-aware save_state/load_state (sizes from dims/tp), geometry-validated count-tagged restore",
+      "rationale": "v2.32 shipped exact tp=1 trainer checkpointing but threw on tp>1 because copy_* (rank shards) is asymmetric with set_* (full weights). The interruption-resume use case checkpointing exists for is precisely multi-GPU, so TASK-059 (6.0) is the named follow-up. Shard layout verified against the layer implementations; a no-slice shard uploader is exactly the existing tp=1 branch of set_weight, so the new setter surface is small and naturally correct. Verified by byte-exact per-rank roundtrip + resume on real 2-GPU trains; tp=1 suite must stay byte-identical.",
+      "alternatives_rejected": "NCCL full-weight gather on save + single checkpoint per cluster (needs an all-gather collective inside the trainer save path — separate follow-up); keeping the tp>1 guard (defeats the resume use case); cross-topology load / distribute-a-tp=1-checkpoint (full->shard redistribution is a distinct feature)"
+    },
+    "TASK-060": {
+      "id": "TASK-060",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-23T23:25:40+00:00",
+      "touched_round": 32,
+      "category": "core-feature",
+      "severity": 2,
+      "title": "v2.33 P1 RED: multi-GPU rank-local checkpoint contracts fail against the tp>1 guard — MicroTrainer (single-trainer-over-ctx) + TransformerTrainer (per-rank run_per_rank): save->load->resume byte-exact shard roundtrip + resumed-vs-uninterrupted on 2 GPUs"
+    },
+    "TASK-061": {
+      "id": "TASK-061",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-23T23:25:40+00:00",
+      "touched_round": 32,
+      "category": "core-feature",
+      "severity": 2,
+      "title": "v2.33 P2 implement: ColumnParallelLayer/RowParallelLayer::set_weight_shard + TensorParallelMLP::set_weight_shards + TransformerBlock::set_weight_shards; rank-aware save_state sizing (dims/tp); drop tp>1 guards; load_state applies via shard setters, geometry-validated"
+    },
+    "TASK-062": {
+      "id": "TASK-062",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-23T23:25:40+00:00",
+      "touched_round": 32,
+      "category": "core-feature",
+      "severity": 2,
+      "title": "v2.33 P3 verify: 2-GPU checkpoint contracts GREEN; tp=1 CheckpointTest 8/8 unchanged; neural single-GPU + multi-GPU regressions; cpp-reviewer; RIL close; ISS-001 resolved"
+    },
+    "EV-041": {
+      "id": "EV-041",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:35:59+00:00",
+      "updated_at": "2026-08-23T23:35:59+00:00",
+      "touched_round": 32,
+      "source": "tests/neural/checkpoint_multigpu_test.cpp CheckpointMultiGpuTest.* (P1 RED run, 2 GPUs)",
+      "title": "CheckpointMultiGpuTest P1 RED: MultiGpu_MicroTrainer_RankLocalCheckpoint + MultiGpu_TransformerTrainer_RankLocalCheckpoint both fail the tp>1 save_state guard ('...v2.32 follow-up (TASK)...') on real 2-GPU runs (NCCL_TESTS_AVAILABLE=1, CUDA_VISIBLE_DEVICES=2,3)",
+      "confidence": 1.0
+    },
+    "EV-042": {
+      "id": "EV-042",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:35:59+00:00",
+      "updated_at": "2026-08-23T23:35:59+00:00",
+      "touched_round": 32,
+      "source": "checkpoint_multigpu_test.cpp fixture",
+      "title": "Multi-GPU test harness detail: CheckpointMultiGpuTest.SetUp must call DeviceMesh::instance().initialize() (device_count is 0 before init) — the working MicroTrainerMultiGpu suite does the same",
+      "confidence": 1.0
     }
   },
   "edges": [
@@ -3519,6 +3591,30 @@
       "to": "TASK-057",
       "type": "implements",
       "created_at": "2026-08-23T23:11:18+00:00"
+    },
+    {
+      "from": "DEC-019",
+      "to": "TASK-061",
+      "type": "governs",
+      "created_at": "2026-08-23T23:25:40+00:00"
+    },
+    {
+      "from": "TASK-060",
+      "to": "TASK-059",
+      "type": "depends_on",
+      "created_at": "2026-08-23T23:26:09+00:00"
+    },
+    {
+      "from": "TASK-061",
+      "to": "TASK-060",
+      "type": "depends_on",
+      "created_at": "2026-08-23T23:26:09+00:00"
+    },
+    {
+      "from": "TASK-062",
+      "to": "TASK-061",
+      "type": "depends_on",
+      "created_at": "2026-08-23T23:26:09+00:00"
     }
   ]
 }
