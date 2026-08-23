@@ -82,8 +82,11 @@ public:
 
 private:
     LAMBConfig config_;
-    std::vector<float> m_data_;
-    std::vector<float> v_data_;
+    // Device moment buffers (v2.31 / DEC-017): the update runs in a fused
+    // kernel instead of the former D2H -> host vector loop -> H2D (the same
+    // change v2.27 made to AdamW).
+    std::unique_ptr<cuda::memory::Buffer<float>> m_data_;
+    std::unique_ptr<cuda::memory::Buffer<float>> v_data_;
     bool initialized_ = false;
 };
 
@@ -135,6 +138,16 @@ float gradient_norm_device(const float* grads, size_t n,
                            GradientClipConfig::NormType norm_type,
                            cudaStream_t stream);
 void clip_device(float* grads, size_t n, float scale, cudaStream_t stream);
+
+// Fused LAMB update kernel (milestone v2.31 / DEC-017): per-element
+// bias-corrected moments + trust-ratio update. `rtw` is the host-computed
+// layer-adaptation ratio (phi_1/phi_2, 1.0 when disabled) — a scalar kernel
+// arg, per-element `r = clamp(param/update, 1/clamp_val, clamp_val)`.
+void lamb_step_device(
+    float* params, const float* grads, float* m, float* v, size_t n,
+    float lr, float beta1, float beta2, float eps, float wd,
+    float beta1_pow, float beta2_pow, float rtw, float clamp_val,
+    bool use_layer_adaptation, cudaStream_t stream);
 
 }  // namespace detail
 

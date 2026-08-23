@@ -3,11 +3,11 @@
  * @brief Optimizer implementations (milestone v2.27)
  *
  * The per-element compute now runs on device (see optimizers_kernels.cu): AdamW
- * m/v are device buffers updated by one fused kernel, the gradient norm uses a
- * device reduction, and clipping scales on device — removing the D2H/H2D full
- * round-trips the host loop previously did. LAMB keeps its host-side
- * implementation (its layer-adaptation needs host-side layer-norm reads and
- * per-element clamping) and is unaffected.
+ * and LAMB m/v are device buffers updated by fused kernels, the gradient norm
+ * uses a device reduction, and clipping scales on device — removing the D2H/H2D
+ * full round-trips the host loops previously did. LAMB's layer-adaptation ratio
+ * (phi_1/phi_2) is a host-computed scalar passed to the fused kernel
+ * (v2.31 / DEC-017), so the per-element update runs on device like AdamW's.
  */
 
 #include "cuda/neural/optimizers/optimizers.h"
@@ -89,64 +89,39 @@ void LAMBOptimizer::step(
     cudaStream_t stream
 ) {
     if (!initialized_) {
-        m_data_.resize(num_elements, 0.0f);
-        v_data_.resize(num_elements, 0.0f);
+        m_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        v_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
         initialized_ = true;
     }
+    if (m_data_->size() < num_elements) {
+        m_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        v_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
+    }
 
-    float lr = config_.learning_rate;
-    float beta1 = config_.beta1;
-    float beta2 = config_.beta2;
-    float eps = config_.epsilon;
-    float wd = config_.weight_decay;
-    float clamp_val = config_.clamp_value;
-
-    float beta1_pow = std::pow(beta1, step);
-    float beta2_pow = std::pow(beta2, step);
-
-    std::vector<float> h_grads(num_elements);
-    std::vector<float> h_params(num_elements);
-
-    CUDA_CHECK(cudaMemcpy(h_grads.data(), grads, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_params.data(), params, num_elements * sizeof(float), cudaMemcpyDeviceToHost));
-
+    // Host-computed layer-adaptation ratio (phi_1/phi_2): a scalar, passed to
+    // the device kernel as an argument (v2.31 — the math itself runs on device).
     float rtw = 0.0f;
     if (config_.use_layer_adaptation && layer_norm_1 && layer_norm_2) {
-        float phi_1 = *layer_norm_1;
-        float phi_2 = *layer_norm_2;
+        const float phi_1 = *layer_norm_1;
+        const float phi_2 = *layer_norm_2;
         if (phi_1 > 0.0f && phi_2 > 0.0f) {
             rtw = phi_1 / phi_2;
         }
     }
     if (rtw == 0.0f) rtw = 1.0f;
 
-    for (size_t i = 0; i < num_elements; ++i) {
-        float grad = h_grads[i];
-        float param = h_params[i];
+    const float beta1_pow = std::pow(config_.beta1, step);
+    const float beta2_pow = std::pow(config_.beta2, step);
 
-        m_data_[i] = beta1 * m_data_[i] + (1.0f - beta1) * grad;
-        v_data_[i] = beta2 * v_data_[i] + (1.0f - beta2) * grad * grad;
-
-        float m_hat = m_data_[i] / (1.0f - beta1_pow);
-        float v_hat = v_data_[i] / (1.0f - beta2_pow);
-
-        float update = m_hat / (std::sqrt(v_hat) + eps);
-        update += wd * param;
-
-        float r = 1.0f;
-        if (config_.use_layer_adaptation) {
-            float norm_update = std::abs(update);
-            float norm_param = std::abs(param);
-            if (norm_param > 0.0f) {
-                r = norm_param / norm_update;
-                r = std::min(std::max(r, 1.0f / clamp_val), clamp_val);
-            }
-        }
-
-        h_params[i] = param - lr * r * rtw * update;
-    }
-
-    CUDA_CHECK(cudaMemcpy(params, h_params.data(), num_elements * sizeof(float), cudaMemcpyHostToDevice));
+    detail::lamb_step_device(
+        params, grads, m_data_->data(), v_data_->data(), num_elements,
+        config_.learning_rate, config_.beta1, config_.beta2, config_.epsilon,
+        config_.weight_decay, beta1_pow, beta2_pow, rtw, config_.clamp_value,
+        config_.use_layer_adaptation, stream);
 }
 
 void LAMBOptimizer::set_learning_rate(float lr) {
@@ -154,8 +129,10 @@ void LAMBOptimizer::set_learning_rate(float lr) {
 }
 
 void LAMBOptimizer::zero_momentum() {
-    std::fill(m_data_.begin(), m_data_.end(), 0.0f);
-    std::fill(v_data_.begin(), v_data_.end(), 0.0f);
+    if (m_data_) {
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
+    }
 }
 
 void LAMBOptimizer::zero_grad() {}

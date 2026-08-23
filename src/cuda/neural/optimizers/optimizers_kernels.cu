@@ -127,6 +127,54 @@ void clip_device(float* grads, size_t n, float scale, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
+// Fused LAMB update (milestone v2.31 / DEC-017): the exact per-element math of
+// the host LAMBOptimizer::step loop, run on device — bias-corrected m/v, the
+// AdamW-style update, then the per-element trust ratio
+// r = clamp(|w|/|update|, 1/clamp_val, clamp_val) when layer adaptation is
+// enabled (rtw = the host-computed phi_1/phi_2 layer ratio, a scalar arg).
+__global__ void lamb_step_kernel(
+    float* params, const float* grads, float* m, float* v, size_t n,
+    float lr, float beta1, float beta2, float eps, float wd,
+    float beta1_pow, float beta2_pow, float rtw, float clamp_val,
+    bool use_layer_adaptation) {
+    const size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x;
+    if (i >= n) return;
+    const float grad = grads[i];
+    const float param = params[i];
+    const float m_new = beta1 * m[i] + (1.0f - beta1) * grad;
+    const float v_new = beta2 * v[i] + (1.0f - beta2) * grad * grad;
+    const float m_hat = m_new / (1.0f - beta1_pow);
+    const float v_hat = v_new / (1.0f - beta2_pow);
+    float update = m_hat / (sqrtf(v_hat) + eps) + wd * param;
+    float r = 1.0f;
+    if (use_layer_adaptation) {
+        const float nu = fabsf(update);
+        const float np = fabsf(param);
+        if (np > 0.0f) {
+            r = np / nu;
+            r = fminf(fmaxf(r, 1.0f / clamp_val), clamp_val);
+        }
+    }
+    params[i] = param - lr * r * rtw * update;
+    m[i] = m_new;
+    v[i] = v_new;
+}
+
+void lamb_step_device(
+    float* params, const float* grads, float* m, float* v, size_t n,
+    float lr, float beta1, float beta2, float eps, float wd,
+    float beta1_pow, float beta2_pow, float rtw, float clamp_val,
+    bool use_layer_adaptation, cudaStream_t stream) {
+    const int block = 256;
+    const int grid = static_cast<int>((n + block - 1) / block);
+    lamb_step_kernel<<<grid, block, 0, stream>>>(
+        params, grads, m, v, n, lr, beta1, beta2, eps, wd, beta1_pow,
+        beta2_pow, rtw, clamp_val, use_layer_adaptation);
+    // async launch errors surface on the next sync; check immediately so a
+    // bad launch is reported here, not in a caller's later cudaStreamSync.
+    CUDA_CHECK(cudaGetLastError());
+}
+
 }  // namespace detail
 
 }  // namespace cuda::neural::optimizers

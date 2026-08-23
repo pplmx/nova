@@ -165,6 +165,36 @@ void host_adamw(const float* w, const float* g, float* w_out,
     }
 }
 
+// Reference for the Milestone v2.31 device LAMB kernel: the exact
+// LAMBOptimizer::step host math (the oracle the device must reproduce
+// element-for-element). rtw is passed in (phi_1/phi_2 when layer adaptation
+// is on, 1.0 otherwise); per-element trust ratio r = |w|/|update| clamped to
+// [1/clamp_val, clamp_val] only when use_layer_adaptation.
+void host_lamb(const float* w, const float* g, float* w_out,
+               std::vector<float>& m, std::vector<float>& v, size_t n,
+               int step, float lr, float b1, float b2, float eps, float wd,
+               float rtw, float clamp_val, bool use_layer_adaptation) {
+    const float b1p = std::pow(b1, step);
+    const float b2p = std::pow(b2, step);
+    for (size_t i = 0; i < n; ++i) {
+        m[i] = b1 * m[i] + (1.0f - b1) * g[i];
+        v[i] = b2 * v[i] + (1.0f - b2) * g[i] * g[i];
+        const float mh = m[i] / (1.0f - b1p);
+        const float vh = v[i] / (1.0f - b2p);
+        float up = mh / (std::sqrt(vh) + eps) + wd * w[i];
+        float r = 1.0f;
+        if (use_layer_adaptation) {
+            const float nu = std::abs(up);
+            const float np = std::abs(w[i]);
+            if (np > 0.0f) {
+                r = np / nu;
+                r = std::min(std::max(r, 1.0f / clamp_val), clamp_val);
+            }
+        }
+        w_out[i] = w[i] - lr * r * rtw * up;
+    }
+}
+
 }  // namespace
 
 // The device AdamW kernel must leave params equal to the host formula over K
@@ -199,6 +229,104 @@ TEST_F(OptimizersTest, AdamWDeviceMatchesHostFormula) {
     d_w.copy_to(dw.data(), n);
     for (size_t i = 0; i < n; ++i) {
         EXPECT_NEAR(hw[i], dw[i], 1e-4f) << "AdamW device/host drift at " << i;
+    }
+}
+
+// ============================================================================
+// Milestone v2.31 (DEC-017 / TASK-052) — device LAMB optimizer kernel.
+// detail::lamb_step_device must leave params element-for-element equal to the
+// host LAMBOptimizer::step math (the oracle in host_lamb above) over K steps,
+// for both layer-adaptation on/off and clamping on/off. Pinned against the
+// throw-stub (RED); GREEN with the P2 fused kernel.
+// ============================================================================
+
+// Device LAMB over K steps with layer adaptation ON must match host_lamb
+// element-for-element. Runs detail::lamb_step_device with persistent m/v
+// device buffers (the P2 shape: LAMBOptimizer's m/v become device Buffers).
+TEST_F(OptimizersTest, LAMBDeviceMatchesHostFormulaWithLayerAdaptation) {
+    const size_t n = 256;
+    std::vector<float> w0(n), g(n);
+    std::mt19937 rng(20260824);
+    std::uniform_real_distribution<float> dist(-2.0f, 2.0f);
+    for (size_t i = 0; i < n; ++i) { w0[i] = dist(rng); g[i] = dist(rng); }
+
+    LAMBConfig cfg;
+    cfg.learning_rate = 0.005f;
+    cfg.use_layer_adaptation = true;
+    cfg.clamp_value = 10.0f;
+    const float rtw = 1.2f;  // phi_1/phi_2 layer ratio (host scalars)
+
+    std::vector<float> hw = w0;
+    std::vector<float> hm(n, 0.0f), hv(n, 0.0f);
+
+    cuda::memory::Buffer<float> d_w(n), d_g(n), d_m(n), d_v(n);
+    d_w.copy_from(w0.data(), n);
+    d_g.copy_from(g.data(), n);
+    d_m.fill(0.0f);
+    d_v.fill(0.0f);
+
+    const int K = 5;
+    for (int s = 1; s <= K; ++s) {
+        host_lamb(hw.data(), g.data(), hw.data(), hm, hv, n, s,
+                  cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon,
+                  cfg.weight_decay, rtw, cfg.clamp_value,
+                  cfg.use_layer_adaptation);
+        EXPECT_NO_THROW(
+            detail::lamb_step_device(
+                d_w.data(), d_g.data(), d_m.data(), d_v.data(), n,
+                cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon,
+                cfg.weight_decay, std::pow(cfg.beta1, s),
+                std::pow(cfg.beta2, s), rtw, cfg.clamp_value,
+                cfg.use_layer_adaptation, nullptr));
+    }
+    std::vector<float> dw(n);
+    d_w.copy_to(dw.data(), n);
+    for (size_t i = 0; i < n; ++i) {
+        EXPECT_NEAR(hw[i], dw[i], 1e-4f) << "LAMB device/host drift at " << i;
+    }
+}
+
+// Layer adaptation OFF: r stays 1.0, so the update is lr*rtw times the
+// AdamW-style update. Still must equal host_lamb element-for-element.
+TEST_F(OptimizersTest, LAMBDeviceMatchesHostFormulaNoLayerAdaptation) {
+    const size_t n = 128;
+    std::vector<float> w0(n), g(n);
+    std::mt19937 rng(20260825);
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    for (size_t i = 0; i < n; ++i) { w0[i] = dist(rng); g[i] = dist(rng); }
+
+    LAMBConfig cfg;
+    cfg.learning_rate = 0.01f;
+    cfg.use_layer_adaptation = false;
+    const float rtw = 1.0f;
+
+    std::vector<float> hw = w0;
+    std::vector<float> hm(n, 0.0f), hv(n, 0.0f);
+
+    cuda::memory::Buffer<float> d_w(n), d_g(n), d_m(n), d_v(n);
+    d_w.copy_from(w0.data(), n);
+    d_g.copy_from(g.data(), n);
+    d_m.fill(0.0f);
+    d_v.fill(0.0f);
+
+    const int K = 3;
+    for (int s = 1; s <= K; ++s) {
+        host_lamb(hw.data(), g.data(), hw.data(), hm, hv, n, s,
+                  cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon,
+                  cfg.weight_decay, rtw, cfg.clamp_value,
+                  cfg.use_layer_adaptation);
+        EXPECT_NO_THROW(
+            detail::lamb_step_device(
+                d_w.data(), d_g.data(), d_m.data(), d_v.data(), n,
+                cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon,
+                cfg.weight_decay, std::pow(cfg.beta1, s),
+                std::pow(cfg.beta2, s), rtw, cfg.clamp_value,
+                cfg.use_layer_adaptation, nullptr));
+    }
+    std::vector<float> dw(n);
+    d_w.copy_to(dw.data(), n);
+    for (size_t i = 0; i < n; ++i) {
+        EXPECT_NEAR(hw[i], dw[i], 1e-4f) << "LAMB device/host drift at " << i;
     }
 }
 
