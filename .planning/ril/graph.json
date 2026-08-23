@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-23T17:10:41+00:00",
+  "updated_at": "2026-08-23T17:52:01+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2028,6 +2028,17 @@
       "touched_round": 32,
       "source": "v2.30 cpp-reviewer (2026-08-23): APPROVE - no CRITICAL/HIGH. MEDIUM M1 (float accuracy count) addressed by documenting exact-for-batch<2^24 bound; MEDIUM M2 (gaps) addressed by DeviceAccuracyMatchesHostArgmax + DeviceCrossEntropyLossLargeClassCount (C=1024) - GREEN; LOW L1 (unchecked cudaMemsetAsync) fixed with CUDA_CHECK - re-verified; L3 kept as defensive guard; L2/L4/L5 documented no-change. Post-fix: neural single-GPU 99/99; multi-GPU 5/5 (2GPU), 19/19 (4GPU), 24/24 residual",
       "confidence": 1.0
+    },
+    "CHG-022": {
+      "id": "CHG-022",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T17:40:36+00:00",
+      "updated_at": "2026-08-23T17:40:36+00:00",
+      "touched_round": 32,
+      "commit": "70b79df",
+      "title": "v2.30: device cross_entropy_loss_device (ce_loss_rows_kernel per-row block max/exp-sum + atomicAdd into pre-zeroed scalar, v2.29 entry-barrier convention) + accuracy_device (per-row argmax atomic count); MicroTrainer/TransformerTrainer train_step/evaluate routed through them, whole-buffer logits D2H + host O(m*C) loop deleted (issue-v30-ce-loss-host-roundtrip)"
     }
   },
   "edges": [
@@ -3050,6 +3061,24 @@
       "to": "TASK-050",
       "type": "depends_on",
       "created_at": "2026-08-23T12:54:33+00:00"
+    },
+    {
+      "from": "CHG-022",
+      "to": "TASK-049",
+      "type": "implements",
+      "created_at": "2026-08-23T17:48:26+00:00"
+    },
+    {
+      "from": "CHG-022",
+      "to": "TASK-047",
+      "type": "implements",
+      "created_at": "2026-08-23T17:50:30+00:00"
+    },
+    {
+      "from": "CHG-022",
+      "to": "issue-v30-ce-loss-host-roundtrip",
+      "type": "resolves",
+      "created_at": "2026-08-23T17:52:01+00:00"
     }
   ]
 }
