@@ -4,7 +4,34 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.31 Device-Native LAMB Optimizer Kernel
+## Current Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
+
+**Status:** In Progress (2026-08-24, RIL Round 32)
+
+**Milestone v2.32** (DEC-018). The train stack is real and device-native
+(v2.25-31), but nothing persists: a trained `MicroTrainer` /
+`TransformerTrainer` dies with the process, an interrupted run cannot resume,
+and there is no export path (the memory-opt `CheckpointCompressor` is buffer
+compression, not model serialization). v2.32 adds the core-feature gap — model
+checkpointing. `save_state(std::ostream&)` / `load_state(std::istream&)` on
+both trainers behind a deterministic binary format (NSCK v1: magic, version,
+kind, dims, tensors as count+float[], moments as count+m[]+v[]), plus
+`AdamWOptimizer::{momentum_capacity, copy_moments_to, copy_moments_from}` so
+the restored trainer resumes with byte-identical weights *and* moments (an
+AdamW update reads m/v, so weights alone diverge at the first resumed step).
+Verified at tp=1 (shard==full): byte-exact roundtrip, fresh-state roundtrip,
+resumed-vs-uninterrupted trajectory, and geometry/corruption rejection; tp>1
+rank-shard restore is the named follow-up.
+
+Phases: **P1 (TASK-056)** pins the surface RED against throw-stubs —
+AdamW moment API + trainer save/load stubs; CheckpointTest contracts
+(roundtrip byte-exact, fresh-state, resume-vs-uninterrupted, geometry/corrupt
+rejection). **P2 (TASK-057)** implements the internal CheckpointWriter/Reader
+(`src/cuda/neural/checkpoint_io.h`) and the trainer save/load paths.
+**P3 (TASK-058)** verifies — CheckpointTest GREEN, neural single-GPU
+regression GREEN, cpp-reviewer, RIL close, tp>1 follow-up opened.
+
+## Previous Milestone: v2.31 Device-Native LAMB Optimizer Kernel
 
 **Status:** Complete (2026-08-24, RIL Round 31)
 

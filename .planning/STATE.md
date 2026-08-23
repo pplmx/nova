@@ -1,13 +1,13 @@
 ----
 gsd_state_version: 1.0
-milestone: v2.31
-milestone_name: Device-Native LAMB Optimizer Kernel
-status: Complete
+milestone: v2.32
+milestone_name: Model Checkpointing (Weights + Optimizer State)
+status: In Progress
 last_updated: "2026-08-24"
-last_activity: 2026-08-24 — Round 31: P1 RED (TASK-052) -> P2 native LAMB kernel (TASK-053) -> P3 verify (101/101 + sanitizer clean) + cpp-reviewer, milestone closed
+last_activity: 2026-08-24 — Round 32: milestone opened (DEC-018, TASK-055/056/057/058, ISS-001); P1 RED in progress
 progress:
   total_phases: 3
-  completed_phases: 3
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
 ---
@@ -15,15 +15,36 @@ progress:
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-08-23
+**Last Updated:** 2026-08-24
 
 ## Current Position
 
-Milestone: v2.31 Device-Native LAMB Optimizer Kernel
-Status: Complete (Round 31)
-Last activity: 2026-08-24 — P1 RED (2 LAMB contracts) -> P2 fused LAMB kernel ->
-P3 verify (101/101 neural, 2/2 multi-GPU trajectory unchanged, sanitizer clean);
-cpp-reviewer APPROVE; milestone closed
+Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
+Status: In Progress (Round 32)
+Last activity: 2026-08-24 — milestone opened (DEC-018): save_state/load_state
+on MicroTrainer + TransformerTrainer + AdamW moment export/import, verified by
+byte-exact roundtrip + resume parity at tp=1; P1 RED in progress
+
+## Milestone v2.32 — Model Checkpointing (Weights + Optimizer State)
+
+The host-round-trip family is complete (v2.27/29/30/31) and the train stack is
+real (v2.25-28), but nothing persists: a trained MicroTrainer/TransformerTrainer
+dies with the process, an interrupted run can't resume, and models can't be
+exported (the memory-opt CheckpointCompressor is buffer compression, not model
+serialization). v2.32 adds save_state(std::ostream&) / load_state(std::istream&)
+to both trainers behind a deterministic binary format (NSCK v1: magic, version,
+kind, dims, tensors count+float[], moments count+m[]+v[]), plus
+AdamWOptimizer::{momentum_capacity, copy_moments_to, copy_moments_from} so a
+restored trainer resumes byte-identical (AdamW reads m/v, so weights alone
+diverge at the first resumed step). Verified at tp=1 (shard==full) by byte-exact
+roundtrip + fresh-state roundtrip + resumed-vs-uninterrupted trajectory +
+geometry/corruption rejection; tp>1 rank-shard restore is the named follow-up.
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: AdamW moment export/import + trainer save_state/load_state throw-stubs; CheckpointTest contracts (roundtrip byte-exact, fresh-state, resume-vs-uninterrupted, geometry/corrupt rejection); RED against stubs | In progress (Round 32) |
+| 2 | Implement: AdamW moment API; CheckpointWriter/Reader (src/cuda/neural/checkpoint_io.h); MicroTrainer + TransformerTrainer save_state/load_state routing through copy_*/set_* + moment copies + validation | Pending |
+| 3 | Verify: CheckpointTest GREEN; neural single-GPU regression GREEN; cpp-reviewer; RIL close; tp>1 follow-up task opened | Pending |
 
 ## Milestone v2.31 — Device-Native LAMB Optimizer Kernel
 

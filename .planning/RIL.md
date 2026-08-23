@@ -3,7 +3,7 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 31).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 32).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
@@ -16,9 +16,24 @@ Residual) + Deep Multi-Layer Training"** closed at Round 29 → **v2.29 "Device-
 Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 →
 **v2.30 "Device-Native Cross-Entropy Loss Reduction"** opened and
 **closed at Round 30/32** → **v2.31 "Device-Native LAMB Optimizer
-Kernel"** opened and **closed at Round 31**.
+Kernel"** opened and **closed at Round 31** → **v2.32 "Model Checkpointing
+(Weights + Optimizer State)"** opened at Round 32 (in progress).
 
 ## Latest round
+- **Round 32 (2026-08-24)** — milestone **v2.32 "Model Checkpointing (Weights +
+  Optimizer State)"** **opened** (DEC-018, TASK-055/056/057/058, ISS-001,
+  comp-neural-training). The host-round-trip family (v2.27/29/30/31) is
+  complete and the train stack (v2.25-28) is real, but nothing persists: a
+  trained MicroTrainer/TransformerTrainer dies with the process, interrupted
+  runs can't resume, models can't be exported. v2.32 adds the core-feature
+  gap — save_state(std::ostream&)/load_state(std::istream&) on both trainers
+  behind a deterministic binary format (NSCK v1) plus
+  AdamWOptimizer::{momentum_capacity, copy_moments_to, copy_moments_from} for
+  optimizer-state restore (an AdamW update reads m/v, so weights alone diverge
+  at the first resumed step). Verified at tp=1: byte-exact roundtrip,
+  fresh-state roundtrip, resumed-vs-uninterrupted trajectory, geometry/
+  corruption rejection; tp>1 rank-shard restore is the named follow-up.
+  In progress.
 - **Round 30/32 (2026-08-23)** — milestone **v2.30 "Device-Native Cross-Entropy
   Loss Reduction"** opened through **close (P1+P2+P3)** (DEC-016,
   TASK-047/048/049/050, CHG-022, EV-028/029/030/031/032). The v2.29 close left
