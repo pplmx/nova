@@ -171,6 +171,9 @@ private:
         b_grads_;  // per-block full weight grads
     std::array<std::unique_ptr<cuda::memory::Buffer<float>>, 2> f_grads_;  // final-LN affine grads
     std::unique_ptr<cuda::memory::Buffer<int>> d_targets_;
+    // Device scalar for the reported loss (v2.30: read ONE float back instead
+    // of the whole logits buffer; also reused for the accuracy count).
+    std::unique_ptr<cuda::memory::Buffer<float>> d_loss_;
     loss::CrossEntropyConfig ce_cfg_;
     int scratch_m_ = 0;
 };

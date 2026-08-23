@@ -212,4 +212,266 @@ TEST_F(LossFunctionsTest, CrossEntropyLogitsBackwardDevice) {
     }
 }
 
+// ============================================================================
+// Milestone v2.30 (DEC-016 / TASK-048) — device cross-entropy-loss scalar.
+// cross_entropy_loss_device computes the identical mean CE loss as the host
+// cross_entropy_loss but from device logits/targets, writing a single scalar
+// to [1] so the training drivers no longer round-trip the full m*C logits
+// buffer through the host every step (issue-v30-ce-loss-host-roundtrip).
+// Pinned against a host double-precision reference. RED against the
+// provisional throw-stub; GREEN with the P2 device reduction kernel.
+// ============================================================================
+namespace {
+
+// Host double-precision reference for the mean CE loss (max-subtracted
+// softmax, target log-probability), matching the host cross_entropy_loss()
+// math exactly (the same full-class-sum ordering; no label smoothing).
+double host_ce_loss_reference(const std::vector<float>& logits,
+                              const std::vector<int>& targets, int batch,
+                              int C, bool reduction_mean) {
+    double total = 0.0;
+    for (int b = 0; b < batch; ++b) {
+        double m = logits[static_cast<size_t>(b) * C];
+        for (int c = 1; c < C; ++c) {
+            m = std::max(m, static_cast<double>(logits[static_cast<size_t>(b) * C + c]));
+        }
+        double sum_exp = 0.0;
+        for (int c = 0; c < C; ++c) {
+            sum_exp += std::exp(static_cast<double>(
+                logits[static_cast<size_t>(b) * C + c]) - m);
+        }
+        const double log_sum_exp = std::log(sum_exp);
+        const int t = targets[b];
+        const double log_prob =
+            static_cast<double>(logits[static_cast<size_t>(b) * C + t]) - m -
+            log_sum_exp;
+        total += -log_prob;
+    }
+    return reduction_mean ? total / batch : total;
+}
+
+}  // namespace
+
+// Batch>1, classes>1; mean reduction. The primary contract for the training
+// drivers (MicroTrainer/TransformerTrainer evaluate mean CE every step).
+TEST_F(LossFunctionsTest, DeviceCrossEntropyLossMatchesFp64Reference) {
+    CrossEntropyConfig config;
+    config.num_classes = 10;
+    config.reduction_mean = true;
+
+    const int batch = 6;
+    const int C = 10;
+    std::vector<float> logits(static_cast<size_t>(batch) * C);
+    std::vector<int> targets(batch);
+    std::mt19937 rng(20260823);
+    std::normal_distribution<float> dist(0.0f, 2.0f);
+    for (size_t i = 0; i < logits.size(); ++i) {
+        logits[i] = dist(rng);
+    }
+    for (int b = 0; b < batch; ++b) {
+        targets[b] = static_cast<int>(rng() % C);
+    }
+    const double expected = host_ce_loss_reference(logits, targets, batch, C, true);
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_loss(1);
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    EXPECT_NO_THROW(
+        cross_entropy_loss_device(
+            d_logits.data(), d_targets.data(), d_loss.data(),
+            batch, C, config, stream_));
+    float dev = 0.0f;
+    d_loss.copy_to(&dev, 1);
+
+    // fp32 reduction-order drift vs the fp64 reference (same convention as
+    // the existing kernel-parity tests: 1e-4 absorbs block-sum reordering).
+    EXPECT_NEAR(static_cast<float>(expected), dev, 1e-4f);
+}
+
+// Single-row edge (batch == 1) — the degenerate case the trainers can hit at
+// batch*seq == 1; must still produce the exact single-row loss.
+TEST_F(LossFunctionsTest, DeviceCrossEntropyLossSingleRow) {
+    CrossEntropyConfig config;
+    config.num_classes = 8;
+    config.reduction_mean = true;
+
+    const int batch = 1;
+    const int C = 8;
+    std::vector<float> logits{3.0f, -1.0f, 0.5f, 2.2f, -4.0f, 1.1f, 0.0f, 0.7f};
+    std::vector<int> targets{2};
+    const double expected = host_ce_loss_reference(logits, targets, batch, C, true);
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_loss(1);
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    EXPECT_NO_THROW(
+        cross_entropy_loss_device(
+            d_logits.data(), d_targets.data(), d_loss.data(),
+            batch, C, config, stream_));
+    float dev = 0.0f;
+    d_loss.copy_to(&dev, 1);
+
+    EXPECT_NEAR(static_cast<float>(expected), dev, 1e-4f);
+}
+
+// Sum reduction (reduction_mean == false) must return the raw summed loss,
+// matching the host cross_entropy_loss convention.
+TEST_F(LossFunctionsTest, DeviceCrossEntropyLossSumReduction) {
+    CrossEntropyConfig config;
+    config.num_classes = 6;
+    config.reduction_mean = false;
+
+    const int batch = 3;
+    const int C = 6;
+    std::vector<float> logits(static_cast<size_t>(batch) * C);
+    std::vector<int> targets(batch);
+    std::mt19937 rng(42);
+    std::normal_distribution<float> dist(0.0f, 1.5f);
+    for (size_t i = 0; i < logits.size(); ++i) {
+        logits[i] = dist(rng);
+    }
+    for (int b = 0; b < batch; ++b) {
+        targets[b] = static_cast<int>(rng() % C);
+    }
+    const double expected = host_ce_loss_reference(logits, targets, batch, C, false);
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_loss(1);
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    EXPECT_NO_THROW(
+        cross_entropy_loss_device(
+            d_logits.data(), d_targets.data(), d_loss.data(),
+            batch, C, config, stream_));
+    float dev = 0.0f;
+    d_loss.copy_to(&dev, 1);
+
+    EXPECT_NEAR(static_cast<float>(expected), dev, 1e-4f);
+}
+
+// accuracy_device must count rows whose argmax class == target, matching the
+// host top-1 loop the training drivers previously ran on copied-back logits.
+// Includes a tie (row with two equal max logits): host and device argmax both
+// pick the earliest max, so the count must agree exactly.
+TEST_F(LossFunctionsTest, DeviceAccuracyMatchesHostArgmax) {
+    const int batch = 5;
+    const int C = 4;
+    // Row 0: target 1 == argmax(3.0 at class 1)  -> correct
+    // Row 1: target 2, argmax class 3            -> wrong
+    // Row 2: tie between class 0 and class 1 (both 2.0); earliest is class 0;
+    //        target 0 -> correct
+    // Row 3: all equal; earliest max is class 0; target 0 -> correct
+    // Row 4: target 3 == argmax(9.0 at class 3)  -> correct
+    std::vector<float> logits{0.0f, 3.0f, 0.0f, 0.5f,
+                              1.0f, 0.0f, 0.0f, 4.0f,
+                              2.0f, 2.0f, 0.0f, 0.0f,
+                              1.0f, 1.0f, 1.0f, 1.0f,
+                              -1.0f, 0.0f, 0.5f, 9.0f};
+    std::vector<int> targets{1, 2, 0, 0, 3};
+
+    int host_correct = 0;
+    for (int b = 0; b < batch; ++b) {
+        const float* row = logits.data() + static_cast<size_t>(b) * C;
+        int argmax = 0;
+        for (int c = 1; c < C; ++c) {
+            if (row[c] > row[argmax]) argmax = c;
+        }
+        if (argmax == targets[b]) ++host_correct;
+    }
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_correct(1);
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    EXPECT_NO_THROW(
+        accuracy_device(d_logits.data(), d_targets.data(), d_correct.data(),
+                        batch, C, stream_));
+    float dev_correct = -1.0f;
+    d_correct.copy_to(&dev_correct, 1);
+
+    EXPECT_EQ(static_cast<float>(host_correct), dev_correct);
+}
+
+// C > 256: with more classes than the block size, every thread holds a
+// nonzero partial in the grid-stride max/exp-sum loops, so the block
+// reductions actually combine multiple partials (the C<=10 tests above are
+// all single-thread-row partials). Locks the multi-iteration path.
+TEST_F(LossFunctionsTest, DeviceCrossEntropyLossLargeClassCount) {
+    CrossEntropyConfig config;
+    config.num_classes = 1024;
+    config.reduction_mean = true;
+
+    const int batch = 3;
+    const int C = 1024;
+    std::vector<float> logits(static_cast<size_t>(batch) * C);
+    std::vector<int> targets(batch);
+    std::mt19937 rng(777);
+    std::normal_distribution<float> dist(0.0f, 1.0f);
+    for (size_t i = 0; i < logits.size(); ++i) {
+        logits[i] = dist(rng);
+    }
+    for (int b = 0; b < batch; ++b) {
+        targets[b] = static_cast<int>(rng() % C);
+    }
+    const double expected = host_ce_loss_reference(logits, targets, batch, C, true);
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_loss(1);
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    EXPECT_NO_THROW(
+        cross_entropy_loss_device(
+            d_logits.data(), d_targets.data(), d_loss.data(),
+            batch, C, config, stream_));
+    float dev = 0.0f;
+    d_loss.copy_to(&dev, 1);
+
+    EXPECT_NEAR(static_cast<float>(expected), dev, 1e-4f);
+}
+
+// Non-uniform logits: a target pinned to the max-logit class must give a
+// small loss (< 1), a target on the min-logit class a large loss (> 2) —
+// sanity that the device path computes log-probabilities, not something
+// else, before the strict fp64 parity above.
+TEST_F(LossFunctionsTest, DeviceCrossEntropyLossDistinguishesTargets) {
+    CrossEntropyConfig config;
+    config.num_classes = 3;
+    config.reduction_mean = true;
+
+    const int batch = 2;
+    const int C = 3;
+    // Row 0: target 0 is the max class. Row 1: target 1 is the min class.
+    std::vector<float> logits{10.0f, 0.0f, 0.0f, 0.0f, -10.0f, 0.0f};
+    std::vector<int> targets{0, 1};
+
+    cuda::memory::Buffer<float> d_logits(logits.size());
+    cuda::memory::Buffer<int> d_targets(targets.size());
+    cuda::memory::Buffer<float> d_loss(1);
+    d_logits.copy_from(logits.data(), logits.size());
+    d_targets.copy_from(targets.data(), targets.size());
+
+    EXPECT_NO_THROW(
+        cross_entropy_loss_device(
+            d_logits.data(), d_targets.data(), d_loss.data(),
+            batch, C, config, stream_));
+    float dev = 0.0f;
+    d_loss.copy_to(&dev, 1);
+
+    // mean of (loss~1e-10 for row0, loss~10 for row1) ≈ 5.
+    EXPECT_GT(dev, 1.0f);
+    EXPECT_LT(dev, 9.0f);
+}
+
 }  // namespace cuda::neural::loss::test

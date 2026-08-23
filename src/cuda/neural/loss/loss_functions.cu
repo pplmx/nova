@@ -197,6 +197,160 @@ void cross_entropy_logits_backward(
     CUDA_CHECK(cudaGetLastError());
 }
 
+namespace {
+
+constexpr int kCeLossBlock = 256;  // multiple of 32 (full reduction masks)
+constexpr unsigned kCeFull = 0xffffffffu;
+
+// Lane collapse of a per-thread max across the block. `red` must hold at
+// least blockDim/32 floats; the reduced value is valid in ALL threads on
+// return (kCeLossBlock threads are always active, so no partial-warp UB).
+//
+// The entry __syncthreads() is load-bearing — same convention as the v2.29
+// block reductions (attention_kernels.cu): the helper both returns red[0]
+// (read after the final barrier) and writes red[wid] at its start, so a
+// subsequent call on the same buffer would race the previous call's readers
+// without the entry barrier (compute-sanitizer racecheck-verified there).
+__device__ float ce_block_reduce_max(float v, float* red) {
+    __syncthreads();
+    for (int o = 16; o > 0; o >>= 1) v = fmaxf(v, __shfl_down_sync(kCeFull, v, o));
+    const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
+    if (lane == 0) red[wid] = v;
+    __syncthreads();
+    if (threadIdx.x < 32) {
+        float acc = (threadIdx.x < kCeLossBlock / 32) ? red[threadIdx.x] : -INFINITY;
+        for (int o = 16; o > 0; o >>= 1) acc = fmaxf(acc, __shfl_down_sync(kCeFull, acc, o));
+        if (lane == 0) red[0] = acc;
+    }
+    __syncthreads();
+    return red[0];
+}
+
+// Same lane-collapse for a sum. Identity value is 0.0f.
+__device__ float ce_block_reduce_sum(float v, float* red) {
+    __syncthreads();
+    for (int o = 16; o > 0; o >>= 1) v += __shfl_down_sync(kCeFull, v, o);
+    const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
+    if (lane == 0) red[wid] = v;
+    __syncthreads();
+    if (threadIdx.x < 32) {
+        float acc = (threadIdx.x < kCeLossBlock / 32) ? red[threadIdx.x] : 0.0f;
+        for (int o = 16; o > 0; o >>= 1) acc += __shfl_down_sync(kCeFull, acc, o);
+        if (lane == 0) red[0] = acc;
+    }
+    __syncthreads();
+    return red[0];
+}
+
+// Mean/sum CE loss over a logits matrix, computed on-device (v2.30 / DEC-016).
+// One block per row: block-reduce the row max, then the row exp-sum, then
+// thread 0 atomicAdds -log_softmax(target), scaled by 1/batch (mean) or 1
+// (sum), into loss_out[0] (the wrapper zeroes it first). This is the exact
+// host cross_entropy_loss math, just on device, so the training drivers can
+// read ONE scalar back instead of the whole m*C logits buffer. The float
+// atomicAdd ordering across blocks only perturbs the final sum at ~ulp level,
+// inside the parity tolerance (same convention as v2.29's dV/dK atomics).
+__global__ void ce_loss_rows_kernel(const float* logits, const int* targets,
+                                    float* out, int batch, int C,
+                                    float loss_scale) {
+    extern __shared__ float red[];
+    const int b = blockIdx.x;
+    if (b >= batch) return;
+    const float* row = logits + static_cast<size_t>(b) * C;
+
+    float mx = -INFINITY;
+    for (int c = threadIdx.x; c < C; c += kCeLossBlock) {
+        mx = fmaxf(mx, row[c]);
+    }
+    mx = ce_block_reduce_max(mx, red);
+
+    float sum_exp = 0.0f;
+    for (int c = threadIdx.x; c < C; c += kCeLossBlock) {
+        sum_exp += __expf(row[c] - mx);
+    }
+    sum_exp = ce_block_reduce_sum(sum_exp, red);
+
+    if (threadIdx.x == 0) {
+        const int t = targets[b];
+        const float log_prob = row[t] - mx - logf(sum_exp);
+        atomicAdd(&out[0], -log_prob * loss_scale);
+    }
+}
+
+// Per-row argmax vs the target class; count of correct rows → the caller
+// divides by batch_size (v2.30 evaluate companion).
+__global__ void accuracy_rows_kernel(const float* logits, const int* targets,
+                                     float* correct, int batch, int C) {
+    const int b = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b >= batch) return;
+    const float* row = logits + static_cast<size_t>(b) * C;
+    int argmax = 0;
+    for (int c = 1; c < C; ++c) {
+        if (row[c] > row[argmax]) argmax = c;
+    }
+    if (argmax == targets[b]) {
+        atomicAdd(&correct[0], 1.0f);
+    }
+}
+
+}  // namespace
+
+void cross_entropy_loss_device(
+    const float* logits,
+    const int* targets,
+    float* loss_out,
+    int batch_size,
+    int num_classes,
+    const CrossEntropyConfig& config,
+    cudaStream_t stream
+) {
+    // Milestone v2.30 (DEC-016 / TASK-049 P2): device mean/sum CE loss. The
+    // public host cross_entropy_loss() keeps its signature for host callers;
+    // this entry computes the identical scalar from device logits so the
+    // training drivers no longer round-trip the full logits buffer (the same
+    // D2H family v2.27/v2.29 removed from the other hot paths).
+    if (batch_size <= 0 || num_classes <= 0) {
+        throw std::invalid_argument(
+            "cross_entropy_loss_device requires positive batch_size and "
+            "num_classes");
+    }
+    const float loss_scale =
+        config.reduction_mean ? 1.0f / static_cast<float>(batch_size) : 1.0f;
+    const size_t shmem = (kCeLossBlock / 32) * sizeof(float);
+
+    // Same-stream cudaMemsetAsync is ordered before the kernel (in-order
+    // streams), so loss_out[0] is guaranteed zero before any atomicAdd. Check
+    // its return value like the launches — a failing memset would otherwise be
+    // silently swallowed (v2.30 reviewer LOW L1).
+    CUDA_CHECK(cudaMemsetAsync(loss_out, 0, sizeof(float), stream));
+    ce_loss_rows_kernel<<<batch_size, kCeLossBlock, shmem, stream>>>(
+        logits, targets, loss_out, batch_size, num_classes, loss_scale);
+    // async launch errors surface on the next sync; check immediately so a
+    // bad launch is reported here, not in a caller's later cudaStreamSync.
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void accuracy_device(
+    const float* logits,
+    const int* targets,
+    float* correct_out,
+    int batch_size,
+    int num_classes,
+    cudaStream_t stream
+) {
+    if (batch_size <= 0 || num_classes <= 0) {
+        throw std::invalid_argument(
+            "accuracy_device requires positive batch_size and num_classes");
+    }
+    // Same-stream memset before the atomicAdd kernel (v2.30 reviewer LOW L1).
+    CUDA_CHECK(cudaMemsetAsync(correct_out, 0, sizeof(float), stream));
+    const int block_size = 256;
+    const int grid_size = (batch_size + block_size - 1) / block_size;
+    accuracy_rows_kernel<<<grid_size, block_size, 0, stream>>>(
+        logits, targets, correct_out, batch_size, num_classes);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 float focal_loss(
     const float* predictions,
     const int* targets,

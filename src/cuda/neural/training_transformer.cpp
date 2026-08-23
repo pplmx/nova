@@ -100,6 +100,11 @@ void TransformerTrainer::ensure_scratch(int m) {
     d_logits_ = std::make_unique<cuda::memory::Buffer<float>>(needed);
     d_dlogits_ = std::make_unique<cuda::memory::Buffer<float>>(needed);
 
+    // Device scalar for the reported loss (v2.30).
+    if (d_loss_ == nullptr) {
+        d_loss_ = std::make_unique<cuda::memory::Buffer<float>>(1);
+    }
+
     const int qkv = heads_ * head_dim_;
     b_grads_.clear();
     for (int b = 0; b < num_blocks_; ++b) {
@@ -191,12 +196,16 @@ float TransformerTrainer::train_step(const float* input, const int* targets,
             g[8]->data(), g[9]->data(), g[10]->data(), step_no);
     }
 
-    // Host scalar for the reported loss (MicroTrainer seed contract).
-    std::vector<float> h_logits(static_cast<size_t>(m) * hidden_);
-    d_logits_->copy_to(h_logits.data(), h_logits.size());
-    std::vector<float> loss_out(static_cast<size_t>(m));
-    return loss::cross_entropy_loss(h_logits.data(), targets, loss_out.data(),
-                                    m, hidden_, ce_cfg_, nullptr);
+    // Device scalar for the reported loss (v2.30 / issue-v30-ce-loss-host-
+    // roundtrip): the loss is reduced on-device and ONE float is read back,
+    // instead of the whole m*hidden logits buffer + host loop. Same mean-CE
+    // scalar as the host cross_entropy_loss (MicroTrainer seed contract).
+    loss::cross_entropy_loss_device(
+        d_logits_->data(), d_targets_->data(), d_loss_->data(),
+        m, hidden_, ce_cfg_, nullptr);
+    float dev_loss = 0.0f;
+    d_loss_->copy_to(&dev_loss, 1);
+    return dev_loss;
 }
 
 float TransformerTrainer::evaluate(const float* input, const int* targets,
@@ -215,25 +224,22 @@ float TransformerTrainer::evaluate(const float* input, const int* targets,
         h_prev = h_bufs_[static_cast<size_t>(b)]->data();
     }
     final_ln_->forward(h_prev, d_logits_->data(), m);
+    d_targets_->copy_from(targets, static_cast<size_t>(m));
 
-    std::vector<float> h_logits(static_cast<size_t>(m) * hidden_);
-    d_logits_->copy_to(h_logits.data(), h_logits.size());
-    std::vector<float> loss_out(static_cast<size_t>(m));
-    float loss = loss::cross_entropy_loss(h_logits.data(), targets,
-                                          loss_out.data(), m, hidden_, ce_cfg_,
-                                          nullptr);
+    // Device loss + device top-1 accuracy (v2.30): the whole logits buffer
+    // stays on device; only the two scalars come back.
+    loss::cross_entropy_loss_device(
+        d_logits_->data(), d_targets_->data(), d_loss_->data(),
+        m, hidden_, ce_cfg_, nullptr);
+    float loss = 0.0f;
+    d_loss_->copy_to(&loss, 1);
     if (accuracy != nullptr) {
-        int correct = 0;
-        for (int i = 0; i < m; ++i) {
-            const float* row =
-                h_logits.data() + static_cast<size_t>(i) * hidden_;
-            int argmax = 0;
-            for (int c = 1; c < hidden_; ++c) {
-                if (row[c] > row[argmax]) argmax = c;
-            }
-            if (argmax == targets[i]) ++correct;
-        }
-        *accuracy = static_cast<float>(correct) / static_cast<float>(m);
+        loss::accuracy_device(
+            d_logits_->data(), d_targets_->data(), d_loss_->data(),
+            m, hidden_, nullptr);
+        float correct = 0.0f;
+        d_loss_->copy_to(&correct, 1);
+        *accuracy = correct / static_cast<float>(m);
     }
     return loss;
 }

@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 31,
+  "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-19T15:15:40+00:00",
+  "updated_at": "2026-08-23T17:10:41+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -579,7 +579,7 @@
       "version": 1,
       "created_at": "2026-08-12T05:11:01+00:00",
       "updated_at": "2026-08-12T05:11:01+00:00",
-      "touched_round": 28,
+      "touched_round": 32,
       "title": "Neural parallel-training layer: TensorParallelMatmul (include/cuda/neural/tensor_parallel_matmul.{h,cpp}), TensorParallelLayers, SequenceParallelAttention / RingSequenceParallelism (include/cuda/distributed/sequence_parallel.h)"
     },
     "HYP-002": {
@@ -1880,6 +1880,154 @@
       "source": "v2.29 post-review-fix verify (2026-08-19): neural single-GPU regression 79/79 (LayerNormTrainableTest 8/8 incl. parallel h=512/1024, AttentionKernelsTest 4/4, TransformerBlockTest, TensorParallelAttentionTest, MicroTrainerTest); neural multi-GPU cross-suite + deep-block 19/19 on 2 GPUs and 19/19 on 4 GPUs",
       "title": "Post-fix GREEN: with the reduction-race barrier + 64-bit grid fixes, all v2.29 single-GPU and 2/4-GPU trajectory-parity contracts still pass",
       "confidence": 1.0
+    },
+    "issue-v30-ce-loss-host-roundtrip": {
+      "id": "issue-v30-ce-loss-host-roundtrip",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-23T12:51:20+00:00",
+      "updated_at": "2026-08-23T17:10:41+00:00",
+      "touched_round": 32,
+      "title": "MicroTrainer and TransformerTrainer round-trip the whole m×hidden logits buffer through the host on every step: train_step/evaluate do logits_->copy_to(host) then run the host cross_entropy_loss loop (O(m×C) exp/log per step) just to produce a scalar — the last big D2H round-trip on the training path, the same family v2.27 (optimizer) and v2.29 (SDPA/LN) removed"
+    },
+    "DEC-016": {
+      "id": "DEC-016",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T12:51:58+00:00",
+      "updated_at": "2026-08-23T12:51:58+00:00",
+      "touched_round": 32,
+      "rationale": "Round-29 LEARN / v2.29 close left one host round-trip on the training hot path: MicroTrainer::train_step and TransformerTrainer::train_step/evaluate copy the full m×hidden logits buffer back to host (Buffer::copy_to) and run the host cross_entropy_loss loop (O(m×C) exp+log per step) only to produce a scalar mean loss. v2.27 removed the optimizer host round-trip and v2.29 removed the SDPA/LN round-trips behind the same public APIs; this milestone removes the loss one: a device CE-loss reduction kernel (per-row max-subtracted softmax -> target log-prob, block/warp reduction to a single scalar read back as 4 bytes), MicroTrainer/TransformerTrainer route through it, verified by device-vs-host-fp64 parity + unchanged K-step trajectory parity",
+      "alternatives_rejected": "GPU-side keep-host-loop (still a blocking m×hidden D2H every step — the point is removing the copy, not just the arithmetic); fusing loss into cross_entropy_logits_backward (couples the seed-gradient and reporting paths; loss must also work for evaluate()); CUDA-graph-capturing the trainer (bigger launch-overhead task, deferred — the copy dominates at this size); changing the public cross_entropy_loss signature (public host API must stay)"
+    },
+    "TASK-047": {
+      "id": "TASK-047",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-23T12:52:27+00:00",
+      "updated_at": "2026-08-23T17:10:41+00:00",
+      "touched_round": 32,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "unlock_factor": 1,
+      "title": "(umbrella v2.30) device-native cross-entropy loss reduction — a device CE-loss kernel (reduction to a single scalar) replaces the full logits-to-host round-trip + host O(m×C) loop in MicroTrainer::train_step/evaluate and TransformerTrainer::train_step/evaluate, behind the same public cross_entropy_loss API; verified by device-vs-host-fp64 parity and unchanged K-step shard==single-GPU trajectory parity",
+      "lock_owner": "nova-v30-l30",
+      "lock_until": "2026-08-23T13:31:54+00:00"
+    },
+    "TASK-048": {
+      "id": "TASK-048",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-08-23T12:52:27+00:00",
+      "updated_at": "2026-08-23T17:06:23+00:00",
+      "touched_round": 32,
+      "category": "test-quality",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P1 RED/parity: pin a detail::cross_entropy_loss_device entry (device logits/targets -> host scalar) against in-test fp64 reference at m>1/classes>1 and a single-row edge; pin MicroTrainer/TransformerTrainer loss-parity contracts RED against throw-stubs",
+      "lock_owner": "nova-v30-l30",
+      "lock_until": "2026-08-23T13:31:54+00:00"
+    },
+    "TASK-049": {
+      "id": "TASK-049",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-23T12:52:40+00:00",
+      "updated_at": "2026-08-23T17:08:30+00:00",
+      "touched_round": 32,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 3,
+      "title": "P2 implementation: loss_functions.cu gains a device CE-loss reduction kernel (per-row max-subtracted softmax target log-prob, block/warp reduce to mean scalar) behind detail::cross_entropy_loss_device; MicroTrainer::train_step/evaluate + TransformerTrainer::train_step/evaluate route through it and drop the full logits_->copy_to(host) + host cross_entropy_loss loop"
+    },
+    "TASK-050": {
+      "id": "TASK-050",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-08-23T12:52:41+00:00",
+      "updated_at": "2026-08-23T17:10:41+00:00",
+      "touched_round": 32,
+      "category": "performance",
+      "severity": 2,
+      "confidence": 1.0,
+      "effort": 2,
+      "title": "P3 verify: device-loss parity GREEN vs host fp64; neural single-GPU suites GREEN (MicroTrainer loss-descent + trajectory parity and LossFunctions tests unchanged); multi-GPU cross-suite + deep-block K-step trajectory parity GREEN on 2 & 4 GPUs; cpp-reviewer pass; RIL close"
+    },
+    "EV-028": {
+      "id": "EV-028",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T13:06:30+00:00",
+      "updated_at": "2026-08-23T13:06:30+00:00",
+      "touched_round": 32,
+      "source": "v2.30 P1 RED (2026-08-23): 4/4 device cross_entropy_loss_device contracts fail against the throw-stub for the right reason — matches fp64 reference (batch=6,C=10,mean), single-row edge (batch=1,C=8), sum reduction (batch=3,C=6), target-distinction sanity — all throw \"not implemented (v2.30 P1 stub)\". 84/84 neural single-GPU baseline GREEN before this change",
+      "confidence": 1.0
+    },
+    "EV-029": {
+      "id": "EV-029",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T13:39:05+00:00",
+      "updated_at": "2026-08-23T13:39:05+00:00",
+      "touched_round": 32,
+      "source": "v2.30 P2 (2026-08-23): cross_entropy_loss_device (per-row block max/exp-sum reductions + atomicAdd of scaled row losses into a pre-zeroed scalar) + accuracy_device (per-row argmax atomic count) implemented; MicroTrainer::train_step/evaluate + TransformerTrainer::train_step/evaluate route through them, dropping the full logits_->copy_to(host) + host cross_entropy_loss loop. All 4 P1 loss contracts GREEN (max_abs ~1e-7 vs fp64); MicroTrainer still descends + accuracy rises; neural single-GPU regression 97/97",
+      "confidence": 1.0
+    },
+    "EV-030": {
+      "id": "EV-030",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T13:48:36+00:00",
+      "updated_at": "2026-08-23T13:48:36+00:00",
+      "touched_round": 32,
+      "source": "v2.30 multi-GPU verify (2026-08-23, all 8 GPUs free after external load released): neural multi-GPU cross-suite + deep-block K-step trajectory parity 5/5 on 2 GPUs and 19/19 on 4 GPUs — MicroTrainer shard==host-fp64 full-weight trajectory, TP attention fwd/bwd + mini-transformer, and DeepBlockMultiGpuPinnedTest all UNCHANGED through the device loss reduction",
+      "confidence": 1.0
+    },
+    "EV-031": {
+      "id": "EV-031",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T14:02:41+00:00",
+      "updated_at": "2026-08-23T14:02:41+00:00",
+      "touched_round": 32,
+      "source": "v2.30 accuracy_device parity (2026-08-23): DeviceAccuracyMatchesHostArgmax GREEN — 5-row crafted set incl. a tie and an all-equal row; device count == host argmax count exactly; complements the MicroTrainer evaluate acc>0.5 check",
+      "confidence": 1.0
+    },
+    "EV-032": {
+      "id": "EV-032",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T14:47:17+00:00",
+      "updated_at": "2026-08-23T14:47:17+00:00",
+      "touched_round": 32,
+      "source": "v2.30 full-suite baseline (2026-08-23, all 8 GPUs free, ctest -j 8): 1603/1618 passed (99%); 15 failures all verified as -j8 device-0 OOM contention in GPU-memory-heavy inference/quantization suites (BlockManagerCudaGraph, LongPrompt, ChunkedPrefill, BeamSpeculative, one FP8 benchmark) — every sampled failure passes in isolation; same environment limitation documented since v2.28 (not a v2.30 regression; v2.30 touches only loss/training)",
+      "confidence": 1.0
+    },
+    "EV-033": {
+      "id": "EV-033",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T16:39:31+00:00",
+      "updated_at": "2026-08-23T16:39:31+00:00",
+      "touched_round": 32,
+      "source": "v2.30 cpp-reviewer (2026-08-23): APPROVE - no CRITICAL/HIGH. MEDIUM M1 (float accuracy count) addressed by documenting exact-for-batch<2^24 bound; MEDIUM M2 (gaps) addressed by DeviceAccuracyMatchesHostArgmax + DeviceCrossEntropyLossLargeClassCount (C=1024) - GREEN; LOW L1 (unchecked cudaMemsetAsync) fixed with CUDA_CHECK - re-verified; L3 kept as defensive guard; L2/L4/L5 documented no-change. Post-fix: neural single-GPU 99/99; multi-GPU 5/5 (2GPU), 19/19 (4GPU), 24/24 residual",
+      "confidence": 1.0
     }
   },
   "edges": [
@@ -2848,6 +2996,60 @@
       "to": "TASK-045",
       "type": "implements",
       "created_at": "2026-08-19T15:09:30+00:00"
+    },
+    {
+      "from": "TASK-047",
+      "to": "issue-v30-ce-loss-host-roundtrip",
+      "type": "addresses",
+      "created_at": "2026-08-23T12:53:26+00:00"
+    },
+    {
+      "from": "TASK-048",
+      "to": "TASK-049",
+      "type": "depends_on",
+      "created_at": "2026-08-23T12:53:26+00:00"
+    },
+    {
+      "from": "TASK-049",
+      "to": "TASK-050",
+      "type": "depends_on",
+      "created_at": "2026-08-23T12:53:26+00:00"
+    },
+    {
+      "from": "issue-v30-ce-loss-host-roundtrip",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-08-23T12:53:26+00:00"
+    },
+    {
+      "from": "DEC-016",
+      "to": "TASK-047",
+      "type": "governs",
+      "created_at": "2026-08-23T12:53:26+00:00"
+    },
+    {
+      "from": "DEC-016",
+      "to": "comp-neural-parallel",
+      "type": "governs",
+      "created_at": "2026-08-23T12:53:27+00:00"
+    },
+    {
+      "from": "TASK-047",
+      "to": "TASK-048",
+      "type": "depends_on",
+      "created_at": "2026-08-23T12:54:33+00:00"
+    },
+    {
+      "from": "TASK-047",
+      "to": "TASK-049",
+      "type": "depends_on",
+      "created_at": "2026-08-23T12:54:33+00:00"
+    },
+    {
+      "from": "TASK-047",
+      "to": "TASK-050",
+      "type": "depends_on",
+      "created_at": "2026-08-23T12:54:33+00:00"
     }
   ]
 }

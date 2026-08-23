@@ -4,7 +4,36 @@
 
 A production-ready CUDA parallel algorithms library with a five-layer architecture, supporting education, extensibility, and production use cases. This project adds production-quality foundations and new algorithm capabilities.
 
-## Current Milestone: v2.29 Device-Native SDPA + LayerNorm Training Kernels
+## Current Milestone: v2.30 Device-Native Cross-Entropy Loss Reduction
+
+**Status:** Complete (2026-08-23, RIL Rounds 30/32)
+
+**Milestone v2.30.** The host-round-trip removal family (v2.27 optimizer, v2.29
+SDPA/LN) closed its last open member: every `train_step`/`evaluate` of
+`MicroTrainer` and `TransformerTrainer` still copied the **whole m×hidden
+logits buffer** back to the host (`logits_->copy_to`) and ran the host
+`cross_entropy_loss` loop (O(m×C) exp+log) just to produce a scalar mean loss;
+`evaluate` also ran a host argmax loop for accuracy. This milestone computes
+that scalar on-device — `cross_entropy_loss_device` (per-row max-subtracted
+softmax, block/warp reduction, atomicAdd of scaled row losses into a
+pre-zeroed one-float scalar) + `accuracy_device` (per-row argmax atomic count)
+behind the same public `cross_entropy_loss` API — and routes both trainers
+through them, dropping the round-trips (only the targets upload and a single
+scalar readback remain on the training path).
+
+Phases: **P1 (TASK-048)** pinned the device contract RED against a throw-stub
+(4/4 — mean/single-row/sum/target-distinction vs host fp64, EV-028). **P2
+(CHG-022)** implemented the kernels with the v2.29 load-bearing entry-barrier
+reduction convention and wired both trainers (EV-029/EV-031). **P3 (TASK-050)**
+verified: device-loss parity GREEN (~1e-7 vs fp64), neural single-GPU 97/97,
+multi-GPU cross-suite + deep-block K-step trajectory parity **5/5 on 2 GPUs and
+19/19 on 4 GPUs** (unchanged), full-suite baseline 1603/1618 (99% — the 15
+- j8 device-0 OOM-contention inference failures pass in isolation).
+cpp-reviewer pass. Also: **all 8 GPUs are free again** (external load
+released), so the full-suite gap that started at v2.28 (~20 OOM at ~5.8GB
+free/GPU) is now down to 15 contention-OOMs.
+
+## Previous Milestone: v2.29 Device-Native SDPA + LayerNorm Training Kernels
 
 **Status:** Complete (2026-08-19, RIL Rounds 30/31)
 

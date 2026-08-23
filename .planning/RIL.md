@@ -3,7 +3,7 @@
 Maintained by the autonomous engineering loop. Full guidance: `.agents/skills/graph-engineering/SKILL.md`
 (single source; `.claude/skills` is a whole-directory symlink to `.agents/skills` so Claude Code
 discovers it under the skills it scans).
-Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 28).
+Per-round narratives + graph deltas: `.planning/ril_autonomous_roundN.md` (latest: Round 30).
 Milestone thread: v2.15 (Test Quality) closed at Round 14 → **v2.16 "Distributed Multi-GPU
 Verification"** closed at Round 16 → **v2.17 "Distributed Ops On Real Multi-GPU"** closed at
 Round 17 → **v2.18 "MeshBarrier On The Verified Layer + Distributed Robustness"** closed at
@@ -13,18 +13,29 @@ closed at Round 19 → **v2.20 "TensorParallelMatmul Production Hardening"** ope
 "End-to-End Training Step On The Tensor-Parallel Stack"** opened at Round 24 (P1 RED) →
 v2.25/26/27 closed at Rounds 25/26/27 → **v2.28 "Normalized Transformer Blocks (LayerNorm +
 Residual) + Deep Multi-Layer Training"** closed at Round 29 → **v2.29 "Device-Native
-Scaled-Dot-Product Attention + LayerNorm Training Kernels"** opened at Round 30 and
-**closed at Round 31**.
+Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 →
+**v2.30 "Device-Native Cross-Entropy Loss Reduction"** opened and
+**closed at Round 30/32**.
 
 ## Latest round
-- **Round 30/31 (2026-08-19)** — milestone **v2.29 "Device-Native SDPA + LayerNorm
-  Training Kernels"** opened through **close (P1+P2+P3)** (DEC-015,
-  TASK-043/044/045/046, CHG-020/021, EV-025/026/027). Round-28 LEARN named the
-  performance round: the v2.28 deep trainer round-tripped attention through the
-  host (`sdpa_forward`/`sdpa_backward` = 10 blocking D2H/H2D per block per
-  step, the D2H/H2D family v2.27 removed from the optimizer; the v2.26 header
-  deferred SDPA to "a later performance pass"), and the trainable LayerNorm
-  kernels launched one thread per row. P1 RED pinned 6 device-kernel contracts
+- **Round 30/32 (2026-08-23)** — milestone **v2.30 "Device-Native Cross-Entropy
+  Loss Reduction"** opened through **close (P1+P2+P3)** (DEC-016,
+  TASK-047/048/049/050, CHG-022, EV-028/029/030/031/032). The v2.29 close left
+  the last whole-buffer host copy on the training hot path: MicroTrainer and
+  TransformerTrainer round-tripped the full m×hidden logits buffer back to the
+  host every train_step (`logits_->copy_to`) and ran the host O(m×C)
+  cross_entropy_loss loop just to produce a scalar mean loss (evaluate also
+  ran a host argmax loop for accuracy) — the same D2H family v2.27/v2.29 had
+  removed everywhere else. P1 RED pinned cross_entropy_loss_device against
+  in-test fp64 references (4/4, EV-028); P2 implemented per-row block-reduced
+  device loss + device accuracy behind the same public API, routing both
+  trainers through them and deleting the round-trips (EV-029/EV-031); P3
+  verified — neural single-GPU 97/97, multi-GPU cross-suite + deep-block K-step
+  trajectory parity 5/5 on 2 GPUs and 19/19 on 4 GPUs (EV-030), and a
+  full-suite baseline 1603/1618 (99%; 15 -j8 device-0 OOM contention in
+  memory-heavy inference suites, each passing in isolation — the pre-existing
+  environment limitation now much reduced from the v2.28 ~20-OOM gap since all
+  8 GPUs are free again). cpp-reviewer pass. Milestone **closed**. P1 RED pinned 6 device-kernel contracts
   vs fp64 references (EV-025); P2 moved SDPA fwd/bwd to device kernels behind
   the same API (`attention_kernels.cu` detail module, mirroring
   `optimizers_kernels.cu`) + parallelized the LN training kernels with

@@ -1,10 +1,10 @@
----
+----
 gsd_state_version: 1.0
-milestone: v2.29
-milestone_name: Device-Native SDPA + LayerNorm Training Kernels
+milestone: v2.30
+milestone_name: Device-Native Cross-Entropy Loss Reduction
 status: Complete
-last_updated: "2026-08-19"
-last_activity: 2026-08-19 — Round 30/31: P1 RED (TASK-044) -> P2 device kernels (TASK-045) -> P3 verify + cpp-reviewer HIGH/MEDIUM fixed, milestone closed
+last_updated: "2026-08-23"
+last_activity: 2026-08-23 — Round 30/32: P1 RED (TASK-048) -> P2 device loss/reduce (TASK-049) -> P3 verify + cpp-reviewer M1/M2/L1 addressed, milestone closed
 progress:
   total_phases: 3
   completed_phases: 3
@@ -15,16 +15,38 @@ progress:
 # Project State
 
 **Project:** Nova CUDA Library Enhancement
-**Last Updated:** 2026-08-19
+**Last Updated:** 2026-08-23
 
 ## Current Position
 
-Milestone: v2.29 Device-Native SDPA + LayerNorm Training Kernels
-Status: Complete (Rounds 30/31)
-Last activity: 2026-08-19 — P1 RED (6 contracts) -> P2 device SDPA + parallel
-LN kernels (all GREEN) -> P3 verify (79/79 + 19/19 on 2 & 4 GPUs);
-cpp-reviewer HIGH (reduction-buffer race) + MEDIUM (int overflow) fixed;
-milestone closed
+Milestone: v2.30 Device-Native Cross-Entropy Loss Reduction
+Status: Complete (Rounds 30/32)
+Last activity: 2026-08-23 — P1 RED (4 loss contracts) -> P2 device CE-loss +
+accuracy kernels -> P3 verify (99/99 + 19/19 on 2 & 4 GPUs + 1603/1618 full
+baseline); cpp-reviewer APPROVE (MEDIUM/LOW addressed); milestone closed
+
+## Milestone v2.30 — Device-Native Cross-Entropy Loss Reduction
+
+The v2.29 close left one big D2H copy on the training hot path: every
+`train_step`/`evaluate` of `MicroTrainer` and `TransformerTrainer` copied the
+whole m×hidden logits buffer back to host (`logits_->copy_to`) and ran the host
+`cross_entropy_loss` O(m×C) loop just to produce a scalar mean loss; `evaluate`
+also ran a host argmax loop for accuracy. Same D2H family v2.27 (optimizer) and
+v2.29 (SDPA/LN) removed. This milestone computes the scalar on-device —
+`cross_entropy_loss_device` (per-row max-subtracted softmax, block/warp
+reduction, scaled atomicAdd of row losses into a pre-zeroed scalar) +
+`accuracy_device` (per-row argmax atomic count) — behind the same public
+`cross_entropy_loss` API, and routes both trainers through them, dropping the
+round-trips (only the targets upload + single scalar readback remain).
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | RED/parity: cross_entropy_loss_device vs host fp64 reference (batch>1 mean, single-row, sum reduction, target-distinction); RED against throw-stub | Complete (Round 30) — 4/4 RED (EV-028); 84/84 neural baseline GREEN before change |
+| 2 | Implement: ce_block_reduce_max/sum (v2.29 entry-barrier convention) + ce_loss_rows_kernel (per-row block max/exp-sum, scaled atomicAdd) + accuracy_rows_kernel; route MicroTrainer + TransformerTrainer train_step/evaluate through them | Complete (Round 30) — CHG-022; 4 loss contracts + DeviceAccuracyMatchesHostArgmax + LargeClassCount(C=1024) GREEN (EV-029/EV-031) |
+| 3 | Verify: parity GREEN; neural single-GPU 99/99; multi-GPU cross-suite + deep-block 5/5 on 2 GPUs + 19/19 on 4 GPUs (unchanged; EV-030); full-suite baseline 1603/1618 (99%, 15 -j8 OOM contention pass in isolation, EV-032); cpp-reviewer APPROVE (M1/M2/L1 addressed, EV-033); RIL close | Complete (Round 30/32) |
+
+Decision: DEC-016. Env: ALL 8 GPUs free again (external load released) —
+full-suite gap since v2.28 (~20 OOM at ~5.8GB free) now 15 contention-OOMs.
 
 ## Milestone v2.29 — Device-Native SDPA + LayerNorm Training Kernels
 
@@ -309,6 +331,7 @@ matmul real path (row-split + NCCL all-gather) thread-per-rank.
 | v2.27 Device-Native Optimizer Kernels (AdamW + Gradient Norm/Clip) | Complete | 2026-08-13 | 3 phases |
 | v2.28 Normalized Transformer Blocks + Deep Multi-Layer Training | Complete | 2026-08-19 | 3 phases |
 | v2.29 Device-Native SDPA + LayerNorm Training Kernels | Complete | 2026-08-19 | 3 phases |
+| v2.30 Device-Native Cross-Entropy Loss Reduction | Complete | 2026-08-23 | 3 phases |
 
 ---
 

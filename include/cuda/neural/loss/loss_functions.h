@@ -61,6 +61,66 @@ void cross_entropy_logits_backward(
     cudaStream_t stream = nullptr
 );
 
+/**
+ * @brief Device cross-entropy-with-logits scalar (milestone v2.30 / DEC-016)
+ *
+ * The host cross_entropy_loss() computes the mean-loss scalar from HOST
+ * predictions, so the training drivers (MicroTrainer, TransformerTrainer)
+ * round-trip the whole m x hidden logits buffer back to the host every
+ * train_step just to read this one number — the same D2H family v2.27
+ * (optimizer) and v2.29 (SDPA/LN) removed. This entry computes the identical
+ * mean CE loss on-device (per-row max-subtracted softmax -> target
+ * log-probability -> block/warp reduction to a single scalar) and writes it
+ * into `loss_out` (one float, [1]); the caller copies just that scalar back.
+ *
+ * @param logits Device logits [batch_size x num_classes]
+ * @param targets Device targets [batch_size]
+ * @param loss_out Device scalar output [1]
+ * @param batch_size Batch size
+ * @param num_classes Number of classes
+ * @param config Cross-entropy config (reduction must match the host forward)
+ * @param stream CUDA stream (default null = current stream)
+ */
+void cross_entropy_loss_device(
+    const float* logits,
+    const int* targets,
+    float* loss_out,
+    int batch_size,
+    int num_classes,
+    const CrossEntropyConfig& config = {},
+    cudaStream_t stream = nullptr
+);
+
+/**
+ * @brief Device top-1 accuracy (milestone v2.30 / DEC-016)
+ *
+ * Companion to cross_entropy_loss_device(): the training drivers' evaluate()
+ * also round-trip the whole logits buffer to compute a host argmax loop. This
+ * entry counts rows whose argmax class equals the target on-device and writes
+ * the count into `correct_out` (one float, [1]) — the caller divides by
+ * batch_size. Used with cross_entropy_loss_device so MicroTrainer /
+ * TransformerTrainer stop copying logits across the host entirely.
+ *
+ * The count is stored as a float so it shares the trainers' float scalar
+ * buffer; every increment is exactly +1.0f and the running sum is always an
+ * integer, so the result is exact for any batch < 2^24 (~16.7M rows).
+ *
+ * @param logits Device logits [batch_size x num_classes]
+ * @param targets Device targets [batch_size]
+ * @param correct_out Device scalar count of correct rows [1]
+ * @param batch_size Batch size
+ * @param num_classes Number of classes
+ * @param stream CUDA stream (default null = current stream)
+ */
+void accuracy_device(
+    const float* logits,
+    const int* targets,
+    float* correct_out,
+    int batch_size,
+    int num_classes,
+    cudaStream_t stream = nullptr
+);
+
 struct FocalLossConfig {
     int num_classes = 10;
     float alpha = 1.0f;

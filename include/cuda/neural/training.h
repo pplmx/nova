@@ -147,6 +147,9 @@ private:
     std::unique_ptr<cuda::memory::Buffer<float>> dWu_;
     std::unique_ptr<cuda::memory::Buffer<float>> dWd_;
     std::unique_ptr<cuda::memory::Buffer<int>> d_targets_;
+    // Device scalar for the reported loss (v2.30: read ONE float back instead
+    // of the whole logits buffer; also reused for the accuracy count).
+    std::unique_ptr<cuda::memory::Buffer<float>> d_loss_;
     int scratch_m_ = 0;
 };
 
