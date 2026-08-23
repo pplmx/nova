@@ -1,0 +1,159 @@
+/**
+ * @file checkpoint_io.h
+ * @brief Internal deterministic binary IO for trainer checkpoints (v2.32)
+ *
+ * Private to the neural training sources (not installed): the NSCK-v1 stream
+ * format shared by MicroTrainer::save_state/load_state and
+ * TransformerTrainer::save_state/load_state. Layout is little-endian IEEE-754
+ * floats and little-endian u32s written as native raw bytes (the library's
+ * targets are little-endian CUDA hosts):
+ *
+ *   u32 magic  = 'N' 'S' 'C' 'K'  (0x4B43534E)
+ *   u32 version = 1
+ *   u32 kind    = 1 (MicroTrainer) | 2 (TransformerTrainer)
+ *   ... trainer-specific dims, then per tensor a tagged record:
+ *   u32 count; float[count]              (a weight tensor)
+ *   and per optimizer a tagged moment pair:
+ *   u32 count; float[count] m; float[count] v   (count 0 == fresh/zero moments)
+ *
+ * Every read validates: a wrong magic/version/kind is a runtime_error, a
+ * count that doesn't match the receiving trainer's tensor is a runtime_error,
+ * and a short read (truncated or corrupt stream) is a runtime_error — never
+ * silent garbage.
+ */
+
+#pragma once
+
+#include "cuda/neural/optimizers/optimizers.h"
+
+#include <cstdint>
+#include <cstring>
+#include <istream>
+#include <ostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace cuda::neural::training::checkpoint {
+
+constexpr uint32_t kMagic = 0x4B43534Eu;  // 'N' 'S' 'C' 'K'
+constexpr uint32_t kVersion = 1u;
+constexpr uint32_t kKindMicroTrainer = 1u;
+constexpr uint32_t kKindTransformerTrainer = 2u;
+constexpr uint32_t kMaxCount = 0x7fffffffu;  // tensor/moment element cap
+
+class Writer {
+public:
+    explicit Writer(std::ostream& out) : out_(out) {}
+
+    void u32(uint32_t v) {
+        out_.write(reinterpret_cast<const char*>(&v),
+                   static_cast<std::streamsize>(sizeof(v)));
+        if (!out_) {
+            throw std::runtime_error("Nova checkpoint: write failed (stream error)");
+        }
+    }
+
+    void floats(const float* data, size_t n) {
+        if (n == 0) return;
+        out_.write(reinterpret_cast<const char*>(data),
+                   static_cast<std::streamsize>(n * sizeof(float)));
+        if (!out_) {
+            throw std::runtime_error("Nova checkpoint: write failed (stream error)");
+        }
+    }
+
+    // A tagged tensor: element count, then raw floats.
+    void tensor(const float* data, size_t n) {
+        u32(checked(n));
+        floats(data, n);
+    }
+
+private:
+    static uint32_t checked(size_t n) {
+        if (n > kMaxCount) {
+            throw std::runtime_error("Nova checkpoint: tensor exceeds the count cap");
+        }
+        return static_cast<uint32_t>(n);
+    }
+
+    std::ostream& out_;
+};
+
+class Reader {
+public:
+    explicit Reader(std::istream& in) : in_(in) {}
+
+    uint32_t u32() {
+        uint32_t v = 0;
+        read_exactly(&v, sizeof(v));
+        return v;
+    }
+
+    void floats(float* data, size_t n) {
+        if (n == 0) return;
+        read_exactly(data, n * sizeof(float));
+    }
+
+    // A tagged tensor, validated to hold exactly n elements.
+    void tensor(float* data, size_t n, const char* what) {
+        const uint32_t count = u32();
+        if (count != n) {
+            throw std::runtime_error(
+                std::string("Nova checkpoint: ") + what + " size mismatch "
+                "(checkpoint " + std::to_string(count) + " vs trainer " +
+                std::to_string(n) + ")");
+        }
+        floats(data, n);
+    }
+
+private:
+    void read_exactly(void* dst, size_t bytes) {
+        in_.read(static_cast<char*>(dst),
+                 static_cast<std::streamsize>(bytes));
+        if (static_cast<size_t>(in_.gcount()) != bytes) {
+            throw std::runtime_error("Nova checkpoint: stream truncated");
+        }
+    }
+
+    std::istream& in_;
+};
+
+// AdamW moment-pair record (count + m + v), shared by both trainers' save/load
+// (TASK-057). A count of 0 means the saved optimizer was fresh (zero moments).
+inline void write_adamw_moments(Writer& w,
+                                const optimizers::AdamWOptimizer& opt) {
+    const size_t cap = opt.momentum_capacity();
+    w.u32(static_cast<uint32_t>(cap));
+    if (cap == 0) return;
+    if (cap > kMaxCount) {
+        throw std::runtime_error("Nova checkpoint: moment count exceeds the cap");
+    }
+    std::vector<float> m(cap), v(cap);
+    opt.copy_moments_to(m.data(), v.data(), cap, nullptr);
+    w.floats(m.data(), cap);
+    w.floats(v.data(), cap);
+}
+
+// Reads an AdamW moment-pair record back into the optimizer, requiring the
+// count to be either 0 (fresh) or exactly the companion tensor's size.
+inline void read_adamw_moments(Reader& r, optimizers::AdamWOptimizer& opt,
+                               size_t tensor_n, const char* what) {
+    const uint32_t count = r.u32();
+    if (count != 0 && count != tensor_n) {
+        throw std::runtime_error(
+            std::string("Nova checkpoint: ") + what + " moment size mismatch "
+            "(checkpoint " + std::to_string(count) + " vs tensor " +
+            std::to_string(tensor_n) + ")");
+    }
+    if (count == 0) {
+        opt.zero_momentum();
+        return;
+    }
+    std::vector<float> m(count), v(count);
+    r.floats(m.data(), count);
+    r.floats(v.data(), count);
+    opt.copy_moments_from(m.data(), v.data(), count, nullptr);
+}
+
+}  // namespace cuda::neural::training::checkpoint

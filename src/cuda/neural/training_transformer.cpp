@@ -17,7 +17,11 @@
 
 #include "cuda/neural/training_transformer.h"
 
+#include "checkpoint_io.h"
+
+#include <array>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace cuda::neural::training {
@@ -42,6 +46,25 @@ inline int block_grad_size(int idx, int hidden, int qkv, int inter) {
         case 10: return inter * hidden;           // wd
         default: return 0;
     }
+}
+
+// A block's 11 weight-tensor element counts, in the canonical order of
+// set_block_weight / copy_block_weights (matches block_grad_size's layout).
+void block_tensor_sizes(int hidden, int qkv, int inter, size_t sizes[11]) {
+    const size_t h = static_cast<size_t>(hidden);
+    const size_t q = static_cast<size_t>(qkv);
+    const size_t m = static_cast<size_t>(inter);
+    sizes[0] = h;             // ln1_gamma
+    sizes[1] = h;             // ln1_beta
+    sizes[2] = h * q;         // wq
+    sizes[3] = h * q;         // wk
+    sizes[4] = h * q;         // wv
+    sizes[5] = q * h;         // wo
+    sizes[6] = h;             // ln2_gamma
+    sizes[7] = h;             // ln2_beta
+    sizes[8] = h * m;         // wg
+    sizes[9] = h * m;         // wu
+    sizes[10] = m * h;        // wd
 }
 
 }  // namespace
@@ -259,18 +282,108 @@ void TransformerTrainer::copy_final_ln(float* gamma, float* beta) const {
     final_ln_->copy_weights(gamma, beta);
 }
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 void TransformerTrainer::save_state(std::ostream& out) const {
-    (void)out;
-    throw std::logic_error(
-        "TransformerTrainer::save_state not implemented (v2.32 P1 stub)");
+    if (tp_degree() > 1) {
+        throw std::runtime_error(
+            "TransformerTrainer::save_state: tp > 1 rank-shard checkpoints "
+            "are the v2.32 follow-up (TASK); verified on the tp == 1 path");
+    }
+    namespace cp = checkpoint;
+    cp::Writer w(out);
+    w.u32(cp::kMagic);
+    w.u32(cp::kVersion);
+    w.u32(cp::kKindTransformerTrainer);
+    w.u32(static_cast<uint32_t>(num_blocks_));
+    w.u32(static_cast<uint32_t>(hidden_));
+    w.u32(static_cast<uint32_t>(heads_));
+    w.u32(static_cast<uint32_t>(head_dim_));
+    w.u32(static_cast<uint32_t>(intermediate_));
+
+    const int qkv = heads_ * head_dim_;
+    size_t sz[11];
+    block_tensor_sizes(hidden_, qkv, intermediate_, sz);
+    for (int b = 0; b < num_blocks_; ++b) {
+        std::array<std::vector<float>, 11> tens;
+        for (int i = 0; i < 11; ++i) tens[static_cast<size_t>(i)].resize(sz[i]);
+        copy_block_weights(b, tens[0].data(), tens[1].data(), tens[2].data(),
+                           tens[3].data(), tens[4].data(), tens[5].data(),
+                           tens[6].data(), tens[7].data(), tens[8].data(),
+                           tens[9].data(), tens[10].data());
+        for (int i = 0; i < 11; ++i) {
+            w.tensor(tens[static_cast<size_t>(i)].data(), sz[i]);
+        }
+        for (int i = 0; i < 11; ++i) {
+            cp::write_adamw_moments(w, *block_opts_[static_cast<size_t>(b)]
+                                             [static_cast<size_t>(i)]);
+        }
+    }
+    std::vector<float> fg(static_cast<size_t>(hidden_));
+    std::vector<float> fb(static_cast<size_t>(hidden_));
+    copy_final_ln(fg.data(), fb.data());
+    w.tensor(fg.data(), fg.size());
+    w.tensor(fb.data(), fb.size());
+    cp::write_adamw_moments(w, *final_opts_[0]);
+    cp::write_adamw_moments(w, *final_opts_[1]);
 }
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 void TransformerTrainer::load_state(std::istream& in) {
-    (void)in;
-    throw std::logic_error(
-        "TransformerTrainer::load_state not implemented (v2.32 P1 stub)");
+    namespace cp = checkpoint;
+    cp::Reader r(in);
+    if (r.u32() != cp::kMagic) {
+        throw std::runtime_error("Nova checkpoint: bad magic (not a Nova checkpoint)");
+    }
+    if (r.u32() != cp::kVersion) {
+        throw std::runtime_error("Nova checkpoint: unsupported checkpoint version");
+    }
+    if (r.u32() != cp::kKindTransformerTrainer) {
+        throw std::runtime_error(
+            "Nova checkpoint: kind mismatch (not a TransformerTrainer checkpoint)");
+    }
+    const uint32_t fnb = r.u32(), fh = r.u32(), fheads = r.u32(),
+                   fhd = r.u32(), fi = r.u32();
+    if (fnb != static_cast<uint32_t>(num_blocks_) ||
+        fh != static_cast<uint32_t>(hidden_) ||
+        fheads != static_cast<uint32_t>(heads_) ||
+        fhd != static_cast<uint32_t>(head_dim_) ||
+        fi != static_cast<uint32_t>(intermediate_)) {
+        throw std::runtime_error(
+            "Nova checkpoint: dimension mismatch (checkpoint " +
+            std::to_string(fnb) + "x" + std::to_string(fh) + "/" +
+            std::to_string(fheads) + "/" + std::to_string(fhd) + "/" +
+            std::to_string(fi) + " vs trainer " + std::to_string(num_blocks_) +
+            "x" + std::to_string(hidden_) + "/" + std::to_string(heads_) + "/" +
+            std::to_string(head_dim_) + "/" + std::to_string(intermediate_) + ")");
+    }
+    const int qkv = heads_ * head_dim_;
+    size_t sz[11];
+    block_tensor_sizes(hidden_, qkv, intermediate_, sz);
+    for (int b = 0; b < num_blocks_; ++b) {
+        std::array<std::vector<float>, 11> tens;
+        for (int i = 0; i < 11; ++i) tens[static_cast<size_t>(i)].resize(sz[i]);
+        // The tensor records carry their own counts; Reader::tensor validates
+        // each against sz[i] (geometry/tp mismatch rejects before set_weight).
+        for (int i = 0; i < 11; ++i) {
+            r.tensor(tens[static_cast<size_t>(i)].data(), sz[i],
+                     (std::string("block ") + std::to_string(b) + " tensor " +
+                      std::to_string(i)).c_str());
+        }
+        set_block_weight(b, tens[0].data(), tens[1].data(), tens[2].data(),
+                         tens[3].data(), tens[4].data(), tens[5].data(),
+                         tens[6].data(), tens[7].data(), tens[8].data(),
+                         tens[9].data(), tens[10].data());
+        for (int i = 0; i < 11; ++i) {
+            cp::read_adamw_moments(
+                r, *block_opts_[static_cast<size_t>(b)][static_cast<size_t>(i)],
+                sz[i], "block moment");
+        }
+    }
+    std::vector<float> fg(static_cast<size_t>(hidden_));
+    std::vector<float> fb(static_cast<size_t>(hidden_));
+    r.tensor(fg.data(), fg.size(), "final gamma");
+    r.tensor(fb.data(), fb.size(), "final beta");
+    set_final_ln_weight(fg.data(), fb.data());
+    cp::read_adamw_moments(r, *final_opts_[0], fg.size(), "final gamma");
+    cp::read_adamw_moments(r, *final_opts_[1], fb.size(), "final beta");
 }
 
 int TransformerTrainer::num_blocks() const { return num_blocks_; }

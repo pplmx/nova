@@ -16,7 +16,10 @@
 
 #include "cuda/neural/training.h"
 
+#include "checkpoint_io.h"
+
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace cuda::neural::training {
@@ -134,18 +137,72 @@ void MicroTrainer::copy_weights(float* gate, float* up, float* down) const {
     mlp_->copy_weights(gate, up, down);
 }
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 void MicroTrainer::save_state(std::ostream& out) const {
-    (void)out;
-    throw std::logic_error(
-        "MicroTrainer::save_state not implemented (v2.32 P1 stub)");
+    // The format captures what copy_weights() exposes (the full weights at
+    // tp==1, rank shards otherwise). Rank-shard restore needs shard setters on
+    // the MLP pieces — the v2.32 follow-up — so refuse to emit a checkpoint
+    // that cannot roundtrip rather than write one that silently can't load.
+    if (tp_degree() > 1) {
+        throw std::runtime_error(
+            "MicroTrainer::save_state: tp > 1 rank-shard checkpoints are the "
+            "v2.32 follow-up (TASK); verified on the tp == 1 path");
+    }
+    namespace cp = checkpoint;
+    cp::Writer w(out);
+    w.u32(cp::kMagic);
+    w.u32(cp::kVersion);
+    w.u32(cp::kKindMicroTrainer);
+    w.u32(static_cast<uint32_t>(hidden_dim_));
+    w.u32(static_cast<uint32_t>(intermediate_size_));
+
+    const size_t h = static_cast<size_t>(hidden_dim_);
+    const size_t inter = static_cast<size_t>(intermediate_size_);
+    const size_t ng = h * inter, nu = h * inter, nd = inter * h;
+    std::vector<float> g(ng), u(nu), d(nd);
+    copy_weights(g.data(), u.data(), d.data());
+    w.tensor(g.data(), ng);
+    w.tensor(u.data(), nu);
+    w.tensor(d.data(), nd);
+
+    cp::write_adamw_moments(w, *opt_gate_);
+    cp::write_adamw_moments(w, *opt_up_);
+    cp::write_adamw_moments(w, *opt_down_);
 }
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 void MicroTrainer::load_state(std::istream& in) {
-    (void)in;
-    throw std::logic_error(
-        "MicroTrainer::load_state not implemented (v2.32 P1 stub)");
+    namespace cp = checkpoint;
+    cp::Reader r(in);
+    if (r.u32() != cp::kMagic) {
+        throw std::runtime_error("Nova checkpoint: bad magic (not a Nova checkpoint)");
+    }
+    if (r.u32() != cp::kVersion) {
+        throw std::runtime_error("Nova checkpoint: unsupported checkpoint version");
+    }
+    if (r.u32() != cp::kKindMicroTrainer) {
+        throw std::runtime_error(
+            "Nova checkpoint: kind mismatch (not a MicroTrainer checkpoint)");
+    }
+    const uint32_t fh = r.u32(), fi = r.u32();
+    if (fh != static_cast<uint32_t>(hidden_dim_) ||
+        fi != static_cast<uint32_t>(intermediate_size_)) {
+        throw std::runtime_error(
+            "Nova checkpoint: dimension mismatch (checkpoint " +
+            std::to_string(fh) + "x" + std::to_string(fi) + " vs trainer " +
+            std::to_string(hidden_dim_) + "x" +
+            std::to_string(intermediate_size_) + ")");
+    }
+    const size_t h = static_cast<size_t>(hidden_dim_);
+    const size_t inter = static_cast<size_t>(intermediate_size_);
+    const size_t ng = h * inter, nu = h * inter, nd = inter * h;
+    std::vector<float> g(ng), u(nu), d(nd);
+    r.tensor(g.data(), ng, "gate");
+    r.tensor(u.data(), nu, "up");
+    r.tensor(d.data(), nd, "down");
+    set_weight(g.data(), u.data(), d.data());
+
+    cp::read_adamw_moments(r, *opt_gate_, ng, "gate");
+    cp::read_adamw_moments(r, *opt_up_, nu, "up");
+    cp::read_adamw_moments(r, *opt_down_, nd, "down");
 }
 
 int MicroTrainer::hidden_dim() const { return hidden_dim_; }

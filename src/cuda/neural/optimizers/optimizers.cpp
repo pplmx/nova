@@ -75,32 +75,41 @@ void AdamWOptimizer::zero_momentum() {
 
 void AdamWOptimizer::zero_grad() {}
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 size_t AdamWOptimizer::momentum_capacity() const {
-    throw std::logic_error(
-        "AdamWOptimizer::momentum_capacity not implemented (v2.32 P1 stub)");
+    return m_data_ ? m_data_->size() : 0;
 }
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 void AdamWOptimizer::copy_moments_to(float* m, float* v, size_t n,
                                      cudaStream_t stream) const {
-    (void)m;
-    (void)v;
-    (void)n;
     (void)stream;
-    throw std::logic_error(
-        "AdamWOptimizer::copy_moments_to not implemented (v2.32 P1 stub)");
+    if (n > momentum_capacity()) {
+        throw std::invalid_argument(
+            "AdamWOptimizer::copy_moments_to: n exceeds the moment capacity");
+    }
+    if (n == 0) return;
+    m_data_->copy_to(m, n);
+    v_data_->copy_to(v, n);
 }
 
-// v2.32 P1 stub — replaced in P2 (TASK-057).
 void AdamWOptimizer::copy_moments_from(const float* m, const float* v,
                                        size_t n, cudaStream_t stream) {
-    (void)m;
-    (void)v;
-    (void)n;
     (void)stream;
-    throw std::logic_error(
-        "AdamWOptimizer::copy_moments_from not implemented (v2.32 P1 stub)");
+    if (n == 0) {
+        // A zero-size restore means "the saved optimizer was fresh": reset
+        // whatever moments this optimizer already holds so a restored fresh
+        // checkpoint leaves it cold, matching the original.
+        zero_momentum();
+        return;
+    }
+    if (!initialized_ || momentum_capacity() < n) {
+        m_data_ = std::make_unique<cuda::memory::Buffer<float>>(n);
+        v_data_ = std::make_unique<cuda::memory::Buffer<float>>(n);
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
+        initialized_ = true;
+    }
+    m_data_->copy_from(m, n);
+    v_data_->copy_from(v, n);
 }
 
 LAMBOptimizer::LAMBOptimizer(const LAMBConfig& config)

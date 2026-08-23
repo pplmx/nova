@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-23T22:22:47+00:00",
+  "updated_at": "2026-08-23T22:39:26+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2270,6 +2270,18 @@
       "touched_round": 32,
       "source": "tests/neural/checkpoint_test.cpp CheckpointTest.* (EV-038 RED run)",
       "title": "CheckpointTest P1 RED: all 6 contracts (AdamW moment roundtrip, MicroTrainer/TransformerTrainer save-load byte-exact roundtrip, resume-vs-uninterrupted, fresh-state, geometry/corruption rejection) fail against the v2.32 throw-stubs with 'not implemented (v2.32 P1 stub)'; 26/26 baseline green before; also caught a P1 test bug (host pointers passed as device params) that left a sticky async illegal-memory-access",
+      "confidence": 1.0
+    },
+    "EV-039": {
+      "id": "EV-039",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T22:39:26+00:00",
+      "updated_at": "2026-08-23T22:39:26+00:00",
+      "touched_round": 32,
+      "source": "CheckpointTest 6/6 + neural 113/113 + multi-GPU 5/5 (2 GPUs, EV-039 P2 run)",
+      "title": "CheckpointTest P2 GREEN: all 6 contracts pass with the implemented save_state/load_state + AdamW moment API (EV-039): byte-exact roundtrip + resume-vs-uninterrupted (MicroTrainer + TransformerTrainer), fresh-state roundtrip, AdamW momentum oracle, geometry/corruption rejection; neural single-GPU 113/113, multi-GPU trajectory unchanged 5/5 on 2 GPUs",
       "confidence": 1.0
     }
   },

@@ -113,7 +113,6 @@ TEST_F(CheckpointTest, AdamWMomentExportImportRoundtrip) {
     fill_random(grads.data(), n, 102);
     cuda::memory::Buffer<float> d_a(n), d_b(n), d_g(n);
     d_a.copy_from(p0.data(), n);
-    d_b.copy_from(p0.data(), n);
     d_g.copy_from(grads.data(), n);
 
     AdamWOptimizer a(cfg);
@@ -130,8 +129,11 @@ TEST_F(CheckpointTest, AdamWMomentExportImportRoundtrip) {
     b.copy_moments_from(m.data(), v.data(), n, nullptr);
     ASSERT_EQ(b.momentum_capacity(), n);
 
-    // Both step once more from the identical pre-step state: the restored
-    // moments must drive byte-identical updates.
+    // Both step once from the identical pre-step-4 state: pull A's post-3
+    // params to host and stage B's params from them, so the only difference
+    // is where the moments came from (A accumulated them, B imported them).
+    d_a.copy_to(p_a.data(), n);
+    d_b.copy_from(p_a.data(), n);
     a.step(d_a.data(), d_g.data(), n, 4);
     b.step(d_b.data(), d_g.data(), n, 4);
     d_a.copy_to(p_a.data(), n);

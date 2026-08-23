@@ -88,3 +88,32 @@ a real gap, and the restore path needs optimizer state to be exact.
   `std::vector` pointers as the device params/grads to `step()` — an async
   launch left a sticky illegal-memory-access that only surfaced on the next
   test's first memcpy; fixed to device `Buffer`s like optimizers_test does.)
+
+## P2 implementation (TASK-057, EV-039)
+
+- `src/cuda/neural/checkpoint_io.h` (internal, header-only): the NSCK-v1
+  `Writer`/`Reader` (u32 magic/version/kind, tagged tensor records
+  count+float[], tagged AdamW moment pairs count+m[]+v[], every read
+  validated — bad magic/version/kind, count mismatch, truncated stream all
+  throw std::runtime_error).
+- `AdamWOptimizer` moment API implemented in optimizers.cpp:
+  `momentum_capacity()` (buffer size, 0 for never-stepped), `copy_moments_to`
+  (D2H, rejects n > capacity), `copy_moments_from` (allocates + zero-fills
+  when fresh/smaller, then H2D; n == 0 resets to zero — the "the saved
+  optimizer was fresh" case).
+- `MicroTrainer::save_state`/`load_state` (training.cpp): kind 1; dims +
+  gate/up/down tensors + 3 moment pairs, validated on load; restores via
+  `set_weight` + `read_adamw_moments`. `TransformerTrainer::save_state` /
+  `load_state` (training_transformer.cpp): kind 2; dims + 11N+2 tensors +
+  11N+2 moment pairs, per-block tensor counts from `block_tensor_sizes`
+  (mirrors block_grad_size), restores via `set_block_weight` /
+  `set_final_ln_weight`.
+- Both save_state() throw when tp_degree() > 1 (rank shards can't roundtrip
+  through the full-weight setters — the named follow-up), so a checkpoint is
+  never written that cannot load.
+- GREEN (EV-039): CheckpointTest 6/6 (incl. byte-exact roundtrip + resumed-vs
+  -uninterrupted on both trainers); neural single-GPU regression 113/113
+  (baseline + the new suite); multi-GPU cross-suite **5/5 on 2 GPUs**
+  (MicroTrainerMultiGpu + DeepBlockMultiGpu trajectory + attention/block
+  multigpu), trajectory unchanged. No new device kernels — sanitizer not
+  applicable.
