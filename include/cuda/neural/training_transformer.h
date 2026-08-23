@@ -32,6 +32,7 @@
 
 #include <array>
 #include <cstddef>
+#include <iosfwd>
 #include <memory>
 #include <vector>
 
@@ -133,6 +134,25 @@ public:
      * @brief Copy the final LN gamma/beta to host memory (parity)
      */
     void copy_final_ln(float* gamma, float* beta) const;
+
+    /**
+     * @brief Serialize the full trainer state to a binary stream (v2.32)
+     *
+     * Deterministic NSCK-v1 format: kind, dims, all 11N+2 weight tensors and
+     * every optimizer's m/v moment pair, so a restored trainer resumes
+     * byte-exact from the interrupted step.
+     */
+    void save_state(std::ostream& out) const;
+
+    /**
+     * @brief Restore trainer state from a save_state() stream (v2.32)
+     *
+     * Validates the file's kind, dims, per-tensor sizes and moment sizes
+     * against this trainer; a geometry mismatch, corrupt magic or truncated
+     * stream throws std::runtime_error. Restoring moments (not just weights)
+     * keeps the AdamW update identical at the resumed step.
+     */
+    void load_state(std::istream& in);
 
     /**
      * @brief Number of transformer blocks

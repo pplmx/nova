@@ -259,6 +259,20 @@ void TransformerTrainer::copy_final_ln(float* gamma, float* beta) const {
     final_ln_->copy_weights(gamma, beta);
 }
 
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+void TransformerTrainer::save_state(std::ostream& out) const {
+    (void)out;
+    throw std::logic_error(
+        "TransformerTrainer::save_state not implemented (v2.32 P1 stub)");
+}
+
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+void TransformerTrainer::load_state(std::istream& in) {
+    (void)in;
+    throw std::logic_error(
+        "TransformerTrainer::load_state not implemented (v2.32 P1 stub)");
+}
+
 int TransformerTrainer::num_blocks() const { return num_blocks_; }
 int TransformerTrainer::hidden() const { return hidden_; }
 int TransformerTrainer::tp_degree() const {

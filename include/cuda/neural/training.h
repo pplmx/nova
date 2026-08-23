@@ -31,6 +31,7 @@
 #include "cuda/memory/buffer-inl.h"
 
 #include <cstddef>
+#include <iosfwd>
 #include <memory>
 
 namespace cuda::neural::training {
@@ -113,6 +114,25 @@ public:
      *        (parity verification)
      */
     void copy_weights(float* gate, float* up, float* down) const;
+
+    /**
+     * @brief Serialize the full trainer state to a binary stream (v2.32)
+     *
+     * Deterministic NSCK-v1 format: kind, dims, the three weight tensors, and
+     * each optimizer's m/v moment pair, so a restored trainer resumes
+     * byte-exact from the interrupted step.
+     */
+    void save_state(std::ostream& out) const;
+
+    /**
+     * @brief Restore trainer state from a save_state() stream (v2.32)
+     *
+     * Validates the file's kind, dims, per-tensor sizes and moment sizes
+     * against this trainer; a geometry mismatch, corrupt magic or truncated
+     * stream throws std::runtime_error. Restoring moments (not just weights)
+     * keeps the AdamW update identical at the resumed step.
+     */
+    void load_state(std::istream& in);
 
     /**
      * @brief Hidden (input/output) dim == number of classes

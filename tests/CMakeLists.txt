@@ -71,6 +71,7 @@ add_executable(nova-tests
     neural/transformer/attention_test.cpp
     neural/loss/loss_functions_test.cpp
     neural/optimizers/optimizers_test.cpp
+    neural/checkpoint_test.cpp
     tools/tools_test.cpp
     mesh/device_mesh_test.cu
     cuda/nccl/test_nccl_collectives.cpp

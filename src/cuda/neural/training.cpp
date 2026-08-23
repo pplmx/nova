@@ -134,6 +134,20 @@ void MicroTrainer::copy_weights(float* gate, float* up, float* down) const {
     mlp_->copy_weights(gate, up, down);
 }
 
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+void MicroTrainer::save_state(std::ostream& out) const {
+    (void)out;
+    throw std::logic_error(
+        "MicroTrainer::save_state not implemented (v2.32 P1 stub)");
+}
+
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+void MicroTrainer::load_state(std::istream& in) {
+    (void)in;
+    throw std::logic_error(
+        "MicroTrainer::load_state not implemented (v2.32 P1 stub)");
+}
+
 int MicroTrainer::hidden_dim() const { return hidden_dim_; }
 
 int MicroTrainer::intermediate_size() const { return intermediate_size_; }

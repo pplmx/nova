@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 
 namespace cuda::neural::optimizers {
@@ -73,6 +74,34 @@ void AdamWOptimizer::zero_momentum() {
 }
 
 void AdamWOptimizer::zero_grad() {}
+
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+size_t AdamWOptimizer::momentum_capacity() const {
+    throw std::logic_error(
+        "AdamWOptimizer::momentum_capacity not implemented (v2.32 P1 stub)");
+}
+
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+void AdamWOptimizer::copy_moments_to(float* m, float* v, size_t n,
+                                     cudaStream_t stream) const {
+    (void)m;
+    (void)v;
+    (void)n;
+    (void)stream;
+    throw std::logic_error(
+        "AdamWOptimizer::copy_moments_to not implemented (v2.32 P1 stub)");
+}
+
+// v2.32 P1 stub — replaced in P2 (TASK-057).
+void AdamWOptimizer::copy_moments_from(const float* m, const float* v,
+                                       size_t n, cudaStream_t stream) {
+    (void)m;
+    (void)v;
+    (void)n;
+    (void)stream;
+    throw std::logic_error(
+        "AdamWOptimizer::copy_moments_from not implemented (v2.32 P1 stub)");
+}
 
 LAMBOptimizer::LAMBOptimizer(const LAMBConfig& config)
     : config_(config), m_data_(), v_data_(), initialized_(false) {}

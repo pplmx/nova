@@ -40,6 +40,23 @@ public:
     void zero_momentum();
     void zero_grad();
 
+    /**
+     * @brief Moment-state export/import for checkpointing (v2.32, TASK-056)
+     *
+     * momentum_capacity() is the m/v buffer size in elements — 0 for a fresh
+     * optimizer that has never stepped. copy_moments_to D2Hs exactly n
+     * elements into host m/v (n must equal the capacity); copy_moments_from
+     * H2Ds n elements into the buffers, allocating + zero-filling first when
+     * fresh or too small, with n == 0 resetting the moments to zero. A
+     * restored optimizer steps exactly like the one it came from (the AdamW
+     * update reads m/v, so resume needs them byte-identical).
+     */
+    [[nodiscard]] size_t momentum_capacity() const;
+    void copy_moments_to(float* m, float* v, size_t n,
+                         cudaStream_t stream = nullptr) const;
+    void copy_moments_from(const float* m, const float* v, size_t n,
+                           cudaStream_t stream = nullptr);
+
 private:
     OptimizerConfig config_;
     // Device moment buffers (v2.27): the update runs in a fused kernel instead
