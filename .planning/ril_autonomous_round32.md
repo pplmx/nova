@@ -117,3 +117,35 @@ a real gap, and the restore path needs optimizer state to be exact.
   (MicroTrainerMultiGpu + DeepBlockMultiGpu trajectory + attention/block
   multigpu), trajectory unchanged. No new device kernels — sanitizer not
   applicable.
+
+## P3 verify + cpp-reviewer (TASK-058, EV-040)
+
+- cpp-reviewer (agent aba7274412a746e17): **APPROVE** — no CRITICAL/HIGH; the
+  read path was called out as the strongest part (stream-derived counts never
+  trusted for allocation). 3 MEDIUM: (1) load_state wasn't transactional
+  (weights applied before a later moment record validated -> partial restore on
+  mid-write truncation); (2) the format doesn't serialize the AdamW step
+  counter, so "byte-exact resume" silently depends on the caller continuing
+  step_no at the interrupted count; (3) copy_moments_to/from only rejected
+  n > capacity, not n != capacity (a stale-tail hazard for direct API users).
+  LOWs: check-before-write in write_adamw_moments, kMaxCount headroom, the
+  load-side tp>1 guard asymmetry, endianness doc nuance, wasted zero-fill.
+- Fixes (commit 0b5ee09, CHG-025): two-phase transactional load_state on both
+  trainers (read+validate every record, then apply; a rejected load leaves the
+  trainer untouched); copy_moments_to requires n == capacity and copy_moments_
+  from rejects n < existing capacity; step_no caller-managed contract
+  documented on save_state/load_state; symmetric tp>1 load guard;
+  kBlockTensorCount shared constant; widened kMaxCount; endianness doc
+  clarified. Plus 2 new tests pinning the fixed contracts:
+  `RejectedLoadLeavesTrainerUntouched` (truncation at 4 points leaves block-0
+  + final-LN byte-identical) and `AdamWMomentCapacityMismatchRejected`.
+- Re-verified after the fixes: CheckpointTest **8/8**; neural single-GPU
+  regression **115/115**; multi-GPU cross-suite **5/5 on 2 GPUs** (deep-block
+  trajectory unchanged).
+- Full-suite baseline (EV-040 close pass): **1469 PASSED / 0 FAILED** in one
+  in-process run (1545 ran, 153 skipped — MPI/multi-GPU/launcher-gated
+  suites, matching the previous baseline's skip set; the prior -j8 15-OOM
+  contention failures don't occur single-process). No regression.
+- RIL close: TASK-055/056/057/058 resolved (CHG-024 dd93df5, CHG-025 0b5ee09)
+  on EV-038/039/040; ISS-001 stays active (tp=1 persistence shipped, tp>1
+  rank-shard restore opened as **TASK-059**, 6.0).

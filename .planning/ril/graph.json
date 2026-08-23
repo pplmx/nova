@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-23T22:39:26+00:00",
+  "updated_at": "2026-08-23T23:11:18+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2205,10 +2205,10 @@
     "TASK-055": {
       "id": "TASK-055",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T22:05:17+00:00",
-      "updated_at": "2026-08-23T22:05:17+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2217,10 +2217,10 @@
     "TASK-056": {
       "id": "TASK-056",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T22:05:17+00:00",
-      "updated_at": "2026-08-23T22:05:17+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2229,10 +2229,10 @@
     "TASK-057": {
       "id": "TASK-057",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T22:05:17+00:00",
-      "updated_at": "2026-08-23T22:05:17+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2241,10 +2241,10 @@
     "TASK-058": {
       "id": "TASK-058",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T22:05:17+00:00",
-      "updated_at": "2026-08-23T22:05:17+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2282,6 +2282,52 @@
       "touched_round": 32,
       "source": "CheckpointTest 6/6 + neural 113/113 + multi-GPU 5/5 (2 GPUs, EV-039 P2 run)",
       "title": "CheckpointTest P2 GREEN: all 6 contracts pass with the implemented save_state/load_state + AdamW moment API (EV-039): byte-exact roundtrip + resume-vs-uninterrupted (MicroTrainer + TransformerTrainer), fresh-state roundtrip, AdamW momentum oracle, geometry/corruption rejection; neural single-GPU 113/113, multi-GPU trajectory unchanged 5/5 on 2 GPUs",
+      "confidence": 1.0
+    },
+    "TASK-059": {
+      "id": "TASK-059",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T22:41:11+00:00",
+      "updated_at": "2026-08-23T22:41:11+00:00",
+      "touched_round": 32,
+      "category": "core-feature",
+      "severity": 2,
+      "title": "v2.32 follow-up: multi-GPU rank-shard checkpoint restore — add shard-level weight setters (TensorParallelMLP::set_weight_shards, TransformerBlock + attention/M LP shard setters) mirroring copy_weight*, drop the tp>1 save_state throw, add a thread-per-rank multi-GPU checkpoint roundtrip test"
+    },
+    "CHG-024": {
+      "id": "CHG-024",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:10:41+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
+      "touched_round": 32,
+      "commit": "dd93df5",
+      "title": "v2.32 P2 implement: checkpoint_io.h NSCK-v1 Writer/Reader + AdamW moment API + MicroTrainer/TransformerTrainer save_state/load_state (EV-039 GREEN)"
+    },
+    "CHG-025": {
+      "id": "CHG-025",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:10:41+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
+      "touched_round": 32,
+      "commit": "0b5ee09",
+      "title": "v2.32 cpp-reviewer MEDIUM fixes: two-phase transactional load_state, copy_moments n!=capacity rejection, step_no caller-managed doc, tp>1 load guard, kBlockTensorCount (EV-040)"
+    },
+    "EV-040": {
+      "id": "EV-040",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-23T23:10:41+00:00",
+      "updated_at": "2026-08-23T23:10:41+00:00",
+      "touched_round": 32,
+      "source": "cpp-reviewer agent aba7274412a746e17 + re-verification run",
+      "title": "cpp-reviewer APPROVE (no CRITICAL/HIGH) with 3 MEDIUM: (1) load_state not transactional -> fixed two-phase read-then-apply + RejectedLoadLeavesTrainerUntouched; (2) step counter not serialized -> documented step_no is caller-managed; (3) copy_moments n!=capacity underspecified -> reject both directions + AdamWMomentCapacityMismatchRejected. LOWs: check-before-write, kMaxCount, load tp>1 guard, endianness doc, kBlockTensorCount. Re-verified 8/8 + 115/115 + 5/5.",
       "confidence": 1.0
     }
   },
@@ -3449,6 +3495,30 @@
       "to": "TASK-057",
       "type": "governs",
       "created_at": "2026-08-23T22:07:02+00:00"
+    },
+    {
+      "from": "TASK-059",
+      "to": "TASK-057",
+      "type": "depends_on",
+      "created_at": "2026-08-23T22:41:12+00:00"
+    },
+    {
+      "from": "TASK-059",
+      "to": "ISS-001",
+      "type": "addresses",
+      "created_at": "2026-08-23T22:41:12+00:00"
+    },
+    {
+      "from": "CHG-025",
+      "to": "TASK-057",
+      "type": "implements",
+      "created_at": "2026-08-23T23:10:41+00:00"
+    },
+    {
+      "from": "CHG-024",
+      "to": "TASK-057",
+      "type": "implements",
+      "created_at": "2026-08-23T23:11:18+00:00"
     }
   ]
 }

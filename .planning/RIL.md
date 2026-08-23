@@ -17,11 +17,12 @@ Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 
 **v2.30 "Device-Native Cross-Entropy Loss Reduction"** opened and
 **closed at Round 30/32** → **v2.31 "Device-Native LAMB Optimizer
 Kernel"** opened and **closed at Round 31** → **v2.32 "Model Checkpointing
-(Weights + Optimizer State)"** opened at Round 32 (in progress).
+(Weights + Optimizer State)"** opened and **closed at Round 32**.
 
 ## Latest round
 - **Round 32 (2026-08-24)** — milestone **v2.32 "Model Checkpointing (Weights +
-  Optimizer State)"** **opened** (DEC-018, TASK-055/056/057/058, ISS-001,
+  Optimizer State)"** opened through **close (P1+P2+P3)** (DEC-018,
+  TASK-055/056/057/058, CHG-024/CHG-025, EV-038/039/040, ISS-001,
   comp-neural-training). The host-round-trip family (v2.27/29/30/31) is
   complete and the train stack (v2.25-28) is real, but nothing persists: a
   trained MicroTrainer/TransformerTrainer dies with the process, interrupted
@@ -30,10 +31,14 @@ Kernel"** opened and **closed at Round 31** → **v2.32 "Model Checkpointing
   behind a deterministic binary format (NSCK v1) plus
   AdamWOptimizer::{momentum_capacity, copy_moments_to, copy_moments_from} for
   optimizer-state restore (an AdamW update reads m/v, so weights alone diverge
-  at the first resumed step). Verified at tp=1: byte-exact roundtrip,
-  fresh-state roundtrip, resumed-vs-uninterrupted trajectory, geometry/
-  corruption rejection; tp>1 rank-shard restore is the named follow-up.
-  In progress.
+  at the first resumed step). P1 RED 6/6 against throw-stubs (EV-038); P2
+  implemented + GREEN (EV-039: CheckpointTest 6/6, neural 113/113, multi-GPU
+  5/5); cpp-reviewer APPROVE with 3 MEDIUM (transactional two-phase load,
+  n!=capacity moment rejection, caller-managed step_no doc) fixed in CHG-025
+  and re-verified 8/8 + 115/115 + 5/5 (EV-040). Verified at tp=1: byte-exact
+  roundtrip, fresh-state roundtrip, resumed-vs-uninterrupted trajectory,
+  geometry/corruption rejection, no-partial-restore on rejected loads; tp>1
+  rank-shard restore opened as **TASK-059** (6.0). Milestone **closed**.
 - **Round 30/32 (2026-08-23)** — milestone **v2.30 "Device-Native Cross-Entropy
   Loss Reduction"** opened through **close (P1+P2+P3)** (DEC-016,
   TASK-047/048/049/050, CHG-022, EV-028/029/030/031/032). The v2.29 close left

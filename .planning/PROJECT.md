@@ -6,7 +6,7 @@ A production-ready CUDA parallel algorithms library with a five-layer architectu
 
 ## Current Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
 
-**Status:** In Progress (2026-08-24, RIL Round 32)
+**Status:** Complete (2026-08-24, RIL Round 32)
 
 **Milestone v2.32** (DEC-018). The train stack is real and device-native
 (v2.25-31), but nothing persists: a trained `MicroTrainer` /
@@ -20,16 +20,18 @@ kind, dims, tensors as count+float[], moments as count+m[]+v[]), plus
 the restored trainer resumes with byte-identical weights *and* moments (an
 AdamW update reads m/v, so weights alone diverge at the first resumed step).
 Verified at tp=1 (shard==full): byte-exact roundtrip, fresh-state roundtrip,
-resumed-vs-uninterrupted trajectory, and geometry/corruption rejection; tp>1
-rank-shard restore is the named follow-up.
+resumed-vs-uninterrupted trajectory, geometry/corruption rejection, and — after
+cpp-reviewer — a two-phase transactional load (a rejected load leaves the
+trainer untouched). tp>1 rank-shard restore is opened as TASK-059.
 
-Phases: **P1 (TASK-056)** pins the surface RED against throw-stubs —
-AdamW moment API + trainer save/load stubs; CheckpointTest contracts
-(roundtrip byte-exact, fresh-state, resume-vs-uninterrupted, geometry/corrupt
-rejection). **P2 (TASK-057)** implements the internal CheckpointWriter/Reader
-(`src/cuda/neural/checkpoint_io.h`) and the trainer save/load paths.
-**P3 (TASK-058)** verifies — CheckpointTest GREEN, neural single-GPU
-regression GREEN, cpp-reviewer, RIL close, tp>1 follow-up opened.
+Phases: **P1 (TASK-056)** pinned the surface RED against throw-stubs — 6/6
+CheckpointTest contracts (EV-038). **P2 (TASK-057)** implemented
+`checkpoint_io.h` (NSCK-v1 Writer/Reader), the AdamW moment API, and the
+trainer save/load paths (EV-039: 6/6, 113/113 neural, 5/5 multi-GPU).
+**P3 (TASK-058)** — cpp-reviewer APPROVE with 3 MEDIUM fixed (transactional
+load, n!=capacity moment rejection, caller-managed step_no doc; CHG-025),
+re-verified 8/8 + 115/115 + 5/5 (EV-040), full-suite baseline, RIL close.
+Milestone **closed**.
 
 ## Previous Milestone: v2.31 Device-Native LAMB Optimizer Kernel
 

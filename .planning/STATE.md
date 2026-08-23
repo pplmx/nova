@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.32
 milestone_name: Model Checkpointing (Weights + Optimizer State)
-status: In Progress
+status: Complete
 last_updated: "2026-08-24"
-last_activity: 2026-08-24 — Round 32: milestone opened (DEC-018, TASK-055/056/057/058, ISS-001); P1 RED in progress
+last_activity: 2026-08-24 — Round 32: P1 RED -> P2 implement -> cpp-reviewer MEDIUM fixes -> P3 verify + RIL close, milestone closed
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 3
   total_plans: 0
   completed_plans: 0
 ---
@@ -20,10 +20,11 @@ progress:
 ## Current Position
 
 Milestone: v2.32 Model Checkpointing (Weights + Optimizer State)
-Status: In Progress (Round 32)
-Last activity: 2026-08-24 — milestone opened (DEC-018): save_state/load_state
-on MicroTrainer + TransformerTrainer + AdamW moment export/import, verified by
-byte-exact roundtrip + resume parity at tp=1; P1 RED in progress
+Status: Complete (Round 32)
+Last activity: 2026-08-24 — P1 RED (6 contracts + stubs) -> P2 NSCK-v1
+save_state/load_state + AdamW moment API -> cpp-reviewer MEDIUM fixes
+(transactional load, n!=capacity rejection) -> P3 verify (8/8, 115/115, 5/5
+multi-GPU) + RIL close; tp>1 rank-shard restore opened as TASK-059
 
 ## Milestone v2.32 — Model Checkpointing (Weights + Optimizer State)
 
@@ -38,13 +39,14 @@ AdamWOptimizer::{momentum_capacity, copy_moments_to, copy_moments_from} so a
 restored trainer resumes byte-identical (AdamW reads m/v, so weights alone
 diverge at the first resumed step). Verified at tp=1 (shard==full) by byte-exact
 roundtrip + fresh-state roundtrip + resumed-vs-uninterrupted trajectory +
-geometry/corruption rejection; tp>1 rank-shard restore is the named follow-up.
+geometry/corruption rejection + no-partial-restore on rejected loads; tp>1
+rank-shard restore is the named follow-up (TASK-059).
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | RED/parity: AdamW moment export/import + trainer save_state/load_state throw-stubs; CheckpointTest contracts (roundtrip byte-exact, fresh-state, resume-vs-uninterrupted, geometry/corrupt rejection); RED against stubs | In progress (Round 32) |
-| 2 | Implement: AdamW moment API; CheckpointWriter/Reader (src/cuda/neural/checkpoint_io.h); MicroTrainer + TransformerTrainer save_state/load_state routing through copy_*/set_* + moment copies + validation | Pending |
-| 3 | Verify: CheckpointTest GREEN; neural single-GPU regression GREEN; cpp-reviewer; RIL close; tp>1 follow-up task opened | Pending |
+| 1 | RED/parity: AdamW moment export/import + trainer save_state/load_state throw-stubs; CheckpointTest contracts (roundtrip byte-exact, fresh-state, resume-vs-uninterrupted, geometry/corrupt rejection); RED against stubs | Complete (Round 32) — 6/6 RED against stubs (EV-038); 26/26 baseline green before |
+| 2 | Implement: AdamW moment API; CheckpointWriter/Reader (src/cuda/neural/checkpoint_io.h); MicroTrainer + TransformerTrainer save_state/load_state routing through copy_*/set_* + moment copies + validation | Complete (Round 32) — CHG-024 (EV-039): CheckpointTest 6/6, neural 113/113, multi-GPU 5/5 |
+| 3 | Verify: CheckpointTest GREEN; neural single-GPU regression GREEN; cpp-reviewer; RIL close; tp>1 follow-up task opened | Complete (Round 32) — cpp-reviewer APPROVE + 3 MEDIUM fixed (CHG-025, EV-040); re-verified 8/8 + 115/115 + 5/5; full-suite baseline; RIL close |
 
 ## Milestone v2.31 — Device-Native LAMB Optimizer Kernel
 
