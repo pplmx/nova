@@ -44,12 +44,14 @@ public:
      * @brief Moment-state export/import for checkpointing (v2.32, TASK-056)
      *
      * momentum_capacity() is the m/v buffer size in elements — 0 for a fresh
-     * optimizer that has never stepped. copy_moments_to D2Hs exactly n
-     * elements into host m/v (n must equal the capacity); copy_moments_from
-     * H2Ds n elements into the buffers, allocating + zero-filling first when
-     * fresh or too small, with n == 0 resetting the moments to zero. A
-     * restored optimizer steps exactly like the one it came from (the AdamW
-     * update reads m/v, so resume needs them byte-identical).
+     * optimizer that has never stepped. copy_moments_to D2Hs the buffers into
+     * host m/v with n == momentum_capacity() (anything else throws);
+     * copy_moments_from H2Ds n elements in, growing (allocating) when n
+     * exceeds the capacity but rejecting n < capacity — a partial overwrite
+     * would leave a stale tail that the next step() reads over — and
+     * resetting the moments to zero for n == 0. A restored optimizer steps
+     * exactly like the one it came from (the AdamW update reads m/v, so
+     * resume needs them byte-identical).
      */
     [[nodiscard]] size_t momentum_capacity() const;
     void copy_moments_to(float* m, float* v, size_t n,

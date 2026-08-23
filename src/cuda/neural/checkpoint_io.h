@@ -5,8 +5,9 @@
  * Private to the neural training sources (not installed): the NSCK-v1 stream
  * format shared by MicroTrainer::save_state/load_state and
  * TransformerTrainer::save_state/load_state. Layout is little-endian IEEE-754
- * floats and little-endian u32s written as native raw bytes (the library's
- * targets are little-endian CUDA hosts):
+ * floats and little-endian u32s written as native raw bytes. The library's
+ * targets are little-endian CUDA hosts, so native writes coincide with the
+ * documented layout; cross-endian file portability is not part of the format.
  *
  *   u32 magic  = 'N' 'S' 'C' 'K'  (0x4B43534E)
  *   u32 version = 1
@@ -40,7 +41,7 @@ constexpr uint32_t kMagic = 0x4B43534Eu;  // 'N' 'S' 'C' 'K'
 constexpr uint32_t kVersion = 1u;
 constexpr uint32_t kKindMicroTrainer = 1u;
 constexpr uint32_t kKindTransformerTrainer = 2u;
-constexpr uint32_t kMaxCount = 0x7fffffffu;  // tensor/moment element cap
+constexpr uint32_t kMaxCount = 0xFFFFFFFFu;  // tensor/moment element cap (u32 field)
 
 class Writer {
 public:
@@ -124,21 +125,30 @@ private:
 inline void write_adamw_moments(Writer& w,
                                 const optimizers::AdamWOptimizer& opt) {
     const size_t cap = opt.momentum_capacity();
-    w.u32(static_cast<uint32_t>(cap));
-    if (cap == 0) return;
     if (cap > kMaxCount) {
         throw std::runtime_error("Nova checkpoint: moment count exceeds the cap");
     }
+    w.u32(static_cast<uint32_t>(cap));
+    if (cap == 0) return;
     std::vector<float> m(cap), v(cap);
     opt.copy_moments_to(m.data(), v.data(), cap, nullptr);
     w.floats(m.data(), cap);
     w.floats(v.data(), cap);
 }
 
-// Reads an AdamW moment-pair record back into the optimizer, requiring the
-// count to be either 0 (fresh) or exactly the companion tensor's size.
-inline void read_adamw_moments(Reader& r, optimizers::AdamWOptimizer& opt,
-                               size_t tensor_n, const char* what) {
+// A moment-pair read so far (no optimizer touched): used by the trainers' two
+// phase load_state — every read validates before ANY state is applied, so a
+// corrupt/truncated stream throws with the trainer untouched (no partial
+// restore). m/v empty == the saved optimizer was fresh (count 0).
+struct AdamWMomentRecord {
+    std::vector<float> m;
+    std::vector<float> v;
+};
+
+// Reads an AdamW moment-pair record, requiring the count to be either 0
+// (fresh) or exactly the companion tensor's size.
+inline AdamWMomentRecord read_adamw_moments(Reader& r, size_t tensor_n,
+                                            const char* what) {
     const uint32_t count = r.u32();
     if (count != 0 && count != tensor_n) {
         throw std::runtime_error(
@@ -146,14 +156,24 @@ inline void read_adamw_moments(Reader& r, optimizers::AdamWOptimizer& opt,
             "(checkpoint " + std::to_string(count) + " vs tensor " +
             std::to_string(tensor_n) + ")");
     }
-    if (count == 0) {
+    AdamWMomentRecord rec;
+    if (count == 0) return rec;
+    rec.m.resize(count);
+    rec.v.resize(count);
+    r.floats(rec.m.data(), count);
+    r.floats(rec.v.data(), count);
+    return rec;
+}
+
+// Applies a record read by read_adamw_moments to an optimizer (call only after
+// every record in the checkpoint validated).
+inline void apply_adamw_moments(optimizers::AdamWOptimizer& opt,
+                                const AdamWMomentRecord& rec) {
+    if (rec.m.empty()) {
         opt.zero_momentum();
         return;
     }
-    std::vector<float> m(count), v(count);
-    r.floats(m.data(), count);
-    r.floats(v.data(), count);
-    opt.copy_moments_from(m.data(), v.data(), count, nullptr);
+    opt.copy_moments_from(rec.m.data(), rec.v.data(), rec.m.size(), nullptr);
 }
 
 }  // namespace cuda::neural::training::checkpoint

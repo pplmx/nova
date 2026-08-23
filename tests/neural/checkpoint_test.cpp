@@ -448,3 +448,131 @@ TEST_F(CheckpointTest, RejectsGeometryMismatchAndCorruption) {
         EXPECT_THROW(d.load_state(trunc), std::runtime_error);
     }
 }
+
+// A rejected load must leave the trainer untouched (two-phase load): after a
+// truncation at any point, load_state throws and the target's weights are
+// still exactly the pre-load state — no partial block-0-only restore.
+TEST_F(CheckpointTest, RejectedLoadLeavesTrainerUntouched) {
+    const int blocks = 2, h = 8, heads = 1, head_dim = 4, inter = 16;
+    const int qkv = heads * head_dim;
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.01f;
+    TransformerTrainer a(uninitialized_ctx(), blocks, h, heads, head_dim, inter,
+                         cfg);
+    auto set_block = [&](TransformerTrainer& t, int b, unsigned seed) {
+        std::vector<float> l1g(h), l1b(h), l2g(h), l2b(h);
+        std::vector<float> wq(static_cast<size_t>(h) * qkv);
+        std::vector<float> wk(static_cast<size_t>(h) * qkv);
+        std::vector<float> wv(static_cast<size_t>(h) * qkv);
+        std::vector<float> wo(static_cast<size_t>(qkv) * h);
+        std::vector<float> wg(static_cast<size_t>(h) * inter);
+        std::vector<float> wu(static_cast<size_t>(h) * inter);
+        std::vector<float> wd(static_cast<size_t>(inter) * h);
+        fill_random(l1g.data(), l1g.size(), seed);
+        fill_random(l1b.data(), l1b.size(), seed + 1);
+        fill_random(wq.data(), wq.size(), seed + 2);
+        fill_random(wk.data(), wk.size(), seed + 3);
+        fill_random(wv.data(), wv.size(), seed + 4);
+        fill_random(wo.data(), wo.size(), seed + 5);
+        fill_random(l2g.data(), l2g.size(), seed + 6);
+        fill_random(l2b.data(), l2b.size(), seed + 7);
+        fill_random(wg.data(), wg.size(), seed + 8);
+        fill_random(wu.data(), wu.size(), seed + 9);
+        fill_random(wd.data(), wd.size(), seed + 10);
+        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
+                           wv.data(), wo.data(), l2g.data(), l2b.data(),
+                           wg.data(), wu.data(), wd.data());
+    };
+    for (int b = 0; b < blocks; ++b) set_block(a, b, 900u + b);
+    std::vector<float> fg(h), fb(h);
+    fill_random(fg.data(), fg.size(), 910);
+    fill_random(fb.data(), fb.size(), 911);
+    a.set_final_ln_weight(fg.data(), fb.data());
+    std::stringstream ss(std::ios::out | std::ios::binary);
+    a.save_state(ss);
+    const std::string data = ss.str();
+
+    // Target B with its own known state; capture block 0 + final LN before.
+    TransformerTrainer b(uninitialized_ctx(), blocks, h, heads, head_dim, inter,
+                         cfg);
+    set_block(b, 0, 920u);
+    set_block(b, 1, 921u);
+    std::vector<float> bfg(h), bfb(h);
+    fill_random(bfg.data(), bfg.size(), 922);
+    fill_random(bfb.data(), bfb.size(), 923);
+    b.set_final_ln_weight(bfg.data(), bfb.data());
+    auto capture = [&](std::vector<float>& out) {
+        out.clear();
+        std::vector<float> l1g(h), l1b(h), l2g(h), l2b(h);
+        std::vector<float> wq(static_cast<size_t>(h) * qkv);
+        std::vector<float> wk(static_cast<size_t>(h) * qkv);
+        std::vector<float> wv(static_cast<size_t>(h) * qkv);
+        std::vector<float> wo(static_cast<size_t>(qkv) * h);
+        std::vector<float> wg(static_cast<size_t>(h) * inter);
+        std::vector<float> wu(static_cast<size_t>(h) * inter);
+        std::vector<float> wd(static_cast<size_t>(inter) * h);
+        b.copy_block_weights(0, l1g.data(), l1b.data(), wq.data(), wk.data(),
+                             wv.data(), wo.data(), l2g.data(), l2b.data(),
+                             wg.data(), wu.data(), wd.data());
+        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg,
+                              &wu, &wd}) {
+            out.insert(out.end(), p->begin(), p->end());
+        }
+        std::vector<float> cg(h), cb(h);
+        b.copy_final_ln(cg.data(), cb.data());
+        out.insert(out.end(), cg.begin(), cg.end());
+        out.insert(out.end(), cb.begin(), cb.end());
+    };
+    std::vector<float> before;
+    capture(before);
+
+    // Truncation at several points (mid-header, mid-block-0, mid-block-1,
+    // near-end) must throw and leave B's state byte-identical.
+    for (size_t cut : {data.size() / 4, data.size() / 2,
+                       3 * data.size() / 4, data.size() - 1}) {
+        std::stringstream in(data.substr(0, cut));
+        EXPECT_THROW(b.load_state(in), std::runtime_error)
+            << "truncation at " << cut << "/" << data.size()
+            << " must be rejected";
+        std::vector<float> after;
+        capture(after);
+        ASSERT_EQ(before.size(), after.size());
+        expect_eq(before.data(), after.data(), before.size(),
+                  "state after rejected load");
+    }
+}
+
+// The moment API must reject a capacity mismatch (export of n != capacity, or
+// an import into an optimizer with a larger existing capacity — a stale tail).
+TEST_F(CheckpointTest, AdamWMomentCapacityMismatchRejected) {
+    const size_t n = 64;
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.01f;
+    std::vector<float> p0(n), grads(n);
+    fill_random(p0.data(), n, 930);
+    fill_random(grads.data(), n, 931);
+    cuda::memory::Buffer<float> d_w(n), d_g(n);
+    d_w.copy_from(p0.data(), n);
+    d_g.copy_from(grads.data(), n);
+    AdamWOptimizer a(cfg);
+    for (int s = 1; s <= 2; ++s) a.step(d_w.data(), d_g.data(), n, s);
+    ASSERT_EQ(a.momentum_capacity(), n);
+
+    std::vector<float> m(n), v(n);
+    EXPECT_THROW(
+        a.copy_moments_to(m.data(), v.data(), n / 2, nullptr),
+        std::invalid_argument) << "export with n != capacity must throw";
+
+    AdamWOptimizer worse(cfg);
+    for (int s = 1; s <= 2; ++s) worse.step(d_w.data(), d_g.data(), n, s);
+    EXPECT_THROW(
+        worse.copy_moments_from(m.data(), v.data(), n / 2, nullptr),
+        std::invalid_argument)
+        << "importing fewer than the existing capacity must throw (stale tail)";
+
+    // Exact-size export/import still works.
+    a.copy_moments_to(m.data(), v.data(), n, nullptr);
+    AdamWOptimizer b(cfg);
+    b.copy_moments_from(m.data(), v.data(), n, nullptr);
+    EXPECT_EQ(b.momentum_capacity(), n);
+}

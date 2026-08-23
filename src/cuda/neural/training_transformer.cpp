@@ -28,6 +28,13 @@ namespace cuda::neural::training {
 
 namespace {
 
+// A TransformerBlock's weight-tensor layout: LN1 gamma/beta, Wq/Wk/Wv/Wo,
+// LN2 gamma/beta, MLP gate/up/down — the fixed order set_block_weight /
+// copy_block_weights / backward use. Shared by the 11-tensor grad sizes, the
+// checkpoint tensor sizes, and the 11-entry per-block arrays (one source of
+// truth for the layout count).
+constexpr int kBlockTensorCount = 11;
+
 // 11 weight-grad tensor sizes per block, in the fixed order the block step /
 // copy/backward signatures use: LN1 gamma/beta, Wq/Wk/Wv/Wo, LN2 gamma/beta,
 // MLP gate/up/down.
@@ -48,9 +55,10 @@ inline int block_grad_size(int idx, int hidden, int qkv, int inter) {
     }
 }
 
-// A block's 11 weight-tensor element counts, in the canonical order of
-// set_block_weight / copy_block_weights (matches block_grad_size's layout).
-void block_tensor_sizes(int hidden, int qkv, int inter, size_t sizes[11]) {
+// A block's kBlockTensorCount weight-tensor element counts, in the canonical
+// order of set_block_weight / copy_block_weights (matches block_grad_size's
+// layout).
+void block_tensor_sizes(int hidden, int qkv, int inter, size_t sizes[]) {
     const size_t h = static_cast<size_t>(hidden);
     const size_t q = static_cast<size_t>(qkv);
     const size_t m = static_cast<size_t>(inter);
@@ -300,19 +308,21 @@ void TransformerTrainer::save_state(std::ostream& out) const {
     w.u32(static_cast<uint32_t>(intermediate_));
 
     const int qkv = heads_ * head_dim_;
-    size_t sz[11];
+    size_t sz[kBlockTensorCount];
     block_tensor_sizes(hidden_, qkv, intermediate_, sz);
     for (int b = 0; b < num_blocks_; ++b) {
-        std::array<std::vector<float>, 11> tens;
-        for (int i = 0; i < 11; ++i) tens[static_cast<size_t>(i)].resize(sz[i]);
+        std::array<std::vector<float>, kBlockTensorCount> tens;
+        for (int i = 0; i < kBlockTensorCount; ++i) {
+            tens[static_cast<size_t>(i)].resize(sz[i]);
+        }
         copy_block_weights(b, tens[0].data(), tens[1].data(), tens[2].data(),
                            tens[3].data(), tens[4].data(), tens[5].data(),
                            tens[6].data(), tens[7].data(), tens[8].data(),
                            tens[9].data(), tens[10].data());
-        for (int i = 0; i < 11; ++i) {
+        for (int i = 0; i < kBlockTensorCount; ++i) {
             w.tensor(tens[static_cast<size_t>(i)].data(), sz[i]);
         }
-        for (int i = 0; i < 11; ++i) {
+        for (int i = 0; i < kBlockTensorCount; ++i) {
             cp::write_adamw_moments(w, *block_opts_[static_cast<size_t>(b)]
                                              [static_cast<size_t>(i)]);
         }
@@ -354,36 +364,64 @@ void TransformerTrainer::load_state(std::istream& in) {
             "x" + std::to_string(hidden_) + "/" + std::to_string(heads_) + "/" +
             std::to_string(head_dim_) + "/" + std::to_string(intermediate_) + ")");
     }
+    // Symmetric with save_state: a tp > 1 trainer holds rank shards whose
+    // moment buffers don't match a full-weight checkpoint's record sizes —
+    // reject rather than restore with undefined shard semantics.
+    if (tp_degree() > 1) {
+        throw std::runtime_error(
+            "TransformerTrainer::load_state: tp > 1 rank-shard checkpoints "
+            "are the v2.32 follow-up (TASK); verified on the tp == 1 path");
+    }
+    // Two-phase load (cpp-reviewer MEDIUM, RIL EV-040): read + validate every
+    // tensor and moment record into host memory FIRST, then apply — a
+    // corrupt/truncated stream throws with this trainer untouched.
     const int qkv = heads_ * head_dim_;
-    size_t sz[11];
+    size_t sz[kBlockTensorCount];
     block_tensor_sizes(hidden_, qkv, intermediate_, sz);
+    std::vector<std::array<std::vector<float>, kBlockTensorCount>> tens(
+        static_cast<size_t>(num_blocks_));
+    std::vector<std::array<cp::AdamWMomentRecord, kBlockTensorCount>> mots(
+        static_cast<size_t>(num_blocks_));
     for (int b = 0; b < num_blocks_; ++b) {
-        std::array<std::vector<float>, 11> tens;
-        for (int i = 0; i < 11; ++i) tens[static_cast<size_t>(i)].resize(sz[i]);
-        // The tensor records carry their own counts; Reader::tensor validates
-        // each against sz[i] (geometry/tp mismatch rejects before set_weight).
-        for (int i = 0; i < 11; ++i) {
-            r.tensor(tens[static_cast<size_t>(i)].data(), sz[i],
+        std::array<std::vector<float>, kBlockTensorCount>& t =
+            tens[static_cast<size_t>(b)];
+        for (int i = 0; i < kBlockTensorCount; ++i) {
+            t[static_cast<size_t>(i)].resize(sz[i]);
+        }
+        for (int i = 0; i < kBlockTensorCount; ++i) {
+            r.tensor(t[static_cast<size_t>(i)].data(), sz[i],
                      (std::string("block ") + std::to_string(b) + " tensor " +
                       std::to_string(i)).c_str());
         }
-        set_block_weight(b, tens[0].data(), tens[1].data(), tens[2].data(),
-                         tens[3].data(), tens[4].data(), tens[5].data(),
-                         tens[6].data(), tens[7].data(), tens[8].data(),
-                         tens[9].data(), tens[10].data());
-        for (int i = 0; i < 11; ++i) {
-            cp::read_adamw_moments(
-                r, *block_opts_[static_cast<size_t>(b)][static_cast<size_t>(i)],
-                sz[i], "block moment");
+        for (int i = 0; i < kBlockTensorCount; ++i) {
+            mots[static_cast<size_t>(b)][static_cast<size_t>(i)] =
+                cp::read_adamw_moments(r, sz[i], "block moment");
         }
     }
     std::vector<float> fg(static_cast<size_t>(hidden_));
     std::vector<float> fb(static_cast<size_t>(hidden_));
     r.tensor(fg.data(), fg.size(), "final gamma");
     r.tensor(fb.data(), fb.size(), "final beta");
+    const cp::AdamWMomentRecord mg =
+        cp::read_adamw_moments(r, fg.size(), "final gamma");
+    const cp::AdamWMomentRecord mb =
+        cp::read_adamw_moments(r, fb.size(), "final beta");
+
+    for (int b = 0; b < num_blocks_; ++b) {
+        std::array<std::vector<float>, kBlockTensorCount>& t =
+            tens[static_cast<size_t>(b)];
+        set_block_weight(b, t[0].data(), t[1].data(), t[2].data(),
+                         t[3].data(), t[4].data(), t[5].data(), t[6].data(),
+                         t[7].data(), t[8].data(), t[9].data(), t[10].data());
+        for (int i = 0; i < kBlockTensorCount; ++i) {
+            cp::apply_adamw_moments(
+                *block_opts_[static_cast<size_t>(b)][static_cast<size_t>(i)],
+                mots[static_cast<size_t>(b)][static_cast<size_t>(i)]);
+        }
+    }
     set_final_ln_weight(fg.data(), fb.data());
-    cp::read_adamw_moments(r, *final_opts_[0], fg.size(), "final gamma");
-    cp::read_adamw_moments(r, *final_opts_[1], fb.size(), "final beta");
+    cp::apply_adamw_moments(*final_opts_[0], mg);
+    cp::apply_adamw_moments(*final_opts_[1], mb);
 }
 
 int TransformerTrainer::num_blocks() const { return num_blocks_; }

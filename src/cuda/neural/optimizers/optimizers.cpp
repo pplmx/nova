@@ -82,9 +82,9 @@ size_t AdamWOptimizer::momentum_capacity() const {
 void AdamWOptimizer::copy_moments_to(float* m, float* v, size_t n,
                                      cudaStream_t stream) const {
     (void)stream;
-    if (n > momentum_capacity()) {
+    if (n != momentum_capacity()) {
         throw std::invalid_argument(
-            "AdamWOptimizer::copy_moments_to: n exceeds the moment capacity");
+            "AdamWOptimizer::copy_moments_to: n must equal the moment capacity");
     }
     if (n == 0) return;
     m_data_->copy_to(m, n);
@@ -101,12 +101,17 @@ void AdamWOptimizer::copy_moments_from(const float* m, const float* v,
         zero_momentum();
         return;
     }
+    if (momentum_capacity() > n) {
+        throw std::invalid_argument(
+            "AdamWOptimizer::copy_moments_from: n below the existing capacity "
+            "would leave a stale tail the next step() reads");
+    }
     if (!initialized_ || momentum_capacity() < n) {
         m_data_ = std::make_unique<cuda::memory::Buffer<float>>(n);
         v_data_ = std::make_unique<cuda::memory::Buffer<float>>(n);
-        m_data_->fill(0.0f);
-        v_data_->fill(0.0f);
         initialized_ = true;
+        // copy_from below overwrites every element — no zero-fill needed here
+        // (step()'s own fresh-allocation path still zero-fills).
     }
     m_data_->copy_from(m, n);
     v_data_->copy_from(v, n);

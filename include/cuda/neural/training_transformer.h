@@ -139,18 +139,23 @@ public:
      * @brief Serialize the full trainer state to a binary stream (v2.32)
      *
      * Deterministic NSCK-v1 format: kind, dims, all 11N+2 weight tensors and
-     * every optimizer's m/v moment pair, so a restored trainer resumes
-     * byte-exact from the interrupted step.
+     * every optimizer's m/v moment pair. The optimizer step counter is NOT
+     * part of the checkpoint — train_step() takes step_no from the caller —
+     * so a restored trainer resumes exactly only if stepping continues at the
+     * interrupted count (K+1 after a K-step run).
      */
     void save_state(std::ostream& out) const;
 
     /**
      * @brief Restore trainer state from a save_state() stream (v2.32)
      *
-     * Validates the file's kind, dims, per-tensor sizes and moment sizes
-     * against this trainer; a geometry mismatch, corrupt magic or truncated
-     * stream throws std::runtime_error. Restoring moments (not just weights)
-     * keeps the AdamW update identical at the resumed step.
+     * Read + validate every record (kind, dims, per-tensor sizes, moment
+     * sizes) before applying anything: a geometry mismatch, corrupt magic or
+     * truncated stream throws std::runtime_error and leaves this trainer
+     * untouched (no partial restore). Only then are weights and moments set
+     * (via set_block_weight/set_final_ln_weight/copy_moments_from), so a
+     * successfully restored trainer resumes with byte-identical weights and
+     * m/v — the caller continues step_no at the interrupted count.
      */
     void load_state(std::istream& in);
 

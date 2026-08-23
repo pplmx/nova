@@ -191,6 +191,18 @@ void MicroTrainer::load_state(std::istream& in) {
             std::to_string(hidden_dim_) + "x" +
             std::to_string(intermediate_size_) + ")");
     }
+    // Symmetric with save_state: a tp > 1 trainer's moment buffers are the
+    // rank shard sizes, which don't match a full-weight checkpoint's records.
+    if (tp_degree() > 1) {
+        throw std::runtime_error(
+            "MicroTrainer::load_state: tp > 1 rank-shard checkpoints are the "
+            "v2.32 follow-up (TASK); verified on the tp == 1 path");
+    }
+    // Two-phase load (cpp-reviewer MEDIUM, RIL EV-040): read and validate
+    // every tensor and moment record into host memory FIRST, then apply — a
+    // corrupt/truncated stream throws with this trainer untouched (no partial
+    // restore). Moment records are count-tagged; read_adamw_moments requires
+    // count == 0 (fresh) or exactly the companion tensor's size.
     const size_t h = static_cast<size_t>(hidden_dim_);
     const size_t inter = static_cast<size_t>(intermediate_size_);
     const size_t ng = h * inter, nu = h * inter, nd = inter * h;
@@ -198,11 +210,14 @@ void MicroTrainer::load_state(std::istream& in) {
     r.tensor(g.data(), ng, "gate");
     r.tensor(u.data(), nu, "up");
     r.tensor(d.data(), nd, "down");
-    set_weight(g.data(), u.data(), d.data());
+    const cp::AdamWMomentRecord mg = cp::read_adamw_moments(r, ng, "gate");
+    const cp::AdamWMomentRecord mu = cp::read_adamw_moments(r, nu, "up");
+    const cp::AdamWMomentRecord md = cp::read_adamw_moments(r, nd, "down");
 
-    cp::read_adamw_moments(r, *opt_gate_, ng, "gate");
-    cp::read_adamw_moments(r, *opt_up_, nu, "up");
-    cp::read_adamw_moments(r, *opt_down_, nd, "down");
+    set_weight(g.data(), u.data(), d.data());
+    cp::apply_adamw_moments(*opt_gate_, mg);
+    cp::apply_adamw_moments(*opt_up_, mu);
+    cp::apply_adamw_moments(*opt_down_, md);
 }
 
 int MicroTrainer::hidden_dim() const { return hidden_dim_; }
