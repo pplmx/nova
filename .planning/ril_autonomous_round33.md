@@ -110,3 +110,33 @@ rank-shard checkpoint restore on real multi-GPU.
   neural single-GPU **115/115**; multi-GPU cross-suite **21/21 on 2 GPUs**
   (existing trajectory/parity suites + the new checkpoint suite), deep-block
   K-step trajectory unchanged.
+
+## P3 verify (TASK-062)
+
+- CheckpointMultiGpuTest GREEN on **4 GPUs** too (2/2 — the rank-shard math
+  generalizes to tp=4; inter/4 and qkv/4 divisibility holds); full multi-GPU
+  cross-suite on 4 GPUs **7/7** (incl. deep-block trajectory).
+- Full-suite in-process baseline: **1469 PASSED / 0 FAILED** (1547 ran, the
+  MPI/multi-GPU launcher-gated suites skipped as usual).
+- cpp-reviewer (agent a753b2b2ed2f66750): **WARNING — implementation sound,
+  one HIGH test-geometry defect** + one MEDIUM latency gap, no CRITICAL.
+  - HIGH: the transformer RankLocalCheckpoint test hardcoded heads=4/hd=2
+    (qkv=8), so on 8 GPUs local_heads = 4/8 = 0 -> zero-sized QKV ->
+    cuBLAS INVALID_VALUE (RED on the 8-GPU test hardware; the suite's ONLY
+    hardware-dependent failure). Fixed: heads/inter now scale with
+    device_count (heads = 2*tp, inter = 4*tp) — valid on 2/4/8 GPUs, and the
+    suite re-verified GREEN on **8 GPUs** (EV-044).
+  - MEDIUM (pre-existing latent, surfaced here): the attention ctor only
+    validated qkv % tp (via the inner layer ctors) which does NOT imply
+    num_heads % tp == 0 — local_heads truncates to 0 silently. Added
+    `num_heads % tp_degree() == 0` to the ctor -> wrong topology now throws
+    cleanly instead of a cuBLAS INVALID_VALUE at forward.
+  - LOW (folded in): the NSCK header now carries a TP-degree field (v2) so a
+    wrong-topology load fails up front rather than by size luck; docs state
+    the rank-identity caveat (a same-topology file from another rank matches
+    every size check — load this rank's own file; per-rank id is the
+    follow-up TASK-063). Step-counter caller-managed already documented (v2.32).
+- Re-verified after fixes: CheckpointTest 8/8, CheckpointMultiGpuTest 2/2 on
+  2/4/8 GPUs, attention/TP/block + neural single-GPU suites green (59/59 in
+  the target filter), multi-GPU cross-suite green incl. deep-block trajectory,
+  full-suite baseline 1469/0 re-run with the fixes included.

@@ -10,8 +10,11 @@
  * documented layout; cross-endian file portability is not part of the format.
  *
  *   u32 magic  = 'N' 'S' 'C' 'K'  (0x4B43534E)
- *   u32 version = 1
+ *   u32 version = 2                (v2 adds the TP-degree field after kind)
  *   u32 kind    = 1 (MicroTrainer) | 2 (TransformerTrainer)
+ *   u32 tp      = TP degree of the trainer that wrote the file (load rejects
+ *                 a mismatch, so only the same topology roundtrips and a
+ *                 wrong-topology file fails up front, not by size luck)
  *   ... trainer-specific dims, then per tensor a tagged record:
  *   u32 count; float[count]              (a weight tensor)
  *   and per optimizer a tagged moment pair:
@@ -38,7 +41,7 @@
 namespace cuda::neural::training::checkpoint {
 
 constexpr uint32_t kMagic = 0x4B43534Eu;  // 'N' 'S' 'C' 'K'
-constexpr uint32_t kVersion = 1u;
+constexpr uint32_t kVersion = 2u;  // v2 adds the TP-degree field after kind
 constexpr uint32_t kKindMicroTrainer = 1u;
 constexpr uint32_t kKindTransformerTrainer = 2u;
 constexpr uint32_t kMaxCount = 0xFFFFFFFFu;  // tensor/moment element cap (u32 field)

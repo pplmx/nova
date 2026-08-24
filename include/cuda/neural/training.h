@@ -129,13 +129,17 @@ public:
     /**
      * @brief Restore trainer state from a save_state() stream (v2.32)
      *
-     * Read + validate every record (kind, dims, per-tensor sizes, moment
-     * sizes) before applying anything: a geometry mismatch, corrupt magic or
-     * truncated stream throws std::runtime_error and leaves this trainer
-     * untouched (no partial restore). Only then are weights and moments set
-     * (via set_weight/copy_moments_from), so a successfully restored trainer
-     * resumes with byte-identical weights and m/v — the caller continues
-     * step_no at the interrupted count.
+     * Read + validate every record (kind, TP degree, dims, per-tensor sizes,
+     * moment sizes) before applying anything: a geometry (incl. TP-degree)
+     * mismatch, corrupt magic or truncated stream throws std::runtime_error
+     * and leaves this trainer untouched (no partial restore). Only then are
+     * weights and moments set (via the shard setters / copy_moments_from), so
+     * a successfully restored trainer resumes with byte-identical weights and
+     * m/v — the caller continues step_no at the interrupted count. Records are
+     * this rank's shards (full at tp == 1); the format stores the TP degree
+     * (mismatch rejected) but NOT the rank id, so load this rank's OWN file
+     * back — a same-topology file written by another rank matches every size
+     * check and is not detected.
      */
     void load_state(std::istream& in);
 

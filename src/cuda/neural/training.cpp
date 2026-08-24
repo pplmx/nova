@@ -143,6 +143,7 @@ void MicroTrainer::save_state(std::ostream& out) const {
     w.u32(cp::kMagic);
     w.u32(cp::kVersion);
     w.u32(cp::kKindMicroTrainer);
+    w.u32(static_cast<uint32_t>(tp_degree()));
     w.u32(static_cast<uint32_t>(hidden_dim_));
     w.u32(static_cast<uint32_t>(intermediate_size_));
 
@@ -178,6 +179,13 @@ void MicroTrainer::load_state(std::istream& in) {
     if (r.u32() != cp::kKindMicroTrainer) {
         throw std::runtime_error(
             "Nova checkpoint: kind mismatch (not a MicroTrainer checkpoint)");
+    }
+    const uint32_t ftp = r.u32();
+    if (ftp != static_cast<uint32_t>(tp_degree())) {
+        throw std::runtime_error(
+            "Nova checkpoint: TP-degree mismatch (checkpoint " +
+            std::to_string(ftp) + " vs trainer " +
+            std::to_string(tp_degree()) + ")");
     }
     const uint32_t fh = r.u32(), fi = r.u32();
     if (fh != static_cast<uint32_t>(hidden_dim_) ||

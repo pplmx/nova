@@ -299,6 +299,7 @@ void TransformerTrainer::save_state(std::ostream& out) const {
     w.u32(cp::kMagic);
     w.u32(cp::kVersion);
     w.u32(cp::kKindTransformerTrainer);
+    w.u32(static_cast<uint32_t>(tp_degree()));
     w.u32(static_cast<uint32_t>(num_blocks_));
     w.u32(static_cast<uint32_t>(hidden_));
     w.u32(static_cast<uint32_t>(heads_));
@@ -348,6 +349,13 @@ void TransformerTrainer::load_state(std::istream& in) {
     if (r.u32() != cp::kKindTransformerTrainer) {
         throw std::runtime_error(
             "Nova checkpoint: kind mismatch (not a TransformerTrainer checkpoint)");
+    }
+    const uint32_t ftp = r.u32();
+    if (ftp != static_cast<uint32_t>(tp_degree())) {
+        throw std::runtime_error(
+            "Nova checkpoint: TP-degree mismatch (checkpoint " +
+            std::to_string(ftp) + " vs trainer " +
+            std::to_string(tp_degree()) + ")");
     }
     const uint32_t fnb = r.u32(), fh = r.u32(), fheads = r.u32(),
                    fhd = r.u32(), fi = r.u32();

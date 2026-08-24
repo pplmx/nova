@@ -198,9 +198,16 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
 
-    const int blocks = 2, h = 8, heads = 4, hd = 2, inter = 16;
-    const int qkv = heads * hd;  // == hidden
-    const int m = 12, K = 4, extra = 2;
+    // Scale heads (and inter) with the number of ranks so the geometry is
+    // valid on any 2..N topology: heads and heads*head_dim (qkv) must both
+    // divide by tp (head_dim 2 keeps qkv even), and intermediate must divide
+    // by tp. A fixed heads=4 would truncate local_heads to 0 beyond 4 ranks
+    // (the cpp-reviewer HIGH — the attention ctor now rejects such geometry,
+    // but the test must not trip it on the available 8-GPU hardware).
+    const int blocks = 2, h = 8, hd = 2, m = 12, K = 4, extra = 2;
+    const int heads = 2 * device_count;
+    const int qkv = heads * hd;
+    const int inter = 4 * device_count;
     OptimizerConfig opt_cfg;
     opt_cfg.learning_rate = 0.01f;
 

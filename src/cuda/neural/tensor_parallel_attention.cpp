@@ -80,6 +80,18 @@ TensorParallelMultiHeadAttention::TensorParallelMultiHeadAttention(
         throw std::invalid_argument(
             "TensorParallelMultiHeadAttention requires positive dims");
     }
+    // num_heads * head_dim (qkv) dividing by tp is guaranteed by the inner
+    // column/row layer ctors, but that does NOT imply num_heads % tp == 0
+    // (e.g. 4 heads, head_dim 2, tp 8): local_heads would truncate to 0 and
+    // the QKV projections become zero-sized. Enforce per-head divisibility so
+    // a wrong topology fails with a clear error, not a cuBLAS INVALID_VALUE
+    // at forward time (v2.26 latent gap surfaced by v2.33's 8-GPU checkpoint
+    // test; cpp-reviewer MEDIUM, EV-044).
+    if (num_heads_ % tp_degree() != 0) {
+        throw std::invalid_argument(
+            "TensorParallelMultiHeadAttention: num_heads must divide evenly by "
+            "the TP degree");
+    }
 }
 
 TensorParallelMultiHeadAttention::~TensorParallelMultiHeadAttention() = default;
