@@ -82,6 +82,15 @@ public:
     void set_weight(const float* weight);
 
     /**
+     * @brief Upload this rank's column shard directly (v2.33 / DEC-019)
+     *
+     * The no-slice dual of copy_weight_shard: stores shard
+     * [in_features x out_features/tp] (== the full weight at tp == 1) exactly
+     * as given, so a rank-local checkpoint restores onto the same topology.
+     */
+    void set_weight_shard(const float* shard);
+
+    /**
      * @brief Forward pass (synchronous)
      * @param input Input tensor [batch * seq x in_features]
      * @param output Output tensor [batch * seq x out_features / tp_degree]
@@ -224,6 +233,15 @@ public:
     void set_weight(const float* weight);
 
     /**
+     * @brief Upload this rank's row shard directly (v2.33 / DEC-019)
+     *
+     * The no-slice dual of copy_weight_shard for the row-parallel layer:
+     * stores shard [in_features/tp x out_features] (== the full weight at
+     * tp == 1) exactly as given.
+     */
+    void set_weight_shard(const float* shard);
+
+    /**
      * @brief Forward pass (synchronous; AllReduce on the op stream)
      * @param input Input tensor [batch * seq x in_features / tp_degree]
      * @param output Output tensor [batch * seq x out_features]
@@ -357,6 +375,19 @@ public:
         const float* gate_weight,
         const float* up_weight,
         const float* down_weight);
+
+    /**
+     * @brief Upload this rank's gate/up/down weight shards directly (v2.33)
+     *
+     * The no-slice dual of copy_weights: gate/up shards
+     * [hidden x intermediate/tp], down shard [(intermediate/tp) x hidden]
+     * (== the full weights at tp == 1), uploading each rank's storage-layout
+     * shard exactly — how a rank-local checkpoint restores.
+     */
+    void set_weight_shards(
+        const float* gate_shard,
+        const float* up_shard,
+        const float* down_shard);
 
     /**
      * @brief Forward pass (synchronous)

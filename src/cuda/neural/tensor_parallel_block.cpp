@@ -73,6 +73,17 @@ void TransformerBlock::set_weight(const float* ln1_gamma, const float* ln1_beta,
     mlp_->set_weight(wg, wu, wd);
 }
 
+void TransformerBlock::set_weight_shards(
+    const float* ln1_gamma, const float* ln1_beta, const float* wq,
+    const float* wk, const float* wv, const float* wo, const float* ln2_gamma,
+    const float* ln2_beta, const float* wg, const float* wu,
+    const float* wd) {
+    ln1_->set_weight(ln1_gamma, ln1_beta);
+    attn_->set_weight_shards(wq, wk, wv, wo);
+    ln2_->set_weight(ln2_gamma, ln2_beta);
+    mlp_->set_weight_shards(wg, wu, wd);
+}
+
 void TransformerBlock::forward(const float* input, float* output, int batch,
                                int seq) {
     // All activations are [batch*seq x hidden]; LayerNorm normalizes per row

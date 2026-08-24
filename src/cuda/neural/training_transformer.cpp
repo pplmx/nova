@@ -57,18 +57,21 @@ inline int block_grad_size(int idx, int hidden, int qkv, int inter) {
 
 // A block's kBlockTensorCount weight-tensor element counts, in the canonical
 // order of set_block_weight / copy_block_weights (matches block_grad_size's
-// layout).
-void block_tensor_sizes(int hidden, int qkv, int inter, size_t sizes[]) {
+// layout except that the checkpoint records are RANK-SHARD sizes at tp > 1:
+// the 7 matmul tensors divide by tp, the 4 replicated LayerNorm gamma/beta
+// stay full hidden — v2.33).
+void block_tensor_sizes(int hidden, int qkv, int inter, int tp,
+                        size_t sizes[]) {
     const size_t h = static_cast<size_t>(hidden);
-    const size_t q = static_cast<size_t>(qkv);
-    const size_t m = static_cast<size_t>(inter);
-    sizes[0] = h;             // ln1_gamma
+    const size_t q = static_cast<size_t>(qkv) / tp;
+    const size_t m = static_cast<size_t>(inter) / tp;
+    sizes[0] = h;             // ln1_gamma (replicated)
     sizes[1] = h;             // ln1_beta
     sizes[2] = h * q;         // wq
     sizes[3] = h * q;         // wk
     sizes[4] = h * q;         // wv
     sizes[5] = q * h;         // wo
-    sizes[6] = h;             // ln2_gamma
+    sizes[6] = h;             // ln2_gamma (replicated)
     sizes[7] = h;             // ln2_beta
     sizes[8] = h * m;         // wg
     sizes[9] = h * m;         // wu
@@ -291,11 +294,6 @@ void TransformerTrainer::copy_final_ln(float* gamma, float* beta) const {
 }
 
 void TransformerTrainer::save_state(std::ostream& out) const {
-    if (tp_degree() > 1) {
-        throw std::runtime_error(
-            "TransformerTrainer::save_state: tp > 1 rank-shard checkpoints "
-            "are the v2.32 follow-up (TASK); verified on the tp == 1 path");
-    }
     namespace cp = checkpoint;
     cp::Writer w(out);
     w.u32(cp::kMagic);
@@ -307,9 +305,11 @@ void TransformerTrainer::save_state(std::ostream& out) const {
     w.u32(static_cast<uint32_t>(head_dim_));
     w.u32(static_cast<uint32_t>(intermediate_));
 
+    // Records are this rank's shard sizes (full at tp == 1); copy_block_weights
+    // returns exactly these, and each tensor's moment capacity matches.
     const int qkv = heads_ * head_dim_;
     size_t sz[kBlockTensorCount];
-    block_tensor_sizes(hidden_, qkv, intermediate_, sz);
+    block_tensor_sizes(hidden_, qkv, intermediate_, tp_degree(), sz);
     for (int b = 0; b < num_blocks_; ++b) {
         std::array<std::vector<float>, kBlockTensorCount> tens;
         for (int i = 0; i < kBlockTensorCount; ++i) {
@@ -364,20 +364,15 @@ void TransformerTrainer::load_state(std::istream& in) {
             "x" + std::to_string(hidden_) + "/" + std::to_string(heads_) + "/" +
             std::to_string(head_dim_) + "/" + std::to_string(intermediate_) + ")");
     }
-    // Symmetric with save_state: a tp > 1 trainer holds rank shards whose
-    // moment buffers don't match a full-weight checkpoint's record sizes —
-    // reject rather than restore with undefined shard semantics.
-    if (tp_degree() > 1) {
-        throw std::runtime_error(
-            "TransformerTrainer::load_state: tp > 1 rank-shard checkpoints "
-            "are the v2.32 follow-up (TASK); verified on the tp == 1 path");
-    }
-    // Two-phase load (cpp-reviewer MEDIUM, RIL EV-040): read + validate every
-    // tensor and moment record into host memory FIRST, then apply — a
+    // Records validate against THIS trainer's shard sizes (matmul /tp, LN
+    // replicated full — v2.33), so only the same topology roundtrips; applied
+    // via the block's shard setters (no-slice) rather than the full-weight
+    // set_block_weight. Two-phase load (cpp-reviewer MEDIUM, RIL EV-040):
+    // read + validate everything into host memory FIRST, then apply — a
     // corrupt/truncated stream throws with this trainer untouched.
     const int qkv = heads_ * head_dim_;
     size_t sz[kBlockTensorCount];
-    block_tensor_sizes(hidden_, qkv, intermediate_, sz);
+    block_tensor_sizes(hidden_, qkv, intermediate_, tp_degree(), sz);
     std::vector<std::array<std::vector<float>, kBlockTensorCount>> tens(
         static_cast<size_t>(num_blocks_));
     std::vector<std::array<cp::AdamWMomentRecord, kBlockTensorCount>> mots(
@@ -410,9 +405,10 @@ void TransformerTrainer::load_state(std::istream& in) {
     for (int b = 0; b < num_blocks_; ++b) {
         std::array<std::vector<float>, kBlockTensorCount>& t =
             tens[static_cast<size_t>(b)];
-        set_block_weight(b, t[0].data(), t[1].data(), t[2].data(),
-                         t[3].data(), t[4].data(), t[5].data(), t[6].data(),
-                         t[7].data(), t[8].data(), t[9].data(), t[10].data());
+        blocks_[static_cast<size_t>(b)]->set_weight_shards(
+            t[0].data(), t[1].data(), t[2].data(), t[3].data(), t[4].data(),
+            t[5].data(), t[6].data(), t[7].data(), t[8].data(), t[9].data(),
+            t[10].data());
         for (int i = 0; i < kBlockTensorCount; ++i) {
             cp::apply_adamw_moments(
                 *block_opts_[static_cast<size_t>(b)][static_cast<size_t>(i)],

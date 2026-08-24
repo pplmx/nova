@@ -138,15 +138,6 @@ void MicroTrainer::copy_weights(float* gate, float* up, float* down) const {
 }
 
 void MicroTrainer::save_state(std::ostream& out) const {
-    // The format captures what copy_weights() exposes (the full weights at
-    // tp==1, rank shards otherwise). Rank-shard restore needs shard setters on
-    // the MLP pieces — the v2.32 follow-up — so refuse to emit a checkpoint
-    // that cannot roundtrip rather than write one that silently can't load.
-    if (tp_degree() > 1) {
-        throw std::runtime_error(
-            "MicroTrainer::save_state: tp > 1 rank-shard checkpoints are the "
-            "v2.32 follow-up (TASK); verified on the tp == 1 path");
-    }
     namespace cp = checkpoint;
     cp::Writer w(out);
     w.u32(cp::kMagic);
@@ -155,9 +146,15 @@ void MicroTrainer::save_state(std::ostream& out) const {
     w.u32(static_cast<uint32_t>(hidden_dim_));
     w.u32(static_cast<uint32_t>(intermediate_size_));
 
+    // Records are this rank's shard sizes (== the full sizes at tp == 1, so a
+    // tp=1 checkpoint is just the single-shard case). copy_weights exposes the
+    // rank shards; the moment capacities are the same shard sizes.
+    const int tp = tp_degree();
     const size_t h = static_cast<size_t>(hidden_dim_);
     const size_t inter = static_cast<size_t>(intermediate_size_);
-    const size_t ng = h * inter, nu = h * inter, nd = inter * h;
+    const size_t ng = h * (inter / tp);
+    const size_t nu = h * (inter / tp);
+    const size_t nd = (inter / tp) * h;
     std::vector<float> g(ng), u(nu), d(nd);
     copy_weights(g.data(), u.data(), d.data());
     w.tensor(g.data(), ng);
@@ -191,21 +188,23 @@ void MicroTrainer::load_state(std::istream& in) {
             std::to_string(hidden_dim_) + "x" +
             std::to_string(intermediate_size_) + ")");
     }
-    // Symmetric with save_state: a tp > 1 trainer's moment buffers are the
-    // rank shard sizes, which don't match a full-weight checkpoint's records.
-    if (tp_degree() > 1) {
-        throw std::runtime_error(
-            "MicroTrainer::load_state: tp > 1 rank-shard checkpoints are the "
-            "v2.32 follow-up (TASK); verified on the tp == 1 path");
-    }
     // Two-phase load (cpp-reviewer MEDIUM, RIL EV-040): read and validate
     // every tensor and moment record into host memory FIRST, then apply — a
     // corrupt/truncated stream throws with this trainer untouched (no partial
     // restore). Moment records are count-tagged; read_adamw_moments requires
     // count == 0 (fresh) or exactly the companion tensor's size.
+    //
+    // v2.33 (DEC-019): records validate against THIS trainer's shard sizes
+    // (hidden x inter/tp etc.), so a tp=1 checkpoint won't load into a tp>1
+    // trainer or vice versa — only the same topology roundtrips. Applied via
+    // set_weight_shards (the no-slice shard uploader) instead of the
+    // full-weight set_weight.
+    const int tp = tp_degree();
     const size_t h = static_cast<size_t>(hidden_dim_);
     const size_t inter = static_cast<size_t>(intermediate_size_);
-    const size_t ng = h * inter, nu = h * inter, nd = inter * h;
+    const size_t ng = h * (inter / tp);
+    const size_t nu = h * (inter / tp);
+    const size_t nd = (inter / tp) * h;
     std::vector<float> g(ng), u(nu), d(nd);
     r.tensor(g.data(), ng, "gate");
     r.tensor(u.data(), nu, "up");
@@ -214,7 +213,7 @@ void MicroTrainer::load_state(std::istream& in) {
     const cp::AdamWMomentRecord mu = cp::read_adamw_moments(r, nu, "up");
     const cp::AdamWMomentRecord md = cp::read_adamw_moments(r, nd, "down");
 
-    set_weight(g.data(), u.data(), d.data());
+    mlp_->set_weight_shards(g.data(), u.data(), d.data());
     cp::apply_adamw_moments(*opt_gate_, mg);
     cp::apply_adamw_moments(*opt_up_, mu);
     cp::apply_adamw_moments(*opt_down_, md);

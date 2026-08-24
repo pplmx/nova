@@ -287,6 +287,15 @@ void ColumnParallelLayer::step(
                    stream);
 }
 
+void ColumnParallelLayer::set_weight_shard(const float* shard) {
+    const size_t elems =
+        static_cast<size_t>(in_features_) * (out_features_ / tp_degree());
+    if (!weight_ || weight_->size() != elems) {
+        weight_ = std::make_unique<cuda::memory::Buffer<float>>(elems);
+    }
+    weight_->copy_from(shard, elems);
+}
+
 void ColumnParallelLayer::copy_weight_shard(float* host_out) const {
     if (!weight_) {
         throw std::runtime_error(
@@ -498,6 +507,15 @@ void RowParallelLayer::step(
                    stream);
 }
 
+void RowParallelLayer::set_weight_shard(const float* shard) {
+    const size_t elems =
+        static_cast<size_t>(in_features_ / tp_degree()) * out_features_;
+    if (!weight_ || weight_->size() != elems) {
+        weight_ = std::make_unique<cuda::memory::Buffer<float>>(elems);
+    }
+    weight_->copy_from(shard, elems);
+}
+
 void RowParallelLayer::copy_weight_shard(float* host_out) const {
     if (!weight_) {
         throw std::runtime_error(
@@ -556,6 +574,15 @@ void TensorParallelMLP::set_weight(
     gate_proj_->set_weight(gate_weight);
     up_proj_->set_weight(up_weight);
     down_proj_->set_weight(down_weight);
+}
+
+void TensorParallelMLP::set_weight_shards(
+    const float* gate_shard,
+    const float* up_shard,
+    const float* down_shard) {
+    gate_proj_->set_weight_shard(gate_shard);
+    up_proj_->set_weight_shard(up_shard);
+    down_proj_->set_weight_shard(down_shard);
 }
 
 void TensorParallelMLP::forward(

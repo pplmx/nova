@@ -85,3 +85,28 @@ rank-shard checkpoint restore on real multi-GPU.
   save_state guard ("...v2.32 follow-up (TASK)..."). Harness detail recorded
   as EV-042: the fixture SetUp must `DeviceMesh::instance().initialize()`
   (device_count reads 0 before init), same as MicroTrainerMultiGpuTest.
+
+## P2 implementation (TASK-061, EV-043)
+
+- Shard setters (the no-slice dual of the existing copy_weight_shard /
+  copy_weights): `ColumnParallelLayer` / `RowParallelLayer::set_weight_shard`
+  (the tp=1 branch of set_weight extracted; self-sizing, rejects nothing —
+  copies the rank shard exactly), then `TensorParallelMLP::set_weight_shards`
+  (3), `TensorParallelMultiHeadAttention::set_weight_shards` (4), and
+  `TransformerBlock::set_weight_shards` (11: the 7 matmul shards + the 4
+  replicated LN gamma/beta via the full set_weight — checkpoint LN records are
+  full hidden).
+- Rank-aware checkpoints: `MicroTrainer::save_state` sized to
+  hidden×(inter/tp) / (inter/tp)×hidden; `TransformerTrainer`'s
+  `block_tensor_sizes` takes tp (matmul /tp, LN full). The tp>1 guards are
+  dropped from both trainers' save/load; `load_state` validates every record
+  against THIS trainer's shard sizes (a tp=1 file won't load on a tp>1 trainer
+  or vice versa — only the same topology roundtrips — geometry rejected, never
+  mis-restored) and applies via the shard setters. Public trainer APIs
+  unchanged (the setters compose inside load_state).
+- GREEN (EV-043): CheckpointMultiGpuTest **2/2** on 2 real GPUs — per-rank
+  save→load→resume byte-exact shards + resumed-vs-uninterrupted on both
+  trainers; tp=1 CheckpointTest **8/8** unchanged (shard==full);
+  neural single-GPU **115/115**; multi-GPU cross-suite **21/21 on 2 GPUs**
+  (existing trajectory/parity suites + the new checkpoint suite), deep-block
+  K-step trajectory unchanged.

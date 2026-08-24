@@ -108,6 +108,14 @@ void TensorParallelMultiHeadAttention::set_weight(
     out_proj_->set_weight(wo);
 }
 
+void TensorParallelMultiHeadAttention::set_weight_shards(
+    const float* wq, const float* wk, const float* wv, const float* wo) {
+    q_proj_->set_weight_shard(wq);
+    k_proj_->set_weight_shard(wk);
+    v_proj_->set_weight_shard(wv);
+    out_proj_->set_weight_shard(wo);
+}
+
 void TensorParallelMultiHeadAttention::forward(
     const float* input, float* output, int batch, int seq) {
     const int m = batch * seq;

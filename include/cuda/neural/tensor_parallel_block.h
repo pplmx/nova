@@ -90,6 +90,20 @@ public:
                     const float* wd);
 
     /**
+     * @brief Upload this rank's weight shards directly (v2.33 / DEC-019)
+     *
+     * The no-slice dual of copy_weights: the 7 matmul tensors are this rank's
+     * shards (wq/wk/wv [hidden x qkv/tp], wo [(qkv/tp) x hidden], wg/wu
+     * [hidden x inter/tp], wd [(inter/tp) x hidden]); the 4 LayerNorm gamma/
+     * beta are replicated [hidden] (the checkpoint stores them full).
+     */
+    void set_weight_shards(const float* ln1_gamma, const float* ln1_beta,
+                           const float* wq, const float* wk, const float* wv,
+                           const float* wo, const float* ln2_gamma,
+                           const float* ln2_beta, const float* wg,
+                           const float* wu, const float* wd);
+
+    /**
      * @brief Forward pass: y = x + MLP(LN2(x + MHA(LN1(x))))
      * @param input Device input [batch*seq x hidden] (replicated)
      * @param output Device output [batch*seq x hidden] (replicated)

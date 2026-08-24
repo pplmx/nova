@@ -87,6 +87,16 @@ public:
                     const float* wo);
 
     /**
+     * @brief Upload this rank's Q/K/V/output weight shards directly (v2.33)
+     *
+     * The no-slice dual of copy_weights: wq/wk/wv column shards
+     * [hidden x local_heads*head_dim], wo row shard
+     * [local_heads*head_dim x hidden] (== the full weights at tp == 1).
+     */
+    void set_weight_shards(const float* wq, const float* wk, const float* wv,
+                           const float* wo);
+
+    /**
      * @brief Forward pass (synchronous)
      * @param input Device input [batch*seq x hidden_dim] (replicated)
      * @param output Device output [batch*seq x hidden_dim] (replicated)
