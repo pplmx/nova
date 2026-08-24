@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 32,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-24T00:42:12+00:00",
+  "updated_at": "2026-08-24T00:47:09+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2194,10 +2194,10 @@
     "ISS-001": {
       "id": "ISS-001",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T22:05:17+00:00",
-      "updated_at": "2026-08-23T22:05:17+00:00",
+      "updated_at": "2026-08-24T00:47:09+00:00",
       "touched_round": 32,
       "title": "no model persistence: a trained MicroTrainer/TransformerTrainer cannot be saved or resumed; long-running or interrupted training loses all state",
       "severity": 2
@@ -2287,10 +2287,10 @@
     "TASK-059": {
       "id": "TASK-059",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T22:41:11+00:00",
-      "updated_at": "2026-08-23T22:41:11+00:00",
+      "updated_at": "2026-08-24T00:47:09+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2345,10 +2345,10 @@
     "TASK-060": {
       "id": "TASK-060",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T23:25:40+00:00",
-      "updated_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-24T00:47:09+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2357,10 +2357,10 @@
     "TASK-061": {
       "id": "TASK-061",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T23:25:40+00:00",
-      "updated_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-24T00:47:09+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2369,10 +2369,10 @@
     "TASK-062": {
       "id": "TASK-062",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-08-23T23:25:40+00:00",
-      "updated_at": "2026-08-23T23:25:40+00:00",
+      "updated_at": "2026-08-24T00:47:09+00:00",
       "touched_round": 32,
       "category": "core-feature",
       "severity": 2,
@@ -2437,6 +2437,39 @@
       "category": "maintainability",
       "severity": 1,
       "title": "checkpoint follow-up: store the rank id in the NSCK header (and validate on load) so a same-topology file from another rank is rejected instead of silently restoring the wrong shard; per-rank file naming is currently the caller's contract"
+    },
+    "CHG-026": {
+      "id": "CHG-026",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-24T00:46:28+00:00",
+      "updated_at": "2026-08-24T00:46:28+00:00",
+      "touched_round": 32,
+      "commit": "ef5c596",
+      "title": "v2.33 P1 RED: CheckpointMultiGpuTest contracts (2 multi-GPU rank-local checkpoint tests) fail against the tp>1 guard (EV-041)"
+    },
+    "CHG-027": {
+      "id": "CHG-027",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-24T00:46:28+00:00",
+      "updated_at": "2026-08-24T00:46:28+00:00",
+      "touched_round": 32,
+      "commit": "69ae442",
+      "title": "v2.33 P2 implement: layer shard setters (set_weight_shard/set_weight_shards) + rank-aware save/load, tp>1 guard dropped (EV-043 GREEN 2 GPUs)"
+    },
+    "CHG-028": {
+      "id": "CHG-028",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-08-24T00:46:29+00:00",
+      "updated_at": "2026-08-24T00:46:29+00:00",
+      "touched_round": 32,
+      "commit": "e6ce721",
+      "title": "v2.33 cpp-reviewer fixes: test geometry scaled with device_count (8-GPU GREEN), attention num_heads%tp ctor validation, NSCK v2 TP-degree field (EV-044)"
     }
   },
   "edges": [
@@ -3657,6 +3690,24 @@
       "to": "TASK-061",
       "type": "depends_on",
       "created_at": "2026-08-24T00:42:12+00:00"
+    },
+    {
+      "from": "CHG-026",
+      "to": "TASK-060",
+      "type": "implements",
+      "created_at": "2026-08-24T00:47:08+00:00"
+    },
+    {
+      "from": "CHG-027",
+      "to": "TASK-061",
+      "type": "implements",
+      "created_at": "2026-08-24T00:47:08+00:00"
+    },
+    {
+      "from": "CHG-028",
+      "to": "TASK-061",
+      "type": "implements",
+      "created_at": "2026-08-24T00:47:09+00:00"
     }
   ]
 }

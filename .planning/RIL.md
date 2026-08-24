@@ -18,20 +18,24 @@ Scaled-Dot-Product Attention + LayerNorm Training Kernels"** closed at Round 31 
 **closed at Round 30/32** → **v2.31 "Device-Native LAMB Optimizer
 Kernel"** opened and **closed at Round 31** → **v2.32 "Model Checkpointing
 (Weights + Optimizer State)"** closed at Round 32 → **v2.33 "Multi-GPU
-Rank-Shard Checkpoint Restore"** opened at Round 33 (in progress).
+Rank-Shard Checkpoint Restore"** closed at Round 33.
 
 ## Latest round
 - **Round 33 (2026-08-24)** — milestone **v2.33 "Multi-GPU Rank-Shard
-  Checkpoint Restore"** **opened** (DEC-019, TASK-059/060/061/062,
-  EV-041/EV-042). v2.32 shipped exact tp=1 checkpointing but guarded tp>1
-  (copy_* returns rank shards while set_* takes full weights — asymmetric
-  restore). v2.33 removes the guard: no-slice shard uploaders
-  (ColumnParallelLayer/RowParallelLayer::set_weight_shard,
-  TensorParallelMLP::set_weight_shards, TransformerBlock::set_weight_shards),
-  rank-aware save/load sizing from dims/tp, geometry-validated count-tagged
-  restore. P1 RED 2/2: CheckpointMultiGpuTest RankLocalCheckpoint contracts
-  (MicroTrainer + TransformerTrainer, thread-per-rank on real 2 GPUs) fail the
-  tp>1 guard (EV-041/EV-042). In progress.
+  Checkpoint Restore"** opened through **close (P1+P2+P3)** (DEC-019,
+  TASK-059..062, CHG-026/027/028, EV-041/042/043/044; ISS-001 **resolved**).
+  v2.32 shipped exact tp=1 checkpointing but guarded tp>1 (copy_* returns rank
+  shards while set_* takes full weights — asymmetric restore). v2.33 removes
+  the guard: no-slice shard uploaders (ColumnParallelLayer/RowParallelLayer::
+  set_weight_shard, TensorParallelMLP::set_weight_shards, TransformerBlock::
+  set_weight_shards), rank-aware save/load sizing from dims/tp (NSCK v2 adds a
+  TP-degree field), geometry-validated restore. P1 RED 2/2 (EV-041); P2 GREEN
+  2/2 on 2 GPUs + tp=1 8/8 (EV-043); cpp-reviewer WARNING->GREEN: HIGH test-
+  geometry on 8 GPUs (heads scaled with device_count) + MEDIUM attention
+  num_heads%tp ctor validation + NSCK v2 (EV-044); verified 2/2 on 2/4/8 GPUs,
+  regressions green, full-suite 1469/0. The no-persistence issue (ISS-001,
+  opened v2.32) is now fully resolved — tp=1 and multi-GPU rank-shard restore.
+  Milestone **closed**.
 - **Round 32 (2026-08-24)** — milestone **v2.32 "Model Checkpointing (Weights +
   Optimizer State)"** opened through **close (P1+P2+P3)** (DEC-018,
   TASK-055/056/057/058, CHG-024/CHG-025, EV-038/039/040, ISS-001,
