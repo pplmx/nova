@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-02T16:06:37+00:00",
+  "updated_at": "2026-09-02T16:38:35+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2429,10 +2429,10 @@
     "TASK-063": {
       "id": "TASK-063",
       "type": "task",
-      "status": "active",
-      "version": 3,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-08-24T00:42:12+00:00",
-      "updated_at": "2026-09-02T16:06:37+00:00",
+      "updated_at": "2026-09-02T16:29:02+00:00",
       "touched_round": 33,
       "category": "maintainability",
       "severity": 1,
@@ -2632,6 +2632,17 @@
       "touched_round": 33,
       "confidence": 0.85,
       "title": "ISS-004 root cause: TensorParallelTest::SetUp (tests/neural/tensor_parallel_test.cpp:11) calls cudaDeviceReset() on every (CPU-only formula) test; an earlier suite (SyncBatchNormTest.MultiGpu, alphabetically before it) initialized the shared NcclContext::instance() communicators, and the reset destroys the CUDA context those communicators live on — undetectable to NcclContext (the documented issue-v19-shared-nccl-context-reset family) — so the later TensorParallelMultiGpuTest AllReduce runs on a stale communicator and cudaDeviceSynchronize blocks forever"
+    },
+    "CHG-029": {
+      "id": "CHG-029",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T16:29:02+00:00",
+      "updated_at": "2026-09-02T16:29:02+00:00",
+      "touched_round": 33,
+      "commit": "684f417",
+      "title": "fix(neural): NSCK v3 rank-id field + load validation (micro + transformer trainers), shard_rank helper, ctx_ retention; wrong-rank multi-GPU rejection tests"
     }
   },
   "edges": [
@@ -3924,6 +3935,12 @@
       "to": "HYP-003",
       "type": "validates",
       "created_at": "2026-09-02T15:48:36+00:00"
+    },
+    {
+      "from": "CHG-029",
+      "to": "TASK-063",
+      "type": "implements",
+      "created_at": "2026-09-02T16:31:29+00:00"
     }
   ]
 }
