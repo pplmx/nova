@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-02T21:46:21+00:00",
+  "updated_at": "2026-09-02T22:11:55+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2543,13 +2543,15 @@
       "id": "TASK-064",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 2,
       "created_at": "2026-09-02T14:16:05+00:00",
-      "updated_at": "2026-09-02T14:16:05+00:00",
+      "updated_at": "2026-09-02T21:49:41+00:00",
       "touched_round": 33,
       "category": "dx",
       "severity": 2,
-      "title": "Re-integrate the four examples against the current library: port neural_net/image_processing/graph_algorithms/distributed_training to the current cuda::* headers+APIs, add CMake example targets (restoring the build the README already promises), fix CLI usability (--help exit 0, argc-bounds + positive-int arg validation, <cstring>, stderr for errors), and fix the silent-invalid-kernel no-op + misleading softmax verification in the examples; update examples/README.md to match reality (ISS-002, ISS-003)"
+      "title": "Re-integrate the four examples against the current library: port neural_net/image_processing/graph_algorithms/distributed_training to the current cuda::* headers+APIs, add CMake example targets (restoring the build the README already promises), fix CLI usability (--help exit 0, argc-bounds + positive-int arg validation, <cstring>, stderr for errors), and fix the silent-invalid-kernel no-op + misleading softmax verification in the examples; update examples/README.md to match reality (ISS-002, ISS-003)",
+      "lock_owner": "nova-001",
+      "lock_until": "2026-09-03T01:49:41+00:00"
     },
     "EV-047": {
       "id": "EV-047",
@@ -2701,6 +2703,18 @@
       "touched_round": 33,
       "commit": "7ecdf49",
       "title": "test(distributed): remove pointless cudaDeviceReset from TensorParallelTest + both single-GPU sequence-parallel suites (shared-NcclContext poisoning, TASK-065 v1)"
+    },
+    "EV-053": {
+      "id": "EV-053",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T22:11:55+00:00",
+      "updated_at": "2026-09-02T22:11:55+00:00",
+      "touched_round": 33,
+      "source": "2026-09-02 run: build/bin/neural_net on CUDA_VISIBLE_DEVICES=1",
+      "title": "examples/neural_net.cpp ported to cuda::* API (FusedMatmulBiasAct + layer_norm + softmax) builds via the new examples/CMakeLists.txt target and runs GREEN: softmax rows sum to 1, --help exits 0 without running, bad/unknown args fail fast with stderr + exit 1 (ISS-002/003, TASK-064)",
+      "confidence": 1.0
     }
   },
   "edges": [

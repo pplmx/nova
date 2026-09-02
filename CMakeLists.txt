@@ -757,5 +757,6 @@ install(
 )
 
 enable_testing()
+add_subdirectory(examples)
 add_subdirectory(tests)
 add_subdirectory(benchmark)
