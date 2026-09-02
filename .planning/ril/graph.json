@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 32,
+  "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-08-24T00:47:09+00:00",
+  "updated_at": "2026-09-02T16:06:37+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -476,7 +476,7 @@
       "version": 2,
       "created_at": "2026-08-12T02:26:40+00:00",
       "updated_at": "2026-08-23T21:24:18+00:00",
-      "touched_round": 18,
+      "touched_round": 33,
       "confidence": 0.9,
       "title": "Legacy MeshBarrier multi-GPU path (per-instance host event-poll on internal streams) does not enforce cross-rank arrival: events on empty streams fire immediately so a rank is released before all ranks reach the barrier"
     },
@@ -579,7 +579,7 @@
       "version": 1,
       "created_at": "2026-08-12T05:11:01+00:00",
       "updated_at": "2026-08-12T05:11:01+00:00",
-      "touched_round": 32,
+      "touched_round": 33,
       "title": "Neural parallel-training layer: TensorParallelMatmul (include/cuda/neural/tensor_parallel_matmul.{h,cpp}), TensorParallelLayers, SequenceParallelAttention / RingSequenceParallelism (include/cuda/distributed/sequence_parallel.h)"
     },
     "HYP-002": {
@@ -675,7 +675,7 @@
       "version": 1,
       "created_at": "2026-08-12T06:05:18+00:00",
       "updated_at": "2026-08-12T06:05:18+00:00",
-      "touched_round": 18,
+      "touched_round": 33,
       "title": "Full-suite NCCL-enabled run can SIGSEGV in a driver region when unrelated suites call cudaDeviceReset() after the shared NcclContext singleton created its communicators - stale comms are used, and unlike aborts (v2.18 mark_comm_aborted) a context reset is undetectable, so the comms are silently invalid",
       "severity": 2
     },
@@ -2430,10 +2430,10 @@
       "id": "TASK-063",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 3,
       "created_at": "2026-08-24T00:42:12+00:00",
-      "updated_at": "2026-08-24T00:42:12+00:00",
-      "touched_round": 32,
+      "updated_at": "2026-09-02T16:06:37+00:00",
+      "touched_round": 33,
       "category": "maintainability",
       "severity": 1,
       "title": "checkpoint follow-up: store the rank id in the NSCK header (and validate on load) so a same-topology file from another rank is rejected instead of silently restoring the wrong shard; per-rank file naming is currently the caller's contract"
@@ -2470,6 +2470,168 @@
       "touched_round": 32,
       "commit": "e6ce721",
       "title": "v2.33 cpp-reviewer fixes: test geometry scaled with device_count (8-GPU GREEN), attention num_heads%tp ctor validation, NSCK v2 TP-degree field (EV-044)"
+    },
+    "DEC-020": {
+      "id": "DEC-020",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T13:12:25+00:00",
+      "updated_at": "2026-09-02T13:12:25+00:00",
+      "touched_round": 33,
+      "title": "NSCK v3: record the writer's rank id (active_rank convention) so load rejects a same-topology file from another rank",
+      "rationale": "TASK-063 is the silent-wrong-shard hazard: the NSCK v2 header stores the TP degree (mismatch rejected) but not the rank id, so a same-topology checkpoint written by another rank passes every size check and is restored silently. Fix: bump kVersion to 3 and add a u32 rank field after tp (both trainers). The rank is resolved at save/load via the v2.20 verified active_rank convention (cudaGetDevice -> ctx.rank_of_device) that the TP layers already use — this makes wrong-shard detection automatic, consistent with the library's rank model (raw device indices are wrong for non-default NcclContextConfig groups), and needs no caller discipline. tp<=1 -> rank 0 (single shard is shard 0; an uninitialized ctx cannot answer rank_of_device and must not throw). Load validates frank == shard_rank in the two-phase pre-apply header, so a cross-rank file throws with the trainer untouched. Trainers retain a non-owning NcclContext& ctx_ (matching the layer stack's ctx_ convention) to resolve the rank; the ctor signature is unchanged.",
+      "alternatives_rejected": "explicit rank parameter on save_state/load_state (relies on caller discipline — the same weak per-rank-file-naming contract this task exists to remove; and a defaulted rank would let rank 1 silently accept rank 0's shard, recreating the bug); capturing the rank into the trainer at construction (adds a ctor-time resolve/throw path and changes behavior for every trainer even those that never checkpoint); deriving rank from the raw CUDA device index (wrong for non-default NCCL groups — the documented v2.20 pitfall)"
+    },
+    "EV-045": {
+      "id": "EV-045",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T13:34:47+00:00",
+      "updated_at": "2026-09-02T13:34:47+00:00",
+      "touched_round": 33,
+      "source": "test:MultiGpu_MicroTrainer_WrongRankRejected (P1 RED, 2026-09-02, CUDA_VISIBLE_DEVICES=1,2)",
+      "title": "neural/checkpoint_multigpu_test.cpp: rank-1 trainer loading rank-0 MicroTrainer bytes succeeds on NSCK v2 (no throw) — the silent-wrong-shard hazard TASK-063 targets is real",
+      "confidence": 1.0
+    },
+    "EV-046": {
+      "id": "EV-046",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T13:34:47+00:00",
+      "updated_at": "2026-09-02T13:34:47+00:00",
+      "touched_round": 33,
+      "source": "test:MultiGpu_TransformerTrainer_WrongRankRejected (P1 RED, 2026-09-02, CUDA_VISIBLE_DEVICES=1,2)",
+      "title": "neural/checkpoint_multigpu_test.cpp: rank-1 trainer loading rank-0 TransformerTrainer bytes succeeds on NSCK v2 — same hole in the deep-trainer path",
+      "confidence": 1.0
+    },
+    "COMP-001": {
+      "id": "COMP-001",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T14:13:04+00:00",
+      "updated_at": "2026-09-02T14:13:04+00:00",
+      "touched_round": 33,
+      "title": "examples/ showcase programs: neural_net.cpp, image_processing.cpp, graph_algorithms.cpp, distributed_training.cpp + examples/README.md (the primary user-facing onboarding surface)"
+    },
+    "ISS-002": {
+      "id": "ISS-002",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T14:14:30+00:00",
+      "updated_at": "2026-09-02T14:14:30+00:00",
+      "touched_round": 33,
+      "title": "examples/ are broken against the current library and not built: no CMake target builds them (examples/README.md falsely claims 'All examples are built as part of the main build'), and all four include pre-v2 headers/APIs that moved (cuda/neural/matmul.hpp -> matmul.h, nova::memory::Buffer -> cuda::memory, nova::image::* -> cuda::algo/cuda::image, nova::nccl::NcclContext::initialize(MPI_COMM_WORLD) -> cuda::nccl::NcclContext), so following the README yields nothing to run and hand-compiling fails on namespace/header",
+      "severity": 2
+    },
+    "ISS-003": {
+      "id": "ISS-003",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T14:14:30+00:00",
+      "updated_at": "2026-09-02T14:14:30+00:00",
+      "touched_round": 33,
+      "title": "examples/ CLI usability gaps on top of the stale build: no --help/-h (usage only on unknown arg, exit 1), atoi/atof without validation (--batch abc silently 0), strcmp used without <cstring>, error messages to stdout, and image_processing silently no-ops + saves uninitialized output on an invalid --kernel",
+      "severity": 1
+    },
+    "TASK-064": {
+      "id": "TASK-064",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T14:16:05+00:00",
+      "updated_at": "2026-09-02T14:16:05+00:00",
+      "touched_round": 33,
+      "category": "dx",
+      "severity": 2,
+      "title": "Re-integrate the four examples against the current library: port neural_net/image_processing/graph_algorithms/distributed_training to the current cuda::* headers+APIs, add CMake example targets (restoring the build the README already promises), fix CLI usability (--help exit 0, argc-bounds + positive-int arg validation, <cstring>, stderr for errors), and fix the silent-invalid-kernel no-op + misleading softmax verification in the examples; update examples/README.md to match reality (ISS-002, ISS-003)"
+    },
+    "EV-047": {
+      "id": "EV-047",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T14:33:01+00:00",
+      "updated_at": "2026-09-02T14:33:01+00:00",
+      "touched_round": 33,
+      "source": "test:CheckpointMultiGpuTest.* GREEN, 2026-09-02, CUDA_VISIBLE_DEVICES=1,2 and 1,2,3,4 and 1,2,3,4,5,6,7",
+      "title": "checkpoint_multigpu_test.cpp: 4/4 GREEN on 2/4/7-GPU topologies — wrong-rank files now rejected (rank mismatch runtime_error) while own-rank roundtrips + resumed-trajectory contracts hold",
+      "confidence": 1.0
+    },
+    "EV-048": {
+      "id": "EV-048",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T14:33:01+00:00",
+      "updated_at": "2026-09-02T14:33:01+00:00",
+      "touched_round": 33,
+      "source": "test:CheckpointTest.* GREEN, 2026-09-02 (tp==1, uninitialized ctx)",
+      "title": "checkpoint_test.cpp: 8/8 GREEN — NSCK v3 roundtrip, zero-moment path, geometry/corrupt/truncated rejection, untouched-on-reject all still hold at tp==1 (rank field is 0 there, no behavior change)",
+      "confidence": 1.0
+    },
+    "ISS-004": {
+      "id": "ISS-004",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T15:11:13+00:00",
+      "updated_at": "2026-09-02T15:11:13+00:00",
+      "touched_round": 33,
+      "title": "Full-suite NCCL-enabled regression can hang (busy-spin ~100% CPU on one rank) then core-dump at TensorParallelMultiGpuTest.MultiGpu_TensorParallelColumnParallel on 2 GPUs; reproduces when SyncBatchNormTest + TensorParallelTest run immediately before it, but neither suite alone nor an isolated run triggers it — a pre-existing shared-NcclContext state-interaction flake (v2.19 shared-reset family), unrelated to NSCK v3 (reproduces with zero checkpoint tests)",
+      "severity": 3
+    },
+    "EV-049": {
+      "id": "EV-049",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T15:11:13+00:00",
+      "updated_at": "2026-09-02T15:11:13+00:00",
+      "touched_round": 33,
+      "source": "2026-09-02 runs, CUDA_VISIBLE_DEVICES=1,2 build/bin/nova-tests",
+      "title": "Full NCCL regression: hangs at MultiGpu_TensorParallelColumnParallel (100% CPU spin, GPU 2 100%); isolated test passes 617ms; CheckpointMultiGpuTest+that test passes; TensorParallelTest+that test passes; SyncBatchNormTest+that test passes; only the SyncBatchNormTest+TensorParallelTest+that-test sequence reproduced the hang/core-dump",
+      "confidence": 1.0
+    },
+    "TASK-065": {
+      "id": "TASK-065",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T15:14:19+00:00",
+      "updated_at": "2026-09-02T15:14:19+00:00",
+      "touched_round": 33,
+      "category": "stability",
+      "severity": 3,
+      "title": "Diagnose and fix the full-suite NCCL-enabled regression hang: SyncBatchNormTest+TensorParallelTest running before TensorParallelMultiGpuTest.MultiGpu_TensorParallelColumnParallel triggers a busy-spin hang / core-dump on 2 GPUs (ISS-004) — likely contingent state in the shared NcclContext singleton or a cudaDeviceReset/(re)initialize interaction; restoring a hang-free full NCCL run un-gates the all-suite verification methodology"
+    },
+    "EV-050": {
+      "id": "EV-050",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T15:34:08+00:00",
+      "updated_at": "2026-09-02T15:34:08+00:00",
+      "touched_round": 33,
+      "source": "2026-09-02 full single-GPU baseline, CUDA_VISIBLE_DEVICES=1 (device 0 -> free physical GPU 1), no NCCL env",
+      "title": "nova-tests single-GPU regression: 1549 ran / 1482 PASSED / 0 FAILED (multi-GPU suites self-skip) — no regression from NSCK v3 + ctx_ reference members (prior baseline 1469/0)",
+      "confidence": 1.0
+    },
+    "HYP-003": {
+      "id": "HYP-003",
+      "type": "hypothesis",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T15:43:51+00:00",
+      "updated_at": "2026-09-02T15:43:51+00:00",
+      "touched_round": 33,
+      "confidence": 0.85,
+      "title": "ISS-004 root cause: TensorParallelTest::SetUp (tests/neural/tensor_parallel_test.cpp:11) calls cudaDeviceReset() on every (CPU-only formula) test; an earlier suite (SyncBatchNormTest.MultiGpu, alphabetically before it) initialized the shared NcclContext::instance() communicators, and the reset destroys the CUDA context those communicators live on — undetectable to NcclContext (the documented issue-v19-shared-nccl-context-reset family) — so the later TensorParallelMultiGpuTest AllReduce runs on a stale communicator and cudaDeviceSynchronize blocks forever"
     }
   },
   "edges": [
@@ -3708,6 +3870,60 @@
       "to": "TASK-061",
       "type": "implements",
       "created_at": "2026-08-24T00:47:09+00:00"
+    },
+    {
+      "from": "DEC-020",
+      "to": "TASK-063",
+      "type": "governs",
+      "created_at": "2026-09-02T13:13:49+00:00"
+    },
+    {
+      "from": "ISS-002",
+      "to": "COMP-001",
+      "type": "located_in",
+      "created_at": "2026-09-02T14:17:23+00:00"
+    },
+    {
+      "from": "ISS-003",
+      "to": "COMP-001",
+      "type": "located_in",
+      "created_at": "2026-09-02T14:17:24+00:00"
+    },
+    {
+      "from": "TASK-064",
+      "to": "ISS-002",
+      "type": "addresses",
+      "created_at": "2026-09-02T14:17:24+00:00"
+    },
+    {
+      "from": "TASK-064",
+      "to": "ISS-003",
+      "type": "addresses",
+      "created_at": "2026-09-02T14:17:24+00:00"
+    },
+    {
+      "from": "ISS-004",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-09-02T15:14:19+00:00"
+    },
+    {
+      "from": "TASK-065",
+      "to": "ISS-004",
+      "type": "addresses",
+      "created_at": "2026-09-02T15:14:19+00:00"
+    },
+    {
+      "from": "ISS-004",
+      "to": "issue-v19-shared-nccl-context-reset",
+      "type": "causes",
+      "created_at": "2026-09-02T15:45:59+00:00"
+    },
+    {
+      "from": "EV-049",
+      "to": "HYP-003",
+      "type": "validates",
+      "created_at": "2026-09-02T15:48:36+00:00"
     }
   ]
 }

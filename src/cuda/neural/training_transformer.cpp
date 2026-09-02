@@ -88,7 +88,8 @@ TransformerTrainer::TransformerTrainer(
     int head_dim,
     int intermediate_size,
     const optimizers::OptimizerConfig& opt_cfg)
-    : num_blocks_(num_blocks),
+    : ctx_(ctx),
+      num_blocks_(num_blocks),
       hidden_(hidden),
       heads_(heads),
       head_dim_(head_dim),
@@ -300,6 +301,9 @@ void TransformerTrainer::save_state(std::ostream& out) const {
     w.u32(cp::kVersion);
     w.u32(cp::kKindTransformerTrainer);
     w.u32(static_cast<uint32_t>(tp_degree()));
+    // v3 (DEC-020): this rank's shard id, so a same-topology file from another
+    // rank is rejected on load instead of silently restoring its shard.
+    w.u32(cp::shard_rank(ctx_, tp_degree()));
     w.u32(static_cast<uint32_t>(num_blocks_));
     w.u32(static_cast<uint32_t>(hidden_));
     w.u32(static_cast<uint32_t>(heads_));
@@ -356,6 +360,17 @@ void TransformerTrainer::load_state(std::istream& in) {
             "Nova checkpoint: TP-degree mismatch (checkpoint " +
             std::to_string(ftp) + " vs trainer " +
             std::to_string(tp_degree()) + ")");
+    }
+    // v3 (DEC-020): the writer's shard id must be this trainer's rank — a
+    // same-topology file from another rank matches every size check and used
+    // to silently restore the wrong shard.
+    const uint32_t frank = r.u32();
+    const uint32_t my_rank = cp::shard_rank(ctx_, tp_degree());
+    if (frank != my_rank) {
+        throw std::runtime_error(
+            "Nova checkpoint: rank mismatch (checkpoint written by rank " +
+            std::to_string(frank) + " vs trainer rank " +
+            std::to_string(my_rank) + ")");
     }
     const uint32_t fnb = r.u32(), fh = r.u32(), fheads = r.u32(),
                    fhd = r.u32(), fi = r.u32();

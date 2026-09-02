@@ -18,8 +18,11 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <string>
@@ -95,6 +98,33 @@ void expect_eq(const float* a, const float* b, size_t n, const char* what) {
         EXPECT_FLOAT_EQ(a[i], b[i]) << what << " element " << i;
     }
 }
+
+// Cross-rank checkpoint handoff: rank 0 publishes its serialized bytes and the
+// other ranks wait for them before attempting a load (run_per_rank threads are
+// device-pinned and run concurrently, so a rank must never read bytes rank 0
+// has not yet published). wait_for guards against a rank-0 failure leaving the
+// other ranks blocked forever — the caller FAILs instead of hanging.
+struct Rank0CheckpointHandoff {
+    std::mutex m;
+    std::condition_variable cv;
+    bool published = false;
+    std::string bytes;
+
+    void publish(std::string b) {
+        std::lock_guard<std::mutex> lock(m);
+        bytes = std::move(b);
+        published = true;
+        cv.notify_all();
+    }
+    // Rank 0's bytes, or an empty string if rank 0 never published (timeout).
+    [[nodiscard]] std::string wait_for_bytes() {
+        std::unique_lock<std::mutex> lock(m);
+        if (!cv.wait_for(lock, std::chrono::seconds(30), [&] { return published; })) {
+            return {};
+        }
+        return bytes;
+    }
+};
 
 }  // namespace
 
@@ -299,5 +329,168 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
             EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-4f)
                 << "resumed deep loss at step " << s << " on this rank";
         }
+    });
+}
+
+// A checkpoint is rank-scoped at tp > 1: NSCK v3 records the writer's rank id,
+// so loading rank 0's bytes on another rank must be REJECTED — a same-topology
+// file written by a different rank matches every size check and would silently
+// restore the wrong shard — while rank 0 loading its own bytes still
+// roundtrips. P1: the v2 header stores no rank, so the cross-rank load
+// succeeds -> RED.
+TEST_F(CheckpointMultiGpuTest, MultiGpu_MicroTrainer_WrongRankRejected) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for the cross-rank rejection test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    // inter scales with device_count so the sharded MLP geometry is valid on
+    // any 2..N topology (ColumnParallelLayer requires inter % tp == 0 — the
+    // fixed inter=16 roundtrip test only divides for tp in {2,4,8}).
+    const int m = 16, h = 8, inter = 4 * device_count, K = 3;
+    OptimizerConfig opt_cfg;
+    opt_cfg.learning_rate = 0.01f;
+
+    std::vector<float> X;
+    std::vector<int> targets;
+    make_task(X, targets, m, h, 20260902);
+    std::vector<float> Wg0(static_cast<size_t>(h) * inter);
+    std::vector<float> Wu0(static_cast<size_t>(h) * inter);
+    std::vector<float> Wd0(static_cast<size_t>(inter) * h);
+    fill_random(Wg0.data(), Wg0.size(), 41);
+    fill_random(Wu0.data(), Wu0.size(), 42);
+    fill_random(Wd0.data(), Wd0.size(), 43);
+
+    Rank0CheckpointHandoff rank0;
+    run_per_rank(device_count, [&](int rank) {
+        cuda::memory::Buffer<float> d_X(m * h);
+        d_X.copy_from(X.data(), X.size());
+
+        MicroTrainer a(ctx, h, inter, opt_cfg);
+        a.set_weight(Wg0.data(), Wu0.data(), Wd0.data());
+        for (int s = 1; s <= K; ++s) {
+            a.train_step(d_X.data(), targets.data(), m, 1, s);
+        }
+
+        std::stringstream ss(std::ios::out | std::ios::binary);
+        a.save_state(ss);  // P1: rank-less v2 header -> the cross-rank load has
+                           // no rank to reject and succeeds -> the EXPECT_THROW below is RED.
+        const std::string bytes = ss.str();
+
+        if (rank == 0) {
+            // Own bytes on the owning rank: same rank -> must still roundtrip.
+            std::stringstream own(bytes);
+            MicroTrainer b0(ctx, h, inter, opt_cfg);
+            EXPECT_NO_THROW(b0.load_state(own))
+                << "rank 0 loading its own checkpoint";
+            rank0.publish(bytes);
+            return;
+        }
+        const std::string cross = rank0.wait_for_bytes();
+        ASSERT_FALSE(cross.empty()) << "rank 0 never published its checkpoint";
+        // A same-topology file written by rank 0 must not restore into rank r.
+        std::stringstream in(cross);
+        MicroTrainer b1(ctx, h, inter, opt_cfg);
+        EXPECT_THROW(b1.load_state(in), std::runtime_error)
+            << "rank " << rank << " must reject rank 0's checkpoint";
+    });
+}
+
+// Same cross-rank contract for the deep transformer: a per-rank block-shard
+// checkpoint written by rank 0 must be rejected on every other rank.
+TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_WrongRankRejected) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for the cross-rank rejection test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    // Scale heads (and inter) with device_count so the geometry is valid on any
+    // 2..N topology (same rationale as the roundtrip test): heads and qkv must
+    // divide by tp, and intermediate must divide by tp.
+    const int blocks = 2, h = 8, hd = 2, m = 12, K = 3;
+    const int heads = 2 * device_count;
+    const int inter = 4 * device_count;
+    OptimizerConfig opt_cfg;
+    opt_cfg.learning_rate = 0.01f;
+
+    std::vector<float> X;
+    std::vector<int> targets;
+    make_task(X, targets, m, h, 20260903);
+
+    auto set_block = [&](TransformerTrainer& t, int b, unsigned seed) {
+        const int qkv = heads * hd;
+        std::vector<float> l1g(h), l1b(h), l2g(h), l2b(h);
+        std::vector<float> wq(static_cast<size_t>(h) * qkv);
+        std::vector<float> wk(static_cast<size_t>(h) * qkv);
+        std::vector<float> wv(static_cast<size_t>(h) * qkv);
+        std::vector<float> wo(static_cast<size_t>(qkv) * h);
+        std::vector<float> wg(static_cast<size_t>(h) * inter);
+        std::vector<float> wu(static_cast<size_t>(h) * inter);
+        std::vector<float> wd(static_cast<size_t>(inter) * h);
+        fill_random(l1g.data(), l1g.size(), seed);
+        fill_random(l1b.data(), l1b.size(), seed + 1);
+        fill_random(wq.data(), wq.size(), seed + 2);
+        fill_random(wk.data(), wk.size(), seed + 3);
+        fill_random(wv.data(), wv.size(), seed + 4);
+        fill_random(wo.data(), wo.size(), seed + 5);
+        fill_random(l2g.data(), l2g.size(), seed + 6);
+        fill_random(l2b.data(), l2b.size(), seed + 7);
+        fill_random(wg.data(), wg.size(), seed + 8);
+        fill_random(wu.data(), wu.size(), seed + 9);
+        fill_random(wd.data(), wd.size(), seed + 10);
+        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
+                           wv.data(), wo.data(), l2g.data(), l2b.data(),
+                           wg.data(), wu.data(), wd.data());
+    };
+
+    Rank0CheckpointHandoff rank0;
+    run_per_rank(device_count, [&](int rank) {
+        cuda::memory::Buffer<float> d_X(m * h);
+        d_X.copy_from(X.data(), X.size());
+
+        TransformerTrainer a(ctx, blocks, h, heads, hd, inter, opt_cfg);
+        for (int b = 0; b < blocks; ++b) set_block(a, b, 500u + static_cast<unsigned>(b));
+        std::vector<float> fg(h), fb(h);
+        fill_random(fg.data(), fg.size(), 600);
+        fill_random(fb.data(), fb.size(), 601);
+        a.set_final_ln_weight(fg.data(), fb.data());
+        for (int s = 1; s <= K; ++s) {
+            a.train_step(d_X.data(), targets.data(), m, 1, s);
+        }
+
+        std::stringstream ss(std::ios::out | std::ios::binary);
+        a.save_state(ss);  // P1: rank-less v2 header -> RED (see MicroTrainer).
+        const std::string bytes = ss.str();
+
+        if (rank == 0) {
+            std::stringstream own(bytes);
+            TransformerTrainer b0(ctx, blocks, h, heads, hd, inter, opt_cfg);
+            EXPECT_NO_THROW(b0.load_state(own))
+                << "rank 0 loading its own checkpoint";
+            rank0.publish(bytes);
+            return;
+        }
+        const std::string cross = rank0.wait_for_bytes();
+        ASSERT_FALSE(cross.empty()) << "rank 0 never published its checkpoint";
+        std::stringstream in(cross);
+        TransformerTrainer b1(ctx, blocks, h, heads, hd, inter, opt_cfg);
+        EXPECT_THROW(b1.load_state(in), std::runtime_error)
+            << "rank " << rank << " must reject rank 0's checkpoint";
     });
 }

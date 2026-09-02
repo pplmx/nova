@@ -157,9 +157,10 @@ public:
      * from), so a successfully restored trainer resumes with byte-identical
      * weights and m/v — the caller continues step_no at the interrupted
      * count. Records are this rank's shards (full at tp == 1); the format
-     * stores the TP degree (mismatch rejected) but NOT the rank id, so load
-     * this rank's OWN file back — a same-topology file written by another
-     * rank matches every size check and is not detected.
+     * stores the TP degree (mismatch rejected) AND the writer's rank id (v3,
+     * mismatch rejected), so only the same topology roundtrips and a
+     * same-topology file written by another rank is rejected instead of
+     * silently restoring its shard. Load this rank's OWN file back.
      */
     void load_state(std::istream& in);
 
@@ -181,6 +182,10 @@ public:
 private:
     void ensure_scratch(int m);
 
+    // The NCCL context the block stack was built over (kept so save_state /
+    // load_state can resolve this trainer's shard rank via the v2.20
+    // active_rank convention — same non-owning reference the layers hold).
+    ::cuda::nccl::NcclContext& ctx_;
     int num_blocks_ = 0;
     int hidden_ = 0;
     int heads_ = 0;

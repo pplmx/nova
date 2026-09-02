@@ -10,11 +10,15 @@
  * documented layout; cross-endian file portability is not part of the format.
  *
  *   u32 magic  = 'N' 'S' 'C' 'K'  (0x4B43534E)
- *   u32 version = 2                (v2 adds the TP-degree field after kind)
+ *   u32 version = 3                (v2 adds the TP-degree field after kind; v3
+ *                                   adds the writer's rank id after tp)
  *   u32 kind    = 1 (MicroTrainer) | 2 (TransformerTrainer)
  *   u32 tp      = TP degree of the trainer that wrote the file (load rejects
  *                 a mismatch, so only the same topology roundtrips and a
  *                 wrong-topology file fails up front, not by size luck)
+ *   u32 rank    = rank id of the writer's shard (v3; load rejects a mismatch,
+ *                 so a same-topology file written by another rank cannot
+ *                 silently restore the wrong shard)
  *   ... trainer-specific dims, then per tensor a tagged record:
  *   u32 count; float[count]              (a weight tensor)
  *   and per optimizer a tagged moment pair:
@@ -28,6 +32,8 @@
 
 #pragma once
 
+#include "cuda/device/error.h"
+#include "cuda/nccl/nccl_context.h"
 #include "cuda/neural/optimizers/optimizers.h"
 
 #include <cstdint>
@@ -41,10 +47,25 @@
 namespace cuda::neural::training::checkpoint {
 
 constexpr uint32_t kMagic = 0x4B43534Eu;  // 'N' 'S' 'C' 'K'
-constexpr uint32_t kVersion = 2u;  // v2 adds the TP-degree field after kind
+constexpr uint32_t kVersion = 3u;  // v2 adds TP degree; v3 adds the rank id
 constexpr uint32_t kKindMicroTrainer = 1u;
 constexpr uint32_t kKindTransformerTrainer = 2u;
 constexpr uint32_t kMaxCount = 0xFFFFFFFFu;  // tensor/moment element cap (u32 field)
+
+// The rank id that owns a checkpoint's shard set: the active thread's NCCL rank
+// within ctx's group (the v2.20 verified active_rank convention — raw device
+// indices are wrong for non-default NcclContextConfig groups) when the trainer
+// is tensor-parallel, or 0 for the tp == 1 single-shard case (the only shard is
+// shard 0; the context may be uninitialized there and rank_of_device throws on
+// an uninitialized context).
+inline uint32_t shard_rank(::cuda::nccl::NcclContext& ctx, int tp) {
+    if (tp <= 1) {
+        return 0u;
+    }
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    return static_cast<uint32_t>(ctx.rank_of_device(device));
+}
 
 class Writer {
 public:
