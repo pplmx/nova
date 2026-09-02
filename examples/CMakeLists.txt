@@ -11,3 +11,7 @@
 add_executable(neural_net neural_net.cpp)
 target_link_libraries(neural_net PRIVATE cuda_impl CUDA::cublasLt)
 target_include_directories(neural_net PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(image_processing image_processing.cpp)
+target_link_libraries(image_processing PRIVATE cuda_impl)
+target_include_directories(image_processing PRIVATE ${CMAKE_SOURCE_DIR}/include)
