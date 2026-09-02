@@ -12,9 +12,14 @@ protected:
         stream_ = std::make_unique<stream::Stream>();
     }
 
+    // NOTE: single-GPU suite — deliberately no cudaDeviceReset() in TearDown.
+    // A reset here destroys the CUDA context the shared NcclContext singleton's
+    // communicators live on (undetectable to the context, per the v2.19
+    // shared-reset convention), so an earlier suite's initialized communicators
+    // go stale and the NEXT multi-GPU suite crashes on them (RIL TASK-065 /
+    // ISS-004). stream_.reset() is the real cleanup.
     void TearDown() override {
         stream_.reset();
-        CUDA_CHECK(cudaDeviceReset());
     }
 
     std::unique_ptr<stream::Stream> stream_;

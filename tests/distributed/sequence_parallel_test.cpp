@@ -12,9 +12,11 @@ protected:
         stream_ = std::make_unique<stream::Stream>();
     }
 
+    // NOTE: single-GPU suite — deliberately no cudaDeviceReset() in TearDown
+    // (same shared-NcclContext rationale as SequenceParallelEdgeTest; RIL
+    // TASK-065 / ISS-004). stream_.reset() is the real cleanup.
     void TearDown() override {
         stream_.reset();
-        CUDA_CHECK(cudaDeviceReset());
     }
 
     std::unique_ptr<stream::Stream> stream_;

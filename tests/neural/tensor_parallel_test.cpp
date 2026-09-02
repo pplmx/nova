@@ -5,12 +5,13 @@
 
 using namespace cuda::neural;
 
-class TensorParallelTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
-};
+// These are CPU-only contracts (buffer-size formulas, profiler structs,
+// strategy enum values) — deliberately NO cudaDeviceReset() in SetUp: a reset
+// here destroys the CUDA context the shared NcclContext singleton's
+// communicators live on (undetectable to the context, per the v2.19
+// shared-reset convention), so an earlier suite's initialized communicators
+// go stale and a later multi-GPU suite hangs on them (RIL TASK-065 / ISS-004).
+class TensorParallelTest : public ::testing::Test {};
 
 TEST_F(TensorParallelTest, RequiredBufferSizeFormula) {
     constexpr size_t size_2gpus = TensorParallelMatmul::required_buffer_size(1024, 1024, 1024, 2);

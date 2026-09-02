@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-02T16:38:35+00:00",
+  "updated_at": "2026-09-02T21:43:13+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2602,9 +2602,9 @@
       "id": "TASK-065",
       "type": "task",
       "status": "active",
-      "version": 1,
+      "version": 3,
       "created_at": "2026-09-02T15:14:19+00:00",
-      "updated_at": "2026-09-02T15:14:19+00:00",
+      "updated_at": "2026-09-02T21:43:13+00:00",
       "touched_round": 33,
       "category": "stability",
       "severity": 3,
@@ -2643,6 +2643,53 @@
       "touched_round": 33,
       "commit": "684f417",
       "title": "fix(neural): NSCK v3 rank-id field + load validation (micro + transformer trainers), shard_rank helper, ctx_ retention; wrong-rank multi-GPU rejection tests"
+    },
+    "DEC-021": {
+      "id": "DEC-021",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T21:35:29+00:00",
+      "updated_at": "2026-09-02T21:35:29+00:00",
+      "touched_round": 33,
+      "title": "TASK-065 v1 resolution: revert the library-level primary-context staleness machinery; keep the harmless cudaDeviceReset removals; the full-suite single-process NCCL run is not a supported configuration",
+      "rationale": "Empirically, the v2.19 'context reset is undetectable' claim holds on this platform: (1) after cudaDeviceReset, cuDevicePrimaryCtxRetain returns the SAME CUcontext pointer (driver reuses the freed chunk), so handle-identity comparison cannot detect the reset; (2) touching the stale handles (cudaStreamQuery / cudaStreamDestroy / ncclCommDestroy / ctx.destroy) crashes nondeterministically (core dump), so rebuild-via-destroy is unsafe; (3) a discard-and-leak rebuild would leak valid NCCL comms on the common no-reset path (device memory). A reliable automatic heal is therefore not achievable cheaply. Meanwhile the repo's supported verification already avoids the hazard: the full in-process baseline runs WITHOUT NCCL (multi-GPU suites self-skip -> 1482/0), and the multi-GPU suites are run separately with NCCL_TESTS_AVAILABLE=1. Within a supported multi-GPU-friendlies process (no single-GPU reset suites interleaved) all 45 multi-GPU tests pass, and after removing the 3 pointless cudaDeviceReset calls in CPU-only/single-GPU suites adjacent to multi-GPU boundaries the previously-hanging repro runs hang-free. Keep those removals; TASK-065 closes as hygiene + documented non-support of full-suite NCCL single-process runs.",
+      "alternatives_rejected": "primary-context handle detection (pointer reused after reset — empirically refuted); rebuild-via-destroy (stale-handle destroy crashes nondeterministically); discard-bookkeeping-and-leak (leaks valid comms' device memory on the common path); removing ALL interleaved reset sites (~8 more suites, some load-bearing — whack-a-mole with destabilization risk and no supported-config benefit)"
+    },
+    "EV-051": {
+      "id": "EV-051",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T21:37:01+00:00",
+      "updated_at": "2026-09-02T21:37:01+00:00",
+      "touched_round": 33,
+      "source": "2026-09-02 probes, CUDA_VISIBLE_DEVICES=1,2",
+      "title": "After cudaDeviceReset, cuDevicePrimaryCtxRetain returns the SAME pointer (0x...2160 == recorded) with result 0, and cudaStreamQuery/cudaStreamDestroy/ctx.destroy on pre-reset handles core-dump nondeterministically — v2.19 'context reset is undetectable' confirmed and handle-based detection refuted",
+      "confidence": 1.0
+    },
+    "EV-052": {
+      "id": "EV-052",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T21:37:01+00:00",
+      "updated_at": "2026-09-02T21:37:01+00:00",
+      "touched_round": 33,
+      "source": "2026-09-02, CUDA_VISIBLE_DEVICES=1,2",
+      "title": "With v1 reset removals: 45/45 multi-GPU tests (13 suites) pass in a single process (no interleaved reset suites); TensorParallelTest/SequenceParallelTest/SequenceParallelEdgeTest 33/33; the previously-hanging SyncBatchNorm+TensorParallel+TensorParallelMultiGpu repro runs hang-free",
+      "confidence": 1.0
+    },
+    "HYP-004": {
+      "id": "HYP-004",
+      "type": "hypothesis",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-02T21:40:34+00:00",
+      "updated_at": "2026-09-02T21:40:34+00:00",
+      "touched_round": 33,
+      "confidence": 0.95,
+      "title": "primary-context handle identity (cuDevicePrimaryCtxRetain recorded at initialize, re-retained at check) can detect a cudaDeviceReset — proposed detector for the shared-NcclContext staleness"
     }
   },
   "edges": [
@@ -3941,6 +3988,24 @@
       "to": "TASK-063",
       "type": "implements",
       "created_at": "2026-09-02T16:31:29+00:00"
+    },
+    {
+      "from": "DEC-021",
+      "to": "TASK-065",
+      "type": "governs",
+      "created_at": "2026-09-02T21:38:41+00:00"
+    },
+    {
+      "from": "EV-052",
+      "to": "HYP-003",
+      "type": "validates",
+      "created_at": "2026-09-02T21:40:33+00:00"
+    },
+    {
+      "from": "EV-051",
+      "to": "HYP-004",
+      "type": "refutes",
+      "created_at": "2026-09-02T21:40:34+00:00"
     }
   ]
 }
