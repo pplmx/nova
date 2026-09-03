@@ -28,6 +28,36 @@ PageRankResult::~PageRankResult() {
     clear();
 }
 
+PageRankResult::PageRankResult(PageRankResult&& other) noexcept
+    : num_vertices(other.num_vertices),
+      ranks(other.ranks),
+      d_ranks(other.d_ranks),
+      iterations(other.iterations),
+      final_delta(other.final_delta) {
+    other.num_vertices = 0;
+    other.ranks = nullptr;
+    other.d_ranks = nullptr;
+    other.iterations = 0;
+    other.final_delta = 0.0f;
+}
+
+PageRankResult& PageRankResult::operator=(PageRankResult&& other) noexcept {
+    if (this != &other) {
+        clear();
+        num_vertices = other.num_vertices;
+        ranks = other.ranks;
+        d_ranks = other.d_ranks;
+        iterations = other.iterations;
+        final_delta = other.final_delta;
+        other.num_vertices = 0;
+        other.ranks = nullptr;
+        other.d_ranks = nullptr;
+        other.iterations = 0;
+        other.final_delta = 0.0f;
+    }
+    return *this;
+}
+
 void PageRankResult::upload() {
     CUDA_CHECK(cudaMemcpy(d_ranks, ranks, num_vertices * sizeof(float), cudaMemcpyHostToDevice));
 }

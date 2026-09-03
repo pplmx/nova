@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <utility>
 #include <vector>
 #include "cuda/graph/csr_graph.h"
 #include "cuda/graph/bfs.h"
@@ -82,6 +83,58 @@ TEST_F(BFSTest, BFSMemoryUsageIsPositive) {
     BFSResult result(100);
     size_t mem = result.memory_usage();
     EXPECT_GT(mem, 0);
+}
+
+TEST_F(BFSTest, BFSResultIsMovable) {
+    BFSResult a(4);
+    a.init_source(0);
+
+    // Move construction must transfer ownership and empty the source. With the
+    // old implicit shallow copy, `a` would keep dangling pointers and the two
+    // objects would double-free.
+    BFSResult b = std::move(a);
+    EXPECT_EQ(b.num_vertices, 4);
+    EXPECT_EQ(b.distance_to(0), 0);
+    EXPECT_EQ(a.num_vertices, 0);
+    EXPECT_EQ(a.distances, nullptr);
+    EXPECT_EQ(a.d_distances, nullptr);
+    EXPECT_EQ(a.visited, nullptr);
+
+    // Move assignment re-seats an existing object without leaking.
+    BFSResult c(4);
+    c = std::move(b);
+    EXPECT_EQ(c.num_vertices, 4);
+    EXPECT_EQ(c.distance_to(0), 0);
+    EXPECT_EQ(b.distances, nullptr);
+
+    c.clear();  // must not double-free
+}
+
+TEST_F(BFSTest, BfsAsyncReusesResultWithoutDoubleFree) {
+    // Directed chain 0 -> {1,3}, 1 -> 2, 2 -> 3.
+    std::vector<std::vector<int>> adj(4);
+    adj[0] = {1, 3};
+    adj[1] = {2};
+    adj[2] = {3};
+    auto graph = create_csr_from_adjacency(adj);
+
+    BFSResult result(4);
+    bfs_async(*graph, result, 0);
+    EXPECT_EQ(result.distance_to(0), 0);
+    EXPECT_EQ(result.distance_to(1), 1);
+    EXPECT_EQ(result.distance_to(2), 2);
+    EXPECT_EQ(result.distance_to(3), 1);
+    EXPECT_EQ(result.visited_count, 4);
+
+    // A second call re-seats the result; with implicit shallow copy assignment
+    // the first bfs() temporary frees the buffers the result still points at
+    // (double free / use-after-free).
+    bfs_async(*graph, result, 1);
+    EXPECT_EQ(result.num_vertices, 4);
+    EXPECT_EQ(result.distance_to(0), -1);
+    EXPECT_EQ(result.distance_to(1), 0);
+    EXPECT_EQ(result.distance_to(2), 1);
+    EXPECT_EQ(result.distance_to(3), 2);
 }
 
 TEST_F(BFSTest, BFSClearFreesMemory) {

@@ -17,6 +17,13 @@ struct BFSResult {
     explicit BFSResult(int num_vertices);
     ~BFSResult();
 
+    // Owns raw host+device pointers: move-only (a shallow copy would leave
+    // two objects freeing the same memory).
+    BFSResult(const BFSResult&) = delete;
+    BFSResult& operator=(const BFSResult&) = delete;
+    BFSResult(BFSResult&& other) noexcept;
+    BFSResult& operator=(BFSResult&& other) noexcept;
+
     void init_source(int source);
     void upload();
     void download();

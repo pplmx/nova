@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <utility>
 #include <vector>
 #include <cmath>
 #include "cuda/graph/csr_graph.h"
@@ -101,6 +102,26 @@ TEST_F(PageRankTest, PageRankOnSingleVertex) {
 
     EXPECT_EQ(result.num_vertices, 1);
     EXPECT_EQ(result.rank_at(0), 1.0f);
+}
+
+TEST_F(PageRankTest, PageRankResultIsMovable) {
+    PageRankResult a(4);
+    a.ranks[0] = 0.5f;
+
+    PageRankResult b = std::move(a);
+    EXPECT_EQ(b.num_vertices, 4);
+    EXPECT_NEAR(b.rank_at(0), 0.5f, 1e-6f);
+    EXPECT_EQ(a.num_vertices, 0);
+    EXPECT_EQ(a.ranks, nullptr);
+    EXPECT_EQ(a.d_ranks, nullptr);
+
+    PageRankResult c(4);
+    c = std::move(b);
+    EXPECT_EQ(c.num_vertices, 4);
+    EXPECT_NEAR(c.rank_at(0), 0.5f, 1e-6f);
+    EXPECT_EQ(b.ranks, nullptr);
+
+    c.clear();  // must not double-free
 }
 
 TEST_F(PageRankTest, DefaultOptionsAreSane) {

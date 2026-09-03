@@ -35,6 +35,44 @@ BFSResult::~BFSResult() {
     clear();
 }
 
+BFSResult::BFSResult(BFSResult&& other) noexcept
+    : num_vertices(other.num_vertices),
+      distances(other.distances),
+      d_distances(other.d_distances),
+      visited(other.visited),
+      d_visited(other.d_visited),
+      visited_count(other.visited_count),
+      max_distance(other.max_distance) {
+    other.num_vertices = 0;
+    other.distances = nullptr;
+    other.d_distances = nullptr;
+    other.visited = nullptr;
+    other.d_visited = nullptr;
+    other.visited_count = 0;
+    other.max_distance = 0;
+}
+
+BFSResult& BFSResult::operator=(BFSResult&& other) noexcept {
+    if (this != &other) {
+        clear();
+        num_vertices = other.num_vertices;
+        distances = other.distances;
+        d_distances = other.d_distances;
+        visited = other.visited;
+        d_visited = other.d_visited;
+        visited_count = other.visited_count;
+        max_distance = other.max_distance;
+        other.num_vertices = 0;
+        other.distances = nullptr;
+        other.d_distances = nullptr;
+        other.visited = nullptr;
+        other.d_visited = nullptr;
+        other.visited_count = 0;
+        other.max_distance = 0;
+    }
+    return *this;
+}
+
 void BFSResult::init_source(int source) {
     std::fill(distances, distances + num_vertices, -1);
     std::fill(visited, visited + num_vertices, false);

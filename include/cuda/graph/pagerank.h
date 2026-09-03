@@ -17,6 +17,13 @@ struct PageRankResult {
     explicit PageRankResult(int num_vertices);
     ~PageRankResult();
 
+    // Owns raw host+device pointers: move-only (a shallow copy would leave
+    // two objects freeing the same memory).
+    PageRankResult(const PageRankResult&) = delete;
+    PageRankResult& operator=(const PageRankResult&) = delete;
+    PageRankResult(PageRankResult&& other) noexcept;
+    PageRankResult& operator=(PageRankResult&& other) noexcept;
+
     void upload();
     void download();
     void clear();
