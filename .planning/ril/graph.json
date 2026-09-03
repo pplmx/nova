@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-03T07:39:30+00:00",
+  "updated_at": "2026-09-03T08:25:51+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2945,6 +2945,29 @@
       "title": "build_bvh ignores max_nodes: no node-capacity guard, OOB write when tree exceeds capacity",
       "description": "src/cuda/raytrace/bvh.cu build_bvh (and build_bvh_spheres) end with (void)max_nodes; build_bvh_recursive grows next_node and writes nodes[] with no bound check. Traversal defends (node_idx < num_nodes), builder does not. Fixed: throw std::overflow_error on capacity exhaustion (commit f613cd2).",
       "severity": 3
+    },
+    "TASK-071": {
+      "id": "TASK-071",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-03T08:17:17+00:00",
+      "updated_at": "2026-09-03T08:25:51+00:00",
+      "touched_round": 33,
+      "category": "dx",
+      "severity": 1,
+      "title": "graph_algorithms example: make --damping/--tolerance real CLI knobs (were doc-only)"
+    },
+    "CHG-037": {
+      "id": "CHG-037",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T08:25:51+00:00",
+      "updated_at": "2026-09-03T08:25:51+00:00",
+      "touched_round": 33,
+      "commit": "592b9b8",
+      "title": "graph_algorithms CLI damping/tolerance knobs (TASK-071)"
     }
   },
   "edges": [
@@ -4417,6 +4440,12 @@
       "to": "COMP-001",
       "type": "located_in",
       "created_at": "2026-09-03T07:25:31+00:00"
+    },
+    {
+      "from": "CHG-037",
+      "to": "TASK-071",
+      "type": "implements",
+      "created_at": "2026-09-03T08:25:51+00:00"
     }
   ]
 }
