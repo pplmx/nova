@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-02T22:11:55+00:00",
+  "updated_at": "2026-09-03T02:20:11+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -589,7 +589,7 @@
       "version": 2,
       "created_at": "2026-08-12T05:11:01+00:00",
       "updated_at": "2026-08-23T21:24:18+00:00",
-      "touched_round": 18,
+      "touched_round": 33,
       "title": "TensorParallelMatmul ColumnParallel multi-GPU path in src/cuda/neural/tensor_parallel_matmul.cpp produces numerically wrong C (or crashes) on real multi-GPU because B/C column partitions use contiguous-slice offsets (column-major math) against a row-major matmul, and every rank redundantly computes all slices so there is no per-rank narrowing",
       "confidence": 0.85
     },
@@ -2542,16 +2542,14 @@
     "TASK-064": {
       "id": "TASK-064",
       "type": "task",
-      "status": "active",
-      "version": 2,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-09-02T14:16:05+00:00",
-      "updated_at": "2026-09-02T21:49:41+00:00",
+      "updated_at": "2026-09-03T02:18:39+00:00",
       "touched_round": 33,
       "category": "dx",
       "severity": 2,
-      "title": "Re-integrate the four examples against the current library: port neural_net/image_processing/graph_algorithms/distributed_training to the current cuda::* headers+APIs, add CMake example targets (restoring the build the README already promises), fix CLI usability (--help exit 0, argc-bounds + positive-int arg validation, <cstring>, stderr for errors), and fix the silent-invalid-kernel no-op + misleading softmax verification in the examples; update examples/README.md to match reality (ISS-002, ISS-003)",
-      "lock_owner": "nova-001",
-      "lock_until": "2026-09-03T01:49:41+00:00"
+      "title": "Re-integrate the four examples against the current library: port neural_net/image_processing/graph_algorithms/distributed_training to the current cuda::* headers+APIs, add CMake example targets (restoring the build the README already promises), fix CLI usability (--help exit 0, argc-bounds + positive-int arg validation, <cstring>, stderr for errors), and fix the silent-invalid-kernel no-op + misleading softmax verification in the examples; update examples/README.md to match reality (ISS-002, ISS-003)"
     },
     "EV-047": {
       "id": "EV-047",
@@ -2714,6 +2712,98 @@
       "touched_round": 33,
       "source": "2026-09-02 run: build/bin/neural_net on CUDA_VISIBLE_DEVICES=1",
       "title": "examples/neural_net.cpp ported to cuda::* API (FusedMatmulBiasAct + layer_norm + softmax) builds via the new examples/CMakeLists.txt target and runs GREEN: softmax rows sum to 1, --help exits 0 without running, bad/unknown args fail fast with stderr + exit 1 (ISS-002/003, TASK-064)",
+      "confidence": 1.0
+    },
+    "ISS-005": {
+      "id": "ISS-005",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-03T00:23:45+00:00",
+      "updated_at": "2026-09-03T02:07:36+00:00",
+      "touched_round": 33,
+      "title": "cuda::graph::bfs() stops after level 0: frontier loop never progresses",
+      "description": "bfs() in src/cuda/graph/bfs.cu runs exactly one loop iteration: 'frontier_exists' is initialized true then set false at the top of the loop and never set true again, so the while(bool) exits immediately after level 0. bfs_merge_kernel is defined but never called, and the frontier kernel is launched with the read state aliased as the write state. Verified with chain graph 0->{1,3},1->{2},2->{3}: library returned dists {0,1,-1,1} (node 2 at depth 2 unreachable). Zero coverage: BFSCorrectShortestPath test manually wrote host distances and never called bfs()",
+      "severity": 4
+    },
+    "ISS-006": {
+      "id": "ISS-006",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-03T00:24:11+00:00",
+      "updated_at": "2026-09-03T02:07:36+00:00",
+      "touched_round": 33,
+      "title": "cuda::graph::pagerank() is directionally wrong and never converges",
+      "description": "Two defects in src/cuda/graph/pagerank.cu: (1) pagerank_score_kernel gathers rank contributions from each vertex's OUT-neighbors (prev[columns[i]]/outdegree), but CSR rows hold out-neighbors, so it must gather from IN-neighbors to compute PR(v); the result never differentiates ranks correctly. (2) pagerank() computes delta = compute_pagerank_delta(result.ranks, result.ranks) comparing ranks to themselves, so it always exits after iteration 1 with final_delta 0 ('converged in 1 iterations'). Both confirmed by directed-path test (expected r0=0.05,r1=0.0925 but got uniform) and example output. pagerank_test.cpp had zero real graph invocations.",
+      "severity": 4
+    },
+    "comp-graph": {
+      "id": "comp-graph",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T00:31:08+00:00",
+      "updated_at": "2026-09-03T00:31:08+00:00",
+      "touched_round": 33,
+      "title": "Graph algorithms module: CSR graph construction, BFS, PageRank (src/cuda/graph/, include/cuda/graph/)"
+    },
+    "TASK-066": {
+      "id": "TASK-066",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-09-03T00:31:36+00:00",
+      "updated_at": "2026-09-03T02:10:04+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "severity": 4,
+      "title": "Fix graph algorithm correctness: BFS must reach nodes beyond level 1, PageRank must pull from in-neighbors and converge with a real delta"
+    },
+    "ISS-007": {
+      "id": "ISS-007",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T01:07:56+00:00",
+      "updated_at": "2026-09-03T01:07:56+00:00",
+      "touched_round": 33,
+      "title": "BFSResult lacks move semantics: bfs_async() and any by-value path double-free",
+      "description": "BFSResult (and PageRankResult) own raw device/host pointers, declare a user destructor, and declare NO copy/move operations. bfs() in src/cuda/graph/bfs.cu returns by value relying on NRVO (works today, fragile), and bfs_async() does 'result = bfs(...)' which compiles to shallow copy assignment -> temporary BFSResult destructor frees the pointers, then the target destructor frees them again (double free / dangling). Currently unreachable (no callers of bfs_async/count_reachable_components in src/tests/examples), but it is public API (include/cuda/graph/bfs.h). Fix by rule-of-five: delete copy, implement move, rewrite bfs_async to move-construct.",
+      "severity": 3
+    },
+    "CHG-031": {
+      "id": "CHG-031",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T02:05:54+00:00",
+      "updated_at": "2026-09-03T02:05:54+00:00",
+      "touched_round": 33,
+      "commit": "2befaba",
+      "title": "Fix BFS multi-level traversal + PageRank direction/convergence (TASK-066)"
+    },
+    "CHG-032": {
+      "id": "CHG-032",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T02:16:42+00:00",
+      "updated_at": "2026-09-03T02:16:42+00:00",
+      "touched_round": 33,
+      "commit": "dc66c27",
+      "title": "Port distributed_training example + rewrite examples README (TASK-064 wrap-up)"
+    },
+    "EV-GRAPH-FIX": {
+      "id": "EV-GRAPH-FIX",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T02:18:38+00:00",
+      "updated_at": "2026-09-03T02:18:38+00:00",
+      "touched_round": 33,
+      "source": "tests + 2befaba",
+      "title": "Graph bug fixes verified: graph suite 26/26, full baseline 1487/0, examples show real BFS depth + genuine PageRank iteration counts",
       "confidence": 1.0
     }
   },
@@ -4037,6 +4127,72 @@
       "to": "TASK-065",
       "type": "implements",
       "created_at": "2026-09-02T21:46:21+00:00"
+    },
+    {
+      "from": "ISS-005",
+      "to": "comp-graph",
+      "type": "located_in",
+      "created_at": "2026-09-03T00:31:08+00:00"
+    },
+    {
+      "from": "ISS-006",
+      "to": "comp-graph",
+      "type": "located_in",
+      "created_at": "2026-09-03T00:31:08+00:00"
+    },
+    {
+      "from": "TASK-066",
+      "to": "ISS-005",
+      "type": "addresses",
+      "created_at": "2026-09-03T00:32:12+00:00"
+    },
+    {
+      "from": "TASK-066",
+      "to": "ISS-006",
+      "type": "addresses",
+      "created_at": "2026-09-03T00:32:12+00:00"
+    },
+    {
+      "from": "ISS-007",
+      "to": "comp-graph",
+      "type": "located_in",
+      "created_at": "2026-09-03T01:08:41+00:00"
+    },
+    {
+      "from": "CHG-031",
+      "to": "TASK-066",
+      "type": "implements",
+      "created_at": "2026-09-03T02:07:36+00:00"
+    },
+    {
+      "from": "CHG-031",
+      "to": "ISS-005",
+      "type": "resolves",
+      "created_at": "2026-09-03T02:07:36+00:00"
+    },
+    {
+      "from": "CHG-031",
+      "to": "ISS-006",
+      "type": "resolves",
+      "created_at": "2026-09-03T02:07:36+00:00"
+    },
+    {
+      "from": "CHG-032",
+      "to": "TASK-064",
+      "type": "implements",
+      "created_at": "2026-09-03T02:17:22+00:00"
+    },
+    {
+      "from": "CHG-032",
+      "to": "ISS-002",
+      "type": "resolves",
+      "created_at": "2026-09-03T02:17:22+00:00"
+    },
+    {
+      "from": "CHG-032",
+      "to": "ISS-003",
+      "type": "resolves",
+      "created_at": "2026-09-03T02:17:22+00:00"
     }
   ]
 }
