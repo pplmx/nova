@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <vector>
 #include "cuda/raytrace/primitives.h"
 #include "cuda/raytrace/bvh.h"
@@ -145,6 +146,44 @@ TEST_F(BVHTest, BVHBuildOptionsDefault) {
     EXPECT_EQ(options.min_prims_per_leaf, 1);
     EXPECT_TRUE(options.use_sah);
     EXPECT_EQ(options.bins, 12);
+}
+
+TEST_F(BVHTest, BVHBuildRejectsInsufficientCapacity) {
+    // 6 prims with max_prims_per_leaf=1 force a 5-internal + 6-leaf tree (11
+    // nodes). A node capacity of 4 must be enforced: the builder used to
+    // silently `(void)max_nodes` and write past the declared bound.
+    auto prim_bounds = create_primitive_bounds();
+    std::vector<BVHNode> nodes(MAX_NODES);  // backing buffer is generous; the
+                                            // DECLARED capacity is what's small
+    std::vector<uint32_t> prim_indices(MAX_PRIMS);
+
+    BVHBuildOptions options;
+    options.max_prims_per_leaf = 1;
+
+    EXPECT_THROW(
+        build_bvh(prim_bounds.data(), prim_bounds.size(),
+                  nodes.data(), prim_indices.data(), /*max_nodes=*/4, options),
+        std::overflow_error);
+}
+
+TEST_F(BVHTest, BVHBuildStaysWithinDeclaredCapacity) {
+    // Every split consumes exactly one extra node, so 2N-1 is a hard upper
+    // bound on the tree size regardless of how the SAH splits fall. A build
+    // given at least that capacity must succeed and report a count <= it.
+    auto prim_bounds = create_primitive_bounds();  // 6 prims
+    std::vector<BVHNode> nodes(MAX_NODES);
+    std::vector<uint32_t> prim_indices(MAX_PRIMS);
+
+    BVHBuildOptions options;
+    options.max_prims_per_leaf = 2;
+    const size_t worst_case = 2 * prim_bounds.size() - 1;  // 11
+
+    const size_t num_nodes = build_bvh(
+        prim_bounds.data(), prim_bounds.size(),
+        nodes.data(), prim_indices.data(), /*max_nodes=*/worst_case, options);
+
+    EXPECT_GT(num_nodes, 1);
+    EXPECT_LE(num_nodes, worst_case);
 }
 
 TEST_F(BVHTest, BVHTraversalStats) {

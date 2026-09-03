@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace cuda::raytrace {
 
@@ -174,8 +175,14 @@ size_t build_bvh_recursive(
     int start,
     int end,
     const BVHBuildOptions& options,
-    size_t& next_node
+    size_t& next_node,
+    size_t max_nodes
 ) {
+    if (node_index >= max_nodes) {
+        throw std::overflow_error(
+            "build_bvh: node capacity (max_nodes) exceeded by the built tree");
+    }
+
     BVHNode& node = nodes[node_index];
     int prim_count = end - start;
 
@@ -233,9 +240,9 @@ size_t build_bvh_recursive(
     node.internal.prim_count = 0;
 
     build_bvh_recursive(prim_bounds, prim_indices, nodes, node.internal.left_child,
-                        start, mid, options, next_node);
+                        start, mid, options, next_node, max_nodes);
     build_bvh_recursive(prim_bounds, prim_indices, nodes, node.internal.right_child,
-                        mid, end, options, next_node);
+                        mid, end, options, next_node, max_nodes);
 
     return next_node;
 }
@@ -251,15 +258,13 @@ size_t build_bvh(
     const BVHBuildOptions& options,
     cudaStream_t
 ) {
-    (void)max_nodes;
-
     for (size_t i = 0; i < num_prims; ++i) {
         prim_indices[i] = i;
     }
 
     size_t next_node = 1;
     size_t num_nodes = build_bvh_recursive(
-        prim_bounds, prim_indices, nodes, 0, 0, static_cast<int>(num_prims), options, next_node
+        prim_bounds, prim_indices, nodes, 0, 0, static_cast<int>(num_prims), options, next_node, max_nodes
     );
 
     return num_nodes;
@@ -293,7 +298,7 @@ size_t build_bvh_spheres(
         prim_indices[i] = i;
     }
     size_t num_nodes = build_bvh_recursive(
-        bounds, prim_indices, nodes, 0, 0, static_cast<int>(num_spheres), local_options, next_node
+        bounds, prim_indices, nodes, 0, 0, static_cast<int>(num_spheres), local_options, next_node, max_nodes
     );
 
     delete[] bounds;
