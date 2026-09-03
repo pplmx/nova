@@ -281,23 +281,44 @@ __global__ void compute_degrees_kernel(
     out_degrees[v] = row_offsets[v + 1] - row_offsets[v];
 }
 
+__global__ void compute_in_degrees_kernel(
+    const int* columns,
+    int* in_degrees,
+    int num_edges
+) {
+    int e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= num_edges) return;
+
+    atomicAdd(&in_degrees[columns[e]], 1);
+}
+
 void compute_degrees(
     const CSRGraph& graph,
     int* out_degrees,
     int* in_degrees,
     cudaStream_t stream
 ) {
-    int block_size = 256;
-    int grid_size = (graph.num_vertices + block_size - 1) / block_size;
+    const int block_size = 256;
+    const int vertex_grid = (graph.num_vertices + block_size - 1) / block_size;
 
-    compute_degrees_kernel<<<grid_size, block_size, 0, stream>>>(
+    compute_degrees_kernel<<<vertex_grid, block_size, 0, stream>>>(
         graph.d_row_offsets,
         out_degrees,
         graph.num_vertices
     );
     CUDA_CHECK(cudaGetLastError());
 
-    (void)in_degrees;
+    if (in_degrees) {
+        CUDA_CHECK(cudaMemsetAsync(in_degrees, 0,
+                                   graph.num_vertices * sizeof(int), stream));
+        const int edge_grid = std::max(1, (graph.num_edges + block_size - 1) / block_size);
+        compute_in_degrees_kernel<<<edge_grid, block_size, 0, stream>>>(
+            graph.d_columns,
+            in_degrees,
+            graph.num_edges
+        );
+        CUDA_CHECK(cudaGetLastError());
+    }
 }
 
 bool validate_csr(const CSRGraph& graph) {

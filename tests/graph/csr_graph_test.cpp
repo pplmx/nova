@@ -214,3 +214,21 @@ TEST_F(CSRGraphTest, ComputeDegreesMatchesHostDegrees) {
         EXPECT_EQ(degrees[v], graph->degree(v));
     }
 }
+
+TEST_F(CSRGraphTest, ComputeInDegreesPopulatesBuffer) {
+    // Directed graph 0->1, 1->2, 2->{}, 3->{0,1}: in-degrees {1, 2, 1, 0}.
+    auto adj = directed_graph();
+    auto graph = create_csr_from_adjacency(adj);
+    graph->upload();
+
+    Buffer<int> d_out(4);
+    Buffer<int> d_in(4);
+    compute_degrees(*graph, d_out.data(), d_in.data());
+
+    std::vector<int> in(4);
+    d_in.copy_to(in.data(), 4);
+    std::vector<int> expected_in = {1, 2, 1, 0};
+    for (int v = 0; v < 4; ++v) {
+        EXPECT_EQ(in[v], expected_in[v]);
+    }
+}
