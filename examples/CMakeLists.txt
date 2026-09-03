@@ -15,3 +15,11 @@ target_include_directories(neural_net PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_executable(image_processing image_processing.cpp)
 target_link_libraries(image_processing PRIVATE cuda_impl)
 target_include_directories(image_processing PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(graph_algorithms graph_algorithms.cpp)
+target_link_libraries(graph_algorithms PRIVATE cuda_impl)
+target_include_directories(graph_algorithms PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(distributed_training distributed_training.cpp)
+target_link_libraries(distributed_training PRIVATE cuda_impl)
+target_include_directories(distributed_training PRIVATE ${CMAKE_SOURCE_DIR}/include)

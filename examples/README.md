@@ -1,131 +1,141 @@
 # Nova Examples
 
-This directory contains runnable example programs demonstrating Nova features.
-
-## Building Examples
+This directory contains runnable example programs demonstrating Nova's current
+public API. Each example is a standalone executable; the targets are always
+registered, so they build when the main build runs:
 
 ```bash
-# All examples are built as part of the main build
-cmake -G Ninja -B build
+cmake -S . -B build
 cmake --build build --parallel
 
-# Or build specific examples
-cmake --build build --target image_processing
+# Or build a specific example:
+cmake --build build --target graph_algorithms
 ```
 
-## Available Examples
+The available targets are `neural_net`, `image_processing`, `graph_algorithms`,
+and `distributed_training`. All four have been ported to the current
+`cuda::*` namespaces (the old pre-v2 `nova::*` APIs they referenced no longer
+exist).
 
-### Image Processing
+## Neural Network Primitives
+
+**File:** `neural_net.cpp`
+
+Demonstrates CUDA neural network operations with:
+
+- Fused matrix multiply + bias + ReLU (`cuda::neural::fusion::FusedMatmulBiasAct`)
+- Layer normalization
+- Softmax (verified: every output row sums to 1)
+
+```bash
+./build/bin/neural_net --batch 32 --seq_len 16 --hidden 128
+```
+
+Options: `--batch`, `--seq_len`, `--hidden`, `--help`.
+
+## Image Processing
 
 **File:** `image_processing.cpp`
 
-Demonstrates CUDA image processing with:
+Demonstrates CUDA image kernels with embedded PGM (P5 binary) IO:
 
-- Sobel edge detection
-- Gaussian blur
-- Morphological operations
+- Sobel edge detection (`cuda::image::sobelEdgeDetection`, RGB; a grayscale PGM
+  is adapted via the R channel)
+- Gaussian blur (`cuda::algo::gaussianBlur`)
+- Morphological dilation (`dilateImage`)
 
 ```bash
-./build/bin/image_processing --input image.pgm --output result.pgm --kernel sobel
+# Process an existing PGM:
+./build/bin/image_processing --input in.pgm --output out.pgm --kernel sobel
+./build/bin/image_processing --input in.pgm --output out.pgm --kernel blur --iterations 2
 ```
 
-### Graph Algorithms
+Options: `--kernel sobel|blur|morphology`, `--input`, `--output`, `--iterations`,
+`--help`. An unknown `--kernel` is rejected before any device work (the old
+example silently no-op'ed and saved garbage). The example embeds its own
+minimal PGM (P5 binary) reader/writer.
+
+## Graph Algorithms
 
 **File:** `graph_algorithms.cpp`
 
 Demonstrates GPU graph processing with:
 
-- BFS (Breadth-First Search)
-- PageRank
+- BFS (`cuda::graph::bfs`) over a generated random edge list
+- PageRank (`cuda::graph::pagerank`), reporting iterations and final delta
 
 ```bash
 ./build/bin/graph_algorithms --algorithm bfs --nodes 10000 --edges 50000
 ./build/bin/graph_algorithms --algorithm pagerank --nodes 10000 --iterations 20
 ```
 
-### Neural Network Primitives
+Options: `--algorithm bfs|pagerank`, `--nodes`, `--edges`, `--source`, `--iterations`,
 
-**File:** `neural_net.cpp`
+`--damping`, `--tolerance`, `--help`.
 
-Demonstrates CUDA neural network operations with:
-
-- Matrix multiply with bias
-- ReLU activation
-- Layer normalization
-- Softmax
-
-```bash
-./build/bin/neural_net --batch 32 --seq_len 128 --hidden 512
-```
-
-### Distributed Training
+## Distributed Training
 
 **File:** `distributed_training.cpp`
 
-Demonstrates multi-GPU distributed training with:
+Demonstrates multi-GPU distributed all-reduce with the current device-mesh
+architecture (no MPI):
 
-- NCCL collectives
-- All-reduce gradients
-- Multi-node support via MPI
+- Shared `cuda::nccl::NcclContext` singleton discovers the visible GPUs
+- `cuda::distributed::DistributedReduce::all_reduce(Sum)` across the whole group
+- One thread per device (the collective contract the multi-GPU suites use);
+  every rank verifies it ends with the group sum
 
 ```bash
-# Requires MPI and NCCL
-mpirun -n 2 --allow-run-as-root ./distributed_training --batch 64 --epochs 10
+# Needs >= 2 visible GPUs for a real NCCL collective:
+CUDA_VISIBLE_DEVICES=1,2 ./build/bin/distributed_training --chunk 1024
 ```
+
+On a single visible GPU the operation degenerates to a local copy (identity) and
+the demo still verifies the result. Options: `--chunk`, `--help`.
 
 ## Compilation
 
-### Single-GPU Examples
+Examples are built by the CMake targets above — no manual `g++`/`mpicc`
+invocation is required. For a manual build (shared lib), link against
+`cuda_impl` and the CUDA runtime:
 
 ```bash
 g++ -std=c++23 \
-    -I /path/to/nova/include \
+    -I include \
     -I /usr/local/cuda/include \
-    examples/image_processing.cpp \
-    -L /path/to/nova/build/lib -lcuda_impl \
+    examples/neural_net.cpp \
+    -L build/lib -lcuda_impl \
     -L /usr/local/cuda/lib64 -lcudart \
-    -o image_processing
+    -o neural_net
 ```
 
-### Distributed Example
-
-```bash
-mpicc -std=c++23 \
-    -I /path/to/nova/include \
-    -I /usr/local/cuda/include \
-    examples/distributed_training.cpp \
-    -L /path/to/nova/build/lib -lcuda_impl \
-    -L /usr/local/cuda/lib64 -lcudart -lnccl \
-    -o distributed_training
-```
+The `distributed_training` example does **not** require MPI; it is a plain
+single-process program (the library owns NCCL initialization).
 
 ## Requirements
 
-- CUDA Toolkit 12.0+
+- CUDA Toolkit 12.0+ (with NCCL for the distributed example)
 - CMake 4.0+
 - C++23 compiler
-
-For distributed examples:
-
-- MPI implementation (OpenMPI, MPICH)
-- NCCL library
 
 ## Troubleshooting
 
 ### "No CUDA-capable device"
 
-Ensure `CUDA_VISIBLE_DEVICES` is set correctly:
+Ensure `CUDA_VISIBLE_DEVICES` is set to a device that is actually free:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 ./build/bin/image_processing
+nvidia-smi                                # pick a free device
+CUDA_VISIBLE_DEVICES=1 ./build/bin/image_processing --generate ...
 ```
 
-### NCCL initialization failed
+### The distributed example exits with an NCCL error
 
-Ensure NCCL is installed and CUDA can see multiple GPUs:
+NCCL must see the group of GPUs on one machine and the devices must be free:
 
 ```bash
-nvidia-smi  # Verify GPUs are visible
+nvidia-smi  # Verify >= 2 GPUs are visible and idle
+CUDA_VISIBLE_DEVICES=1,2 ./build/bin/distributed_training
 ```
 
 ### Build errors
@@ -134,6 +144,6 @@ Clean and rebuild:
 
 ```bash
 rm -rf build
-cmake -G Ninja -B build
+cmake -S . -B build
 cmake --build build --parallel
 ```
