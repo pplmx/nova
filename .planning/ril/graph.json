@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-03T02:58:25+00:00",
+  "updated_at": "2026-09-03T07:39:30+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2863,6 +2863,88 @@
       "touched_round": 33,
       "commit": "02e99bb",
       "title": "Fix csr_mv_transpose source indexing + CSR tests (TASK-068)"
+    },
+    "ISS-009": {
+      "id": "ISS-009",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T04:04:47+00:00",
+      "updated_at": "2026-09-03T04:04:47+00:00",
+      "touched_round": 33,
+      "title": "compute_degrees ignores in_degrees: a caller-supplied in-degree buffer stays uninitialized",
+      "description": "compute_degrees(const CSRGraph&, int* out_degrees, int* in_degrees = nullptr, cudaStream_t) documents in_degrees as an optional output but ends in (void)in_degrees. Passing a non-null buffer yields uninitialized in-degree values. Implementing requires counting edge destinations (atomicAdd over columns) — mirrors csr_mv_transpose. Located adjacent to the graph CSR module.",
+      "severity": 3
+    },
+    "TASK-069": {
+      "id": "TASK-069",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-09-03T04:04:47+00:00",
+      "updated_at": "2026-09-03T07:39:30+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "severity": 3,
+      "title": "Implement compute_degrees in_degrees output + RED/GREEN tests (ISS-009)"
+    },
+    "CHG-035": {
+      "id": "CHG-035",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T07:18:16+00:00",
+      "updated_at": "2026-09-03T07:18:16+00:00",
+      "touched_round": 33,
+      "commit": "62cc9b9",
+      "title": "compute_degrees in_degrees implementation (TASK-069)"
+    },
+    "CHG-036": {
+      "id": "CHG-036",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T07:18:16+00:00",
+      "updated_at": "2026-09-03T07:18:16+00:00",
+      "touched_round": 33,
+      "commit": "f613cd2",
+      "title": "build_bvh max_nodes capacity guard (TASK-070)"
+    },
+    "ISS-010": {
+      "id": "ISS-010",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T07:18:16+00:00",
+      "updated_at": "2026-09-03T07:18:16+00:00",
+      "touched_round": 33,
+      "title": "apply_tree_attention_mask is an empty no-op: speculative-decoding verification misses its tree-mask step",
+      "description": "src/cuda/inference/speculative_decoding.cpp: apply_tree_attention_mask body is (void)num_draft_tokens; (void)stream; — a pure no-op, yet verify_draft_tokens() calls it as its documentation says the draft-acceptance prerequisite. Pure-chain drafts make the mask the identity (simple tests pass); branching draft trees are silently unhandled.",
+      "severity": 3
+    },
+    "TASK-070": {
+      "id": "TASK-070",
+      "type": "task",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-09-03T07:22:34+00:00",
+      "updated_at": "2026-09-03T07:39:30+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "severity": 3,
+      "title": "Enforce build_bvh max_nodes capacity (throw on overflow) + TESTS (ISS-011)"
+    },
+    "ISS-011": {
+      "id": "ISS-011",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T07:22:34+00:00",
+      "updated_at": "2026-09-03T07:22:34+00:00",
+      "touched_round": 33,
+      "title": "build_bvh ignores max_nodes: no node-capacity guard, OOB write when tree exceeds capacity",
+      "description": "src/cuda/raytrace/bvh.cu build_bvh (and build_bvh_spheres) end with (void)max_nodes; build_bvh_recursive grows next_node and writes nodes[] with no bound check. Traversal defends (node_idx < num_nodes), builder does not. Fixed: throw std::overflow_error on capacity exhaustion (commit f613cd2).",
+      "severity": 3
     }
   },
   "edges": [
@@ -4293,6 +4375,48 @@
       "to": "ISS-008",
       "type": "resolves",
       "created_at": "2026-09-03T02:58:25+00:00"
+    },
+    {
+      "from": "ISS-009",
+      "to": "comp-graph",
+      "type": "located_in",
+      "created_at": "2026-09-03T04:04:47+00:00"
+    },
+    {
+      "from": "TASK-069",
+      "to": "ISS-009",
+      "type": "addresses",
+      "created_at": "2026-09-03T04:04:47+00:00"
+    },
+    {
+      "from": "CHG-035",
+      "to": "TASK-069",
+      "type": "implements",
+      "created_at": "2026-09-03T07:20:26+00:00"
+    },
+    {
+      "from": "CHG-035",
+      "to": "ISS-009",
+      "type": "resolves",
+      "created_at": "2026-09-03T07:20:26+00:00"
+    },
+    {
+      "from": "CHG-036",
+      "to": "TASK-070",
+      "type": "implements",
+      "created_at": "2026-09-03T07:25:31+00:00"
+    },
+    {
+      "from": "CHG-036",
+      "to": "ISS-011",
+      "type": "resolves",
+      "created_at": "2026-09-03T07:25:31+00:00"
+    },
+    {
+      "from": "ISS-010",
+      "to": "COMP-001",
+      "type": "located_in",
+      "created_at": "2026-09-03T07:25:31+00:00"
     }
   ]
 }
