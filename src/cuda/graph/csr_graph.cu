@@ -228,8 +228,23 @@ __global__ void csr_mv_transpose_kernel(
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= num_edges) return;
 
-    int dst = columns[tid];
-    atomicAdd(&y[dst], weights[tid] * x[tid]);
+    // y = A^T x: edge tid (u -> v) contributes x[u] (the edge's source, the
+    // row u whose range contains tid — not tid itself; only vertices with a
+    // single edge would coincide). Recover u by binary search over the prefix
+    // row_offsets array.
+    int lo = 0;
+    int hi = num_vertices;  // row_offsets[hi] == num_edges
+    while (lo + 1 < hi) {
+        int mid = (lo + hi) / 2;
+        if (row_offsets[mid] <= tid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+
+    const int dst = columns[tid];
+    atomicAdd(&y[dst], weights[tid] * x[lo]);
 }
 
 void csr_mv_transpose(
