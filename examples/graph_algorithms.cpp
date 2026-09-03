@@ -47,6 +47,8 @@ void print_usage(const char* prog) {
     printf("  --edges <n>         Number of edges (positive int)\n");
     printf("  --source <n>        Source node for BFS\n");
     printf("  --iterations <n>    PageRank iterations window (positive int)\n");
+    printf("  --damping <f>       PageRank damping factor in (0, 1)\n");
+    printf("  --tolerance <f>     PageRank convergence tolerance (positive float)\n");
 }
 
 // Positive-int parse with fail-fast validation (the old atoi silently
@@ -60,6 +62,19 @@ bool parse_positive_int(const char* arg, int* out, const char* name) {
         return false;
     }
     *out = static_cast<int>(v);
+    return true;
+}
+
+// Positive-float parse with fail-fast validation.
+bool parse_positive_float(const char* arg, float* out, const char* name) {
+    char* end = nullptr;
+    const float v = strtof(arg, &end);
+    if (end == arg || *end != '\0' || !(v > 0.0f) || v > 1e9f) {
+        fprintf(stderr, "Error: --%s expects a positive number, got '%s'\n",
+                name, arg);
+        return false;
+    }
+    *out = v;
     return true;
 }
 
@@ -85,6 +100,16 @@ int parse_args(int argc, char** argv, Args& args) {
             if (!parse_positive_int(argv[++i], &args.source, "source")) return -1;
         } else if (strcmp(argv[i], "--iterations") == 0 && i + 1 < argc) {
             if (!parse_positive_int(argv[++i], &args.iterations, "iterations"))
+                return -1;
+        } else if (strcmp(argv[i], "--damping") == 0 && i + 1 < argc) {
+            if (!parse_positive_float(argv[++i], &args.damping, "damping"))
+                return -1;
+            if (args.damping >= 1.0f) {
+                fprintf(stderr, "Error: --damping must be strictly less than 1\n");
+                return -1;
+            }
+        } else if (strcmp(argv[i], "--tolerance") == 0 && i + 1 < argc) {
+            if (!parse_positive_float(argv[++i], &args.tolerance, "tolerance"))
                 return -1;
         } else {
             fprintf(stderr, "Error: unknown or incomplete option '%s'\n", argv[i]);
