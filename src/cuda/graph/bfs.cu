@@ -133,57 +133,103 @@ BFSResult bfs(
     CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
     non_const_graph.upload();
 
-    int* d_distances;
-    bool* d_visited;
-    CUDA_CHECK(cudaMalloc(&d_distances, graph.num_vertices * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_visited, graph.num_vertices * sizeof(bool)));
+    const int n = graph.num_vertices;
 
-    CUDA_CHECK(cudaMemcpyAsync(d_distances, result.d_distances, graph.num_vertices * sizeof(int), cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_visited, result.d_visited, graph.num_vertices * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
+    // Working state: d_dist/d_vis accumulate the explored set across levels,
+    // while d_next_dist/d_next_vis receive the freshly discovered frontier.
+    // Merging (bfs_merge_kernel) folds the frontier into the accumulated state
+    // and reports whether anything new was reached, which drives the loop.
+    int* d_dist;
+    bool* d_vis;
+    int* d_next_dist;
+    bool* d_next_vis;
+    int* d_changed;
+    CUDA_CHECK(cudaMalloc(&d_dist, n * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_vis, n * sizeof(bool)));
+    CUDA_CHECK(cudaMalloc(&d_next_dist, n * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_next_vis, n * sizeof(bool)));
+    CUDA_CHECK(cudaMalloc(&d_changed, sizeof(int)));
+
+    CUDA_CHECK(cudaMemcpyAsync(d_dist, result.d_distances,
+                               n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_vis, result.d_visited,
+                               n * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
+
+    // The frontier kernel only writes entries for this level's newly reached
+    // neighbors; slots it never touches must read as false in the merge, so
+    // zero both scratch buffers once up front (cudaMalloc does not guarantee
+    // zeroed memory).
+    CUDA_CHECK(cudaMemsetAsync(d_next_dist, 0, n * sizeof(int), stream));
+    CUDA_CHECK(cudaMemsetAsync(d_next_vis, 0, n * sizeof(bool), stream));
+
+    const int block_size = 256;
+    const int grid_size = (n + block_size - 1) / block_size;
 
     int current_level = 0;
-    bool frontier_exists = true;
-
-    while (frontier_exists) {
-        frontier_exists = false;
-        int block_size = 256;
-        int grid_size = (graph.num_vertices + block_size - 1) / block_size;
+    bool changed = true;
+    while (changed && current_level < n) {
+        CUDA_CHECK(cudaMemsetAsync(d_changed, 0, sizeof(int), stream));
 
         bfs_frontier_kernel<<<grid_size, block_size, 0, stream>>>(
             graph.d_row_offsets,
             graph.d_columns,
-            d_distances,
-            d_visited,
-            d_distances,
-            d_visited,
+            d_dist,
+            d_vis,
+            d_next_dist,
+            d_next_vis,
             current_level,
-            graph.num_vertices
+            n
         );
         CUDA_CHECK(cudaGetLastError());
 
-        current_level++;
-        if (current_level > graph.num_vertices) break;
+        bfs_merge_kernel<<<grid_size, block_size, 0, stream>>>(
+            d_next_dist,
+            d_next_vis,
+            d_dist,
+            d_vis,
+            d_changed,
+            n
+        );
+        CUDA_CHECK(cudaGetLastError());
+
         if (stream) {
             CUDA_CHECK(cudaStreamSynchronize(stream));
+        } else {
+            CUDA_CHECK(cudaDeviceSynchronize());
         }
+
+        int host_changed = 0;
+        CUDA_CHECK(cudaMemcpy(&host_changed, d_changed, sizeof(int),
+                              cudaMemcpyDeviceToHost));
+        changed = host_changed != 0;
+
+        current_level++;
     }
 
-    CUDA_CHECK(cudaMemcpyAsync(result.d_distances, d_distances, graph.num_vertices * sizeof(int), cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(result.d_visited, d_visited, graph.num_vertices * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(result.d_distances, d_dist,
+                               n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(result.d_visited, d_vis,
+                               n * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
+    if (stream) {
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
 
     result.download();
 
     result.visited_count = 0;
     result.max_distance = 0;
-    for (int v = 0; v < graph.num_vertices; ++v) {
+    for (int v = 0; v < n; ++v) {
         if (result.distances[v] >= 0) {
             result.visited_count++;
             result.max_distance = std::max(result.max_distance, result.distances[v]);
         }
     }
 
-    CUDA_CHECK(cudaFree(d_distances));
-    CUDA_CHECK(cudaFree(d_visited));
+    CUDA_CHECK(cudaFree(d_dist));
+    CUDA_CHECK(cudaFree(d_vis));
+    CUDA_CHECK(cudaFree(d_next_dist));
+    CUDA_CHECK(cudaFree(d_next_vis));
+    CUDA_CHECK(cudaFree(d_changed));
     return result;
 }
 

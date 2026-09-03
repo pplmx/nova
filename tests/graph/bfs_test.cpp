@@ -102,15 +102,54 @@ TEST_F(BFSTest, BFSOnSingleVertex) {
     EXPECT_EQ(result.visited_count, 1);
 }
 
-TEST_F(BFSTest, BFSCorrectShortestPath) {
-    BFSResult result(4);
-    result.init_source(0);
-    result.distances[1] = 1;
-    result.distances[2] = 2;
-    result.distances[3] = 3;
+TEST_F(BFSTest, BFSFindsShortestPathsAcrossMultipleLevels) {
+    // Chain 0 -> 1 -> 2 plus a shortcut 0 -> 3. A correct level-synchronous
+    // BFS must reach depth 2 (node 2) through node 1.
+    std::vector<std::vector<int>> adj(4);
+    adj[0] = {1, 3};
+    adj[1] = {2};
+    adj[2] = {3};
+    auto graph = create_csr_from_adjacency(adj);
 
+    auto result = bfs(*graph, 0);
+
+    EXPECT_EQ(result.visited_count, 4);
+    EXPECT_EQ(result.max_distance, 2);
+    EXPECT_EQ(result.distance_to(0), 0);
+    EXPECT_EQ(result.distance_to(1), 1);
+    EXPECT_EQ(result.distance_to(2), 2);
+    EXPECT_EQ(result.distance_to(3), 1);
+}
+
+TEST_F(BFSTest, BFSReachesDepthThreeThroughLongChain) {
+    // 0 -> 1 -> 2 -> 3: every node must be discovered at its own level.
+    std::vector<std::vector<int>> adj(6);
+    adj[0] = {1};
+    adj[1] = {2};
+    adj[2] = {3};
+    auto graph = create_csr_from_adjacency(adj);
+
+    auto result = bfs(*graph, 0);
+
+    EXPECT_EQ(result.visited_count, 4);
+    EXPECT_EQ(result.max_distance, 3);
     EXPECT_EQ(result.distance_to(0), 0);
     EXPECT_EQ(result.distance_to(1), 1);
     EXPECT_EQ(result.distance_to(2), 2);
     EXPECT_EQ(result.distance_to(3), 3);
+    EXPECT_EQ(result.distance_to(4), -1);
+    EXPECT_EQ(result.distance_to(5), -1);
+}
+
+TEST_F(BFSTest, BFSFindsEverythingInCompleteTriangle) {
+    // Triangle {0,1,2}: all reachable at distance 1.
+    auto adj = create_simple_graph();
+    auto graph = create_csr_from_adjacency(adj);
+
+    auto result = bfs(*graph, 0);
+
+    EXPECT_EQ(result.distance_to(0), 0);
+    EXPECT_EQ(result.distance_to(1), 1);
+    EXPECT_EQ(result.distance_to(2), 1);
+    EXPECT_EQ(result.distance_to(3), -1);
 }
