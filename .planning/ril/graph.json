@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-03T02:35:20+00:00",
+  "updated_at": "2026-09-03T02:58:25+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2828,6 +2828,41 @@
       "touched_round": 33,
       "commit": "cd07dc7",
       "title": "Rule-of-five for BFSResult/PageRankResult (TASK-067)"
+    },
+    "ISS-008": {
+      "id": "ISS-008",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T02:54:30+00:00",
+      "updated_at": "2026-09-03T02:54:30+00:00",
+      "touched_round": 33,
+      "title": "csr_mv_transpose reads x[edge_index] instead of x[edge_source] (wrong A^T product)",
+      "description": "src/cuda/graph/csr_graph.cu csr_mv_transpose_kernel indexes x[tid] by the flat edge index, but the transpose product y=A^T x requires x at the edge's SOURCE row (the row whose range contains tid). Only degree-1 sources would coincide. Dead public API (no callers/tests) hid it; on a directed graph 0->1,1->2,3->{0,1} with x={1,2,4,8} it yields y={4,9,2,0} instead of {8,9,2,0} (and reads x out of bounds when num_edges > num_vertices). Fix recovers source via binary search on row_offsets.",
+      "severity": 4
+    },
+    "TASK-068": {
+      "id": "TASK-068",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-09-03T02:54:30+00:00",
+      "updated_at": "2026-09-03T02:58:25+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "severity": 4,
+      "title": "Fix csr_mv_transpose source indexing + add real CSR SpMV tests (ISS-008)"
+    },
+    "CHG-034": {
+      "id": "CHG-034",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-03T02:58:25+00:00",
+      "updated_at": "2026-09-03T02:58:25+00:00",
+      "touched_round": 33,
+      "commit": "02e99bb",
+      "title": "Fix csr_mv_transpose source indexing + CSR tests (TASK-068)"
     }
   },
   "edges": [
@@ -4234,6 +4269,30 @@
       "to": "ISS-007",
       "type": "resolves",
       "created_at": "2026-09-03T02:34:23+00:00"
+    },
+    {
+      "from": "ISS-008",
+      "to": "comp-graph",
+      "type": "located_in",
+      "created_at": "2026-09-03T02:54:30+00:00"
+    },
+    {
+      "from": "TASK-068",
+      "to": "ISS-008",
+      "type": "addresses",
+      "created_at": "2026-09-03T02:54:31+00:00"
+    },
+    {
+      "from": "CHG-034",
+      "to": "TASK-068",
+      "type": "implements",
+      "created_at": "2026-09-03T02:58:25+00:00"
+    },
+    {
+      "from": "CHG-034",
+      "to": "ISS-008",
+      "type": "resolves",
+      "created_at": "2026-09-03T02:58:25+00:00"
     }
   ]
 }
