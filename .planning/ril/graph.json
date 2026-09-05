@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 34,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T21:42:40+00:00",
+  "updated_at": "2026-09-05T22:31:22+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3492,6 +3492,74 @@
       "updated_at": "2026-09-05T21:41:55+00:00",
       "touched_round": 34,
       "commit": "dcfc055"
+    },
+    "ISS-024": {
+      "id": "ISS-024",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T22:24:27+00:00",
+      "updated_at": "2026-09-05T22:31:22+00:00",
+      "touched_round": 34,
+      "severity": "medium",
+      "title": "ILUPreconditioner silent no-op stub (setup records n_, apply no-ops); uncompiled duplicate impl"
+    },
+    "TASK-084": {
+      "id": "TASK-084",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T22:24:27+00:00",
+      "updated_at": "2026-09-05T22:31:22+00:00",
+      "touched_round": 34,
+      "category": "maintainability",
+      "severity": 3,
+      "effort": 1,
+      "title": "make ILU fail fast / remove dead dup"
+    },
+    "ISS-025": {
+      "id": "ISS-025",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T22:25:38+00:00",
+      "updated_at": "2026-09-05T22:25:38+00:00",
+      "touched_round": 34,
+      "severity": "medium",
+      "title": "real ILU(0) via cusparse csrilu02+csrsm2 to be implemented behind Preconditioner interface"
+    },
+    "TASK-085": {
+      "id": "TASK-085",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T22:25:38+00:00",
+      "updated_at": "2026-09-05T22:25:38+00:00",
+      "touched_round": 34,
+      "category": "core-feature",
+      "severity": 2,
+      "effort": 5,
+      "title": "implement real ILU(0) preconditioner (csrilu02 + csrsm2) with dense-reference test"
+    },
+    "CHG-052": {
+      "id": "CHG-052",
+      "type": "change",
+      "status": "active",
+      "version": 2,
+      "created_at": "2026-09-05T22:27:11+00:00",
+      "updated_at": "2026-09-05T22:30:09+00:00",
+      "touched_round": 34,
+      "commit": "2d73275"
+    },
+    "COMP-005": {
+      "id": "COMP-005",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T22:30:10+00:00",
+      "updated_at": "2026-09-05T22:30:10+00:00",
+      "touched_round": 34,
+      "title": "Sparse solvers + preconditioners (src/cuda/sparse, include/cuda/sparse)"
     }
   },
   "edges": [
@@ -5288,6 +5356,42 @@
       "to": "TASK-083",
       "type": "implements",
       "created_at": "2026-09-05T21:41:56+00:00"
+    },
+    {
+      "from": "TASK-084",
+      "to": "ISS-024",
+      "type": "addresses",
+      "created_at": "2026-09-05T22:27:11+00:00"
+    },
+    {
+      "from": "TASK-085",
+      "to": "ISS-025",
+      "type": "addresses",
+      "created_at": "2026-09-05T22:27:11+00:00"
+    },
+    {
+      "from": "ISS-024",
+      "to": "COMP-005",
+      "type": "located_in",
+      "created_at": "2026-09-05T22:30:53+00:00"
+    },
+    {
+      "from": "ISS-025",
+      "to": "COMP-005",
+      "type": "located_in",
+      "created_at": "2026-09-05T22:30:53+00:00"
+    },
+    {
+      "from": "CHG-052",
+      "to": "ISS-024",
+      "type": "resolves",
+      "created_at": "2026-09-05T22:30:53+00:00"
+    },
+    {
+      "from": "CHG-052",
+      "to": "TASK-084",
+      "type": "implements",
+      "created_at": "2026-09-05T22:30:53+00:00"
     }
   ]
 }
