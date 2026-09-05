@@ -96,25 +96,10 @@ public:
     SequenceParallelConfig config() const { return config_; }
 
 private:
-    void all_gather_internal(
-        memory::Buffer<float>& output,
-        const memory::Buffer<float>& input,
-        size_t count,
-        const Stream& stream
-    );
-
-    void reduce_scatter_internal(
-        memory::Buffer<float>& output,
-        const memory::Buffer<float>& input,
-        size_t count,
-        const Stream& stream
-    );
-
-    void all_reduce_internal(
-        memory::Buffer<float>& data,
-        size_t count,
-        const Stream& stream
-    );
+    // The collective bodies live inline in gather_kv / scatter_output /
+    // all_reduce_sequence; the private all_gather/reduce_scatter/all_reduce
+    // _internal helpers that used to be declared here were removed — they were
+    // declared but never defined or called (ISS-012).
 
     SequenceParallelConfig config_;
 };
