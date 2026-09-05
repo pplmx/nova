@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T11:40:15+00:00",
+  "updated_at": "2026-09-05T12:43:06+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2258,7 +2258,7 @@
       "version": 1,
       "created_at": "2026-08-23T22:07:02+00:00",
       "updated_at": "2026-08-23T22:07:02+00:00",
-      "touched_round": 32,
+      "touched_round": 33,
       "title": "Neural training drivers: MicroTrainer (tensor-parallel MLP classification loop) + TransformerTrainer (deep TransformerBlock loop), device loss/optimizer stack (v2.25-31). Checkpointing lives here (v2.32)."
     },
     "EV-038": {
@@ -3115,6 +3115,138 @@
       "commit": "1d9b149",
       "title": "Wire the documented NOVA_ENABLE_NCCL build switch",
       "description": "option(NOVA_ENABLE_NCCL) now gates NCCL discovery: =OFF defines NOVA_NCCL_ENABLED=0, =ON keeps the find_library auto-detection. EV-055 documents why cmake/FindNCCL.cmake is not activated (breaks ON configure on /usr/include hosts)."
+    },
+    "ISS-013": {
+      "id": "ISS-013",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "title": "build_histogram_kernel writes out of bounds of its fixed 256-entry shared histogram when num_bins > 256 (default 2048)",
+      "description": "int8_kernels.cu build_histogram_kernel used __shared__ uint32_t smem[256] but bin was clamped to [0, num_bins-1]; the HistogramCalibrator default num_bins=2048 -> OOB shared write + bins >= 256 never flushed to global, so calibration under-counted and produced a wrong percentile threshold."
+    },
+    "ISS-014": {
+      "id": "ISS-014",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "title": "focal_loss divides by the running partial softmax denominator (probs[class0] == 1.0 for every row)",
+      "description": "loss_functions.cu focal_loss accumulated sum_exp in the same loop that divided, so only the final class saw the correct denominator — same bug class cross_entropy_loss was already fixed for; wrong probabilities for early classes."
+    },
+    "ISS-015": {
+      "id": "ISS-015",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "title": "attention.cu: MultiHeadAttention::forward is a silent no-op and PositionalEncoding::forward overwrites input with the encoding",
+      "description": "MHA::forward scaled uninitialized scratch and returned without computing attention or writing output (issue-v24-mha-incomplete was superseded by TP attention but the broken method remained public API); PositionalEncoding::forward memcpy'd the encoding OVER the input instead of adding, and only encoded the first batch row."
+    },
+    "TASK-076": {
+      "id": "TASK-076",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "title": "build_histogram_kernel: size shared histogram to num_bins (no OOB, full flush) + 2048-bin regression test"
+    },
+    "TASK-077": {
+      "id": "TASK-077",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "title": "focal_loss: compute full softmax denominator before dividing + fp64 reference parity test"
+    },
+    "TASK-078": {
+      "id": "TASK-078",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "title": "attention.cu: MHA forward fails fast (superseded) instead of silent no-op; PositionalEncoding::forward adds (not overwrites) per position for every batch row + tests"
+    },
+    "TASK-079": {
+      "id": "TASK-079",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T12:29:43+00:00",
+      "touched_round": 33,
+      "category": "maintainability",
+      "title": "Sweep backlog: zero_grad() empty body (AdamW/LAMB), preemption checkpoint_on_shutdown never saves + timeout never counts down, AdamW step lacks LAMB grow-safeguard, BlockManager sequence-index space never reused, fake tests (optimizers zero-momentum, benchmark SetStream)",
+      "description": "From the deep-dive sweep (a83772): remaining verified MEDIUM/LOW findings deferred to future rounds. zero_grad empty (optimizers.cpp:76,181); preemption_handler.cpp:171-174 prints but never checkpoints + get_remaining_timeout never decrements + shutdown() resets while a thread finalizes; AdamW m/v never resize on num_elements growth (LAMB guards, AdamW doesn't); BlockManager sequence_to_index_ ever-increments (thrash after num_cpu_blocks lifetime creates); fake tests construct-only/no-assert."
+    },
+    "COMP-002": {
+      "id": "COMP-002",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:32:41+00:00",
+      "updated_at": "2026-09-05T12:32:41+00:00",
+      "touched_round": 33,
+      "title": "Quantization calibration (HistogramCalibrator / MinMax / int8 kernels)"
+    },
+    "ISS-016": {
+      "id": "ISS-016",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:34:55+00:00",
+      "updated_at": "2026-09-05T12:34:55+00:00",
+      "touched_round": 33,
+      "title": "Deferred MEDIUM/LOW sweep backlog: optimizer zero_grad no-op, preemption fake-checkpoint/timeout, AdamW grow-guard, BlockManager sequence-index exhaustion, construct-only fake tests",
+      "description": "Verified lower-severity findings from sweep a83772, deliberately deferred (below 3.0 threshold). See TASK-079."
+    },
+    "CHG-043": {
+      "id": "CHG-043",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:43:05+00:00",
+      "updated_at": "2026-09-05T12:43:05+00:00",
+      "touched_round": 33,
+      "commit": "d7070ce",
+      "title": "fix for TASK-078 (ISS-015)"
+    },
+    "CHG-044": {
+      "id": "CHG-044",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:43:06+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "commit": "7c9070b",
+      "title": "fix for TASK-077 (ISS-014)"
+    },
+    "CHG-045": {
+      "id": "CHG-045",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:43:06+00:00",
+      "updated_at": "2026-09-05T12:43:06+00:00",
+      "touched_round": 33,
+      "commit": "50f6794",
+      "title": "fix for TASK-076 (ISS-013)"
     }
   },
   "edges": [
@@ -4653,6 +4785,90 @@
       "to": "TASK-075",
       "type": "implements",
       "created_at": "2026-09-05T11:40:15+00:00"
+    },
+    {
+      "from": "TASK-076",
+      "to": "ISS-013",
+      "type": "addresses",
+      "created_at": "2026-09-05T12:30:26+00:00"
+    },
+    {
+      "from": "TASK-077",
+      "to": "ISS-014",
+      "type": "addresses",
+      "created_at": "2026-09-05T12:30:26+00:00"
+    },
+    {
+      "from": "TASK-078",
+      "to": "ISS-015",
+      "type": "addresses",
+      "created_at": "2026-09-05T12:30:26+00:00"
+    },
+    {
+      "from": "ISS-014",
+      "to": "comp-neural-training",
+      "type": "located_in",
+      "created_at": "2026-09-05T12:32:41+00:00"
+    },
+    {
+      "from": "ISS-015",
+      "to": "comp-neural-training",
+      "type": "located_in",
+      "created_at": "2026-09-05T12:32:41+00:00"
+    },
+    {
+      "from": "ISS-013",
+      "to": "COMP-002",
+      "type": "located_in",
+      "created_at": "2026-09-05T12:33:25+00:00"
+    },
+    {
+      "from": "TASK-079",
+      "to": "ISS-016",
+      "type": "addresses",
+      "created_at": "2026-09-05T12:34:55+00:00"
+    },
+    {
+      "from": "ISS-016",
+      "to": "comp-neural-training",
+      "type": "located_in",
+      "created_at": "2026-09-05T12:34:55+00:00"
+    },
+    {
+      "from": "CHG-043",
+      "to": "TASK-078",
+      "type": "implements",
+      "created_at": "2026-09-05T12:43:05+00:00"
+    },
+    {
+      "from": "CHG-043",
+      "to": "ISS-015",
+      "type": "resolves",
+      "created_at": "2026-09-05T12:43:06+00:00"
+    },
+    {
+      "from": "CHG-044",
+      "to": "TASK-077",
+      "type": "implements",
+      "created_at": "2026-09-05T12:43:06+00:00"
+    },
+    {
+      "from": "CHG-044",
+      "to": "ISS-014",
+      "type": "resolves",
+      "created_at": "2026-09-05T12:43:06+00:00"
+    },
+    {
+      "from": "CHG-045",
+      "to": "TASK-076",
+      "type": "implements",
+      "created_at": "2026-09-05T12:43:06+00:00"
+    },
+    {
+      "from": "CHG-045",
+      "to": "ISS-013",
+      "type": "resolves",
+      "created_at": "2026-09-05T12:43:06+00:00"
     }
   ]
 }
