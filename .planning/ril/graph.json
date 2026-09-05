@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T11:23:14+00:00",
+  "updated_at": "2026-09-05T11:40:15+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3078,6 +3078,43 @@
       "commit": "aa890ea",
       "title": "Fail fast on a broken owning NcclContext before touching a dead comm",
       "description": "comm_context_healthy() seam query + detail::check_comm_healthy() gates in gather_kv/scatter_output/all_reduce_sequence/ring_attention throw when the wired owner has_nccl() false instead of handing the freed comm to NCCL. Multigpu 10/10 live; full suite 1486 pass / 0 fail."
+    },
+    "TASK-075": {
+      "id": "TASK-075",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-09-05T11:29:48+00:00",
+      "updated_at": "2026-09-05T11:40:15+00:00",
+      "touched_round": 33,
+      "category": "dx",
+      "title": "Wire NOVA_ENABLE_NCCL build option so -DNOVA_ENABLE_NCCL=OFF actually disables NCCL (and activate the dead FindNCCL module)",
+      "description": "CMakeLists.txt declares option(NOVA_ENABLE_NCCL ... ON) and documents -DNOVA_ENABLE_NCCL=OFF in the header + user-guide comment, but nothing ever reads the variable — the compile definition NOVA_NCCL_ENABLED is keyed purely off whether libnccl.so is discoverable (find_library), so the documented switch has zero effect. Additionally cmake/FindNCCL.cmake (version-checked headers+lib module) is never invoked (no find_package(NCCL) call), so its NCCL_FOUND/NCCL::nccl branch is dead. Fix: gate the whole discovery block on if(NOVA_ENABLE_NCCL), call find_package(NCCL) inside the ON branch (module first, find_library fallback preserving current behavior), else define NOVA_NCCL_ENABLED=0. Verify both OFF and ON configurations."
+    },
+    "EV-055": {
+      "id": "EV-055",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T11:39:40+00:00",
+      "updated_at": "2026-09-05T11:39:40+00:00",
+      "touched_round": 33,
+      "source": "cmake configure probes 2026-09-05 (/tmp/nb-{on,off}*)",
+      "title": "FindNCCL.cmake is not activation-ready; the plain find_library fallback works",
+      "description": "find_package(NCCL) with cmake/FindNCCL.cmake FAILS the default ON configure on this Debian host: its find_path(NCCL_INCLUDE_DIR ...) only searches NCCL_SEARCH_PATHS (/usr/local/nccl, /usr/local/cuda/nccl, /opt/nccl, NCCL_DIR) and misses nccl.h in /usr/include, so find_package_handle_standard_args fails and configure aborts. The pre-existing find_library(NCCL_LIB nccl) fallback finds /usr/lib/x86_64-linux-gnu/libnccl.so and enables NCCL fine. -> TASK-075 scoped to wiring NOVA_ENABLE_NCCL around the working fallback; activating FindNCCL needs its include-path search widened first.",
+      "confidence": 1.0
+    },
+    "CHG-042": {
+      "id": "CHG-042",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T11:40:15+00:00",
+      "updated_at": "2026-09-05T11:40:15+00:00",
+      "touched_round": 33,
+      "commit": "1d9b149",
+      "title": "Wire the documented NOVA_ENABLE_NCCL build switch",
+      "description": "option(NOVA_ENABLE_NCCL) now gates NCCL discovery: =OFF defines NOVA_NCCL_ENABLED=0, =ON keeps the find_library auto-detection. EV-055 documents why cmake/FindNCCL.cmake is not activated (breaks ON configure on /usr/include hosts)."
     }
   },
   "edges": [
@@ -4610,6 +4647,12 @@
       "to": "TASK-074",
       "type": "implements",
       "created_at": "2026-09-05T11:21:57+00:00"
+    },
+    {
+      "from": "CHG-042",
+      "to": "TASK-075",
+      "type": "implements",
+      "created_at": "2026-09-05T11:40:15+00:00"
     }
   ]
 }
