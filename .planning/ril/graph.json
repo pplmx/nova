@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-03T08:25:51+00:00",
+  "updated_at": "2026-09-05T09:42:39+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -1103,11 +1103,11 @@
     "TASK-018": {
       "id": "TASK-018",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-08-12T12:01:28+00:00",
-      "updated_at": "2026-08-12T12:01:28+00:00",
-      "touched_round": 22,
+      "updated_at": "2026-09-05T09:38:06+00:00",
+      "touched_round": 33,
       "title": "Maintainability follow-up: route NCCL P2P (ring send_recv_kv) and TP-layer collective failures through the comm-error layer (mark_comm_aborted) so a broken ring/AllReduce comm poisons has_nccl() and the self-healing suite recovers; config/API needs an NcclContext or comm-recovery hook",
       "category": "maintainability",
       "severity": 1
@@ -2968,6 +2968,66 @@
       "touched_round": 33,
       "commit": "592b9b8",
       "title": "graph_algorithms CLI damping/tolerance knobs (TASK-071)"
+    },
+    "EV-054": {
+      "id": "EV-054",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T08:48:46+00:00",
+      "updated_at": "2026-09-05T08:48:46+00:00",
+      "touched_round": 33,
+      "source": "tests/distributed/sequence_parallel_multigpu_test.cu (live NCCL run, 2026-09-05, 4 GPUs)",
+      "title": "Live verification: sequence-parallel collectives route failures through comm-error seam",
+      "description": "NCCL_TESTS_AVAILABLE=1 on 4 GPUs: SequenceParallelMultiGpuTest 9/9 PASS incl. MultiGpu_CommPoisonSeam_FlipsHasNccl_AndHeals (poison->has_nccl false->heal), CollectiveError_IsSurfacedNotDiscarded (rc no longer discarded), MultiGpu_AbortedComm_RingThrows_AndRecovers (ring surfaces dead comm as exception on every rank + self-heals). Healthy-path AllReduce/GatherKV/ReduceScatter/ring-reference all still pass through checked_collective. Also: raw ncclCommAbort on an already-aborted comm SEGVs (pncclCommAbort) -> tests never double-abort.",
+      "confidence": 1.0
+    },
+    "TASK-072": {
+      "id": "TASK-072",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T09:02:10+00:00",
+      "updated_at": "2026-09-05T09:42:39+00:00",
+      "touched_round": 33,
+      "category": "maintainability",
+      "title": "Remove dead private helper declarations from SequenceParallelAttention",
+      "description": "SequenceParallelAttention declares all_gather_internal / reduce_scatter_internal / all_reduce_internal (sequence_parallel.h ~lines 99-115) but never defines or uses them — the bodies were folded inline into gather_kv / scatter_output / all_reduce_sequence. Dead declarations; a private member that is declared-never-defined is an ODR trap if anyone later calls it. Trivial removal + re-build."
+    },
+    "CHG-038": {
+      "id": "CHG-038",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T09:37:35+00:00",
+      "updated_at": "2026-09-05T09:37:35+00:00",
+      "touched_round": 33,
+      "commit": "729208b",
+      "title": "Route sequence-parallel NCCL collectives through comm-error layer",
+      "description": "New nccl_recovery.h seam (poison_failed_comm: abort + mark_comm_aborted, mirroring safe_nccl_call); SequenceParallelConfig.nccl_context; detail::checked_collective/collect_failed apply the caller-error-no-poison / broken-comm-poison policy (ncclInProgress = still-in-flight); gather_kv/scatter_output/all_reduce_sequence now route through it; send_recv_kv op-rejections throw (no poison), ncclGroupEnd failure aborts+poisons+throws. Live-verified: full suite 1485 pass/0 fail; NCCL-on 4-GPU SequenceParallelMultiGpuTest 9/9; 46-test cross-suite PASS."
+    },
+    "ISS-012": {
+      "id": "ISS-012",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T09:39:22+00:00",
+      "updated_at": "2026-09-05T09:42:39+00:00",
+      "touched_round": 33,
+      "title": "SequenceParallelAttention declares 3 internal collectives that are never defined or used",
+      "description": "SequenceParallelAttention (include/cuda/distributed/sequence_parallel.h) declares private all_gather_internal / reduce_scatter_internal / all_reduce_internal but never defines or calls them — the implementations were folded inline into gather_kv / scatter_output / all_reduce_sequence. ODR trap + dead API surface."
+    },
+    "CHG-039": {
+      "id": "CHG-039",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T09:42:16+00:00",
+      "updated_at": "2026-09-05T09:42:16+00:00",
+      "touched_round": 33,
+      "commit": "577602c",
+      "title": "Remove dead SequenceParallelAttention internal-collective declarations",
+      "description": "Deleted the declared-never-defined private helpers; verified full build + NCCL-on multi-GPU suite 9/9."
     }
   },
   "edges": [
@@ -4446,6 +4506,36 @@
       "to": "TASK-071",
       "type": "implements",
       "created_at": "2026-09-03T08:25:51+00:00"
+    },
+    {
+      "from": "CHG-038",
+      "to": "TASK-018",
+      "type": "implements",
+      "created_at": "2026-09-05T09:38:06+00:00"
+    },
+    {
+      "from": "TASK-072",
+      "to": "ISS-012",
+      "type": "addresses",
+      "created_at": "2026-09-05T09:39:22+00:00"
+    },
+    {
+      "from": "ISS-012",
+      "to": "comp-neural-parallel",
+      "type": "located_in",
+      "created_at": "2026-09-05T09:39:22+00:00"
+    },
+    {
+      "from": "CHG-039",
+      "to": "TASK-072",
+      "type": "implements",
+      "created_at": "2026-09-05T09:42:39+00:00"
+    },
+    {
+      "from": "CHG-039",
+      "to": "ISS-012",
+      "type": "resolves",
+      "created_at": "2026-09-05T09:42:39+00:00"
     }
   ]
 }
