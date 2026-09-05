@@ -242,7 +242,13 @@ std::vector<BeamHypothesis> BeamSearchManager::search(
         next_hypotheses_.clear();
         int beam_idx = 0;
 
-        const float* logits_data = static_cast<const float*>(logits.data());
+        // logits is a device buffer; the softmax/sampling below is host-side,
+        // so stage a host copy first (dereferencing Battery::data() on the CPU
+        // would read device memory — the same segfault class the speculative
+        // runner guards against).
+        std::vector<float> h_logits(vocab_size);
+        logits.copy_to(h_logits.data(), vocab_size);
+        const float* logits_data = h_logits.data();
 
         std::vector<float> probs(vocab_size);
         float max_logit = logits_data[0];

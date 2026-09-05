@@ -63,6 +63,40 @@ TEST_F(BeamSearchTest, TraceStats) {
     EXPECT_EQ(stats.avg_beam_width, 0);
 }
 
+TEST_F(BeamSearchTest, SearchStagesHostLogits) {
+    // search() runs the whole decode loop with a forward callback that writes
+    // device logits. The old code read Buffer::data() (device memory) on the
+    // host for the softmax/sampling — a latent segfault no test had exercised.
+    BeamSearchConfig config;
+    config.max_beams = 4;
+    config.max_length = 8;      // prompt 1 -> up to 7 steps, keeps the test fast
+    config.temperature = 1.0f;
+    config.length_penalty = 0.7f;
+    beam_manager->configure(config);
+
+    memory::Buffer<float> embeddings(16);
+    stream::Stream stream;
+
+    auto forward_fn = [](memory::Buffer<float>& logits,
+                         const std::vector<int64_t>&,
+                         const stream::Stream&) {
+        const int vocab = 32;
+        std::vector<float> h(static_cast<size_t>(vocab), -5.0f);
+        h[0] = 0.0f;  // deterministic argmax-ish preference for token 0
+        logits.copy_from(h.data(), static_cast<size_t>(vocab));
+    };
+
+    auto result = beam_manager->search(embeddings, 1, 32, stream, forward_fn);
+
+    // No segfault: search staged the device logits on the host before the
+    // softmax. Returns the surviving beams, each with at least one token.
+    ASSERT_GE(result.size(), 1u);
+    EXPECT_LE(result.size(), static_cast<size_t>(config.max_beams));
+    for (const auto& hyp : result) {
+        EXPECT_GE(hyp.tokens.size(), 1u);
+    }
+}
+
 TEST_F(BeamSearchTest, ClearTrace) {
     beam_manager->clear_trace();
 
