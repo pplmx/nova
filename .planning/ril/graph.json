@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T12:43:06+00:00",
+  "updated_at": "2026-09-05T15:31:09+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3185,10 +3185,10 @@
     "TASK-079": {
       "id": "TASK-079",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 4,
       "created_at": "2026-09-05T12:29:43+00:00",
-      "updated_at": "2026-09-05T12:29:43+00:00",
+      "updated_at": "2026-09-05T15:31:09+00:00",
       "touched_round": 33,
       "category": "maintainability",
       "title": "Sweep backlog: zero_grad() empty body (AdamW/LAMB), preemption checkpoint_on_shutdown never saves + timeout never counts down, AdamW step lacks LAMB grow-safeguard, BlockManager sequence-index space never reused, fake tests (optimizers zero-momentum, benchmark SetStream)",
@@ -3207,10 +3207,10 @@
     "ISS-016": {
       "id": "ISS-016",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-09-05T12:34:55+00:00",
-      "updated_at": "2026-09-05T12:34:55+00:00",
+      "updated_at": "2026-09-05T15:29:26+00:00",
       "touched_round": 33,
       "title": "Deferred MEDIUM/LOW sweep backlog: optimizer zero_grad no-op, preemption fake-checkpoint/timeout, AdamW grow-guard, BlockManager sequence-index exhaustion, construct-only fake tests",
       "description": "Verified lower-severity findings from sweep a83772, deliberately deferred (below 3.0 threshold). See TASK-079."
@@ -3247,6 +3247,121 @@
       "touched_round": 33,
       "commit": "50f6794",
       "title": "fix for TASK-076 (ISS-013)"
+    },
+    "EV-056": {
+      "id": "EV-056",
+      "type": "evidence",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T12:56:01+00:00",
+      "updated_at": "2026-09-05T12:56:01+00:00",
+      "touched_round": 33,
+      "source": "full-suite run bdop7basc: core.nova-tests.3693456, crash inside libcuda cuEventRecord via pncclAllReduce at SequenceParallelMultiGpuTest.MultiGpu_AllReduceSequence",
+      "detail": "Full-suite single-process NCCL-on run SEGVs (exit 139) at first MultiGpu collective. Root cause: ~15 earlier single-GPU suites (ErrorContextTest, MemoryPoolStreamTest, DeviceInfoTest, benchmark/*, pinned_memory_test, scheduler_test, ...) call cudaDeviceReset(), which invalidates the shared NcclContext singleton's CUDA primaries; later NCCL comms are silently poisoned (EV-008) and the driver crashes in cuEventRecord/pncclAllReduce. Same pre-existing family as core.nova-tests.2554551. NOT a regression: standalone multigpu suite passes 10/10 on the same binary, and full-suite single-process NCCL is a documented unsupported configuration (DEC-021).",
+      "confidence": 1.0
+    },
+    "ISS-017": {
+      "id": "ISS-017",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T15:21:36+00:00",
+      "updated_at": "2026-09-05T15:29:26+00:00",
+      "touched_round": 33,
+      "title": "AdamWOptimizer step() OOB device r/w when num_elements grows",
+      "description": "AdamW m/v were allocated only on the first step (initialized_ flag); a later LARGER num_elements fed the fused adamw_step_device kernel a smaller m/v pair — out-of-bounds device read/write (silent corruption or SEGV) plus uninitialized moment state for the grown region. LAMB had a grow guard; AdamW did not. Fixed to mirror LAMB: reallocate-and-zero-fill on size() < num_elements (grown buffers resume cold, consistent with LAMB semantics).",
+      "severity": "high"
+    },
+    "ISS-018": {
+      "id": "ISS-018",
+      "type": "issue",
+      "status": "resolved",
+      "version": 3,
+      "created_at": "2026-09-05T15:21:40+00:00",
+      "updated_at": "2026-09-05T15:30:21+00:00",
+      "touched_round": 33,
+      "title": "Preemption module unusable: pimpl singletons SEGV on first use + checkpoint never saves + frozen timeout + shutdown reset race",
+      "description": "Root cause: all four pimpl classes (SignalHandler/ShutdownCoordinator/ResumeValidator/PreemptionManager) had '= default' ctors and NEVER allocated impl_ - every method dereferenced a null unique_ptr (SEGV on any use; the module had zero tests so it went uncaught). Stacked defects: checkpoint_coordinated printed 'Saving checkpoint before shutdown' and saved nothing; get_remaining_timeout returned a frozen stored value (no countdown); ShutdownCoordinator::shutdown() reset phase/flags under a still-finalizing detached shutdown thread (data race). Fixed: ctor allocates Impl; checkpoint_coordinated now runs a user-registered callback (returns bool; false + clear error when requested-but-unwired or failed); timeout counts down from a real deadline clamped at 0; shutdown() refuses mid-flight resets. Atomic shutdown_start for race-free reads across reuse rounds; callback forwarded by value to the coordinator.",
+      "severity": "high"
+    },
+    "ISS-019": {
+      "id": "ISS-019",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T15:21:59+00:00",
+      "updated_at": "2026-09-05T15:29:26+00:00",
+      "touched_round": 33,
+      "title": "BlockManager sequence-index space exhausted after num_cpu_blocks cumulative creates",
+      "description": "sequence_to_index_ was assigned from an ever-increasing counter that never reused freed slots, so after num_cpu_blocks cumulative create_sequence calls (the GPU block table is num_cpu_blocks x max_blocks_per_sequence_) the next sequence's index landed past the table and update_block_table_gpu threw out_of_range on EVERY forward_batch forever — a hard failure for any process churning short-lived sequences. Fixed with a free_indices_ reuse pool; removed the num_allocated_sequences_-- decrement which would double-book with the pool. Also made create_sequence exception-safe (KV allocated before map commit, rollback on throw).",
+      "severity": "medium"
+    },
+    "ISS-020": {
+      "id": "ISS-020",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T15:23:45+00:00",
+      "updated_at": "2026-09-05T15:29:26+00:00",
+      "touched_round": 33,
+      "title": "Dead zero_grad() API on both optimizers + construct-only fake tests",
+      "description": "AdamWOptimizer::zero_grad/LAMBOptimizer::zero_grad had empty bodies and zero callers anywhere (src/include/tests/examples); the contract is structurally impossible because gradients are caller-owned per-step, not accumulated by the optimizer - a silent no-op that lies (repo fail-fast disposition). Removed from both classes (compile error at any user call site is the honest failure). Also made the construct-only fake tests real: AdamWZeroMomentum/LAMBZeroMomentum now step first then assert m/v are actually zeroed; QuantizationBenchmark SetStream gained a get_stream accessor and asserts a real round-trip.",
+      "severity": "low"
+    },
+    "COMP-003": {
+      "id": "COMP-003",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T15:25:57+00:00",
+      "updated_at": "2026-09-05T15:25:57+00:00",
+      "touched_round": 33,
+      "title": "Preemption subsystem (src/cuda/preemption/)",
+      "description": "SignalHandler/ShutdownCoordinator/ResumeValidator/PreemptionManager: graceful-shutdown orchestration, checkpoint-on-shutdown, timeout/extension accounting, resume validation."
+    },
+    "COMP-004": {
+      "id": "COMP-004",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T15:25:57+00:00",
+      "updated_at": "2026-09-05T15:25:57+00:00",
+      "touched_round": 33,
+      "title": "Inference serving core (src/cuda/inference/)",
+      "description": "BlockManager (KV block scheduling/tables), sequence lifecycle, flash attention forward_batch."
+    },
+    "CHG-046": {
+      "id": "CHG-046",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T15:28:43+00:00",
+      "updated_at": "2026-09-05T15:28:43+00:00",
+      "touched_round": 33,
+      "commit": "38629d9",
+      "title": "AdamW grow guard + zero_grad removal (TASK-079/ISS-017/ISS-020)"
+    },
+    "CHG-047": {
+      "id": "CHG-047",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T15:28:43+00:00",
+      "updated_at": "2026-09-05T15:28:43+00:00",
+      "touched_round": 33,
+      "commit": "52878cb",
+      "title": "Preemption pimpl allocation + real checkpoint/timeout/shutdown semantics (TASK-079/ISS-018)"
+    },
+    "CHG-048": {
+      "id": "CHG-048",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T15:28:43+00:00",
+      "updated_at": "2026-09-05T15:28:43+00:00",
+      "touched_round": 33,
+      "commit": "db6f447",
+      "title": "BlockManager slot reuse + SetStream test (TASK-079/ISS-019/ISS-020)"
     }
   },
   "edges": [
@@ -4869,6 +4984,96 @@
       "to": "ISS-013",
       "type": "resolves",
       "created_at": "2026-09-05T12:43:06+00:00"
+    },
+    {
+      "from": "TASK-079",
+      "to": "ISS-017",
+      "type": "addresses",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "TASK-079",
+      "to": "ISS-018",
+      "type": "addresses",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "TASK-079",
+      "to": "ISS-019",
+      "type": "addresses",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "TASK-079",
+      "to": "ISS-020",
+      "type": "addresses",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "ISS-017",
+      "to": "comp-neural-training",
+      "type": "located_in",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "ISS-020",
+      "to": "comp-neural-training",
+      "type": "located_in",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "ISS-018",
+      "to": "COMP-003",
+      "type": "located_in",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "ISS-019",
+      "to": "COMP-004",
+      "type": "located_in",
+      "created_at": "2026-09-05T15:26:28+00:00"
+    },
+    {
+      "from": "CHG-046",
+      "to": "TASK-079",
+      "type": "implements",
+      "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "CHG-047",
+      "to": "TASK-079",
+      "type": "implements",
+      "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "CHG-048",
+      "to": "TASK-079",
+      "type": "implements",
+      "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "CHG-046",
+      "to": "ISS-017",
+      "type": "resolves",
+      "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "CHG-046",
+      "to": "ISS-020",
+      "type": "resolves",
+      "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "CHG-047",
+      "to": "ISS-018",
+      "type": "resolves",
+      "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "CHG-048",
+      "to": "ISS-019",
+      "type": "resolves",
+      "created_at": "2026-09-05T15:29:26+00:00"
     }
   ]
 }
