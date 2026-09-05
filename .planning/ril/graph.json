@@ -1,8 +1,8 @@
 {
   "ril_version": 1,
-  "round": 33,
+  "round": 34,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T19:52:19+00:00",
+  "updated_at": "2026-09-05T20:40:48+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3366,24 +3366,25 @@
     "TASK-080": {
       "id": "TASK-080",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "abandoned",
+      "version": 2,
       "created_at": "2026-09-05T18:51:44+00:00",
-      "updated_at": "2026-09-05T18:51:44+00:00",
-      "touched_round": 33,
+      "updated_at": "2026-09-05T20:40:48+00:00",
+      "touched_round": 34,
       "category": "maintainability",
-      "severity": "low",
+      "severity": 1,
       "priority_score": 4.2,
       "effort": 1,
-      "title": "create_csr_from_adjacency: bool weighted was a silent no-op"
+      "title": "create_csr_from_adjacency: bool weighted was a silent no-op",
+      "reason": "duplicate of TASK-081 created by the failed severity=low add"
     },
     "TASK-081": {
       "id": "TASK-081",
       "type": "task",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-09-05T18:54:38+00:00",
-      "updated_at": "2026-09-05T18:54:38+00:00",
+      "updated_at": "2026-09-05T20:34:39+00:00",
       "touched_round": 33,
       "category": "maintainability",
       "severity": 1,
@@ -3394,10 +3395,10 @@
     "ISS-021": {
       "id": "ISS-021",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-09-05T19:02:51+00:00",
-      "updated_at": "2026-09-05T19:02:51+00:00",
+      "updated_at": "2026-09-05T20:36:54+00:00",
       "touched_round": 33,
       "severity": "medium",
       "title": "create_csr_from_adjacency weighted no-op"
@@ -3412,6 +3413,16 @@
       "touched_round": 33,
       "rationale": "replace_noop_with_weights",
       "alternatives_rejected": "keep_noop"
+    },
+    "CHG-049": {
+      "id": "CHG-049",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T20:30:13+00:00",
+      "updated_at": "2026-09-05T20:30:13+00:00",
+      "touched_round": 33,
+      "commit": "9d3ea44"
     }
   },
   "edges": [
@@ -5142,6 +5153,18 @@
       "to": "TASK-081",
       "type": "governs",
       "created_at": "2026-09-05T19:52:19+00:00"
+    },
+    {
+      "from": "CHG-049",
+      "to": "ISS-021",
+      "type": "resolves",
+      "created_at": "2026-09-05T20:32:05+00:00"
+    },
+    {
+      "from": "CHG-049",
+      "to": "TASK-081",
+      "type": "implements",
+      "created_at": "2026-09-05T20:32:05+00:00"
     }
   ]
 }
