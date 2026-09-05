@@ -102,29 +102,35 @@ __global__ void build_histogram_kernel(
     float max_val,
     int num_bins) {
 
-    __shared__ uint32_t smem[256];
+    // Dynamic shared memory sized to num_bins at launch (TASK-076): the old
+    // fixed __shared__ uint32_t[256] wrote smem[bin] for bin up to num_bins-1
+    // (the HistogramCalibrator default num_bins is 2048) — an out-of-bounds
+    // shared-memory write, and bins >= 256 were never flushed to the host
+    // histogram, so calibration produced a wrong threshold.
+    extern __shared__ uint32_t smem[];
 
-    size_t tid = threadIdx.x;
-    if (tid < 256) {
-        smem[tid] = 0;
+    const int tid = static_cast<int>(threadIdx.x);
+    const int step = static_cast<int>(blockDim.x);
+    for (int i = tid; i < num_bins; i += step) {
+        smem[i] = 0;
     }
     __syncthreads();
 
-    size_t idx = blockIdx.x * blockDim.x + tid;
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         float val = data[idx];
         float range = max_val - min_val;
         if (range > 1e-6f) {
             int bin = static_cast<int>((val - min_val) / range * (num_bins - 1));
             bin = max(0, min(num_bins - 1, bin));
-            atomicAdd(&smem[bin], 1);
+            atomicAdd(&smem[bin], 1u);
         }
     }
 
     __syncthreads();
 
-    if (tid < 256) {
-        atomicAdd(&histogram[tid], smem[tid]);
+    for (int i = tid; i < num_bins; i += step) {
+        atomicAdd(&histogram[i], smem[i]);
     }
 }
 
@@ -305,7 +311,12 @@ void build_histogram(
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
 
-    detail::build_histogram_kernel<<<grid_size, block_size, 0, stream>>>(
+    // Dynamic shared memory must cover every possible bin (TASK-076): the
+    // calibrator's default num_bins=2048 previously overran a fixed 256-entry
+    // shared buffer. 2048 bins * 4B is comfortably within the 48KB static
+    // shared-memory limit per block.
+    const size_t shared_bytes = static_cast<size_t>(num_bins) * sizeof(uint32_t);
+    detail::build_histogram_kernel<<<grid_size, block_size, shared_bytes, stream>>>(
         d_data, histogram, n, min_val, max_val, num_bins);
 
     if (stream == 0) {

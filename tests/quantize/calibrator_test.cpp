@@ -1,4 +1,5 @@
 #include <cuda/quantize/calibrator.hpp>
+#include <cuda/quantize/int8_kernels.hpp>
 
 #include <gtest/gtest.h>
 #include <vector>
@@ -81,6 +82,51 @@ TEST_F(CalibratorTest, HistogramCalibration) {
     EXPECT_GT(result.scale, 0.0f);
     EXPECT_TRUE(result.symmetric);
     EXPECT_EQ(calibrator.get_num_bins(), 256);
+}
+
+TEST_F(CalibratorTest, HistogramFullCoverage_2048Bins) {
+    // Regression (TASK-076): build_histogram_kernel used a fixed 256-entry
+    // shared buffer but binned into up to num_bins-1 == 2047 — an out-of-bounds
+    // shared-memory write, and bins >= 256 were never flushed to the global
+    // histogram, so calibration over the DEFAULT 2048 bins silently under-
+    // counted (~7/8 of the values were lost and the percentile threshold was
+    // wrong). The kernel now sizes its shared histogram to num_bins.
+    const size_t n = 4096;
+    const float lo = -50.0f, hi = 50.0f;
+    std::vector<float> data = create_test_data(lo, hi, n);
+
+    // build_histogram's histogram argument must be a DEVICE buffer (the host
+    // wrapper memsets it with cudaMemset); the calibrator uses a device one.
+    uint32_t* d_hist = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_hist, 2048 * sizeof(uint32_t)), cudaSuccess);
+    std::vector<uint32_t> hist(2048);
+    cuda::build_histogram(data.data(), d_hist, n, lo, hi, 2048, 0);
+    ASSERT_EQ(cudaMemcpy(hist.data(), d_hist, 2048 * sizeof(uint32_t),
+                         cudaMemcpyDeviceToHost), cudaSuccess);
+    ASSERT_EQ(cudaFree(d_hist), cudaSuccess);
+
+    uint64_t total = 0;
+    for (uint32_t c : hist) {
+        total += c;
+    }
+    EXPECT_EQ(total, n)
+        << "every value must land in one of the 2048 bins (the old kernel "
+           "dropped every value whose bin was >= 256)";
+
+    // Values spread across the full range must populate bins far past 256.
+    uint64_t tail = 0;
+    for (int b = 256; b < 2048; ++b) {
+        tail += hist[b];
+    }
+    EXPECT_GT(tail, 0u) << "bins 256..2047 must receive counts";
+
+    // And a default (2048-bin) calibrate() must neither crash (the OOB shared
+    // write) nor produce a degenerate scale.
+    HistogramCalibrator calibrator;  // default num_bins = 2048
+    auto result = calibrator.calibrate(data.data(), n);
+    EXPECT_GT(result.scale, 0.0f);
+    EXPECT_TRUE(result.symmetric);
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 TEST_F(CalibratorTest, HistogramPercentileSelection) {
