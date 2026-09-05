@@ -242,6 +242,25 @@ inline void checked_collective(
     }
 }
 
+// Fail-fast gate for a configured communicator (TASK-074). When the caller
+// wired an owning NcclContext and that context is broken (has_nccl() false —
+// a prior collective aborted and poisoned it), `config.comm` points at a DEAD
+// communicator. Touching it is undefined (observed to SEGV in the ring-abort
+// multi-GPU test), so throw a clear error before any NCCL call: the documented
+// recovery is re-initializing the NcclContext (which re-establishes clean
+// comms) rather than retrying a config that can never work again.
+inline void check_comm_healthy(
+    const char* where, const void* comm, const void* nccl_context) {
+    if (comm != nullptr && !cuda::nccl::comm_context_healthy(
+                               const_cast<void*>(nccl_context))) {
+        throw std::runtime_error(
+            std::string(where) + ": the owning NcclContext is broken "
+            "(has_nccl() false) — config.comm points at a communicator a prior "
+            "collective aborted; re-initialize the NcclContext and rebuild the "
+            "config before issuing more sequence-parallel collectives");
+    }
+}
+
 }  // namespace detail
 
 #endif
@@ -283,6 +302,9 @@ inline void SequenceParallelAttention::gather_kv(
         gathered_v.copy_from(local_v.data(), local_v.size());
         return;
     }
+    detail::check_comm_healthy(
+        "SequenceParallelAttention::gather_kv", config_.comm,
+        config_.nccl_context);
 
     const size_t local_count = local_k.size();
     const size_t total_count = local_count * config_.sequence_parallel_size;
@@ -349,6 +371,9 @@ inline void SequenceParallelAttention::scatter_output(
         local_output.copy_from(full_output.data(), full_output.size());
         return;
     }
+    detail::check_comm_healthy(
+        "SequenceParallelAttention::scatter_output", config_.comm,
+        config_.nccl_context);
 
     const size_t local_count = local_output.size();
     const size_t total_count = full_output.size();
@@ -404,6 +429,9 @@ inline void SequenceParallelAttention::all_reduce_sequence(
     if (config_.comm == nullptr) {
         return;
     }
+    detail::check_comm_healthy(
+        "SequenceParallelAttention::all_reduce_sequence", config_.comm,
+        config_.nccl_context);
 
     auto dtype = detail::to_nccl_dtype(float{});
     // Comm-error layer routing (see gather_kv for the rationale).
@@ -544,6 +572,9 @@ inline void RingSequenceParallelism::ring_attention(
             "RingSequenceParallelism::ring_attention: multi-GPU ring requires "
             "a live communicator (config.comm)");
     }
+    detail::check_comm_healthy(
+        "RingSequenceParallelism::ring_attention", config_.comm,
+        config_.nccl_context);
     // The ring must walk exactly the gates' parallelism degree: a config whose
     // world_size disagrees with sequence_parallel_size would silently attend
     // only a prefix of the full sequence — fail fast instead (the class of

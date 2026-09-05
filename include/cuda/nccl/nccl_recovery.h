@@ -40,4 +40,21 @@ namespace cuda::nccl {
  */
 void poison_failed_comm(void* comm, void* nccl_context) noexcept;
 
+/**
+ * @brief Ask whether an owning NcclContext is still healthy (has_nccl() true)
+ *
+ * The counterpart to poison_failed_comm: before calling NCCL through a
+ * caller-supplied communicator, consult the owning context if one was wired.
+ * After a prior collective poisoned the context (a broken comm -> has_nccl()
+ * false), the caller's `comm` points at a dead communicator — using it is
+ * undefined (observed to SEGV). This lets header-only callers fail fast and
+ * route into the self-healing re-initialize() path instead.
+ *
+ * @param nccl_context Opaque pointer to the owning NcclContext (may be null).
+ * @return true when the context is healthy (or no context was wired — the
+ *         caller owns the comm lifecycle then); false when the wired context
+ *         reports has_nccl() false.
+ */
+bool comm_context_healthy(void* nccl_context) noexcept;
+
 }  // namespace cuda::nccl

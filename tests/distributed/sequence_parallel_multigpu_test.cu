@@ -644,3 +644,75 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AbortedComm_RingThrows_AndRecovers
     EXPECT_TRUE(ctx.has_nccl());
     EXPECT_FALSE(ctx.broken());
 }
+
+// TASK-074: once a broken comm has poisoned the owning NcclContext
+// (has_nccl() false), a caller retrying a collective with the SAME config must
+// fail fast WITHOUT touching the dead communicator — touching it is undefined
+// (observed to SEGV). The gate must be the thing that throws, never the dead
+// comm.
+TEST_F(SequenceParallelMultiGpuTest, BrokenContext_FailsFastBeforeTouchingDeadComm) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU sequence-parallel test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU sequence-parallel requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    const int sp = device_count;
+    std::vector<ncclComm_t> stale_comm(sp);
+    run_per_rank(device_count, [&](int d) {
+        stale_comm[d] = ctx.current_comm();
+    });
+
+    // Poison WITHOUT keeping any comm live: abort + mark via the seam (the
+    // real comms are now aborted and their slots nulled out of the context).
+    run_per_rank(device_count, [&](int d) {
+        cuda::nccl::poison_failed_comm(stale_comm[d], &ctx);
+    });
+    ASSERT_FALSE(ctx.has_nccl())
+        << "precondition: a poisoned context reports has_nccl() false";
+
+    // A retrying caller still holds the stale, non-null comm pointer. The
+    // collective must throw from the health gate before that pointer is ever
+    // handed to NCCL.
+    std::vector<bool> threw(sp, false);
+    run_per_rank(device_count, [&](int d) {
+        cuda::memory::Buffer<float> data(32);
+        std::vector<float> h(32, 1.0f);
+        data.copy_from(h.data(), 32);
+        SequenceParallelConfig cfg{
+            .num_model_parallel_gpus = sp,
+            .sequence_parallel_size = sp,
+            .reduce_scatter_output = true,
+            .rank = d,
+            .world_size = sp,
+            .comm = static_cast<void*>(stale_comm[d]),
+            .nccl_context = static_cast<void*>(&ctx),
+        };
+        SequenceParallelAttention sp_attn(cfg);
+        cuda::stream::Stream stream;
+        try {
+            sp_attn.all_reduce_sequence(data, stream);
+            CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        } catch (const std::exception&) {
+            threw[d] = true;
+        }
+    });
+
+    for (int d = 0; d < sp; ++d) {
+        EXPECT_TRUE(threw[d])
+            << "rank " << d << " reused a communicator of a broken context "
+               "instead of failing fast via the health gate (TASK-074)";
+    }
+
+    EXPECT_TRUE(cuda::distributed::test::heal_and_ready(ctx))
+        << "self-healing must restore a clean context";
+    EXPECT_TRUE(ctx.has_nccl());
+    EXPECT_FALSE(ctx.broken());
+}

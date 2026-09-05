@@ -313,6 +313,22 @@ bool NcclContext::mark_comm_aborted(ncclComm_t comm) noexcept {
     return found;
 }
 
+bool comm_context_healthy(void* nccl_context) noexcept {
+    // No wired owner: nothing to consult; the caller owns the comm lifecycle.
+    if (nccl_context == nullptr) {
+        return true;
+    }
+#if NOVA_NCCL_ENABLED
+    return static_cast<NcclContext*>(nccl_context)->has_nccl();
+#else
+    // In a no-NCCL build has_nccl() is false by construction; the only callers
+    // reach here with a wired context under NOVA_NCCL_ENABLED branches. Report
+    // healthy (false would only ever be returned by a build that cannot run
+    // NCCL anyway) — the caller's subsequent NCCL call fails fast itself.
+    return true;
+#endif
+}
+
 void poison_failed_comm(void* comm, void* nccl_context) noexcept {
     if (comm == nullptr) {
         return;
