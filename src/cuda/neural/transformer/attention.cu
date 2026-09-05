@@ -63,6 +63,26 @@ __global__ void softmax_kernel(T* data, int batch_size, int num_heads, int seq_l
     }
 }
 
+// Adds the positional encoding to every batch row's embeddings (TASK-077 /
+// ISS-013): each of the `batch_size` rows receives the same per-position
+// encoding, so output[(b*seq_len+p)*embed_dim + d] =
+// input[..] + encoding[p*embed_dim + d]. Previously forward() memcpy'd the
+// encoding OVER the input (losing the embeddings) and only touched the first
+// batch row's span.
+template <typename T>
+__global__ void add_positional_kernel(
+    const T* input, T* output, const T* encoding,
+    int batch_size, int seq_len, int embed_dim
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = batch_size * seq_len * embed_dim;
+    if (idx < total) {
+        const int d = idx % embed_dim;
+        const int p = (idx / embed_dim) % seq_len;
+        output[idx] = input[idx] + encoding[p * embed_dim + d];
+    }
+}
+
 }  // namespace
 
 MultiHeadAttention::MultiHeadAttention(const MultiHeadAttentionConfig& config)
@@ -85,29 +105,25 @@ void MultiHeadAttention::forward(
     int qkv_dim,
     cudaStream_t stream
 ) {
-    int total_heads = config_.num_heads;
-    int head_dim = config_.head_dim;
-    size_t qkv_size = batch_size * seq_len * qkv_dim;
-    size_t attn_size = batch_size * total_heads * seq_len * seq_len;
-    size_t output_size = batch_size * seq_len * qkv_dim;
-
-    size_t needed = qkv_size * 3 + attn_size + output_size;
-    if (needed > buffer_size_) {
-        if (d_qkv_buffer_) cudaFree(d_qkv_buffer_);
-        CUDA_CHECK(cudaMalloc(&d_qkv_buffer_, needed * sizeof(float)));
-        buffer_size_ = needed;
-        d_attn_weights_ = d_qkv_buffer_ + qkv_size;
-        d_output_buffer_ = d_attn_weights_ + attn_size;
-    }
-
-    int block = 256;
-    int grid = (batch_size * total_heads * seq_len + block - 1) / block;
-
-    if (config_.scale_outputs) {
-        float scale = 1.0f / sqrtf(static_cast<float>(head_dim));
-        scale_kernel<float><<<grid, block, 0, stream>>>(
-            d_attn_weights_, attn_size, scale);
-    }
+    // This single-GPU attention path is deliberately NOT implemented (it was
+    // superseded by TensorParallelMultiHeadAttention in v2.26 — see
+    // tensor_parallel_attention.cpp's "anti-pattern" note). The old shell used
+    // to scale an uninitialized scratch buffer and return without ever
+    // computing attention or writing `output` — a silent garbage-producing
+    // no-op (issue-v24-mha-incomplete). Fail fast instead, so a caller gets an
+    // explicit error rather than reading untouched/garbage output.
+    (void)query;
+    (void)key;
+    (void)value;
+    (void)output;
+    (void)batch_size;
+    (void)seq_len;
+    (void)qkv_dim;
+    (void)stream;
+    throw std::runtime_error(
+        "MultiHeadAttention::forward: single-GPU multi-head attention is not "
+        "implemented (superseded by TensorParallelMultiHeadAttention in "
+        "v2.26); this class is a non-functional shell and must not be used");
 }
 
 void MultiHeadAttention::forward_self_attention(
@@ -144,15 +160,30 @@ void PositionalEncoding::forward(
     if (seq_len > config_.max_seq_len) {
         compute_sinusoidal_encoding(seq_len);
     }
-
-    int num_elements = batch_size * seq_len * config_.embed_dim;
-    CUDA_CHECK(cudaMemcpyAsync(output, input, num_elements * sizeof(float),
-                    cudaMemcpyDeviceToDevice, stream));
-
-    if (d_encoding_buffer_) {
-        CUDA_CHECK(cudaMemcpyAsync(output, d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float),
-                        cudaMemcpyDeviceToDevice, stream));
+    if (batch_size <= 0 || seq_len <= 0 || config_.embed_dim <= 0) {
+        return;
     }
+    if (d_encoding_buffer_ == nullptr) {
+        // No encoding computed (e.g. an embed-dim of a type that produced no
+        // buffer); behave as identity rather than overwriting with garbage.
+        CUDA_CHECK(cudaMemcpyAsync(output, input,
+                                   static_cast<size_t>(batch_size) * seq_len *
+                                       config_.embed_dim * sizeof(float),
+                                   cudaMemcpyDeviceToDevice, stream));
+        return;
+    }
+
+    // output = input + positional encoding, repeated per batch row (TASK-077 /
+    // ISS-013): previously the encoding was memcpy'd OVER the input — the first
+    // sequence's embeddings were discarded and later batch rows got no encoding
+    // at all.
+    const int total = batch_size * seq_len * config_.embed_dim;
+    const int block = 256;
+    const int grid = (total + block - 1) / block;
+    add_positional_kernel<float><<<grid, block, 0, stream>>>(
+        input, output, d_encoding_buffer_, batch_size, seq_len,
+        config_.embed_dim);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void PositionalEncoding::get_encoding(float* output, int seq_len, cudaStream_t stream) {
