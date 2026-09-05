@@ -539,17 +539,29 @@ target_link_libraries(cuda_nccl PUBLIC
         CUDA::cudart
         cuda_device
 )
-if(NCCL_FOUND AND TARGET NCCL::nccl)
-        target_link_libraries(cuda_nccl PUBLIC NCCL::nccl)
-        target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=1)
-else()
-        find_library(NCCL_LIB nccl)
-        if(NCCL_LIB)
-                target_link_libraries(cuda_nccl PUBLIC ${NCCL_LIB})
+# The documented -DNOVA_ENABLE_NCCL=OFF switch (see option() above) must
+# actually disable NCCL: before this gate the compile definition was keyed only
+# off library discovery, so the option was a no-op (TASK-075). When enabled,
+# keep the existing auto-detection (the NCCL_FOUND/NCCL::nccl branch is only
+# reached if cmake/FindNCCL.cmake is ever invoked — it is NOT today, so the
+# find_library fallback does the detection; see EV-055 for why FindNCCL is not
+# activated as-is). The else() branch makes the OFF switch real.
+if(NOVA_ENABLE_NCCL)
+        if(NCCL_FOUND AND TARGET NCCL::nccl)
+                target_link_libraries(cuda_nccl PUBLIC NCCL::nccl)
                 target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=1)
         else()
-                target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=0)
+                find_library(NCCL_LIB nccl)
+                if(NCCL_LIB)
+                        target_link_libraries(cuda_nccl PUBLIC ${NCCL_LIB})
+                        target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=1)
+                else()
+                        target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=0)
+                endif()
         endif()
+else()
+        message(STATUS "Nova: NCCL explicitly disabled (NOVA_ENABLE_NCCL=OFF)")
+        target_compile_definitions(cuda_nccl PUBLIC NOVA_NCCL_ENABLED=0)
 endif()
 
 add_library(cuda_mpi STATIC ${MPI_SOURCES})
