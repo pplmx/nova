@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T10:15:11+00:00",
+  "updated_at": "2026-09-05T10:17:46+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2520,10 +2520,10 @@
     "ISS-002": {
       "id": "ISS-002",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-09-02T14:14:30+00:00",
-      "updated_at": "2026-09-02T14:14:30+00:00",
+      "updated_at": "2026-09-05T10:17:46+00:00",
       "touched_round": 33,
       "title": "examples/ are broken against the current library and not built: no CMake target builds them (examples/README.md falsely claims 'All examples are built as part of the main build'), and all four include pre-v2 headers/APIs that moved (cuda/neural/matmul.hpp -> matmul.h, nova::memory::Buffer -> cuda::memory, nova::image::* -> cuda::algo/cuda::image, nova::nccl::NcclContext::initialize(MPI_COMM_WORLD) -> cuda::nccl::NcclContext), so following the README yields nothing to run and hand-compiling fails on namespace/header",
       "severity": 2
@@ -2531,10 +2531,10 @@
     "ISS-003": {
       "id": "ISS-003",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-09-02T14:14:30+00:00",
-      "updated_at": "2026-09-02T14:14:30+00:00",
+      "updated_at": "2026-09-05T10:17:46+00:00",
       "touched_round": 33,
       "title": "examples/ CLI usability gaps on top of the stale build: no --help/-h (usage only on unknown arg, exit 1), atoi/atof without validation (--batch abc silently 0), strcmp used without <cstring>, error messages to stdout, and image_processing silently no-ops + saves uninitialized output on an invalid --kernel",
       "severity": 1
