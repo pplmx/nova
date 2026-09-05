@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T10:23:23+00:00",
+  "updated_at": "2026-09-05T11:23:14+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3054,6 +3054,30 @@
       "commit": "d30293d",
       "title": "Speculative-decoding feature flags fail fast instead of silently no-oping",
       "description": "Runner ctor/configure validate_implemented_features: throw not-implemented for tree/async/eagle3/xgrammar; enable_tree_attention + enable_async_draft defaults flipped to false; apply_tree_attention_mask documents identity + defensive throw. 32 speculative tests PASS; full suite 1486 pass / 0 fail."
+    },
+    "TASK-074": {
+      "id": "TASK-074",
+      "type": "task",
+      "status": "resolved",
+      "version": 4,
+      "created_at": "2026-09-05T11:02:20+00:00",
+      "updated_at": "2026-09-05T11:23:14+00:00",
+      "touched_round": 33,
+      "category": "stability",
+      "title": "Sequence-parallel collectives must fail fast when the owning NcclContext is broken (has_nccl() false)",
+      "description": "After TASK-018's poisoning, a broken comm flips has_nccl() false, but SequenceParallelAttention/RingSequenceParallelism only check config.comm != nullptr — a caller who catches the poisoning throw and retries the same config calls NCCL on a freed comm (observed SEGV in the ring-abort test) instead of getting a clean error. Add a comm-context-health gate (has_nccl() query via the nccl_recovery seam) that throws before touching a dead comm, so the self-healing re-initialize() path is the documented recovery."
+    },
+    "CHG-041": {
+      "id": "CHG-041",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T11:21:57+00:00",
+      "updated_at": "2026-09-05T11:21:57+00:00",
+      "touched_round": 33,
+      "commit": "aa890ea",
+      "title": "Fail fast on a broken owning NcclContext before touching a dead comm",
+      "description": "comm_context_healthy() seam query + detail::check_comm_healthy() gates in gather_kv/scatter_output/all_reduce_sequence/ring_attention throw when the wired owner has_nccl() false instead of handing the freed comm to NCCL. Multigpu 10/10 live; full suite 1486 pass / 0 fail."
     }
   },
   "edges": [
@@ -4580,6 +4604,12 @@
       "to": "ISS-010",
       "type": "resolves",
       "created_at": "2026-09-05T10:15:11+00:00"
+    },
+    {
+      "from": "CHG-041",
+      "to": "TASK-074",
+      "type": "implements",
+      "created_at": "2026-09-05T11:21:57+00:00"
     }
   ]
 }
