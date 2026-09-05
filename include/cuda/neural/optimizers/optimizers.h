@@ -38,7 +38,6 @@ public:
     float get_weight_decay() const { return config_.weight_decay; }
 
     void zero_momentum();
-    void zero_grad();
 
     /**
      * @brief Moment-state export/import for checkpointing (v2.32, TASK-056)
@@ -97,7 +96,6 @@ public:
     float get_learning_rate() const { return config_.learning_rate; }
 
     void zero_momentum();
-    void zero_grad();
 
 private:
     LAMBConfig config_;

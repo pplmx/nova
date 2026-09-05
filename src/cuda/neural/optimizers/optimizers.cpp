@@ -40,6 +40,17 @@ void AdamWOptimizer::step(
         v_data_->fill(0.0f);
         initialized_ = true;
     }
+    // Grow guard (RIL TASK-079, ISS-017): previous rounds only allocated on the
+    // first step, so a later LARGER num_elements fed adamw_step_device a smaller
+    // m/v pair — an out-of-bounds device read/write (silent corruption or SEGV)
+    // plus uninitialized moment state for the grown region. Mirror LAMB's
+    // reallocate-and-zero-fill so a grown parameter buffer resumes cold.
+    if (m_data_->size() < num_elements) {
+        m_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        v_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
+        m_data_->fill(0.0f);
+        v_data_->fill(0.0f);
+    }
 
     float lr = config_.learning_rate;
     float beta1 = config_.beta1;
@@ -72,8 +83,6 @@ void AdamWOptimizer::zero_momentum() {
         v_data_->fill(0.0f);
     }
 }
-
-void AdamWOptimizer::zero_grad() {}
 
 size_t AdamWOptimizer::momentum_capacity() const {
     return m_data_ ? m_data_->size() : 0;
@@ -177,8 +186,6 @@ void LAMBOptimizer::zero_momentum() {
         v_data_->fill(0.0f);
     }
 }
-
-void LAMBOptimizer::zero_grad() {}
 
 float clip_gradients(
     float* grads,

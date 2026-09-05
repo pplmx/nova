@@ -43,10 +43,69 @@ TEST_F(OptimizersTest, AdamWOptimizerSetters) {
     EXPECT_EQ(optimizer.get_weight_decay(), 0.001f);
 }
 
-TEST_F(OptimizersTest, AdamWOptimizerZeroMomentum) {
+TEST_F(OptimizersTest, AdamWZeroMomentumZerosMoments) {
+    // The old test was construct-only (called zero_momentum on a fresh, never-
+    // stepped optimizer and asserted nothing). Drive one real step first so the
+    // moments are non-zero, then zero_momentum must zero both m and v.
+    const size_t n = 64;
+    std::vector<float> w(n, 1.0f), g(n, 0.01f);
     OptimizerConfig config;
     AdamWOptimizer optimizer(config);
+    cuda::memory::Buffer<float> d_w(n), d_g(n);
+    d_w.copy_from(w.data(), n);
+    d_g.copy_from(g.data(), n);
+    optimizer.step(d_w.data(), d_g.data(), n, 1);
+    ASSERT_GT(optimizer.momentum_capacity(), 0u);
+
     optimizer.zero_momentum();
+
+    std::vector<float> m(n, -1.0f), v(n, -1.0f);
+    optimizer.copy_moments_to(m.data(), v.data(), n);
+    for (size_t i = 0; i < n; ++i) {
+        EXPECT_EQ(m[i], 0.0f) << "m must be zeroed at " << i;
+        EXPECT_EQ(v[i], 0.0f) << "v must be zeroed at " << i;
+    }
+}
+
+TEST_F(OptimizersTest, AdamWStepGrowsMomentCapacityZeroed) {
+    // Regression (RIL TASK-079, ISS-017): AdamW only allocated m/v on the FIRST
+    // step, so a later LARGER num_elements ran the fused kernel over the stale
+    // smaller buffers — an out-of-bounds device read/write — and the grown
+    // region resumed from uninitialized memory. The moment pair must now grow
+    // with num_elements and the grown region must start cold (zero), so the
+    // post-grow update equals the host single-step formula from zero moments.
+    OptimizerConfig cfg;
+    cfg.learning_rate = 0.01f;
+    AdamWOptimizer opt(cfg);
+
+    const size_t n1 = 32, n2 = 256;
+    std::vector<float> w2(n2, 1.0f), g2(n2, 0.01f);
+    cuda::memory::Buffer<float> d_w2(n2), d_g2(n2);
+    d_w2.copy_from(w2.data(), n2);
+    d_g2.copy_from(g2.data(), n2);
+
+    // Prime at the small size first.
+    cuda::memory::Buffer<float> d_w1(n1), d_g1(n1);
+    std::vector<float> w1(n1, 1.0f), g1(n1, 0.01f);
+    d_w1.copy_from(w1.data(), n1);
+    d_g1.copy_from(g1.data(), n1);
+    opt.step(d_w1.data(), d_g1.data(), n1, 1);
+    EXPECT_EQ(opt.momentum_capacity(), n1);
+
+    // Grow: must not OOB, capacity must track the new size, and the moments
+    // across the WHOLE grown range must equal the zero-cold-start formula
+    // (grow semantics match LAMB — resize discards history, resumes cold):
+    // m = (1-b1)*g = 1e-3, v = (1-b2)*g^2 = 1e-7 (g == 0.01).
+    EXPECT_NO_THROW(opt.step(d_w2.data(), d_g2.data(), n2, 2));
+    EXPECT_EQ(opt.momentum_capacity(), n2);
+
+    std::vector<float> m(n2, -1.0f), v(n2, -1.0f);
+    opt.copy_moments_to(m.data(), v.data(), n2);
+    for (size_t i = 0; i < n2; ++i) {
+        EXPECT_NEAR(m[i], 1e-3f, 1e-5f) << "m cold start (whole range) at " << i;
+        EXPECT_NEAR(v[i], 1e-7f, 1e-9f) << "v cold start (whole range) at " << i;
+    }
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 TEST_F(OptimizersTest, LAMBOptimizerConstruction) {
@@ -66,12 +125,6 @@ TEST_F(OptimizersTest, LAMBOptimizerSetters) {
 
     optimizer.set_learning_rate(0.005f);
     EXPECT_EQ(optimizer.get_learning_rate(), 0.005f);
-}
-
-TEST_F(OptimizersTest, LAMBOptimizerZeroMomentum) {
-    LAMBConfig config;
-    LAMBOptimizer optimizer(config);
-    optimizer.zero_momentum();
 }
 
 TEST_F(OptimizersTest, LAMBConfigDefaults) {
@@ -196,6 +249,45 @@ void host_lamb(const float* w, const float* g, float* w_out,
 }
 
 }  // namespace
+
+TEST_F(OptimizersTest, LAMBZeroMomentumResetsMoments) {
+    // LAMB has no moment read-back (AdamW does), so prove zero_momentum works
+    // by observable behavior: prime moments with step 1, zero them, then step 2
+    // must evolve exactly like a re-start from zero moments at step index 2
+    // (the host_lamb oracle). If zero_momentum were a no-op, the step-1 history
+    // would leak into the update and the params would drift.
+    const size_t n = 64;
+    std::mt19937 rng(20260825);
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    std::vector<float> w(n), g(n);
+    for (size_t i = 0; i < n; ++i) { w[i] = dist(rng); g[i] = dist(rng); }
+
+    LAMBConfig cfg;
+    LAMBOptimizer opt(cfg);
+    cuda::memory::Buffer<float> d_w(n), d_g(n);
+    d_w.copy_from(w.data(), n);
+    d_g.copy_from(g.data(), n);
+
+    opt.step(d_w.data(), d_g.data(), n, 1);  // prime non-zero moments
+
+    std::vector<float> w1(n);
+    d_w.copy_to(w1.data(), n);
+    std::vector<float> mh(n, 0.0f), vh(n, 0.0f), w_ref(n);
+    host_lamb(w1.data(), g.data(), w_ref.data(), mh, vh, n, 2,
+              cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon,
+              cfg.weight_decay, /*rtw=*/1.0f, cfg.clamp_value,
+              cfg.use_layer_adaptation);
+
+    opt.zero_momentum();
+    opt.step(d_w.data(), d_g.data(), n, 2);
+
+    std::vector<float> w_after(n);
+    d_w.copy_to(w_after.data(), n);
+    for (size_t i = 0; i < n; ++i) {
+        EXPECT_NEAR(w_ref[i], w_after[i], 1e-4f)
+            << "zero_momentum restart drift at " << i;
+    }
+}
 
 // The device AdamW kernel must leave params equal to the host formula over K
 // steps (same config, same moments, monotonic same sequence).
