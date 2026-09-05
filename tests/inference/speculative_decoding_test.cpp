@@ -398,6 +398,43 @@ TEST_F(SpeculativeDecodingTest, DraftTokensGenerationCount) {
     (void)draft_tokens;
 }
 
+TEST_F(SpeculativeDecodingTest, DecodeRunsReplayAndVerifiesPerPosition) {
+    // Full decode() path: the draft pass is replayed on the verify sequence
+    // with one draft + one target forward per position (not 2k-1 appends), and
+    // each drafted token is scored against its own position's logits. The
+    // no-op forward leaves logits garbage, so no acceptance is guaranteed —
+    // the test guards the accounting/lifecycle (no throw, no over-append,
+    // bounded output, tracker consistent).
+    SpeculativeDecodingConfig config;
+    config.draft_depth = 4;
+    config.vocab_size = 256;
+    config.temperature = 0.0f;
+    spec_runner->configure(config);
+
+    auto* seq = block_manager->create_sequence(777, 256);
+    (void)seq;
+
+    memory::Buffer<float> embeddings(512);
+    stream::Stream stream;
+
+    auto forward_fn = [config](memory::Buffer<float>& logits,
+                               const std::vector<int64_t>&,
+                               bool,
+                               const stream::Stream&) {
+        std::vector<float> h(static_cast<size_t>(config.vocab_size));
+        logits.copy_from(h.data(), static_cast<size_t>(config.vocab_size));
+    };
+
+    std::vector<int> out;
+    EXPECT_NO_THROW(out = spec_runner->decode(embeddings, 32, stream, forward_fn));
+    EXPECT_LE(out.size(), static_cast<size_t>(config.draft_depth));
+
+    const auto& tracker = spec_runner->get_logprob_tracker();
+    EXPECT_EQ(tracker.get_history().size(), static_cast<size_t>(config.draft_depth));
+    EXPECT_EQ(tracker.num_accepted() + tracker.num_rejected(),
+              static_cast<size_t>(config.draft_depth));
+}
+
 TEST_F(SpeculativeDecodingTest, TemperatureZeroSampling) {
     SpeculativeDecodingConfig config;
     config.draft_depth = 1;

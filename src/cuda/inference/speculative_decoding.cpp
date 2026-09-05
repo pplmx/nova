@@ -92,6 +92,21 @@ int sample_from_logits(
     return sorted[0].first;
 }
 
+// Host-side probability of `token_id` under the softmax of a single
+// next-token logits row (`n` entries, max-shifted for stability). Used by both
+// verify_draft_tokens() (one shared row) and decode() (per-position rows).
+float softmax_prob(const float* logits, int n, int token_id) {
+    float max_logit = logits[0];
+    for (int i = 1; i < n; ++i) {
+        max_logit = std::max(max_logit, logits[i]);
+    }
+    float sum = 0.0f;
+    for (int i = 0; i < n; ++i) {
+        sum += std::exp(logits[i] - max_logit);
+    }
+    return std::exp(logits[token_id] - max_logit) / sum;
+}
+
 }  // anonymous namespace
 
 void LogProbTracker::record(
@@ -256,34 +271,19 @@ VerificationResult SpeculativeDecodingRunner::verify_draft_tokens(
         return result;
     }
 
-    float max_draft = draft_data[0];
-    float max_target = target_data[0];
-    for (size_t i = 1; i < n; ++i) {
-        max_draft = std::max(max_draft, draft_data[i]);
-        max_target = std::max(max_target, target_data[i]);
-    }
-
-    float draft_sum = 0.0f;
-    float target_sum = 0.0f;
-    std::vector<float> draft_exp(n);
-    std::vector<float> target_exp(n);
-    for (size_t i = 0; i < n; ++i) {
-        draft_exp[i] = std::exp(draft_data[i] - max_draft);
-        target_exp[i] = std::exp(target_data[i] - max_target);
-        draft_sum += draft_exp[i];
-        target_sum += target_exp[i];
-    }
-
+    // Both drafts share this single logits pair (the caller supplies one row
+    // per model), so each token is scored against the same probabilities —
+    // this is the single-position contract of verify_draft_tokens().
+    constexpr float epsilon = 1e-8f;
     for (size_t i = 0; i < draft_tokens.size(); ++i) {
         int token_id = draft_tokens[i];
         if (token_id < 0 || static_cast<size_t>(token_id) >= n) {
             continue;
         }
 
-        float draft_prob = draft_exp[token_id] / draft_sum;
-        float target_prob = target_exp[token_id] / target_sum;
+        const float draft_prob = softmax_prob(draft_data, static_cast<int>(n), token_id);
+        const float target_prob = softmax_prob(target_data, static_cast<int>(n), token_id);
 
-        constexpr float epsilon = 1e-8f;
         float acceptance;
         if (draft_prob > epsilon) {
             acceptance = std::fmin(1.0f, target_prob / draft_prob);
@@ -361,41 +361,71 @@ std::vector<int> SpeculativeDecodingRunner::decode(
 
     snapshot_kv_state();
 
+    const int k = static_cast<int>(draft_tokens_.size());
     const int vocab_size = config_.vocab_size > 0 ? config_.vocab_size : 32000;
-    memory::Buffer<float> draft_logits(vocab_size);
-    memory::Buffer<float> target_logits(vocab_size);
 
-    auto* verify_seq = block_manager_->create_sequence(0, prompt_length + config_.max_draft_depth);
-    int64_t verify_seq_id = verify_seq->id;
-
-    for (int i = 0; i < static_cast<int>(draft_tokens_.size()); ++i) {
-        if (i < static_cast<int>(draft_tokens_.size()) - 1) {
-            block_manager_->append_tokens(verify_seq_id, 1);
-        }
+    // No drafted tokens: nothing to verify. Commit (nothing changed) and
+    // return empty rather than forwarding on an empty verify sequence.
+    if (k == 0) {
+        commit_kv_state();
+        return {};
     }
 
+    // Replay the draft pass on a fresh verify sequence and collect per-position
+    // logits. At step j the sequence holds prompt + t_1..t_{j-1}, so both
+    // models predict t_j there (the bool selects draft vs target on a
+    // dual-model backend — same contract generate_draft_tokens() uses). The
+    // old code appended (k-1) then k tokens (2k-1 total), which both polluted
+    // the verify prefix and could exceed max_tokens when max_draft_depth < 2k-1.
+    auto* verify_seq = block_manager_->create_sequence(0, prompt_length + k);
+    const int64_t verify_seq_id = verify_seq->id;
     std::vector<int64_t> seq_ids = {verify_seq_id};
-    forward_fn(draft_logits, seq_ids, false, stream);
 
-    block_manager_->append_tokens(verify_seq_id, static_cast<int>(draft_tokens_.size()));
-    forward_fn(target_logits, seq_ids, false, stream);
+    memory::Buffer<float> draft_logits(vocab_size);
+    memory::Buffer<float> target_logits(vocab_size);
+    std::vector<std::vector<float>> h_draft(static_cast<size_t>(k));
+    std::vector<std::vector<float>> h_target(static_cast<size_t>(k));
+    for (int j = 0; j < k; ++j) {
+        forward_fn(draft_logits, seq_ids, true, stream);
+        forward_fn(target_logits, seq_ids, false, stream);
+        h_draft[static_cast<size_t>(j)].resize(vocab_size);
+        h_target[static_cast<size_t>(j)].resize(vocab_size);
+        draft_logits.copy_to(h_draft[static_cast<size_t>(j)].data(), vocab_size);
+        target_logits.copy_to(h_target[static_cast<size_t>(j)].data(), vocab_size);
+        block_manager_->append_tokens(verify_seq_id, 1);
+    }
 
-    auto result = verify_draft_tokens(draft_tokens_, draft_logits, target_logits, stream);
+    // Verify each draft token against the logits of its own position.
+    std::vector<int> output_tokens;
+    int num_accepted = 0;
+    constexpr float epsilon = 1e-8f;
+    for (int j = 0; j < k; ++j) {
+        const int token_id = draft_tokens_[static_cast<size_t>(j)];
+        const float draft_prob = softmax_prob(h_draft[static_cast<size_t>(j)].data(), vocab_size, token_id);
+        const float target_prob = softmax_prob(h_target[static_cast<size_t>(j)].data(), vocab_size, token_id);
 
-    if (result.num_accepted < result.tokens.size()) {
+        float acceptance;
+        if (draft_prob > epsilon) {
+            acceptance = std::fmin(1.0f, target_prob / draft_prob);
+        } else {
+            acceptance = 0.0f;
+        }
+
+        const bool accepted = acceptance >= config_.acceptance_threshold;
+        if (accepted) {
+            num_accepted++;
+            output_tokens.push_back(token_id);
+        }
+        logprob_tracker_.record(token_id, std::log(target_prob + epsilon), std::log(draft_prob + epsilon), accepted);
+    }
+
+    if (num_accepted < k) {
         rollback_kv_state();
     } else {
         commit_kv_state();
     }
 
     block_manager_->free_sequence(verify_seq_id);
-
-    std::vector<int> output_tokens;
-    for (const auto& token : result.tokens) {
-        if (token.accepted) {
-            output_tokens.push_back(token.token_id);
-        }
-    }
 
     return output_tokens;
 }
