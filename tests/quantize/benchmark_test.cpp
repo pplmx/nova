@@ -1,5 +1,7 @@
 #include <cuda/quantize/benchmark.hpp>
 
+#include "cuda/device/error.h"
+
 #include <gtest/gtest.h>
 #include <vector>
 #include <cmath>
@@ -165,9 +167,17 @@ TEST_F(QuantizationBenchmarkConfigTest, GenerateRandomDataScale) {
     }
 }
 
-TEST_F(QuantizationBenchmarkConfigTest, SetStream) {
+TEST_F(QuantizationBenchmarkConfigTest, SetStreamRoundtrips) {
+    // The old test called set_stream(0) and asserted nothing (construct-only).
+    // set_stream must actually store the caller's stream.
     QuantizationBenchmark bench;
-    bench.set_stream(0);
+    EXPECT_EQ(bench.get_stream(), (cudaStream_t)nullptr);
+
+    cudaStream_t s = nullptr;
+    CUDA_CHECK(cudaStreamCreate(&s));
+    bench.set_stream(s);
+    EXPECT_EQ(bench.get_stream(), s);
+    CUDA_CHECK(cudaStreamDestroy(s));
 }
 
 class QuantizationBenchmarkIntegrationTest : public ::testing::Test {

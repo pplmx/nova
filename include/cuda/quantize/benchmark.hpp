@@ -78,6 +78,7 @@ public:
         : config_(), stream_(0) {}
 
     void set_stream(cudaStream_t stream) { stream_ = stream; }
+    cudaStream_t get_stream() const { return stream_; }
 
     BenchmarkResult benchmark_fp8_quantization(
         const std::vector<float>& data, Precision precision = Precision::FP8_E4M3);

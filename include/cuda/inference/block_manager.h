@@ -94,6 +94,9 @@ private:
     BlockManagerConfig config_;
     std::unordered_map<int64_t, std::unique_ptr<Sequence>> sequences_;
     std::unordered_map<int64_t, int> sequence_to_index_;
+    // Block-table slots freed by free_sequence, reused by the next
+    // create_sequence (RIL TASK-079, ISS-019).
+    std::vector<int> free_indices_;
     mutable std::shared_mutex sequence_mutex_;
 
     std::unique_ptr<memory::KVCacheAllocator> kv_cache_;

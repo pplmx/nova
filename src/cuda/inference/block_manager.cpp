@@ -53,12 +53,28 @@ Sequence* BlockManager::create_sequence(int64_t sequence_id, int max_tokens) {
                            config_.block_size;
     seq->block_table.resize(num_blocks, -1);
 
+    // Allocate the KV blocks BEFORE committing the sequence to the maps: on a
+    // throw, roll back the partial KV registration so no index slot is burned
+    // and no sequence id is left half-created in sequences_ (review note).
+    try {
+        allocate_blocks_for_sequence(seq.get(), num_blocks);
+    } catch (...) {
+        kv_cache_->free(sequence_id);
+        throw;
+    }
+
     Sequence* seq_ptr = seq.get();
     sequences_[sequence_id] = std::move(seq);
-    sequence_to_index_[sequence_id] = num_allocated_sequences_;
-    num_allocated_sequences_++;
-
-    allocate_blocks_for_sequence(seq_ptr, num_blocks);
+    // Reuse freed block-table slots before handing out a fresh index (RIL
+    // TASK-079, ISS-019): the old ever-increasing counter exhausted the
+    // num_cpu_blocks-sized GPU table after that many cumulative create_sequence
+    // calls, after which every forward_batch threw out_of_range.
+    if (!free_indices_.empty()) {
+        sequence_to_index_[sequence_id] = free_indices_.back();
+        free_indices_.pop_back();
+    } else {
+        sequence_to_index_[sequence_id] = num_allocated_sequences_++;
+    }
 
     return seq_ptr;
 }
@@ -119,10 +135,17 @@ void BlockManager::free_sequence(int64_t sequence_id) {
         return;
     }
 
+    // Return the slot to the reuse pool. NOTE: num_allocated_sequences_ is the
+    // monotonic "next fresh index" cursor and must NOT be decremented here —
+    // decrementing it would re-hand out an index that is still in the free
+    // pool, double-booking the same block-table row.
+    auto idx_it = sequence_to_index_.find(sequence_id);
+    if (idx_it != sequence_to_index_.end()) {
+        free_indices_.push_back(idx_it->second);
+    }
     kv_cache_->free(sequence_id);
     sequence_to_index_.erase(sequence_id);
     sequences_.erase(it);
-    num_allocated_sequences_--;
 }
 
 void BlockManager::forward_batch(

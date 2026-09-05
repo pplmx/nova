@@ -215,6 +215,40 @@ TEST_F(BlockManagerEdgeTest, ForwardBatchWithMultipleSequences) {
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
 }
 
+TEST_F(BlockManagerEdgeTest, SequenceIndexSpaceReusedAcrossCreateFreeChurn) {
+    // Regression (RIL TASK-079, ISS-019): sequence → GPU block-table-slot
+    // indices were handed out with an ever-increasing counter that never reused
+    // freed slots, so after num_cpu_blocks cumulative create_sequence calls
+    // (128 in this fixture) the next sequence landed past the table and EVERY
+    // forward_batch threw out_of_range forever — a hard failure after any
+    // process that churns many short-lived sequences. Freed slots must recycle.
+    auto manager = std::make_unique<BlockManager>(config_);
+
+    const int per_batch = 8;
+    const int batches = 20;  // 160 cumulative creates > num_cpu_blocks (128)
+    int64_t next_id = 1;
+    for (int b = 0; b < batches; ++b) {
+        for (int i = 0; i < per_batch; ++i, ++next_id) {
+            auto* seq = manager->create_sequence(next_id, 32);
+            ASSERT_NE(seq, nullptr);
+            manager->append_tokens(next_id, 16);
+        }
+        for (int i = 0; i < per_batch; ++i) {
+            manager->free_sequence(next_id - per_batch + i);
+        }
+    }
+
+    // The post-churn sequence's slot must land on a reused (or fresh-within-
+    // capacity) row, so a real forward must not trip the index guard.
+    const int64_t final_id = ++next_id;
+    manager->create_sequence(final_id, 64);
+    memory::Buffer<float> query(64 * 4 * 64);
+    memory::Buffer<float> output(64 * 4 * 64);
+    std::vector<int64_t> batch = {final_id};
+    EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+}
+
 TEST_F(BlockManagerEdgeTest, ForwardBatchWithMissingSequence) {
     auto manager = std::make_unique<BlockManager>(config_);
 
