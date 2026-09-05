@@ -14,6 +14,7 @@
 #if defined(NOVA_NCCL_ENABLED)
 #include <nccl.h>
 #include "cuda/device/error.h"
+#include "cuda/nccl/nccl_recovery.h"
 #endif
 
 namespace cuda::distributed {
@@ -40,6 +41,13 @@ struct SequenceParallelConfig {
     int rank = 0;
     int world_size = 1;
     void* comm = nullptr;
+    /** Opaque pointer to the owning NcclContext (a cuda::nccl::NcclContext*),
+     *  or null. When the caller also passes a live `comm`, set this so a failed
+     *  collective aborts the communicator and flips the context's has_nccl()
+     *  false — the self-healing initialize() path can then re-establish NCCL
+     *  instead of letting every later NCCL user silently reuse a dead comm.
+     *  May stay null when `comm` is null (single-GPU fallback). */
+    void* nccl_context = nullptr;
     /** Feature dim of the Q/K/V rows. Required by the multi-GPU ring attention
      *  (RingSequenceParallelism) to compute the per-token dot products; the
      *  all-gather / scatter ops do not need it. */
@@ -193,6 +201,62 @@ ncclResult_t nccl_all_reduce(
     return ncclAllReduce(sendbuf, recvbuf, count, datatype, op, comm, stream);
 }
 
+// Surface a raw NCCL collective failure. `poison` distinguishes the two cases
+// under the same policy as the comm-error layer (safe_nccl_call):
+//   - poison == false: a synchronous caller error (e.g. a deliberate
+//     invalid-argument call) — thrown WITHOUT poisoning, because a negative
+//     test must not flip has_nccl() false for every later NCCL user in the
+//     process.
+//   - poison == true: the communicator itself is broken (async/comm-level
+//     error) — abort + poison the owning context so has_nccl() goes false and
+//     the self-healing initialize() path can recover instead of a silent hang
+//     on the dead comm.
+// ncclGetErrorString is only called on a real failure; `code` is a valid NCCL
+// error code here.
+[[noreturn]] inline void collect_failed(
+    const char* where, const char* op, ncclResult_t code,
+    void* comm, void* nccl_context, bool poison) {
+    if (poison) {
+        cuda::nccl::poison_failed_comm(comm, nccl_context);
+    }
+    throw std::runtime_error(
+        std::string(where) + ": NCCL " + op + " failed (" +
+        std::to_string(static_cast<int>(code)) + ": " +
+        ncclGetErrorString(code) + ")");
+}
+
+// Run one raw NCCL collective (fn must return ncclResult_t) with comm-error
+// layer-compatible handling. Never returns on failure: an immediate non-success
+// is a caller error (thrown, not poisoned); an error detected AFTER a
+// successful enqueue — the single-shot ncclCommGetAsyncError poll below — is a
+// broken communicator and is poisoned (see collect_failed).
+template <typename Fn>
+inline void checked_collective(
+    const char* where, const char* op, Fn&& fn,
+    void* comm, void* nccl_context) {
+    const ncclResult_t rc = fn();
+    if (rc != ncclSuccess) {
+        collect_failed(where, op, rc, comm, nccl_context, /*poison=*/false);
+    }
+    // Enqueue succeeded; one-shot async poll for a comm-level failure (e.g. a
+    // peer rank's transport died mid-collective). A broken comm that has
+    // ALREADY reported an error must be noticed here, not left for the
+    // caller's cudaStreamSynchronize. ncclInProgress means the op is still in
+    // flight with no error yet — proceed (the same "keep waiting, not a
+    // failure" reading safe_nccl_call's poll loop uses; a single-shot poll
+    // cannot hold for a hang, the caller's eventual stream sync is that
+    // backstop). Only a reported non-in-progress error is a broken comm.
+    ncclResult_t async_err = ncclSuccess;
+    if (ncclCommGetAsyncError(static_cast<ncclComm_t>(comm), &async_err) !=
+        ncclSuccess) {
+        collect_failed(where, op, ncclInternalError, comm, nccl_context,
+                       /*poison=*/true);
+    }
+    if (async_err != ncclSuccess && async_err != ncclInProgress) {
+        collect_failed(where, op, async_err, comm, nccl_context, /*poison=*/true);
+    }
+}
+
 }  // namespace detail
 
 #endif
@@ -246,16 +310,29 @@ inline void SequenceParallelAttention::gather_kv(
     }
 
     auto dtype = detail::to_nccl_dtype(float{});
-    detail::nccl_all_gather<float>(
-        local_k.data(), gathered_k.data(), local_count, dtype,
-        static_cast<ncclComm_t>(config_.comm), stream.get()
-    );
+    // Route the raw AllGather through the comm-error policy (checked_collective
+    // / nccl_recovery.h): a broken comm is aborted and poisons has_nccl() so
+    // the self-healing initialize() path recovers, instead of the pre-TASK-018
+    // behavior of silently discarding the ncclResult_t and scanning only the
+    // CUDA error.
+    detail::checked_collective(
+        "SequenceParallelAttention::gather_kv", "AllGather(K)",
+        [&]() {
+            return detail::nccl_all_gather<float>(
+                local_k.data(), gathered_k.data(), local_count, dtype,
+                static_cast<ncclComm_t>(config_.comm), stream.get());
+        },
+        config_.comm, config_.nccl_context);
     CUDA_CHECK(cudaGetLastError());
 
-    detail::nccl_all_gather<float>(
-        local_v.data(), gathered_v.data(), local_count, dtype,
-        static_cast<ncclComm_t>(config_.comm), stream.get()
-    );
+    detail::checked_collective(
+        "SequenceParallelAttention::gather_kv", "AllGather(V)",
+        [&]() {
+            return detail::nccl_all_gather<float>(
+                local_v.data(), gathered_v.data(), local_count, dtype,
+                static_cast<ncclComm_t>(config_.comm), stream.get());
+        },
+        config_.comm, config_.nccl_context);
     CUDA_CHECK(cudaGetLastError());
 #else
     (void)gathered_k;
@@ -301,10 +378,17 @@ inline void SequenceParallelAttention::scatter_output(
 
     if (config_.reduce_scatter_output) {
         auto dtype = detail::to_nccl_dtype(float{});
-        detail::nccl_reduce_scatter<float>(
-            full_output.data(), local_output.data(), local_count, dtype,
-            ncclSum, static_cast<ncclComm_t>(config_.comm), stream.get()
-        );
+        // Comm-error layer routing (see gather_kv for the rationale): a dead
+        // comm is aborted + poisons has_nccl() so self-healing can recover.
+        detail::checked_collective(
+            "SequenceParallelAttention::scatter_output", "ReduceScatter",
+            [&]() {
+                return detail::nccl_reduce_scatter<float>(
+                    full_output.data(), local_output.data(), local_count,
+                    dtype, ncclSum, static_cast<ncclComm_t>(config_.comm),
+                    stream.get());
+            },
+            config_.comm, config_.nccl_context);
         CUDA_CHECK(cudaGetLastError());
     } else {
         const size_t offset = config_.rank * local_count;
@@ -337,10 +421,15 @@ inline void SequenceParallelAttention::all_reduce_sequence(
     }
 
     auto dtype = detail::to_nccl_dtype(float{});
-    detail::nccl_all_reduce<float>(
-        data.data(), data.data(), data.size(), dtype,
-        ncclSum, static_cast<ncclComm_t>(config_.comm), stream.get()
-    );
+    // Comm-error layer routing (see gather_kv for the rationale).
+    detail::checked_collective(
+        "SequenceParallelAttention::all_reduce_sequence", "AllReduce",
+        [&]() {
+            return detail::nccl_all_reduce<float>(
+                data.data(), data.data(), data.size(), dtype,
+                ncclSum, static_cast<ncclComm_t>(config_.comm), stream.get());
+        },
+        config_.comm, config_.nccl_context);
     CUDA_CHECK(cudaGetLastError());
 #else
     (void)data;
@@ -391,20 +480,35 @@ inline void RingSequenceParallelism::send_recv_kv(
         send_v.data(), count, dtype, next_rank_, comm, stream.get());
     const ncclResult_t r4 = ncclRecv(
         recv_v.data(), count, dtype, prev_rank_, comm, stream.get());
+    // The group end is where an actual transport failure surfaces: per-op calls
+    // inside a group only validate arguments and enqueue; the rendezvous errors
+    // (dead peer / broken comm) are reported by ncclGroupEnd.
     const ncclResult_t group = ncclGroupEnd();
     if (r != ncclSuccess || r2 != ncclSuccess || r3 != ncclSuccess ||
-        r4 != ncclSuccess || group != ncclSuccess) {
-        // Preserve the per-op ncclResult_t so a ring KV failure is diagnosable
-        // (which op + GPU it broke on). Full comm-poisoning recovery
-        // (mark_comm_aborted) needs an NcclContext reference the config does
-        // not carry — tracked as a library-level follow-up.
+        r4 != ncclSuccess) {
+        // Immediately-rejected op = caller error (bad peer / count / dtype) —
+        // preserve the per-op ncclResult_t for diagnosis, but do NOT poison:
+        // a deliberate invalid-argument call must not break every later NCCL
+        // user (same policy as safe_nccl_call's synchronous-error branch).
         throw std::runtime_error(
-            "RingSequenceParallelism::send_recv_kv: NCCL send/recv failed "
+            "RingSequenceParallelism::send_recv_kv: NCCL send/recv rejected "
             "(ring KV exchange; send-K=" + std::to_string(r) +
             " recv-K=" + std::to_string(r2) +
             " send-V=" + std::to_string(r3) +
             " recv-V=" + std::to_string(r4) +
             " group=" + std::to_string(group) + ")");
+    }
+    if (group != ncclSuccess) {
+        // The enqueued ring exchange failed en-route: the communicator is in an
+        // indeterminate state and must never be reused — abort it and notify
+        // the owning context (has_nccl() -> false) so later collectives fail
+        // fast and the self-healing initialize() path can recover, instead of
+        // the pre-TASK-018 behavior of throwing while leaving a poisoned comm
+        // silently live for every subsequent user.
+        cuda::nccl::poison_failed_comm(config_.comm, config_.nccl_context);
+        throw std::runtime_error(
+            "RingSequenceParallelism::send_recv_kv: NCCL ring KV group failed "
+            "(comm aborted; group=" + std::to_string(group) + ")");
     }
     CUDA_CHECK(cudaGetLastError());
 #else

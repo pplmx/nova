@@ -25,6 +25,7 @@
 #include "cuda/distributed/sequence_parallel.h"
 #include "cuda/mesh/device_mesh.h"
 #include "cuda/nccl/nccl_context.h"
+#include "cuda/nccl/nccl_recovery.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 #include "cuda/stream/stream.h"
@@ -130,6 +131,9 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AllReduceSequence) {
             .rank = d,
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
+            // Wire the owning context so a broken comm poisons has_nccl() and
+            // the self-healing initialize() path can recover (TASK-018).
+            .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
         cuda::stream::Stream stream;
@@ -193,6 +197,9 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_GatherKV) {
             .rank = d,
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
+            // Wire the owning context so a broken comm poisons has_nccl() and
+            // the self-healing initialize() path can recover (TASK-018).
+            .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
         cuda::stream::Stream stream;
@@ -247,6 +254,9 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterReduceScatter) {
             .rank = d,
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
+            // Wire the owning context so a broken comm poisons has_nccl() and
+            // the self-healing initialize() path can recover (TASK-018).
+            .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
         cuda::stream::Stream stream;
@@ -466,6 +476,9 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
             .rank = d,
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
+            // Wire the owning context so a broken comm poisons has_nccl() and
+            // the self-healing initialize() path can recover (TASK-018).
+            .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
         cuda::stream::Stream stream;
@@ -481,4 +494,153 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
             << "slice-copy scatter output on rank " << rank
             << " is not full_output[rank's block]";
     }
+}
+
+// ============================================================================
+// v2.23 comm-error routing for the sequence-parallel layer (TASK-018). The
+// raw NCCL collectives (gather_kv AllGather, scatter_output ReduceScatter,
+// all_reduce_sequence AllReduce, ring send_recv_kv P2P group) used to discard
+// the ncclResult_t and never inform the owning NcclContext, so a broken comm
+// was silently reused (hang / garbage risk). They now route failures through
+// the comm-error seam (nccl_recovery.h / poison_failed_comm): a dead comm is
+// aborted and flips has_nccl() false so the self-healing initialize() path
+// recovers, mirroring safe_nccl_call's caller-error vs broken-comm policy.
+// ============================================================================
+
+// The deterministic core of TASK-018, independent of NCCL's failure-mode
+// behavior: the seam the collectives call on a broken comm must abort the comm
+// and poison the owning context (has_nccl() -> false), and heal_and_ready must
+// restore a clean context afterward.
+TEST_F(SequenceParallelMultiGpuTest, MultiGpu_CommPoisonSeam_FlipsHasNccl_AndHeals) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU sequence-parallel test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU sequence-parallel requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    // What a broken collective does to its comm, per rank: abort + flag dead on
+    // the owning context via the seam (nccl_recovery.h).
+    run_per_rank(device_count, [&](int d) {
+        (void)d;
+        cuda::nccl::poison_failed_comm(ctx.current_comm(), &ctx);
+    });
+
+    // The context is broken: has_nccl() false so later collectives fail fast
+    // instead of silently reusing the dead comms and hanging.
+    EXPECT_FALSE(ctx.has_nccl());
+    EXPECT_TRUE(ctx.broken());
+
+    // Self-healing recovery restores a clean context.
+    EXPECT_TRUE(cuda::distributed::test::heal_and_ready(ctx))
+        << "self-healing initialize() must recover after comm poisoning (TASK-018)";
+    EXPECT_TRUE(ctx.has_nccl());
+    EXPECT_FALSE(ctx.broken());
+}
+
+// The comm-error routing shared by the SequenceParallelAttention raw
+// collectives (gather_kv / scatter_output / all_reduce_sequence all run through
+// detail::checked_collective) must surface an NCCL error as an exception — the
+// pre-TASK-018 code discarded the ncclResult_t and only scanned
+// cudaGetLastError, so a reported failure silently looked like success. This is
+// host-only (no communicator is touched on the immediate-error path): a launch
+// that returns an error must throw, never return.
+TEST_F(SequenceParallelMultiGpuTest, CollectiveError_IsSurfacedNotDiscarded) {
+#if !defined(NOVA_NCCL_ENABLED)
+    GTEST_SKIP() << "checked_collective is compiled only in an NCCL build";
+#else
+    // An immediate non-success is a caller error: thrown (never silently
+    // swallowed), and deliberately NOT poisoning a null context handle.
+    EXPECT_THROW(
+        detail::checked_collective(
+            "test", "TestLaunch",
+            []() -> ncclResult_t { return ncclUnhandledCudaError; },
+            nullptr, nullptr),
+        std::runtime_error)
+        << "a raw NCCL collective reporting an error must surface as an "
+           "exception, not return as if it succeeded";
+#endif
+}
+
+// The ring P2P KV exchange (send_recv_kv) must surface a dead communicator as
+// an exception on every rank — the pre-TASK-018 path only threw, leaving the
+// broken comm silently live for every later user; now the failure also routes
+// through the seam (nccl_recovery.h). The context is broken the way the error
+// layer leaves it — comms aborted + marked via the seam (a single ncclCommAbort
+// per comm: ncclCommAbort on an already-aborted comm is UB, so the test never
+// aborts a comm it does not also route through the seam) — and ring_attention
+// must fail fast rather than hang or emit garbage on the dead comm.
+TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AbortedComm_RingThrows_AndRecovers) {
+    const int device_count = DeviceMesh::instance().device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "Need at least 2 GPUs for multi-GPU sequence-parallel test";
+    }
+    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+    if (nccl_env == nullptr) {
+        GTEST_SKIP() << "Multi-GPU sequence-parallel requires NCCL (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    if (!multigpu_nccl_ready()) {
+        GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
+    }
+    auto& ctx = cuda::nccl::NcclContext::instance();
+
+    const int sp = device_count;
+    const int hidden = 4;
+    const int local_seq = 4;
+    const size_t elems = static_cast<size_t>(local_seq) * static_cast<size_t>(hidden);
+    std::vector<float> h(elems, 0.5f);
+    std::vector<bool> threw(sp, false);
+
+    // Break every rank's comm via the seam: one ncclCommAbort per comm (raw
+    // ncclCommAbort must not be repeated — aborting an already-aborted comm is
+    // UB, and the seam's mark_comm_aborted nulls the slot so destroy() skips it
+    // and heal_and_ready can re-establish a clean context).
+    run_per_rank(device_count, [&](int d) {
+        (void)d;
+        cuda::nccl::poison_failed_comm(ctx.current_comm(), &ctx);
+    });
+    ASSERT_FALSE(ctx.has_nccl()) << "precondition: poison_failed_comm must break has_nccl()";
+
+    run_per_rank(device_count, [&](int d) {
+        cuda::memory::Buffer<float> q(elems), k(elems), v(elems), out(elems);
+        q.copy_from(h.data(), elems);
+        k.copy_from(h.data(), elems);
+        v.copy_from(h.data(), elems);
+        SequenceParallelConfig cfg{
+            .num_model_parallel_gpus = sp,
+            .sequence_parallel_size = sp,
+            .reduce_scatter_output = true,
+            .rank = d,
+            .world_size = sp,
+            .comm = static_cast<void*>(ctx.current_comm()),
+            .nccl_context = static_cast<void*>(&ctx),
+            .hidden_dim = hidden,
+        };
+        RingSequenceParallelism ring(cfg);
+        cuda::stream::Stream stream;
+        try {
+            ring.ring_attention(q, k, v, out, stream);
+            CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        } catch (const std::exception&) {
+            threw[d] = true;
+        }
+    });
+
+    for (int d = 0; d < sp; ++d) {
+        EXPECT_TRUE(threw[d])
+            << "rank " << d << " did NOT surface the dead-comm ring KV exchange "
+               "as an exception (silent success on an aborted comm is a "
+               "hang/garbage risk)";
+    }
+
+    EXPECT_TRUE(cuda::distributed::test::heal_and_ready(ctx))
+        << "self-healing must recover after the aborted-comm ring exchange";
+    EXPECT_TRUE(ctx.has_nccl());
+    EXPECT_FALSE(ctx.broken());
 }

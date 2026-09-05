@@ -7,6 +7,7 @@
  */
 
 #include "cuda/nccl/nccl_context.h"
+#include "cuda/nccl/nccl_recovery.h"
 
 #include <algorithm>
 #include <cstring>
@@ -310,6 +311,27 @@ bool NcclContext::mark_comm_aborted(ncclComm_t comm) noexcept {
         broken_.store(true, std::memory_order_release);
     }
     return found;
+}
+
+void poison_failed_comm(void* comm, void* nccl_context) noexcept {
+    if (comm == nullptr) {
+        return;
+    }
+#if NOVA_NCCL_ENABLED
+    // Same ordering as safe_nccl_call's async-error branch: abort the comm
+    // first (the error layer's cleanup — a still-open comm must never be
+    // state-queried or destroyed later), then flag it dead on the owning
+    // context so has_nccl() goes false and the self-healing initialize() path
+    // can re-establish NCCL. The abort must still be attempted even when the
+    // owner handle is null, so keep the fallthrough.
+    ncclCommAbort(static_cast<ncclComm_t>(comm));
+    if (nccl_context != nullptr) {
+        static_cast<NcclContext*>(nccl_context)->mark_comm_aborted(
+            static_cast<ncclComm_t>(comm));
+    }
+#else
+    (void)nccl_context;
+#endif
 }
 
 void NcclContext::destroy() {
