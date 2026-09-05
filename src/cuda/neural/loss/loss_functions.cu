@@ -368,12 +368,19 @@ float focal_loss(
             max_logit = std::max(max_logit, predictions[b * num_classes + c]);
         }
 
+        // Two passes per row: accumulate the FULL softmax denominator first,
+        // then divide. The old code divided by the running partial sum while
+        // still accumulating — probs[class 0] was exp(logit0)/exp(logit0) ==
+        // 1.0 for every row regardless of the data, and only the final class
+        // got the correct denominator (the same bug class cross_entropy_loss
+        // was already fixed for, TASK-077).
         float sum_exp = 0.0f;
         for (int c = 0; c < num_classes; ++c) {
-            float logit = predictions[b * num_classes + c] - max_logit;
-            float exp_logit = expf(logit);
-            sum_exp += exp_logit;
-            probs[b * num_classes + c] = exp_logit / sum_exp;
+            sum_exp += expf(predictions[b * num_classes + c] - max_logit);
+        }
+        for (int c = 0; c < num_classes; ++c) {
+            probs[b * num_classes + c] =
+                expf(predictions[b * num_classes + c] - max_logit) / sum_exp;
         }
     }
 

@@ -83,6 +83,62 @@ TEST_F(LossFunctionsTest, FocalLoss) {
     EXPECT_GT(loss, 0.0f);
 }
 
+// Regression for the focal_loss softmax denominator bug (TASK-077, the same
+// class cross_entropy_loss was already fixed for): the old code divided by the
+// running partial sum, so probs[class0] was always 1.0 and only the last class
+// saw the correct denominator. Non-uniform logits + host fp64 reference of the
+// two-pass softmax must match element-for-element — RED against the broken
+// implementation.
+TEST_F(LossFunctionsTest, FocalLoss_SoftmaxReferenceParity) {
+    FocalLossConfig config;
+    config.num_classes = 5;
+    config.alpha = 1.0f;
+    config.gamma = 2.0f;
+
+    int batch_size = 4;
+    int num_classes = 5;
+
+    // Distinct logits so the wrong partial-sum denominator is observable: for
+    // row 0 the broken code would give probs[class0]==1.0 (loss ~0) regardless.
+    std::vector<float> preds = {
+        2.0f, 1.0f, 0.5f, -0.5f, -2.0f,
+        0.1f, 3.0f, 0.2f, -1.0f, 0.8f,
+        -3.0f, -1.5f, 2.5f, 1.2f, 0.0f,
+        0.4f, 0.4f, 0.4f, 0.4f, 0.4f,
+    };
+    std::vector<int> targets = {0, 2, 3, 1};
+    std::vector<float> output(batch_size);
+
+    float mean = focal_loss(
+        preds.data(), targets.data(), output.data(),
+        batch_size, num_classes, config, stream_);
+    (void)cudaGetLastError();  // focal_loss is host-side; drain sticky errors
+
+    constexpr double eps = 1e-8;
+    double ref_total = 0.0;
+    for (int b = 0; b < batch_size; ++b) {
+        const float* row = preds.data() + static_cast<size_t>(b) * num_classes;
+        double max_logit = -INFINITY;
+        for (int c = 0; c < num_classes; ++c) {
+            max_logit = std::max(max_logit, static_cast<double>(row[c]));
+        }
+        double sum_exp = 0.0;
+        for (int c = 0; c < num_classes; ++c) {
+            sum_exp += std::exp(static_cast<double>(row[c]) - max_logit);
+        }
+        const int t = targets[b];
+        double p = std::exp(static_cast<double>(row[t]) - max_logit) / sum_exp;
+        p = std::max(std::min(p, 1.0 - eps), eps);
+        double ref = -config.alpha * std::pow(1.0 - p, config.gamma) * std::log(p);
+        SCOPED_TRACE("batch " + std::to_string(b));
+        EXPECT_NEAR(output[b], static_cast<float>(ref), 1e-3f)
+            << "per-element focal loss must match the two-pass softmax reference";
+        ref_total += ref;
+    }
+    EXPECT_NEAR(mean, static_cast<float>(ref_total / batch_size), 1e-3f)
+        << "mean focal loss must match the reference mean";
+}
+
 TEST_F(LossFunctionsTest, ContrastiveLoss) {
     ContrastiveLossConfig config;
     config.temperature = 0.1f;
