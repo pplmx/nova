@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T15:31:09+00:00",
+  "updated_at": "2026-09-05T19:52:19+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3362,6 +3362,56 @@
       "touched_round": 33,
       "commit": "db6f447",
       "title": "BlockManager slot reuse + SetStream test (TASK-079/ISS-019/ISS-020)"
+    },
+    "TASK-080": {
+      "id": "TASK-080",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T18:51:44+00:00",
+      "updated_at": "2026-09-05T18:51:44+00:00",
+      "touched_round": 33,
+      "category": "maintainability",
+      "severity": "low",
+      "priority_score": 4.2,
+      "effort": 1,
+      "title": "create_csr_from_adjacency: bool weighted was a silent no-op"
+    },
+    "TASK-081": {
+      "id": "TASK-081",
+      "type": "task",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T18:54:38+00:00",
+      "updated_at": "2026-09-05T18:54:38+00:00",
+      "touched_round": 33,
+      "category": "maintainability",
+      "severity": 1,
+      "priority_score": 4.2,
+      "effort": 1,
+      "title": "create_csr_from_adjacency: bool weighted was a silent no-op"
+    },
+    "ISS-021": {
+      "id": "ISS-021",
+      "type": "issue",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T19:02:51+00:00",
+      "updated_at": "2026-09-05T19:02:51+00:00",
+      "touched_round": 33,
+      "severity": "medium",
+      "title": "create_csr_from_adjacency weighted no-op"
+    },
+    "DEC-022": {
+      "id": "DEC-022",
+      "type": "decision",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T19:49:26+00:00",
+      "updated_at": "2026-09-05T19:49:26+00:00",
+      "touched_round": 33,
+      "rationale": "replace_noop_with_weights",
+      "alternatives_rejected": "keep_noop"
     }
   },
   "edges": [
@@ -5074,6 +5124,24 @@
       "to": "ISS-019",
       "type": "resolves",
       "created_at": "2026-09-05T15:29:26+00:00"
+    },
+    {
+      "from": "TASK-081",
+      "to": "ISS-021",
+      "type": "addresses",
+      "created_at": "2026-09-05T19:04:24+00:00"
+    },
+    {
+      "from": "ISS-021",
+      "to": "comp-graph",
+      "type": "located_in",
+      "created_at": "2026-09-05T19:14:53+00:00"
+    },
+    {
+      "from": "DEC-022",
+      "to": "TASK-081",
+      "type": "governs",
+      "created_at": "2026-09-05T19:52:19+00:00"
     }
   ]
 }

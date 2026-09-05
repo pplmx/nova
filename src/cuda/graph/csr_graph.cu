@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
+#include <string>
 
 namespace cuda::graph {
 
@@ -89,30 +91,6 @@ size_t CSRGraph::memory_usage() const {
     return host_mem + device_mem;
 }
 
-namespace {
-
-void count_sort_edges(
-    const int* src_vertices,
-    const int* dst_vertices,
-    const float* in_weights,
-    int* out_dst,
-    float* out_weights,
-    const int* row_offsets,
-    int num_vertices,
-    int num_edges
-) {
-    for (int v = 0; v < num_vertices; ++v) {
-        int start = row_offsets[v];
-        int end = row_offsets[v + 1];
-        for (int i = start; i < end; ++i) {
-            out_dst[i] = dst_vertices[i];
-            out_weights[i] = in_weights ? in_weights[i] : 1.0f;
-        }
-    }
-}
-
-}  // anonymous namespace
-
 std::unique_ptr<CSRGraph> create_csr_from_edges(
     const int* src_vertices,
     const int* dst_vertices,
@@ -148,12 +126,26 @@ std::unique_ptr<CSRGraph> create_csr_from_edges(
 
 std::unique_ptr<CSRGraph> create_csr_from_adjacency(
     const std::vector<std::vector<int>>& adjacency,
-    bool weighted
+    const std::vector<std::vector<float>>& weights
 ) {
-    int num_vertices = static_cast<int>(adjacency.size());
+    const int num_vertices = static_cast<int>(adjacency.size());
+    if (!weights.empty() && weights.size() != adjacency.size()) {
+        throw std::invalid_argument(
+            "create_csr_from_adjacency: weights has " +
+            std::to_string(weights.size()) + " rows but adjacency has " +
+            std::to_string(adjacency.size()));
+    }
+
     int num_edges = 0;
-    for (const auto& neighbors : adjacency) {
-        num_edges += static_cast<int>(neighbors.size());
+    for (size_t v = 0; v < adjacency.size(); ++v) {
+        if (!weights.empty() && weights[v].size() != adjacency[v].size()) {
+            throw std::invalid_argument(
+                "create_csr_from_adjacency: row " + std::to_string(v) +
+                " has " + std::to_string(weights[v].size()) +
+                " weights but " + std::to_string(adjacency[v].size()) +
+                " neighbors");
+        }
+        num_edges += static_cast<int>(adjacency[v].size());
     }
 
     auto graph = std::make_unique<CSRGraph>(num_vertices, num_edges);
@@ -167,7 +159,7 @@ std::unique_ptr<CSRGraph> create_csr_from_adjacency(
         int offset = graph->row_offsets[v];
         for (size_t i = 0; i < adjacency[v].size(); ++i) {
             graph->columns[offset + i] = adjacency[v][i];
-            graph->weights[offset + i] = weighted ? 1.0f : 1.0f;
+            graph->weights[offset + i] = weights.empty() ? 1.0f : weights[v][i];
         }
     }
 

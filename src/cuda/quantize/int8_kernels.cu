@@ -399,12 +399,15 @@ void compute_minmax(
         local_max = std::fmax(local_max, h_block_maxs[i]);
     }
 
-    bool min_is_host = true;
-    if (cudaPointerGetAttributes(&attr, min_val) == cudaSuccess) {
-        min_is_host = (attr.type == cudaMemoryTypeDevice);
-    }
+    // min_val/max_val may be either device pointers (write via H2D copy) or
+    // ordinary host pointers (write directly). cudaPointerGetAttributes
+    // succeeds on both: cudaMemoryTypeDevice for device memory, any other type
+    // (host, managed, unregistered) for host-accessible memory.
+    const bool min_is_device =
+        (cudaPointerGetAttributes(&attr, min_val) == cudaSuccess) &&
+        (attr.type == cudaMemoryTypeDevice);
 
-    if (!min_is_host) {
+    if (!min_is_device) {
         *min_val = local_min;
         *max_val = local_max;
     } else {

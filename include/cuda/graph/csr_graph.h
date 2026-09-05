@@ -47,9 +47,15 @@ std::unique_ptr<CSRGraph> create_csr_from_edges(
     int num_edges
 );
 
+// Build a CSR graph from an adjacency list. `adjacency[v]` holds the
+// out-neighbors of vertex v. When `weights` is non-empty it must have the same
+// shape as `adjacency` (same number of rows, each row the same length as the
+// corresponding adjacency row) and supplies the per-edge weight in parallel
+// position; otherwise every edge gets the unit weight 1.0f. A shape mismatch
+// throws std::invalid_argument rather than silently misaligning weights.
 std::unique_ptr<CSRGraph> create_csr_from_adjacency(
     const std::vector<std::vector<int>>& adjacency,
-    bool weighted = false
+    const std::vector<std::vector<float>>& weights = {}
 );
 
 void csr_mv(

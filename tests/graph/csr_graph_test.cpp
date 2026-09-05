@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <vector>
 #include "cuda/graph/csr_graph.h"
 #include "cuda/memory/buffer.h"
@@ -75,6 +76,51 @@ TEST_F(CSRGraphTest, CreateFromEdges) {
     EXPECT_EQ(graph->row_offsets[0], 0);
     EXPECT_EQ(graph->row_offsets[4], 4);
     EXPECT_TRUE(validate_csr(*graph));
+}
+
+TEST_F(CSRGraphTest, CreateFromWeightedAdjacency) {
+    // Same shape as the adjacency: per-edge weights honored in row-major CSR
+    // position. This is the path the old `bool weighted` flag silently no-op'd.
+    std::vector<std::vector<int>> adj = {
+        {1, 2},
+        {0},
+        {}
+    };
+    std::vector<std::vector<float>> w = {
+        {7.0f, 3.5f},
+        {1.25f},
+        {}
+    };
+
+    auto graph = create_csr_from_adjacency(adj, w);
+    ASSERT_NE(graph, nullptr);
+    EXPECT_EQ(graph->vertices(), 3);
+    EXPECT_EQ(graph->edges(), 3);
+    EXPECT_TRUE(validate_csr(*graph));
+
+    EXPECT_EQ(graph->row_offsets[0], 0);
+    EXPECT_EQ(graph->row_offsets[1], 2);
+    EXPECT_EQ(graph->row_offsets[2], 3);
+    EXPECT_FLOAT_EQ(graph->weights[0], 7.0f);
+    EXPECT_FLOAT_EQ(graph->weights[1], 3.5f);
+    EXPECT_FLOAT_EQ(graph->weights[2], 1.25f);
+}
+
+TEST_F(CSRGraphTest, WeightedAdjacencyShapeMismatchThrows) {
+    std::vector<std::vector<int>> adj = {
+        {1},
+        {0}
+    };
+
+    // Outer-size mismatch: fewer weight rows than adjacency rows.
+    std::vector<std::vector<float>> w_fewer_rows = {{7.0f}};
+    EXPECT_THROW(create_csr_from_adjacency(adj, w_fewer_rows),
+                 std::invalid_argument);
+
+    // Row-length mismatch in a single row.
+    std::vector<std::vector<float>> w_bad_row = {{7.0f, 8.0f}, {1.25f}};
+    EXPECT_THROW(create_csr_from_adjacency(adj, w_bad_row),
+                 std::invalid_argument);
 }
 
 TEST_F(CSRGraphTest, RowOffsetsAreValid) {
