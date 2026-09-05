@@ -150,43 +150,50 @@ private:
     T omega_;
 };
 
+// ILU(0) is NOT implemented. The previous template recorded n_ in setup() and
+// had both apply() overloads as (void) no-ops: constructing an
+// ILUPreconditioner and calling apply() silently returned whatever the caller
+// pre-initialized in its output buffer — no factorization, no triangular
+// solve, a preconditioner that did nothing while pretending to be ILU. A
+// half-written cusparse csrilu02 implementation also lived uncompiled in
+// src/cuda/sparse/ilu_preconditioner.cpp (deleted: it duplicated this header's
+// class name in the same namespace and its apply() was an identity copy).
+//
+// Rather than keep a silent lie in the public API, every operation fails fast
+// with guidance. Use JacobiPreconditioner, or wire cusparse csrilu02 +
+// csrsm2 triangular solves behind the Preconditioner interface (tracked as a
+// feature task) before relying on ILU.
 template<typename T>
 class ILUPreconditioner : public Preconditioner<T> {
 public:
     ILUPreconditioner() = default;
 
-    void setup(const SparseMatrix<T>& A) override;
+    void setup(const SparseMatrix<T>& A) override {
+        (void)A;
+        throw PreconditionerError(
+            "ILUPreconditioner::setup: ILU(0) factorization is not implemented "
+            "(this class previously recorded the shape and silently never "
+            "factorized). Use JacobiPreconditioner, or drive the unilateral "
+            "cusparse csrsm2 path behind the Preconditioner interface.");
+    }
 
-    void apply(const T* in, T* out) override;
+    void apply(const T* in, T* out) override {
+        (void)in;
+        (void)out;
+        throw PreconditionerError(
+            "ILUPreconditioner::apply: ILU(0) triangular solve is not "
+            "implemented (the old API returned the output buffer unchanged). "
+            "Use JacobiPreconditioner instead.");
+    }
 
-    void apply(const memory::Buffer<T>& in, memory::Buffer<T>& out) override;
-
-private:
-    memory::Buffer<T> L_vals_;
-    memory::Buffer<T> U_vals_;
-    memory::Buffer<int> L_row_offsets_;
-    memory::Buffer<int> L_col_indices_;
-    memory::Buffer<int> U_row_offsets_;
-    memory::Buffer<int> U_col_indices_;
-    int n_ = 0;
+    void apply(const memory::Buffer<T>& in, memory::Buffer<T>& out) override {
+        (void)in;
+        (void)out;
+        throw PreconditionerError(
+            "ILUPreconditioner::apply: ILU(0) triangular solve is not "
+            "implemented (the old API returned the output buffer unchanged). "
+            "Use JacobiPreconditioner instead.");
+    }
 };
-
-template<typename T>
-void ILUPreconditioner<T>::setup(const SparseMatrix<T>& A) {
-    n_ = A.rows();
-    (void)A;
-}
-
-template<typename T>
-void ILUPreconditioner<T>::apply(const T* in, T* out) {
-    (void)in;
-    (void)out;
-}
-
-template<typename T>
-void ILUPreconditioner<T>::apply(const memory::Buffer<T>& in, memory::Buffer<T>& out) {
-    (void)in;
-    (void)out;
-}
 
 }

@@ -63,36 +63,39 @@ TEST_F(ILUPreconditionerTest, DefaultConstructor) {
     ILUPreconditioner<double> prec;
 }
 
-TEST_F(ILUPreconditionerTest, SetupSPDMatrix) {
+// ILU is not implemented: setup and both apply overloads fail fast with a
+// PreconditionerError instead of silently pretending to factorize/solve (the
+// old stub recorded n_ and returned the output buffer unchanged).
+TEST_F(ILUPreconditionerTest, SetupFailsFastNotImplemented) {
     auto matrix = create_spd_matrix(5);
     ILUPreconditioner<double> prec;
 
-    EXPECT_NO_THROW(prec.setup(matrix));
+    EXPECT_THROW(prec.setup(matrix), PreconditionerError);
 }
 
-TEST_F(ILUPreconditionerTest, SetupDiagonallyDominantMatrix) {
-    auto matrix = create_diagonally_dominant_matrix(5);
-    ILUPreconditioner<double> prec;
-
-    EXPECT_NO_THROW(prec.setup(matrix));
-}
-
-TEST_F(ILUPreconditionerTest, SetupSmallMatrix) {
+TEST_F(ILUPreconditionerTest, SetupSmallMatrixFailsFast) {
     auto matrix = create_spd_matrix(2);
     ILUPreconditioner<double> prec;
 
-    EXPECT_NO_THROW(prec.setup(matrix));
+    EXPECT_THROW(prec.setup(matrix), PreconditionerError);
 }
 
-TEST_F(ILUPreconditionerTest, ApplyPreservesVectorSize) {
-    auto matrix = create_spd_matrix(5);
+TEST_F(ILUPreconditionerTest, ApplyFailsFastNotImplemented) {
     ILUPreconditioner<double> prec;
-    prec.setup(matrix);
 
     std::vector<double> in = {1.0, 1.0, 1.0, 1.0, 1.0};
     std::vector<double> out(5);
 
-    EXPECT_NO_THROW(prec.apply(in.data(), out.data()));
+    EXPECT_THROW(prec.apply(in.data(), out.data()), PreconditionerError);
+}
+
+TEST_F(ILUPreconditionerTest, BufferApplyFailsFastNotImplemented) {
+    ILUPreconditioner<double> prec;
+
+    memory::Buffer<double> in(5);
+    memory::Buffer<double> out(5);
+
+    EXPECT_THROW(prec.apply(in, out), PreconditionerError);
 }
 
 }
