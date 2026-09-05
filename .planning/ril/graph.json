@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 33,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T09:42:39+00:00",
+  "updated_at": "2026-09-05T10:15:11+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -2913,10 +2913,10 @@
     "ISS-010": {
       "id": "ISS-010",
       "type": "issue",
-      "status": "active",
-      "version": 1,
+      "status": "resolved",
+      "version": 2,
       "created_at": "2026-09-03T07:18:16+00:00",
-      "updated_at": "2026-09-03T07:18:16+00:00",
+      "updated_at": "2026-09-05T10:15:11+00:00",
       "touched_round": 33,
       "title": "apply_tree_attention_mask is an empty no-op: speculative-decoding verification misses its tree-mask step",
       "description": "src/cuda/inference/speculative_decoding.cpp: apply_tree_attention_mask body is (void)num_draft_tokens; (void)stream; — a pure no-op, yet verify_draft_tokens() calls it as its documentation says the draft-acceptance prerequisite. Pure-chain drafts make the mask the identity (simple tests pass); branching draft trees are silently unhandled.",
@@ -3028,6 +3028,30 @@
       "commit": "577602c",
       "title": "Remove dead SequenceParallelAttention internal-collective declarations",
       "description": "Deleted the declared-never-defined private helpers; verified full build + NCCL-on multi-GPU suite 9/9."
+    },
+    "TASK-073": {
+      "id": "TASK-073",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T10:14:42+00:00",
+      "updated_at": "2026-09-05T10:15:11+00:00",
+      "touched_round": 33,
+      "category": "correctness",
+      "title": "Speculative-decoding unimplemented feature flags must fail fast (tree mask / async draft / eagle3 / xgrammar)",
+      "description": "Enable the fail-fast disposition for declared-but-unimplemented SpeculativeDecodingConfig features: enable_tree_attention/async_draft default true yet no source reads them and apply_tree_attention_mask is an empty no-op; requesting any of them must throw a clear not-implemented error at the runner ctor/configure, and defaults must flip to false so the default config is the honest chain-only path."
+    },
+    "CHG-040": {
+      "id": "CHG-040",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T10:15:11+00:00",
+      "updated_at": "2026-09-05T10:15:11+00:00",
+      "touched_round": 33,
+      "commit": "d30293d",
+      "title": "Speculative-decoding feature flags fail fast instead of silently no-oping",
+      "description": "Runner ctor/configure validate_implemented_features: throw not-implemented for tree/async/eagle3/xgrammar; enable_tree_attention + enable_async_draft defaults flipped to false; apply_tree_attention_mask documents identity + defensive throw. 32 speculative tests PASS; full suite 1486 pass / 0 fail."
     }
   },
   "edges": [
@@ -4536,6 +4560,24 @@
       "to": "ISS-012",
       "type": "resolves",
       "created_at": "2026-09-05T09:42:39+00:00"
+    },
+    {
+      "from": "TASK-073",
+      "to": "ISS-010",
+      "type": "addresses",
+      "created_at": "2026-09-05T10:14:42+00:00"
+    },
+    {
+      "from": "CHG-040",
+      "to": "TASK-073",
+      "type": "implements",
+      "created_at": "2026-09-05T10:15:11+00:00"
+    },
+    {
+      "from": "CHG-040",
+      "to": "ISS-010",
+      "type": "resolves",
+      "created_at": "2026-09-05T10:15:11+00:00"
     }
   ]
 }
