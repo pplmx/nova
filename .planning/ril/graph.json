@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 34,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T20:45:00+00:00",
+  "updated_at": "2026-09-05T21:24:19+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3326,7 +3326,7 @@
       "version": 1,
       "created_at": "2026-09-05T15:25:57+00:00",
       "updated_at": "2026-09-05T15:25:57+00:00",
-      "touched_round": 33,
+      "touched_round": 34,
       "title": "Inference serving core (src/cuda/inference/)",
       "description": "BlockManager (KV block scheduling/tables), sequence lifecycle, flash attention forward_batch."
     },
@@ -3423,6 +3423,41 @@
       "updated_at": "2026-09-05T20:30:13+00:00",
       "touched_round": 33,
       "commit": "9d3ea44"
+    },
+    "ISS-022": {
+      "id": "ISS-022",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T21:21:26+00:00",
+      "updated_at": "2026-09-05T21:24:19+00:00",
+      "touched_round": 34,
+      "severity": "medium",
+      "title": "decode() replay appends 2k-1 tokens; k drafts verified against one logits pair"
+    },
+    "TASK-082": {
+      "id": "TASK-082",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-05T21:22:26+00:00",
+      "updated_at": "2026-09-05T21:24:19+00:00",
+      "touched_round": 34,
+      "category": "correctness",
+      "severity": 3,
+      "effort": 3,
+      "priority_score": 6.0,
+      "title": "fix decode() per-position replay"
+    },
+    "CHG-050": {
+      "id": "CHG-050",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-05T21:23:01+00:00",
+      "updated_at": "2026-09-05T21:23:01+00:00",
+      "touched_round": 34,
+      "commit": "61affab"
     }
   },
   "edges": [
@@ -5171,6 +5206,30 @@
       "to": "ISS-021",
       "type": "addresses",
       "created_at": "2026-09-05T20:45:00+00:00"
+    },
+    {
+      "from": "TASK-082",
+      "to": "ISS-022",
+      "type": "addresses",
+      "created_at": "2026-09-05T21:23:01+00:00"
+    },
+    {
+      "from": "ISS-022",
+      "to": "COMP-004",
+      "type": "located_in",
+      "created_at": "2026-09-05T21:23:01+00:00"
+    },
+    {
+      "from": "CHG-050",
+      "to": "ISS-022",
+      "type": "resolves",
+      "created_at": "2026-09-05T21:24:19+00:00"
+    },
+    {
+      "from": "CHG-050",
+      "to": "TASK-082",
+      "type": "implements",
+      "created_at": "2026-09-05T21:24:19+00:00"
     }
   ]
 }
