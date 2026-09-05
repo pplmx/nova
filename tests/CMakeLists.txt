@@ -111,6 +111,7 @@ add_executable(nova-tests
     distributed/sequence_parallel_test.cpp
     distributed/sequence_parallel_edge_test.cpp
     distributed/sequence_parallel_multigpu_test.cu
+    preemption/preemption_handler_test.cpp
     observability/timeline_test.cpp
     observability/bandwidth_tracker_test.cpp
     observability/kernel_stats_test.cpp

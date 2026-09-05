@@ -26,6 +26,9 @@ SignalHandler& SignalHandler::instance() {
     return handler;
 }
 
+SignalHandler::SignalHandler()
+    : impl_(std::make_unique<Impl>()) {}
+
 void SignalHandler::signal_handler(int signal) {
     {
         std::lock_guard<std::mutex> lock(g_signal_mutex);
@@ -107,12 +110,17 @@ SignalHandler::HandlerState SignalHandler::get_state() const {
 struct ShutdownCoordinator::Impl {
     ShutdownConfig config;
     std::atomic<ShutdownPhase> phase{ShutdownPhase::Idle};
-    std::chrono::steady_clock::time_point shutdown_start;
+    // Atomic so a status poller racing a REUSE round (reset via shutdown() then
+    // a new request_shutdown) never formally data-races on a plain time_point —
+    // the reader may pair with the previous round's store, but that is a benign
+    // one-poll-stale value, not UB (review MEDIUM).
+    std::atomic<std::chrono::steady_clock::time_point> shutdown_start{};
     std::atomic<int64_t> timeout_remaining{30};
     std::atomic<bool> shutdown_in_progress{false};
     std::atomic<bool> shutdown_complete{false};
 
     ShutdownStageCallback stage_callback;
+    ShutdownCoordinator::CheckpointCallback checkpoint_callback;
     std::mutex callback_mutex;
 
     std::condition_variable shutdown_cv;
@@ -124,12 +132,24 @@ ShutdownCoordinator& ShutdownCoordinator::instance() {
     return coordinator;
 }
 
+ShutdownCoordinator::ShutdownCoordinator()
+    : impl_(std::make_unique<Impl>()) {}
+
 void ShutdownCoordinator::initialize(const ShutdownConfig& config) {
     impl_->config = config;
     impl_->timeout_remaining.store(config.shutdown_timeout.count());
 }
 
 void ShutdownCoordinator::shutdown() {
+    // Guard (RIL TASK-079, ISS-018): the old reset ran unconditionally while a
+    // detached shutdown thread (begin → checkpoint → finalize) was still
+    // touching phase/shutdown_complete — a data race, and PreemptionManager::
+    // shutdown() could reset state under the thread that "Completes" it. Refuse
+    // the reset while a shutdown is MID-FLIGHT (in progress, not yet complete);
+    // a completed shutdown still resets so the singleton is reusable.
+    if (impl_->shutdown_in_progress.load() && !impl_->shutdown_complete.load()) {
+        return;
+    }
     impl_->phase.store(ShutdownPhase::Idle);
     impl_->shutdown_in_progress.store(false);
     impl_->shutdown_complete.store(false);
@@ -140,9 +160,11 @@ void ShutdownCoordinator::request_shutdown(int signal) {
         return;
     }
 
-    impl_->shutdown_in_progress.store(true);
-    impl_->shutdown_start = std::chrono::steady_clock::now();
+    // Publish the deadline state BEFORE in_progress, so any reader that sees
+    // in_progress == true also sees a fully initialized start time / timeout.
+    impl_->shutdown_start.store(std::chrono::steady_clock::now());
     impl_->timeout_remaining.store(impl_->config.shutdown_timeout.count());
+    impl_->shutdown_in_progress.store(true);
 
     std::thread([this, signal]() {
         begin_graceful_shutdown();
@@ -161,16 +183,43 @@ void ShutdownCoordinator::begin_graceful_shutdown() {
     std::cout << "[Preemption] Beginning graceful shutdown" << std::endl;
 }
 
-void ShutdownCoordinator::checkpoint_coordinated() {
+bool ShutdownCoordinator::checkpoint_coordinated() {
     impl_->phase.store(ShutdownPhase::Checkpointing);
 
     if (impl_->stage_callback) {
         impl_->stage_callback(ShutdownPhase::Checkpointing);
     }
 
-    if (impl_->config.checkpoint_on_shutdown) {
-        std::cout << "[Preemption] Saving checkpoint before shutdown" << std::endl;
+    if (!impl_->config.checkpoint_on_shutdown) {
+        return true;  // checkpointing not requested — nothing to do
     }
+
+    CheckpointCallback cb;
+    {
+        std::lock_guard lock(impl_->callback_mutex);
+        cb = impl_->checkpoint_callback;
+    }
+
+    if (!cb) {
+        // RIL TASK-079, ISS-018: the old code printed "Saving checkpoint before
+        // shutdown" and saved nothing. Never pretend — report the
+        // misconfiguration so an operator wires PreemptionManager::
+        // set_checkpoint_callback (or disables checkpoint_on_shutdown).
+        std::cerr << "[Preemption] checkpoint_on_shutdown is enabled but no "
+                     "checkpoint callback is registered — nothing was saved\n";
+        return false;
+    }
+
+    const bool saved = cb();
+    if (!saved) {
+        std::cerr << "[Preemption] Checkpoint during shutdown FAILED\n";
+    }
+    return saved;
+}
+
+void ShutdownCoordinator::set_checkpoint_callback(CheckpointCallback callback) {
+    std::lock_guard lock(impl_->callback_mutex);
+    impl_->checkpoint_callback = std::move(callback);
 }
 
 void ShutdownCoordinator::finalize_shutdown() {
@@ -210,11 +259,22 @@ std::chrono::milliseconds ShutdownCoordinator::get_elapsed_time() const {
         return std::chrono::milliseconds{0};
     }
     return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - impl_->shutdown_start);
+        std::chrono::steady_clock::now() - impl_->shutdown_start.load());
 }
 
 std::chrono::seconds ShutdownCoordinator::get_remaining_timeout() const {
-    return std::chrono::seconds(impl_->timeout_remaining.load());
+    // RIL TASK-079, ISS-018: previously returned the static stored value and
+    // never counted down — a "timeout" that never elapsed. Compute from the
+    // deadline (start + configured budget, extended by extend_timeout) against
+    // the real clock, clamped at zero. Idle reports the full configured budget.
+    if (!impl_->shutdown_in_progress.load()) {
+        return std::chrono::seconds(impl_->config.shutdown_timeout.count());
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - impl_->shutdown_start.load());
+    const int64_t remaining =
+        impl_->timeout_remaining.load() - elapsed.count();
+    return std::chrono::seconds(remaining > 0 ? remaining : 0);
 }
 
 bool ShutdownCoordinator::extend_timeout(std::chrono::seconds additional_time) {
@@ -231,6 +291,9 @@ ResumeValidator& ResumeValidator::instance() {
     static ResumeValidator validator;
     return validator;
 }
+
+ResumeValidator::ResumeValidator()
+    : impl_(std::make_unique<Impl>()) {}
 
 ResumeValidator::ValidationResult ResumeValidator::validate_checkpoint(
     const std::string& checkpoint_path) {
@@ -307,6 +370,7 @@ struct PreemptionManager::Impl {
 
     ShutdownConfig config;
     PreemptionCallback preemption_callback;
+    CheckpointCallback checkpoint_callback;
     std::atomic<bool> initialized{false};
 
     std::thread shutdown_waiter;
@@ -317,6 +381,9 @@ PreemptionManager& PreemptionManager::instance() {
     return manager;
 }
 
+PreemptionManager::PreemptionManager()
+    : impl_(std::make_unique<Impl>()) {}
+
 void PreemptionManager::initialize(const ShutdownConfig& config) {
     impl_->config = config;
     impl_->signal_handler = &SignalHandler::instance();
@@ -324,6 +391,16 @@ void PreemptionManager::initialize(const ShutdownConfig& config) {
     impl_->resume_validator = &ResumeValidator::instance();
 
     impl_->shutdown_coordinator->initialize(config);
+
+    // Re-forward any checkpoint callback registered before initialize() so the
+    // coordinator's checkpoint_on_shutdown path sees it. Forwarded BY VALUE: the
+    // coordinator's callback_mutex-protected slot is then the single shared
+    // state, and the detached shutdown worker never reads manager state
+    // unsynchronized (review MEDIUM).
+    if (impl_->checkpoint_callback) {
+        impl_->shutdown_coordinator->set_checkpoint_callback(
+            impl_->checkpoint_callback);
+    }
 
     impl_->signal_handler->set_shutdown_callback([this](int signal) {
         this->on_preemption_signal(signal);
@@ -374,6 +451,19 @@ bool PreemptionManager::request_timeout_extension(std::chrono::seconds additiona
 
 void PreemptionManager::set_preemption_callback(PreemptionCallback callback) {
     impl_->preemption_callback = std::move(callback);
+}
+
+void PreemptionManager::set_checkpoint_callback(CheckpointCallback callback) {
+    impl_->checkpoint_callback = std::move(callback);
+    // Forward by value (see initialize): the coordinator's mutex-protected slot
+    // becomes the single shared state, so a re-registration mid-shutdown can't
+    // race the detached worker's read (review MEDIUM). Forwarding nullptr lets
+    // checkpoint_coordinated() report the misconfiguration instead of
+    // pretending to save.
+    if (impl_->shutdown_coordinator) {
+        impl_->shutdown_coordinator->set_checkpoint_callback(
+            impl_->checkpoint_callback);
+    }
 }
 
 PreemptionManager::Status PreemptionManager::get_status() const {

@@ -49,7 +49,7 @@ public:
     HandlerState get_state() const;
 
 private:
-    SignalHandler() = default;
+    SignalHandler();
     ~SignalHandler() = default;
 
     static void signal_handler(int signal);
@@ -72,11 +72,20 @@ public:
     bool is_shutdown_complete() const;
 
     void begin_graceful_shutdown();
-    void checkpoint_coordinated();
+    // Runs the user-registered checkpoint callback when checkpoint_on_shutdown
+    // is set. Returns true only when the callback ran and reported success;
+    // false when checkpointing was requested but no callback is registered or
+    // the callback itself failed (never a silent "saving…" lie).
+    bool checkpoint_coordinated();
     void finalize_shutdown();
 
     using ShutdownStageCallback = std::function<void(ShutdownPhase)>;
     void set_stage_callback(ShutdownStageCallback callback);
+
+    // The user-supplied durable save invoked by checkpoint_coordinated().
+    // Registered via PreemptionManager::set_checkpoint_callback.
+    using CheckpointCallback = std::function<bool()>;
+    void set_checkpoint_callback(CheckpointCallback callback);
 
     std::chrono::milliseconds get_elapsed_time() const;
     std::chrono::seconds get_remaining_timeout() const;
@@ -84,7 +93,7 @@ public:
     bool extend_timeout(std::chrono::seconds additional_time);
 
 private:
-    ShutdownCoordinator() = default;
+    ShutdownCoordinator();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -121,7 +130,7 @@ public:
     void set_checkpoint_dir(const std::string& dir);
 
 private:
-    ResumeValidator() = default;
+    ResumeValidator();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
@@ -144,6 +153,13 @@ public:
     using PreemptionCallback = std::function<void(int signal)>;
     void set_preemption_callback(PreemptionCallback callback);
 
+    // The durable save to run when ShutdownConfig::checkpoint_on_shutdown is
+    // set. Without one, checkpoint_coordinated() reports the misconfiguration
+    // instead of pretending to save. Return true only if the state was durably
+    // persisted.
+    using CheckpointCallback = ShutdownCoordinator::CheckpointCallback;
+    void set_checkpoint_callback(CheckpointCallback callback);
+
     struct Status {
         bool preemption_handlers_installed;
         bool shutdown_in_progress;
@@ -156,7 +172,7 @@ public:
     Status get_status() const;
 
 private:
-    PreemptionManager() = default;
+    PreemptionManager();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
