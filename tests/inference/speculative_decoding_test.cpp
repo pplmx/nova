@@ -38,12 +38,44 @@ TEST_F(SpeculativeDecodingTest, Construction) {
 TEST_F(SpeculativeDecodingTest, Configure) {
     SpeculativeDecodingConfig config;
     config.draft_depth = 6;
-    config.enable_tree_attention = true;
 
     spec_runner->configure(config);
 
     EXPECT_EQ(spec_runner->get_config().draft_depth, 6);
-    EXPECT_TRUE(spec_runner->get_config().enable_tree_attention);
+}
+
+// Requesting an unimplemented feature must fail fast at the configuration
+// boundary rather than silently running plain chain-only drafting (ISS-010).
+TEST_F(SpeculativeDecodingTest, UnimplementedFeatureFlagsFailFast) {
+    SpeculativeDecodingConfig tree;
+    tree.enable_tree_attention = true;
+    EXPECT_THROW(spec_runner->configure(tree), std::exception)
+        << "enable_tree_attention=true must fail fast (tree attention is not "
+           "implemented) instead of silently skipping the tree mask";
+
+    // The runner constructor must reject a tree-enabled config too (a config
+    // can bypass configure() by going straight to the constructor).
+    SpeculativeDecodingConfig by_ctor;
+    by_ctor.enable_tree_attention = true;
+    EXPECT_THROW(
+        SpeculativeDecodingRunner thrown(block_manager.get(), by_ctor),
+        std::exception)
+        << "constructor must reject an unimplemented feature flag";
+
+    SpeculativeDecodingConfig async;
+    async.enable_async_draft = true;
+    EXPECT_THROW(spec_runner->configure(async), std::exception)
+        << "enable_async_draft=true must fail fast";
+
+    SpeculativeDecodingConfig eagle;
+    eagle.enable_eagle3 = true;
+    EXPECT_THROW(spec_runner->configure(eagle), std::exception)
+        << "enable_eagle3=true must fail fast";
+
+    SpeculativeDecodingConfig xgram;
+    xgram.enable_xgrammar = true;
+    EXPECT_THROW(spec_runner->configure(xgram), std::exception)
+        << "enable_xgrammar=true must fail fast";
 }
 
 TEST_F(SpeculativeDecodingTest, SnapshotRollbackCommit) {
@@ -84,8 +116,11 @@ TEST(SpeculativeDecodingConfig, DefaultValues) {
 
     EXPECT_EQ(config.draft_depth, 4);
     EXPECT_EQ(config.acceptance_threshold, 0.8f);
-    EXPECT_TRUE(config.enable_tree_attention);
-    EXPECT_TRUE(config.enable_async_draft);
+    // The unimplemented-feature flags default to false: the default path is
+    // the honest chain-only drafting actually implemented (ISS-010), and any
+    // opt-in fails fast instead of silently lying about what it does.
+    EXPECT_FALSE(config.enable_tree_attention);
+    EXPECT_FALSE(config.enable_async_draft);
     EXPECT_FALSE(config.enable_eagle3);
     EXPECT_FALSE(config.enable_xgrammar);
     EXPECT_EQ(config.max_draft_depth, 8);
@@ -318,26 +353,27 @@ TEST_F(SpeculativeDecodingTest, KLDivergenceComputation) {
 }
 
 TEST_F(SpeculativeDecodingTest, TreeAttentionMaskApplication) {
+    // Tree attention is not implemented: requesting it must fail fast (a tree
+    // mask is never silently dropped — ISS-010), it must not "apply" a no-op.
     SpeculativeDecodingConfig config;
     config.enable_tree_attention = true;
     config.draft_depth = 3;
-    spec_runner->configure(config);
-
-    stream::Stream stream;
-    spec_runner->apply_tree_attention_mask(3, stream);
-
-    auto cfg = spec_runner->get_config();
-    EXPECT_TRUE(cfg.enable_tree_attention);
+    EXPECT_THROW(spec_runner->configure(config), std::exception)
+        << "enable_tree_attention=true must be rejected, not silently no-oped";
 }
 
 TEST_F(SpeculativeDecodingTest, TreeAttentionDisabled) {
+    // The default path — chain-only drafts — does not request the tree mask;
+    // configure() and apply_tree_attention_mask() both complete cleanly (the
+    // mask is the identity for a chain) and report the honest flag value.
     SpeculativeDecodingConfig config;
     config.enable_tree_attention = false;
     config.draft_depth = 3;
     spec_runner->configure(config);
 
     stream::Stream stream;
-    spec_runner->apply_tree_attention_mask(3, stream);
+    EXPECT_NO_THROW(spec_runner->apply_tree_attention_mask(3, stream))
+        << "chain-only path must not be rejected";
 
     auto cfg = spec_runner->get_config();
     EXPECT_FALSE(cfg.enable_tree_attention);

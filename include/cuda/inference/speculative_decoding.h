@@ -16,9 +16,20 @@ namespace cuda::inference {
 struct SpeculativeDecodingConfig {
     int draft_depth = 4;
     float acceptance_threshold = 0.8f;
-    bool enable_tree_attention = true;
-    bool enable_async_draft = true;
+    /** Tree-masked draft attention — NOT IMPLEMENTED: draft generation is
+     *  chain-only, so apply_tree_attention_mask is the identity. Keep false
+     *  (the default); requesting it fails fast in the runner (constructor /
+     *  configure) instead of silently decoding without the advertised tree
+     *  mask (ISS-010). */
+    bool enable_tree_attention = false;
+    /** Asynchronous draft generation — NOT IMPLEMENTED: drafts are generated
+     *  inline. Keep false (the default); requesting it fails fast. */
+    bool enable_async_draft = false;
+    /** EAGLE-3 draft heads — NOT IMPLEMENTED. Keep false; requesting it fails
+     *  fast rather than silently running plain drafting. */
     bool enable_eagle3 = false;
+    /** xgrammar grammar constraints — NOT IMPLEMENTED. Keep false; requesting
+     *  it fails fast. */
     bool enable_xgrammar = false;
     int max_draft_depth = 8;
     int vocab_size = 0;

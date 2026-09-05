@@ -9,6 +9,35 @@ namespace cuda::inference {
 
 namespace {
 
+// Reject any configuration flag that selects a feature this module does not
+// implement (ISS-010): the config used to silently advertise tree attention,
+// async drafting, EAGLE-3 and xgrammar while every path ran plain chain-only
+// drafting — the per-flag no-ops made the advertised features a silent lie.
+// Fail fast at the two configuration boundaries (constructor / configure) so a
+// caller opting in gets an explicit "not implemented" error instead of
+// spending tokens on a decode that never did what the flags promised.
+[[noreturn]] void throw_unimplemented(const char* feature, const char* flag) {
+    throw std::runtime_error(
+        std::string("SpeculativeDecodingRunner: ") + feature +
+        " is not implemented (config flag " + flag +
+        "); set " + flag + "=false to use the supported chain-only path");
+}
+
+void validate_implemented_features(const SpeculativeDecodingConfig& config) {
+    if (config.enable_tree_attention) {
+        throw_unimplemented("tree-masked draft attention", "enable_tree_attention");
+    }
+    if (config.enable_async_draft) {
+        throw_unimplemented("asynchronous draft generation", "enable_async_draft");
+    }
+    if (config.enable_eagle3) {
+        throw_unimplemented("EAGLE-3 draft heads", "enable_eagle3");
+    }
+    if (config.enable_xgrammar) {
+        throw_unimplemented("xgrammar grammar constraints", "enable_xgrammar");
+    }
+}
+
 int sample_from_logits(
     const float* logits,
     int vocab_size,
@@ -116,9 +145,12 @@ void LogProbTracker::clear() {
 SpeculativeDecodingRunner::SpeculativeDecodingRunner(
     BlockManager* block_manager,
     const SpeculativeDecodingConfig& config
-) : block_manager_(block_manager), config_(config), logprob_tracker_() {}
+) : block_manager_(block_manager), config_(config), logprob_tracker_() {
+    validate_implemented_features(config_);
+}
 
 void SpeculativeDecodingRunner::configure(const SpeculativeDecodingConfig& config) {
+    validate_implemented_features(config);
     config_ = config;
 }
 
@@ -304,6 +336,17 @@ void SpeculativeDecodingRunner::apply_tree_attention_mask(
 ) {
     (void)num_draft_tokens;
     (void)stream;
+    // Chain-only drafts (the only path this runner generates) make the tree
+    // mask the identity, so there is nothing to apply here. The constructor /
+    // configure() reject enable_tree_attention=true, so this guard is a
+    // defensive backstop in case a config reaches the runner some other way
+    // (ISS-010): a requested tree mask must never be silently dropped.
+    if (config_.enable_tree_attention) {
+        throw std::runtime_error(
+            "SpeculativeDecodingRunner::apply_tree_attention_mask: tree "
+            "attention is not implemented — draft generation is chain-only "
+            "(set enable_tree_attention=false)");
+    }
 }
 
 std::vector<int> SpeculativeDecodingRunner::decode(
