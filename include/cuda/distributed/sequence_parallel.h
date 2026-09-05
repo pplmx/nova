@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-#if defined(NOVA_NCCL_ENABLED)
+#if NOVA_NCCL_ENABLED
 #include <nccl.h>
 #include "cuda/device/error.h"
 #include "cuda/nccl/nccl_recovery.h"
@@ -141,7 +141,7 @@ private:
     int next_rank_;
 };
 
-#if defined(NOVA_NCCL_ENABLED)
+#if NOVA_NCCL_ENABLED
 
 namespace detail {
 
@@ -290,7 +290,7 @@ inline void SequenceParallelAttention::gather_kv(
         return;
     }
 
-#if defined(NOVA_NCCL_ENABLED)
+#if NOVA_NCCL_ENABLED
     if (config_.comm == nullptr) {
         if (gathered_k.size() < local_k.size()) {
             gathered_k = memory::Buffer<float>(local_k.size());
@@ -363,7 +363,7 @@ inline void SequenceParallelAttention::scatter_output(
         return;
     }
 
-#if defined(NOVA_NCCL_ENABLED)
+#if NOVA_NCCL_ENABLED
     if (config_.comm == nullptr) {
         if (local_output.size() < full_output.size()) {
             local_output = memory::Buffer<float>(full_output.size());
@@ -425,7 +425,7 @@ inline void SequenceParallelAttention::all_reduce_sequence(
         return;
     }
 
-#if defined(NOVA_NCCL_ENABLED)
+#if NOVA_NCCL_ENABLED
     if (config_.comm == nullptr) {
         return;
     }
@@ -475,7 +475,7 @@ inline void RingSequenceParallelism::send_recv_kv(
     size_t count,
     const Stream& stream
 ) {
-#if defined(NOVA_NCCL_ENABLED)
+#if NOVA_NCCL_ENABLED
     // Ring step: send this rank's block clockwise to next_rank_ while receiving
     // prev_rank_'s block counter-clockwise. The four P2P ops are enqueued as one
     // ncclGroupStart/GroupEnd group: without group semantics NCCL serializes
