@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 34,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T20:40:48+00:00",
+  "updated_at": "2026-09-05T20:45:00+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3399,7 +3399,7 @@
       "version": 2,
       "created_at": "2026-09-05T19:02:51+00:00",
       "updated_at": "2026-09-05T20:36:54+00:00",
-      "touched_round": 33,
+      "touched_round": 34,
       "severity": "medium",
       "title": "create_csr_from_adjacency weighted no-op"
     },
@@ -5165,6 +5165,12 @@
       "to": "TASK-081",
       "type": "implements",
       "created_at": "2026-09-05T20:32:05+00:00"
+    },
+    {
+      "from": "TASK-080",
+      "to": "ISS-021",
+      "type": "addresses",
+      "created_at": "2026-09-05T20:45:00+00:00"
     }
   ]
 }
