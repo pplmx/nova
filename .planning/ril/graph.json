@@ -2,7 +2,7 @@
   "ril_version": 1,
   "round": 34,
   "created_at": "2026-08-11T06:37:58+00:00",
-  "updated_at": "2026-09-05T22:31:22+00:00",
+  "updated_at": "2026-09-06T02:07:10+00:00",
   "nodes": {
     "comp-nccl": {
       "id": "comp-nccl",
@@ -3560,6 +3560,132 @@
       "updated_at": "2026-09-05T22:30:10+00:00",
       "touched_round": 34,
       "title": "Sparse solvers + preconditioners (src/cuda/sparse, include/cuda/sparse)"
+    },
+    "ISS-026": {
+      "id": "ISS-026",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:55:05+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "severity": "high",
+      "title": "monte_carlo_integration never calls func; integral ~ (b-a)/2 for any integrand"
+    },
+    "ISS-027": {
+      "id": "ISS-027",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:55:05+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "severity": "high",
+      "title": "svd(): 'A'/'A' into thin buffers (OOB) + cuSOLVER non-square non-conformant"
+    },
+    "ISS-028": {
+      "id": "ISS-028",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:55:06+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "severity": "medium",
+      "title": "schedule_1f1b drops almost all work (steady-state stage>=K)"
+    },
+    "ISS-029": {
+      "id": "ISS-029",
+      "type": "issue",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:55:06+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "severity": "medium",
+      "title": "multiply_csc zeroes only num_cols of y (rectangular OOB/garbage)"
+    },
+    "TASK-086": {
+      "id": "TASK-086",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:57:10+00:00",
+      "updated_at": "2026-09-06T02:07:09+00:00",
+      "touched_round": 34,
+      "category": "correctness",
+      "severity": 4,
+      "effort": 1,
+      "title": "monte carlo: evaluate func over [a,b]"
+    },
+    "TASK-087": {
+      "id": "TASK-087",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:57:10+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "category": "correctness",
+      "severity": 4,
+      "effort": 4,
+      "title": "SVD correct for all shapes (Jacobi)"
+    },
+    "TASK-088": {
+      "id": "TASK-088",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:57:10+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "category": "correctness",
+      "severity": 3,
+      "effort": 1,
+      "title": "schedule_1f1b covers all stage/mb"
+    },
+    "TASK-089": {
+      "id": "TASK-089",
+      "type": "task",
+      "status": "resolved",
+      "version": 2,
+      "created_at": "2026-09-06T01:57:10+00:00",
+      "updated_at": "2026-09-06T02:07:10+00:00",
+      "touched_round": 34,
+      "category": "correctness",
+      "severity": 3,
+      "effort": 1,
+      "title": "CSC spmv zero num_rows of y"
+    },
+    "CHG-053": {
+      "id": "CHG-053",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-06T01:59:48+00:00",
+      "updated_at": "2026-09-06T01:59:48+00:00",
+      "touched_round": 34,
+      "commit": "8638fcc"
+    },
+    "CHG-054": {
+      "id": "CHG-054",
+      "type": "change",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-06T01:59:48+00:00",
+      "updated_at": "2026-09-06T01:59:48+00:00",
+      "touched_round": 34,
+      "commit": "6ebb177"
+    },
+    "COMP-006": {
+      "id": "COMP-006",
+      "type": "component",
+      "status": "active",
+      "version": 1,
+      "created_at": "2026-09-06T02:04:50+00:00",
+      "updated_at": "2026-09-06T02:04:50+00:00",
+      "touched_round": 34,
+      "title": "Numerics & linear algebra (src/cuda/numeric, src/cuda/linalg, src/algo)"
     }
   },
   "edges": [
@@ -5392,6 +5518,102 @@
       "to": "TASK-084",
       "type": "implements",
       "created_at": "2026-09-05T22:30:53+00:00"
+    },
+    {
+      "from": "TASK-086",
+      "to": "ISS-026",
+      "type": "addresses",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "TASK-087",
+      "to": "ISS-027",
+      "type": "addresses",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "TASK-088",
+      "to": "ISS-028",
+      "type": "addresses",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "TASK-089",
+      "to": "ISS-029",
+      "type": "addresses",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "CHG-053",
+      "to": "TASK-086",
+      "type": "implements",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "CHG-053",
+      "to": "TASK-088",
+      "type": "implements",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "CHG-053",
+      "to": "TASK-089",
+      "type": "implements",
+      "created_at": "2026-09-06T02:02:01+00:00"
+    },
+    {
+      "from": "CHG-054",
+      "to": "TASK-087",
+      "type": "implements",
+      "created_at": "2026-09-06T02:02:02+00:00"
+    },
+    {
+      "from": "CHG-053",
+      "to": "ISS-026",
+      "type": "resolves",
+      "created_at": "2026-09-06T02:02:02+00:00"
+    },
+    {
+      "from": "CHG-053",
+      "to": "ISS-028",
+      "type": "resolves",
+      "created_at": "2026-09-06T02:02:02+00:00"
+    },
+    {
+      "from": "CHG-053",
+      "to": "ISS-029",
+      "type": "resolves",
+      "created_at": "2026-09-06T02:02:02+00:00"
+    },
+    {
+      "from": "CHG-054",
+      "to": "ISS-027",
+      "type": "resolves",
+      "created_at": "2026-09-06T02:02:02+00:00"
+    },
+    {
+      "from": "ISS-026",
+      "to": "COMP-006",
+      "type": "located_in",
+      "created_at": "2026-09-06T02:04:50+00:00"
+    },
+    {
+      "from": "ISS-027",
+      "to": "COMP-006",
+      "type": "located_in",
+      "created_at": "2026-09-06T02:04:50+00:00"
+    },
+    {
+      "from": "ISS-028",
+      "to": "COMP-006",
+      "type": "located_in",
+      "created_at": "2026-09-06T02:04:50+00:00"
+    },
+    {
+      "from": "ISS-029",
+      "to": "COMP-006",
+      "type": "located_in",
+      "created_at": "2026-09-06T02:04:50+00:00"
     }
   ]
 }
