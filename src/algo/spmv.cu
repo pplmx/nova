@@ -1,5 +1,6 @@
 #include "cuda/algo/spmv.h"
 
+#include <algorithm>
 #include <cuda_runtime.h>
 
 #include "cuda/device/error.h"
@@ -77,14 +78,16 @@ void multiply_csr(const T* values, const int* row_offsets, const int* col_indice
 
 template <typename T>
 void multiply_csc(const T* values, const int* col_offsets, const int* row_indices,
-                  const T* x, T* y, int num_cols, cudaStream_t stream) {
+                  const T* x, T* y, int num_rows, int num_cols, cudaStream_t stream) {
     const int block_size = 256;
-    const int num_blocks = (num_cols + block_size - 1) / block_size;
+    const int num_blocks = std::max(1, (num_cols + block_size - 1) / block_size);
 
-    // The kernel scatters with atomicAdd, so y must start at zero. Zero the
-    // first num_cols entries (the common square case); rectangular matrices
-    // with more rows are the caller's responsibility.
-    CUDA_CHECK(cudaMemsetAsync(y, 0, num_cols * sizeof(T), stream));
+    // The kernel scatters with atomicAdd into y[row] for row in [0, num_rows),
+    // so the whole output must start at zero — num_rows entries, not num_cols.
+    // With the old num_cols-only memset, a reader with more rows than columns
+    // accumulated into uninitialized trailing rows (and cols > rows memset past
+    // the buffer).
+    CUDA_CHECK(cudaMemsetAsync(y, 0, static_cast<size_t>(num_rows) * sizeof(T), stream));
 
     spmv_csc_kernel<T><<<num_blocks, block_size, 0, stream>>>(
         values, col_offsets, row_indices, x, y, num_cols);
@@ -98,15 +101,18 @@ void multiply(const T* values, const int* offsets, const int* indices,
     if (format == Format::CSR) {
         multiply_csr(values, offsets, indices, x, y, num_rows_or_cols, stream);
     } else {
-        multiply_csc(values, offsets, indices, x, y, num_rows_or_cols, stream);
+        // The single-dimension multiply() implies a square matrix, so num_rows
+        // == num_cols == num_rows_or_cols; callers with rectangular CSC
+        // matrices should use multiply_csc() directly.
+        multiply_csc(values, offsets, indices, x, y, num_rows_or_cols, num_rows_or_cols, stream);
     }
 }
 
 template void multiply_csr<float>(const float*, const int*, const int*, const float*, float*, int, cudaStream_t);
 template void multiply_csr<double>(const double*, const int*, const int*, const double*, double*, int, cudaStream_t);
 
-template void multiply_csc<float>(const float*, const int*, const int*, const float*, float*, int, cudaStream_t);
-template void multiply_csc<double>(const double*, const int*, const int*, const double*, double*, int, cudaStream_t);
+template void multiply_csc<float>(const float*, const int*, const int*, const float*, float*, int, int, cudaStream_t);
+template void multiply_csc<double>(const double*, const int*, const int*, const double*, double*, int, int, cudaStream_t);
 
 template void multiply<float>(const float*, const int*, const int*, const float*, float*, int, Format, cudaStream_t);
 template void multiply<double>(const double*, const int*, const int*, const double*, double*, int, Format, cudaStream_t);

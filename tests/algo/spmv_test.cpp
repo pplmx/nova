@@ -134,13 +134,52 @@ TEST_F(SpMVTest, MultiplyCSCSimple) {
     d_x.copy_from(x.data(), x.size());
 
     cuda::algo::spmv::multiply_csc(d_values.data(), d_col_offsets.data(),
-                                    d_row_indices.data(), d_x.data(), d_y.data(), 3);
+                                    d_row_indices.data(), d_x.data(), d_y.data(), 3, 3);
 
     d_y.copy_to(y.data(), y.size());
 
     EXPECT_NEAR(y[0], 7.0f, 1e-5f);
     EXPECT_NEAR(y[1], 6.0f, 1e-5f);
     EXPECT_NEAR(y[2], 19.0f, 1e-5f);
+}
+
+TEST_F(SpMVTest, MultiplyCSCRectangularMoreRowsThanCols) {
+    // A is 4 rows x 2 cols:
+    //   [[1, 2],
+    //    [0, 3],
+    //    [4, 0],
+    //    [0, 5]]
+    // CSC: col_offsets = [0, 2, 5], row_indices = [0, 2, 0, 1, 3]
+    //      values      = [1, 4, 2, 3, 5]
+    // x = [1, 1]; y = A*x = [3, 3, 4, 5].
+    // The old signature memsets only num_cols=2 entries: y[2] and y[3] started
+    // uninitialized before the atomicAdd scatter polluted them.
+    std::vector<float> values = {1.0f, 4.0f, 2.0f, 3.0f, 5.0f};
+    std::vector<int> col_offsets = {0, 2, 5};
+    std::vector<int> row_indices = {0, 2, 0, 1, 3};
+    std::vector<float> x = {1.0f, 1.0f};
+    std::vector<float> y = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    cuda::memory::Buffer<float> d_values(values.size());
+    cuda::memory::Buffer<int> d_col_offsets(col_offsets.size());
+    cuda::memory::Buffer<int> d_row_indices(row_indices.size());
+    cuda::memory::Buffer<float> d_x(x.size());
+    cuda::memory::Buffer<float> d_y(y.size());
+
+    d_values.copy_from(values.data(), values.size());
+    d_col_offsets.copy_from(col_offsets.data(), col_offsets.size());
+    d_row_indices.copy_from(row_indices.data(), row_indices.size());
+    d_x.copy_from(x.data(), x.size());
+
+    cuda::algo::spmv::multiply_csc(d_values.data(), d_col_offsets.data(),
+                                    d_row_indices.data(), d_x.data(), d_y.data(), 4, 2);
+
+    d_y.copy_to(y.data(), y.size());
+
+    EXPECT_NEAR(y[0], 3.0f, 1e-5f);
+    EXPECT_NEAR(y[1], 3.0f, 1e-5f);
+    EXPECT_NEAR(y[2], 4.0f, 1e-5f);
+    EXPECT_NEAR(y[3], 5.0f, 1e-5f);
 }
 
 }  // namespace cuda::algo::spmv::test

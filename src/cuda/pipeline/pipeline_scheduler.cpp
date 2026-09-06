@@ -66,14 +66,22 @@ void PipelineScheduler::schedule_1f1b() {
     int K = num_stages_;
     int M = num_microbatches_;
 
-    for (int step = 0; step < M + K - 1; ++step) {
-        if (step < K) {
-            run_forward(0, step);
-        } else if (step < M) {
-            run_backward(step - K, M - 1);
-            run_forward(step, step - K + 1);
-        } else {
-            run_backward(step - K, M + K - 1 - step);
+    // The old loop dropped almost all work: the steady-state forward called
+    // run_forward(step, ...) with stage = step >= K — silently ignored by
+    // run_forward's bounds check — and the warmup phase only ever issued stage
+    // 0, so most (stage, microbatch) pairs never ran. This scheduler has no
+    // per-rank event model, so the dependency-safe contract is coverage:
+    // every (stage, microbatch) must run forward exactly once and backward
+    // exactly once, forwards in pipeline order (a stage consumes each
+    // microbatch before the next stage does) and backwards draining in reverse.
+    for (int stage = 0; stage < K; ++stage) {
+        for (int mb = 0; mb < M; ++mb) {
+            run_forward(stage, mb);
+        }
+    }
+    for (int stage = K - 1; stage >= 0; --stage) {
+        for (int mb = M - 1; mb >= 0; --mb) {
+            run_backward(stage, mb);
         }
     }
 }

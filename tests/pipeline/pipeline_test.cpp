@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <utility>
+
 #include "cuda/pipeline/pipeline_scheduler.h"
 #include "cuda/pipeline/stage_balance.h"
 
@@ -40,6 +43,67 @@ TEST_F(PipelineTest, RecommendMicrobatches) {
 TEST_F(PipelineTest, ScheduleTypeEnum) {
     EXPECT_EQ(static_cast<int>(ScheduleType::OneForwardOneBackward), 0);
     EXPECT_EQ(static_cast<int>(ScheduleType::Interleaved), 1);
+}
+
+// The old schedule_1f1b dropped almost all work: the steady-state forward
+// passed stage = step >= K (ignored by run_forward's bounds check) and the
+// warmup only issued stage 0. The schedule must run every (stage, microbatch)
+// exactly once for both directions, in a dependency-safe order.
+TEST_F(PipelineTest, Schedule1F1BCoversEveryStageMicrobatchOnce) {
+    ::cuda::nccl::NcclContext ctx;
+    ctx.initialize();
+
+    const int K = 4;
+    const int M = 8;
+    PipelineScheduler scheduler(ctx, K, M, 32);
+
+    std::vector<std::pair<int, int>> forwards;
+    std::vector<std::pair<int, int>> backwards;
+    scheduler.set_forward_fn([&](int s, int mb) { forwards.emplace_back(s, mb); });
+    scheduler.set_backward_fn([&](int s, int mb) { backwards.emplace_back(s, mb); });
+
+    scheduler.set_schedule_type(ScheduleType::OneForwardOneBackward);
+    scheduler.run();
+
+    const size_t total = static_cast<size_t>(K) * M;
+    ASSERT_EQ(forwards.size(), total);
+    ASSERT_EQ(backwards.size(), total);
+
+    for (int s = 0; s < K; ++s) {
+        for (int mb = 0; mb < M; ++mb) {
+            EXPECT_EQ(std::count(forwards.begin(), forwards.end(), std::make_pair(s, mb)), 1)
+                << "forward (stage " << s << ", mb " << mb << ")";
+            EXPECT_EQ(std::count(backwards.begin(), backwards.end(), std::make_pair(s, mb)), 1)
+                << "backward (stage " << s << ", mb " << mb << ")";
+        }
+    }
+}
+
+TEST_F(PipelineTest, ScheduleInterleavedCoversEveryStageMicrobatchOnce) {
+    ::cuda::nccl::NcclContext ctx;
+    ctx.initialize();
+
+    const int K = 3;
+    const int M = 6;
+    PipelineScheduler scheduler(ctx, K, M, 32);
+
+    std::vector<std::pair<int, int>> forwards;
+    std::vector<std::pair<int, int>> backwards;
+    scheduler.set_forward_fn([&](int s, int mb) { forwards.emplace_back(s, mb); });
+    scheduler.set_backward_fn([&](int s, int mb) { backwards.emplace_back(s, mb); });
+
+    scheduler.set_schedule_type(ScheduleType::Interleaved);
+    scheduler.run();
+
+    const size_t total = static_cast<size_t>(K) * M;
+    ASSERT_EQ(forwards.size(), total);
+    ASSERT_EQ(backwards.size(), total);
+    for (int s = 0; s < K; ++s) {
+        for (int mb = 0; mb < M; ++mb) {
+            EXPECT_EQ(std::count(forwards.begin(), forwards.end(), std::make_pair(s, mb)), 1);
+            EXPECT_EQ(std::count(backwards.begin(), backwards.end(), std::make_pair(s, mb)), 1);
+        }
+    }
 }
 
 TEST_F(PipelineTest, StageBalanceValidator) {

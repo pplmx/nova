@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <vector>
 
 #include "cuda/device/error.h"
 #include "cuda/algo/reduce.h"
@@ -53,31 +54,42 @@ MonteCarloResult monte_carlo_integration(float (*func)(float), float a, float b,
     MonteCarloResult result;
     result.samples = samples;
     result.converged = false;
+    result.mean = 0.0f;
+    result.variance = 0.0f;
+    result.std_error = 0.0f;
 
-    memory::Buffer<float> d_func(samples);
-    float* h_func = static_cast<float*>(malloc(samples * sizeof(float)));
-
-    for (size_t i = 0; i < samples; ++i) {
-        h_func[i] = static_cast<float>(rand()) / RAND_MAX;
+    if (samples == 0) {
+        return result;
     }
 
-    CUDA_CHECK(cudaMemcpy(d_func.data(), h_func, samples * sizeof(float), cudaMemcpyHostToDevice));
+    // The old implementation filled h_func with uniform rand()/RAND_MAX in
+    // [0,1) and never called func, so every integrand "integrated" to
+    // ~(b-a)/2 (mean of uniforms times the interval width). Draw uniform
+    // samples in [a,b], evaluate the integrand on them, and estimate
+    // mean(func) * (b-a).
+    memory::Buffer<float> d_func(samples);
+    std::vector<float> h_func(samples);
 
-    float sum = cuda::algo::reduce_sum(d_func.data(), samples);
-    float mean = sum / samples;
+    for (size_t i = 0; i < samples; ++i) {
+        const float u = a + (b - a) * (static_cast<float>(rand()) / RAND_MAX);
+        h_func[i] = func(u);
+    }
+
+    d_func.copy_from(h_func.data(), samples);
+
+    const float sum = cuda::algo::reduce_sum(d_func.data(), samples);
+    const float mean = sum / static_cast<float>(samples);
     result.mean = mean * (b - a);
 
     float variance = 0.0f;
     for (size_t i = 0; i < samples; ++i) {
-        float diff = h_func[i] - mean;
+        const float diff = h_func[i] - mean;
         variance += diff * diff;
     }
-    variance /= samples;
+    variance /= static_cast<float>(samples);
     result.variance = variance;
-    result.std_error = std::sqrt(variance / samples);
+    result.std_error = std::sqrt(variance / static_cast<float>(samples));
     result.converged = result.std_error < tolerance;
-
-    free(h_func);
 
     return result;
 }
