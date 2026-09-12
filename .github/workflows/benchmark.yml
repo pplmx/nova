@@ -68,7 +68,7 @@ jobs:
             --tolerance ${{ env.TOLERANCE }}
 
       - name: Upload results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: benchmark-results-${{ github.run_number }}
