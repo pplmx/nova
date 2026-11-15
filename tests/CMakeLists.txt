@@ -190,6 +190,7 @@ add_executable(nova-tests
     sparse/error_message_quality_test.cpp
     sparse/occupancy_analyzer_test.cpp
     sparse/histogram_bins_test.cpp
+    sparse/collective_selector_env_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

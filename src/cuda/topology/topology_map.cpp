@@ -228,9 +228,20 @@ AlgorithmConfig CollectiveSelector::select_for_allgather(
     int num_workers) {
 
     AlgorithmConfig config;
-    config.algorithm = CollectiveAlgorithm::Ring;
-    (void)message_size_bytes;
-    (void)num_workers;
+
+    // allgather used to return Ring unconditionally, ignoring both arguments,
+    // while select_for_allreduce and select_for_broadcast applied the same
+    // large-message threshold. The intent is the same heuristic: a ring passes
+    // data around and wins for small messages, while a tree (or collnet with
+    // enough ranks) shortens the critical path once the message is large.
+    constexpr uint64_t TREE_THRESHOLD = 32 * 1024 * 1024;
+
+    if (num_workers > 8 && message_size_bytes > TREE_THRESHOLD) {
+        config.algorithm = CollectiveAlgorithm::Tree;
+    } else {
+        config.algorithm = CollectiveAlgorithm::Ring;
+    }
+
     return config;
 }
 
@@ -249,14 +260,19 @@ std::string algorithm_to_string(CollectiveAlgorithm algo) {
 }
 
 void CollectiveSelector::set_nccl_env(const AlgorithmConfig& config) {
-    std::ostringstream env;
-    env << "NCCL_ALGO=" << algorithm_to_string(config.algorithm);
+    // NCCL reads the algorithm from NCCL_ALGO. Writing "NCCL_ALGO=Tree" into
+    // NCCL_TUNING, as this did, leaves NCCL_ALGO unset and the selection has no
+    // effect at all — measured: NCCL_ALGO was (unset) while NCCL_TUNING held
+    // "NCCL_ALGO=CollNet".
+    setenv("NCCL_ALGO", algorithm_to_string(config.algorithm).c_str(), 1);
 
+    // Any extra tuning fragment the caller supplied is appended to NCCL_ALGO,
+    // which is where NCCL accepts the comma-separated form (e.g. "Ring,Tree").
     if (!config.nccl_tuning_env.empty()) {
-        env << "," << config.nccl_tuning_env;
+        const std::string combined = algorithm_to_string(config.algorithm) + "," +
+                                     config.nccl_tuning_env;
+        setenv("NCCL_ALGO", combined.c_str(), 1);
     }
-
-    setenv("NCCL_TUNING", env.str().c_str(), 1);
 }
 
 AlgorithmConfig CollectiveSelector::from_env() {
