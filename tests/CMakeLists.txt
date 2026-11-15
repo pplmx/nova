@@ -300,6 +300,26 @@ target_include_directories(algo_wrapper-tests PRIVATE
 )
 add_test(NAME algo_wrapper COMMAND algo_wrapper-tests)
 
+# segmented_sort.h pulls in cuda_runtime.h and is implemented in device code, so
+# its test is a .cu executable.
+add_executable(segmented_sort-tests
+    device/segmented_sort_test.cu
+    ${CMAKE_SOURCE_DIR}/src/algo/segmented_sort.cu
+)
+target_link_libraries(segmented_sort-tests
+    PRIVATE
+    CUDA::cudart
+    GTest::gtest
+    GTest::gtest_main
+)
+target_include_directories(segmented_sort-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/cuda/algo
+    ${CMAKE_SOURCE_DIR}/include/cuda/device
+    ${CMAKE_SOURCE_DIR}/include/cuda/memory
+)
+add_test(NAME segmented_sort COMMAND segmented_sort-tests)
+
 include(GoogleTest)
 gtest_discover_tests(nova-tests)
 
