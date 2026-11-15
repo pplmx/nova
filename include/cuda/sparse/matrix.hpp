@@ -31,6 +31,8 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cuda/memory/buffer.h"
@@ -97,11 +99,13 @@ public:
                                       int num_rows, int num_cols);
 
     /**
-     * @brief Create from edge list (for graphs)
-     * @param edges Vector of (src, dst) vertex pairs
+     * @brief Create a square adjacency matrix from an edge list
+     * @param edges Vector of (src, dst) directed vertex pairs
      * @param num_vertices Number of vertices
-     * @param weights Optional edge weights
-     * @return Sparse matrix in adjacency list format
+     * @param weights Optional edge weights, one per edge
+     * @return Sparse matrix whose row `src` holds src's out-edges
+     * @throws std::invalid_argument if an endpoint is outside
+     *         [0, num_vertices) or `weights` does not have one entry per edge
      */
     static SparseMatrix FromEdgeList(const std::vector<std::pair<int, int>>& edges,
                                       int num_vertices,
@@ -217,20 +221,50 @@ template<typename T>
 SparseMatrix<T> SparseMatrix<T>::FromEdgeList(const std::vector<std::pair<int, int>>& edges,
                                               int num_vertices,
                                               const std::vector<T>* weights) {
-    std::vector<int> row_offsets(num_vertices + 1, 0);
-    std::vector<int> col_indices;
-    std::vector<T> values;
-
-    col_indices.reserve(edges.size());
-    values.reserve(edges.size());
-
-    for (const auto& edge : edges) {
-        col_indices.push_back(edge.second);
-        values.push_back(weights ? (*weights)[&edge - &edges[0]] : T{1});
+    if (num_vertices < 0) {
+        throw std::invalid_argument(
+            "SparseMatrix::FromEdgeList: num_vertices must be non-negative, got " +
+            std::to_string(num_vertices));
+    }
+    if (weights && weights->size() != edges.size()) {
+        throw std::invalid_argument(
+            "SparseMatrix::FromEdgeList: " + std::to_string(weights->size()) +
+            " weights for " + std::to_string(edges.size()) + " edges");
+    }
+    for (size_t e = 0; e < edges.size(); ++e) {
+        const int src = edges[e].first;
+        const int dst = edges[e].second;
+        // Both endpoints index rows/columns of the result; an out-of-range one
+        // would make spmv read past x or write past y.
+        if (src < 0 || src >= num_vertices || dst < 0 || dst >= num_vertices) {
+            throw std::invalid_argument(
+                "SparseMatrix::FromEdgeList: edge " + std::to_string(e) + " (" +
+                std::to_string(src) + ", " + std::to_string(dst) +
+                ") is outside [0, " + std::to_string(num_vertices) + ")");
+        }
     }
 
-    for (int i = 0; i <= num_vertices; ++i) {
-        row_offsets[i] = i == 0 ? 0 : static_cast<int>(edges.size());
+    // Bucket the edges by source so each CSR row holds exactly its own
+    // out-edges. Counting sort keeps the original edge order within a row.
+    std::vector<int> row_counts(static_cast<size_t>(num_vertices), 0);
+    for (const auto& edge : edges) {
+        ++row_counts[static_cast<size_t>(edge.first)];
+    }
+
+    std::vector<int> row_offsets(static_cast<size_t>(num_vertices) + 1, 0);
+    for (int v = 0; v < num_vertices; ++v) {
+        row_offsets[static_cast<size_t>(v) + 1] =
+            row_offsets[static_cast<size_t>(v)] + row_counts[static_cast<size_t>(v)];
+    }
+
+    std::vector<int> next(row_offsets.begin(), row_offsets.end() - 1);
+    std::vector<int> col_indices(edges.size());
+    std::vector<T> values(edges.size());
+
+    for (size_t e = 0; e < edges.size(); ++e) {
+        const size_t slot = static_cast<size_t>(next[static_cast<size_t>(edges[e].first)]++);
+        col_indices[slot] = edges[e].second;
+        values[slot] = weights ? (*weights)[e] : T{1};
     }
 
     return FromHostData(values, row_offsets, col_indices, num_vertices, num_vertices);

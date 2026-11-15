@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <cuda/sparse/matrix.hpp>
 
+#include <stdexcept>
+
 namespace nova::sparse::test {
 
 template<typename T>
@@ -105,6 +107,98 @@ TEST(SparseMatrixTest, FromEdgeListWithWeights) {
     EXPECT_FLOAT_EQ(h_values[0], 0.5f);
     EXPECT_FLOAT_EQ(h_values[1], 1.5f);
     EXPECT_FLOAT_EQ(h_values[2], 2.0f);
+}
+
+// Regression: FromEdgeList wrote every row offset as `edges.size()`, so all
+// rows claimed the whole edge array. rows()/nnz()/values still looked right,
+// which is why the structural assertions above never caught it — the matrix
+// multiplied wrong. Pin the per-row structure itself.
+TEST(SparseMatrixTest, FromEdgeListBuildsPerRowOffsets) {
+    // 0 -> 1, 1 -> 2, 2 -> 0: one out-edge per vertex.
+    std::vector<std::pair<int, int>> edges = {{0, 1}, {1, 2}, {2, 0}};
+    auto matrix = SparseMatrix<float>::FromEdgeList(edges, 3);
+
+    std::vector<float> h_values;
+    std::vector<int> h_row_offsets, h_col_indices;
+    matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
+    EXPECT_EQ(h_row_offsets, (std::vector<int>{0, 1, 2, 3}));
+    EXPECT_EQ(h_col_indices, (std::vector<int>{1, 2, 0}));
+}
+
+TEST(SparseMatrixTest, FromEdgeListGroupsOutEdgesPerRow) {
+    // Vertex 0 has two out-edges, vertex 1 none, vertex 2 one.
+    std::vector<std::pair<int, int>> edges = {{0, 1}, {0, 2}, {2, 0}};
+    auto matrix = SparseMatrix<float>::FromEdgeList(edges, 3);
+
+    std::vector<float> h_values;
+    std::vector<int> h_row_offsets, h_col_indices;
+    matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
+    EXPECT_EQ(h_row_offsets, (std::vector<int>{0, 2, 2, 3}));
+    EXPECT_EQ(h_col_indices, (std::vector<int>{1, 2, 0}));
+    // A vertex with no out-edges must not inherit its neighbours' rows.
+    EXPECT_EQ(h_row_offsets[1], h_row_offsets[2]);
+}
+
+TEST(SparseMatrixTest, FromEdgeListWeightsFollowTheirEdges) {
+    // Weights must stay paired with their own (src, dst), not merely be some
+    // permutation of the input.
+    std::vector<std::pair<int, int>> edges = {{0, 2}, {1, 0}, {1, 2}};
+    std::vector<float> weights = {7.0f, -3.0f, 0.25f};
+    auto matrix = SparseMatrix<float>::FromEdgeList(edges, 3, &weights);
+
+    std::vector<float> h_values;
+    std::vector<int> h_row_offsets, h_col_indices;
+    matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
+    EXPECT_EQ(h_row_offsets, (std::vector<int>{0, 1, 3, 3}));
+    EXPECT_EQ(h_col_indices, (std::vector<int>{2, 0, 2}));
+    EXPECT_FLOAT_EQ(h_values[0], 7.0f);   // row 0 -> col 2
+    EXPECT_FLOAT_EQ(h_values[1], -3.0f);  // row 1 -> col 0
+    EXPECT_FLOAT_EQ(h_values[2], 0.25f);  // row 1 -> col 2
+}
+
+TEST(SparseMatrixTest, FromEdgeListReproducesDenseAdjacency) {
+    // End-to-end: the CSR must expand back to the adjacency matrix the edge
+    // list describes.
+    std::vector<std::pair<int, int>> edges = {{0, 0}, {0, 3}, {2, 1}, {3, 2}};
+    auto matrix = SparseMatrix<float>::FromEdgeList(edges, 4);
+
+    std::vector<float> h_values;
+    std::vector<int> h_row_offsets, h_col_indices;
+    matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
+    std::vector<float> dense(16, 0.0f);
+    for (int r = 0; r < 4; ++r) {
+        for (int i = h_row_offsets[r]; i < h_row_offsets[r + 1]; ++i) {
+            dense[r * 4 + h_col_indices[i]] += h_values[i];
+        }
+    }
+
+    const std::vector<float> expected = {
+        1.0f, 0.0f, 0.0f, 1.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+    };
+    EXPECT_EQ(dense, expected);
+}
+
+TEST(SparseMatrixTest, FromEdgeListRejectsOutOfRangeVertex) {
+    // A destination outside [0, num_vertices) would make spmv read past x.
+    std::vector<std::pair<int, int>> edges = {{0, 3}};
+    EXPECT_THROW(SparseMatrix<float>::FromEdgeList(edges, 3), std::invalid_argument);
+
+    std::vector<std::pair<int, int>> negative_src = {{-1, 0}};
+    EXPECT_THROW(SparseMatrix<float>::FromEdgeList(negative_src, 3), std::invalid_argument);
+}
+
+TEST(SparseMatrixTest, FromEdgeListRejectsWeightCountMismatch) {
+    std::vector<std::pair<int, int>> edges = {{0, 1}, {1, 2}};
+    std::vector<float> too_few = {1.0f};
+    EXPECT_THROW(SparseMatrix<float>::FromEdgeList(edges, 3, &too_few),
+                 std::invalid_argument);
 }
 
 TEST(SparseMatrixTest, CopyToHost) {
