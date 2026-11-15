@@ -360,11 +360,13 @@ void spmv(const SparseMatrix<T>& A, const T* x, T* y);
 /**
  * @brief Sparse Matrix-Vector Product with host vectors
  * @param A Sparse matrix
- * @param x Input vector (host)
- * @param[out] y Output vector (host)
+ * @param x Input vector (host), must have exactly A.cols() elements
+ * @param[out] y Output vector (host), resized to A.rows()
  * @tparam T Element type
+ * @throws std::invalid_argument if x.size() != A.cols()
  *
  * @note Automatically copies data between host and device
+ * @note y is sized by this function; any previous contents are discarded
  * @note For performance-critical code, use the device pointer version
  *
  * @def spmv_host

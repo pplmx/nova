@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include <library_types.h>
 
+#include <stdexcept>
 #include <vector>
 
 #include "cuda/sparse/matrix.hpp"
@@ -164,6 +165,21 @@ void spmv(const SparseMatrix<T>& A, const T* x, T* y) {
 
 template<typename T>
 void spmv(const SparseMatrix<T>& A, const std::vector<T>& x, std::vector<T>& y) {
+    // Reject a mismatched input instead of copying A.cols() elements out of a
+    // shorter vector: that read past the host buffer and produced a
+    // plausible-looking wrong answer with no error anywhere.
+    if (x.size() != static_cast<size_t>(A.cols())) {
+        throw std::invalid_argument(
+            "spmv: input vector has " + std::to_string(x.size()) +
+            " elements but the matrix has " + std::to_string(A.cols()) + " columns");
+    }
+
+    // The output is this function's result, so size it here. Previously the
+    // caller had to pre-size y exactly: an empty (or short) one made the
+    // cudaMemcpy fail with "invalid argument", and a longer one kept its stale
+    // tail past rows().
+    y.resize(static_cast<size_t>(A.rows()));
+
     cuda::memory::Buffer<T> d_x(A.cols());
     cuda::memory::Buffer<T> d_y(A.rows());
 
