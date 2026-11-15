@@ -176,6 +176,7 @@ add_executable(nova-tests
     sparse/quantize_benchmark_test.cpp
     sparse/cublas_gemm_test.cpp
     sparse/raytrace_primitives_test.cpp
+    sparse/matrix_add_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -216,6 +217,7 @@ target_link_libraries(nova-tests
 )
 target_include_directories(nova-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/matrix
     ${CMAKE_SOURCE_DIR}/data
     ${CUDA_DEVICE_DIR}
     ${CUDA_ALGO_DIR}
