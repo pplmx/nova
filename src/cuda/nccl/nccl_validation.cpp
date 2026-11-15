@@ -48,7 +48,19 @@ ValidationResult validate_version(int min_major, int min_minor) {
 
     if (version.major == 0) {
         result.valid = false;
-        result.message = "Could not detect NCCL version";
+#if NOVA_NCCL_ENABLED
+        // NCCL is compiled in but the runtime call failed: that IS an
+        // installation/driver problem.
+        result.message =
+            "Could not detect NCCL version: ncclGetVersion() failed";
+#else
+        // Nothing to detect — this build has no NCCL support. Saying "could not
+        // detect" sends the operator after a broken installation when the fix
+        // is to rebuild with NCCL enabled.
+        result.message =
+            "NCCL support is not enabled in this build (NOVA_NCCL_ENABLED=0); "
+            "rebuild with -DNOVA_ENABLE_NCCL=ON to use multi-GPU collectives";
+#endif
         return result;
     }
 

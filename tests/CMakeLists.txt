@@ -165,6 +165,7 @@ add_executable(nova-tests
     sparse/activation_buffer_test.cpp
     sparse/p2p_primitives_test.cpp
     sparse/pipeline_comm_test.cpp
+    sparse/nccl_validation_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
