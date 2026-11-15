@@ -28,9 +28,15 @@ struct ChromeTraceEvent {
     bool args_empty = true;
 };
 
+/// Tag type so the singleton can seed pid_ from the running process without the
+/// public default constructor doing I/O.
+struct ProcessIdTag {};
+
 class TimelineExporter {
 public:
     static TimelineExporter& instance();
+
+
 
     void begin_event(const char* name, const char* category);
     void end_event(const char* name, const char* category);
@@ -53,6 +59,12 @@ public:
 
 private:
     TimelineExporter() = default;
+
+    /// Seeds pid_ from getpid(). The exporter previously left pid_ at 0 and
+    /// nothing in production ever called set_process_id, so every trace
+    /// advertised itself as process 0 — a value Chrome's trace viewer cannot use
+    /// to tell processes apart.
+    explicit TimelineExporter(ProcessIdTag);
     ~TimelineExporter() = default;
     TimelineExporter(const TimelineExporter&) = delete;
     TimelineExporter& operator=(const TimelineExporter&) = delete;

@@ -5,10 +5,16 @@
 #include <iomanip>
 #include <sstream>
 
+#include <unistd.h>
+
 namespace cuda::observability {
 
+TimelineExporter::TimelineExporter(ProcessIdTag) {
+    pid_ = static_cast<int>(::getpid());
+}
+
 TimelineExporter& TimelineExporter::instance() {
-    static TimelineExporter instance;
+    static TimelineExporter instance{ProcessIdTag{}};
     return instance;
 }
 
@@ -113,7 +119,7 @@ bool TimelineExporter::export_to_file(const std::string& filepath) {
 
     file << "],\n";
     file << "\"metadata\": {\n";
-    file << "    \" exporter\": \"Nova Timeline Exporter\",\n";
+    file << "    \"exporter\": \"Nova Timeline Exporter\",\n";
     file << "    \"version\": \"1.0\"\n";
     file << "  }\n";
     file << "}\n";
