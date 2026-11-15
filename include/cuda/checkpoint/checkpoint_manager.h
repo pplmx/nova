@@ -34,6 +34,15 @@ public:
     void create_directory(const std::string& path) override;
     std::string resolve_path(const std::string& path) const override;
 
+    /**
+     * @brief Destructor
+     *
+     * Declared here and defined in the .cpp: Impl is incomplete in this header,
+     * so an implicit destructor would make unique_ptr<Impl> unusable and the
+     * class unconstructible from other translation units.
+     */
+    ~FileStorageBackend() override;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

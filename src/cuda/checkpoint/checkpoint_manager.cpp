@@ -57,6 +57,8 @@ FileStorageBackend::FileStorageBackend(const std::string& base_path)
     }
 }
 
+FileStorageBackend::~FileStorageBackend() = default;
+
 void FileStorageBackend::write(const std::string& path, const void* data, size_t size) {
     auto full_path = impl_->resolve_path(path);
     auto dir = fs::path(full_path).parent_path();
@@ -119,7 +121,16 @@ struct CheckpointManager::Impl {
 };
 
 CheckpointManager& CheckpointManager::instance() {
+    // impl_ is a unique_ptr that nothing allocated — the constructor is
+    // `= default` — so the first call through any member (even
+    // set_checkpoint_interval) dereferenced a null pointer and killed the
+    // process.
     static CheckpointManager manager;
+    static const bool initialized = [&manager] {
+        manager.impl_ = std::make_unique<CheckpointManager::Impl>();
+        return true;
+    }();
+    (void)initialized;
     return manager;
 }
 
@@ -165,7 +176,7 @@ void CheckpointManager::save_checkpoint(
 
     auto& impl = *impl_;
 
-    std::string ckpt_dir = "/ckpt_" + std::to_string(step);
+    std::string ckpt_dir = "ckpt_" + std::to_string(step);
     impl.backend->create_directory(ckpt_dir);
 
     CheckpointManifest manifest;
@@ -294,15 +305,19 @@ bool CheckpointManager::load_checkpoint(
         return false;
     }
 
+    // Read through the backend, not a raw ifstream: the whole point of the
+    // StorageBackend abstraction is that a checkpoint may live somewhere other
+    // than the local filesystem. Bypassing it here meant anything saved to a
+    // non-file backend could never be loaded.
     std::vector<char> model_file;
     {
-        std::ifstream ifs(impl.backend->resolve_path(path + "/model.bin"), std::ios::binary);
-        if (ifs) {
-            ifs.seekg(0, std::ios::end);
-            model_file.resize(ifs.tellg());
-            ifs.seekg(0);
-            ifs.read(model_file.data(), model_file.size());
-        }
+        // The backend owns the blobs; ask it how big they are by reading the
+        // 8-byte length prefix, then read the whole thing. Probing with a raw
+        // std::ifstream made every non-filesystem backend unloadable.
+        size_t model_size = 0;
+        impl.backend->read(path + "/model.bin", &model_size, sizeof(size_t));
+        model_file.resize(sizeof(size_t) + model_size);
+        impl.backend->read(path + "/model.bin", model_file.data(), model_file.size());
     }
 
     if (model_file.size() < sizeof(size_t)) {
@@ -347,13 +362,11 @@ bool CheckpointManager::load_checkpoint(
 
     std::vector<char> optimizer_file;
     {
-        std::ifstream ifs(impl.backend->resolve_path(path + "/optimizer.bin"), std::ios::binary);
-        if (ifs) {
-            ifs.seekg(0, std::ios::end);
-            optimizer_file.resize(ifs.tellg());
-            ifs.seekg(0);
-            ifs.read(optimizer_file.data(), optimizer_file.size());
-        }
+        size_t optimizer_size = 0;
+        impl.backend->read(path + "/optimizer.bin", &optimizer_size, sizeof(size_t));
+        optimizer_file.resize(sizeof(size_t) + optimizer_size);
+        impl.backend->read(path + "/optimizer.bin", optimizer_file.data(),
+                           optimizer_file.size());
     }
 
     if (optimizer_file.size() < sizeof(size_t)) {
@@ -444,15 +457,29 @@ void CheckpointManager::trigger_emergency_checkpoint() {
 std::optional<CheckpointInfo> CheckpointManager::get_checkpoint_info(int step) const {
     auto& impl = *impl_;
 
-    std::string ckpt_dir = "/ckpt_" + std::to_string(step);
+    std::string ckpt_dir = "ckpt_" + std::to_string(step);
     if (!impl.backend->exists(ckpt_dir)) {
         return std::nullopt;
     }
 
-    CheckpointInfo info;
+    // Every field is set: CheckpointInfo has no default member initialisers, so
+    // returning a partially filled struct handed the caller indeterminate
+    // timestamp and size_bytes (undefined behaviour on read).
+    CheckpointInfo info{};
     info.step = step;
     info.path = ckpt_dir;
-
+    info.timestamp = 0;
+    // Size comes from the length prefix the save path writes, so this works for
+    // any backend rather than only ones backed by a real filesystem.
+    size_t model_size = 0;
+    if (impl.backend->exists(ckpt_dir + "/model.bin")) {
+        impl.backend->read(ckpt_dir + "/model.bin", &model_size, sizeof(size_t));
+    }
+    size_t optimizer_size = 0;
+    if (impl.backend->exists(ckpt_dir + "/optimizer.bin")) {
+        impl.backend->read(ckpt_dir + "/optimizer.bin", &optimizer_size, sizeof(size_t));
+    }
+    info.size_bytes = model_size + optimizer_size;
     return info;
 }
 
@@ -460,7 +487,7 @@ std::vector<int> CheckpointManager::available_checkpoints() const {
     auto& impl = *impl_;
     std::vector<int> checkpoints;
 
-    auto entries = impl.backend->list("/");
+    auto entries = impl.backend->list("");
     for (const auto& entry : entries) {
         if (entry.rfind("ckpt_", 0) == 0) {
             try {
@@ -481,7 +508,7 @@ void CheckpointManager::cleanup_old_checkpoints() {
     auto checkpoints = available_checkpoints();
     while (static_cast<int>(checkpoints.size()) > impl.max_checkpoints_to_keep) {
         int to_remove = checkpoints.front();
-        std::string ckpt_dir = "/ckpt_" + std::to_string(to_remove);
+        std::string ckpt_dir = "ckpt_" + std::to_string(to_remove);
         impl.backend->remove(ckpt_dir);
         checkpoints.erase(checkpoints.begin());
     }
