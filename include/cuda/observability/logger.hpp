@@ -27,6 +27,8 @@
 #include <string>
 #include <sstream>
 #include <chrono>
+#include <ctime>
+#include <utility>
 
 namespace nova {
 namespace logging {
@@ -79,14 +81,31 @@ inline bool should_log(LogLevel level) {
  * @return ISO 8601 formatted timestamp
  */
 inline std::string format_timestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    const auto now = std::chrono::system_clock::now();
+    const auto time = std::chrono::system_clock::to_time_t(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
 
+    // std::localtime returns a pointer to a shared static buffer, so two threads
+    // logging at once raced on it (ThreadSanitizer flags format_timestamp
+    // directly). localtime_r writes into caller-owned storage.
+    std::tm broken_down{};
+#if defined(_WIN32)
+    localtime_s(&broken_down, &time);
+#else
+    localtime_r(&time, &broken_down);
+#endif
+
     char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", std::localtime(&time));
-    return std::string(buf) + "." + std::to_string(ms.count());
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &broken_down);
+
+    // Milliseconds are zero-padded to three digits. Without this a timestamp at
+    // +7ms read ".7", which is both wrong for ISO 8601 and breaks the
+    // lexicographic ordering of a fixed-width log line.
+    char millis[8];
+    std::snprintf(millis, sizeof(millis), "%03lld",
+                  static_cast<long long>(ms.count()));
+    return std::string(buf) + "." + millis;
 }
 
 /**
@@ -95,23 +114,59 @@ inline std::string format_timestamp() {
  * @param context Key=value context pairs
  * @param message Log message
  */
-inline void log(LogLevel level, const char* context, const char* message) {
-    if (!should_log(level)) return;
-
-    const char* level_str;
+inline const char* level_name(LogLevel level) {
     switch (level) {
-        case LogLevel::ERROR: level_str = "ERROR"; break;
-        case LogLevel::WARN:  level_str = "WARN";  break;
-        case LogLevel::INFO:  level_str = "INFO";  break;
-        case LogLevel::DEBUG: level_str = "DEBUG"; break;
-        case LogLevel::TRACE: level_str = "TRACE"; break;
+        case LogLevel::ERROR: return "ERROR";
+        case LogLevel::WARN:  return "WARN";
+        case LogLevel::INFO:  return "INFO";
+        case LogLevel::DEBUG: return "DEBUG";
+        case LogLevel::TRACE: return "TRACE";
     }
+    return "UNKNOWN";
+}
 
+/**
+ * @brief Log a preformatted message at the specified level
+ * @param level Log level
+ * @param context Key=value context pairs
+ * @param message Log message
+ */
+inline void write_log_line(LogLevel level, const char* context,
+                           const std::string& message) {
     std::fprintf(stderr, "[%s] [%s] [%s] %s\n",
                  format_timestamp().c_str(),
-                 level_str,
+                 level_name(level),
                  context ? context : "",
-                 message);
+                 message.c_str());
+}
+
+/** @brief Log an already-formatted message */
+inline void log(LogLevel level, const char* context, const std::string& message) {
+    if (!should_log(level)) return;
+    write_log_line(level, context, message);
+}
+
+/**
+ * @brief Log a message built from a streamed expression
+ *
+ * The macros accept `"key=" << value` (see the example at the top of this
+ * file), so something has to turn that into a string. Without this overload the
+ * documented form did not compile at all: the macro passed the streamed
+ * expression to a `const char*` parameter.
+ *
+ * Only the selected stream operator runs when the level is filtered out, so an
+ * expensive value is not formatted for a message that is then discarded.
+ */
+template <typename... Args>
+void log(LogLevel level, const char* context, Args&&... args) {
+    if (!should_log(level)) return;
+
+    std::ostringstream stream;
+    (stream << ... << std::forward<Args>(args));
+    // Calls write_log_line, not log(): an unqualified log(...) with a
+    // std::string argument selects this template again (a forwarding reference
+    // binds better than const&) and recurses until the stack is gone.
+    write_log_line(level, context, stream.str());
 }
 
 }  // namespace logging
@@ -122,39 +177,74 @@ inline void log(LogLevel level, const char* context, const char* message) {
  * Log ERROR level message
  * @ingroup logger
  */
-#define NOVA_LOG_ERROR(context, message) \
-    nova::logging::log(nova::logging::LogLevel::ERROR, context, message)
+#define NOVA_LOG_ERROR(context, ...) \
+    do { \
+        if (nova::logging::should_log(nova::logging::LogLevel::ERROR)) { \
+            std::ostringstream nova_log_stream_; \
+            nova_log_stream_ << __VA_ARGS__; \
+            nova::logging::log(nova::logging::LogLevel::ERROR, context, \
+                               nova_log_stream_.str()); \
+        } \
+    } while (false)
 
 /**
  * @def NOVA_LOG_WARN(context, message)
  * Log WARN level message
  * @ingroup logger
  */
-#define NOVA_LOG_WARN(context, message) \
-    nova::logging::log(nova::logging::LogLevel::WARN, context, message)
+#define NOVA_LOG_WARN(context, ...) \
+    do { \
+        if (nova::logging::should_log(nova::logging::LogLevel::WARN)) { \
+            std::ostringstream nova_log_stream_; \
+            nova_log_stream_ << __VA_ARGS__; \
+            nova::logging::log(nova::logging::LogLevel::WARN, context, \
+                               nova_log_stream_.str()); \
+        } \
+    } while (false)
 
 /**
  * @def NOVA_LOG_INFO(context, message)
  * Log INFO level message
  * @ingroup logger
  */
-#define NOVA_LOG_INFO(context, message) \
-    nova::logging::log(nova::logging::LogLevel::INFO, context, message)
+#define NOVA_LOG_INFO(context, ...) \
+    do { \
+        if (nova::logging::should_log(nova::logging::LogLevel::INFO)) { \
+            std::ostringstream nova_log_stream_; \
+            nova_log_stream_ << __VA_ARGS__; \
+            nova::logging::log(nova::logging::LogLevel::INFO, context, \
+                               nova_log_stream_.str()); \
+        } \
+    } while (false)
 
 /**
  * @def NOVA_LOG_DEBUG(context, message)
  * Log DEBUG level message
  * @ingroup logger
  */
-#define NOVA_LOG_DEBUG(context, message) \
-    nova::logging::log(nova::logging::LogLevel::DEBUG, context, message)
+#define NOVA_LOG_DEBUG(context, ...) \
+    do { \
+        if (nova::logging::should_log(nova::logging::LogLevel::DEBUG)) { \
+            std::ostringstream nova_log_stream_; \
+            nova_log_stream_ << __VA_ARGS__; \
+            nova::logging::log(nova::logging::LogLevel::DEBUG, context, \
+                               nova_log_stream_.str()); \
+        } \
+    } while (false)
 
 /**
  * @def NOVA_LOG_TRACE(context, message)
  * Log TRACE level message
  * @ingroup logger
  */
-#define NOVA_LOG_TRACE(context, message) \
-    nova::logging::log(nova::logging::LogLevel::TRACE, context, message)
+#define NOVA_LOG_TRACE(context, ...) \
+    do { \
+        if (nova::logging::should_log(nova::logging::LogLevel::TRACE)) { \
+            std::ostringstream nova_log_stream_; \
+            nova_log_stream_ << __VA_ARGS__; \
+            nova::logging::log(nova::logging::LogLevel::TRACE, context, \
+                               nova_log_stream_.str()); \
+        } \
+    } while (false)
 
 #endif  // NOVA_CUDA_LOGGER_HPP
