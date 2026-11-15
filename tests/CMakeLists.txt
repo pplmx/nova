@@ -277,6 +277,27 @@ target_include_directories(reduce_kernels-tests PRIVATE
 )
 add_test(NAME reduce_kernels COMMAND reduce_kernels-tests)
 
+# algo_wrapper.h declares a __global__ kernel at namespace scope, so its test is
+# a .cu file in its own executable for the same reason as reduce_kernels.
+# Only the test source: cuda_impl already carries algo_wrapper.cu and
+# graph_executor.cu, and compiling them again collided at link time.
+add_executable(algo_wrapper-tests
+    device/algo_wrapper_test.cu
+)
+target_link_libraries(algo_wrapper-tests
+    PRIVATE
+    CUDA::cudart
+    GTest::gtest
+    GTest::gtest_main
+    cuda_impl
+)
+target_include_directories(algo_wrapper-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/cuda/production
+    ${CMAKE_SOURCE_DIR}/include/cuda/device
+)
+add_test(NAME algo_wrapper COMMAND algo_wrapper-tests)
+
 include(GoogleTest)
 gtest_discover_tests(nova-tests)
 
