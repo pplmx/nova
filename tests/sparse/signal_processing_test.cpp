@@ -198,35 +198,79 @@ TEST(FftConvolutionTest, UnimplementedBoundaryModesAreRejected) {
                  std::invalid_argument);
 }
 
-// KNOWN DEFECT, not asserted here: the convolution itself does not work. The
-// implementation runs ONE R2C plan and then calls cufftExecC2R on the same plan
-// with a buffer that was written as frequency data, and it never multiplies the
-// two spectra pointwise — the transform of the kernel overwrites the transform
-// of the signal. Executing it raises CUFFT_INVALID_VALUE (4). Fixing that means
-// rewriting the algorithm (two R2C transforms, a pointwise complex multiply, one
-// C2R), which is beyond what this change covers. What IS pinned below is that
-// the input validation added here runs and that the call reaches cuFFT at all,
-// so the defect cannot be mistaken for a silent wrong answer.
-TEST(FftConvolutionTest, ReachesCufftForAValidRequestToday) {
+
+// The convolution used to raise CUFFT_INVALID_VALUE: it ran one R2C plan and
+// then called cufftExecC2R on that same plan with frequency data, never
+// multiplying the two spectra. It now does the full transform pipeline.
+TEST(FftConvolutionTest, MatchesDirectConvolution) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
     }
 
-    const std::vector<float> signal_values = {1.0f, 2.0f, 3.0f, 4.0f};
-    const std::vector<float> kernel_values = {1.0f, 1.0f, 1.0f};
+    const std::vector<float> signal_values = {1.0f, 2.0f, 3.0f};
+    const std::vector<float> kernel_values = {1.0f, 1.0f};
     DeviceBuffer signal(signal_values);
     DeviceBuffer kernel(kernel_values);
 
-    EXPECT_THROW(
-        {
-            auto result = fft_convolution(signal.data(), signal_values.size(),
-                                          kernel.data(), kernel_values.size(),
-                                          BoundaryMode::ZeroPadding);
-            (void)result;
-        },
-        std::runtime_error)
-        << "the convolution currently fails inside cuFFT; see the comment above";
-    (void)cudaGetLastError();
+    const auto result = fft_convolution(signal.data(), signal_values.size(),
+                                        kernel.data(), kernel_values.size(),
+                                        BoundaryMode::ZeroPadding);
+    ASSERT_EQ(result.output_size, signal_values.size() + kernel_values.size() - 1);
+
+    const auto output = to_host(result.output, result.output_size);
+    const std::vector<float> expected = {1.0f, 3.0f, 5.0f, 3.0f};
+    ASSERT_EQ(output.size(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_NEAR(output[i], expected[i], 1e-5f) << "sample " << i;
+    }
+}
+
+TEST(FftConvolutionTest, AgreesWithDirectConvolutionAcrossShapes) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    struct Case {
+        std::vector<float> signal;
+        std::vector<float> kernel;
+        const char* label;
+    };
+    const std::vector<Case> cases = {
+        {{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, "uniform 5x3"},
+        {{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f}, {0.5f}, "scale 8x1"},
+        {{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+         {1.0f, 2.0f, 3.0f, 4.0f, 5.0f},
+         "impulse 9x5"},
+        {{-1.0f, -2.0f, -3.0f}, {1.0f, -1.0f}, "negatives 3x2"},
+        {{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f,
+          13.0f},
+         {1.0f, 2.0f},
+         "13x2 non-power-of-two"},
+    };
+
+    for (const Case& test_case : cases) {
+        DeviceBuffer signal(test_case.signal);
+        DeviceBuffer kernel(test_case.kernel);
+
+        const auto result = fft_convolution(signal.data(), test_case.signal.size(),
+                                            kernel.data(), test_case.kernel.size(),
+                                            BoundaryMode::ZeroPadding);
+
+        std::vector<float> reference(test_case.signal.size() + test_case.kernel.size() - 1,
+                                     0.0f);
+        for (size_t i = 0; i < test_case.signal.size(); ++i) {
+            for (size_t j = 0; j < test_case.kernel.size(); ++j) {
+                reference[i + j] += test_case.signal[i] * test_case.kernel[j];
+            }
+        }
+
+        ASSERT_EQ(result.output_size, reference.size()) << test_case.label;
+        const auto output = to_host(result.output, result.output_size);
+        for (size_t i = 0; i < reference.size(); ++i) {
+            EXPECT_NEAR(output[i], reference[i], 1e-3f)
+                << test_case.label << " sample " << i;
+        }
+    }
 }
 
 TEST(HaarWaveletTest, ForwardCountsTheLevelsOfAPowerOfTwoLength) {
@@ -272,37 +316,51 @@ TEST(HaarWaveletTest, InverseRejectsALevelCountThatCannotFitTheSize) {
     EXPECT_THROW(haar_wavelet_inverse(bogus, 4), std::invalid_argument);
 }
 
-// KNOWN DEFECT, not asserted here: forward then inverse does not reconstruct the
-// input, because haar_wavelet_forward overwrites coefficients[0..curr_n/2) with
-// the approximation at every level but never writes that level's DETAIL
-// coefficients anywhere — it computes them into a temporary and drops it. The
-// inverse therefore has nothing to add back. Pinning the current output would
-// enshrine wrong numbers, and fixing it changes the coefficient layout, which is
-// a separate decision. The test records that the round trip is lossy today.
-TEST(HaarWaveletTest, RoundTripIsCurrentlyLossy) {
+
+// The forward transform used to compute each level's detail coefficients into a
+// temporary and never store them, and the inverse rebuilt the full-length region
+// first, overwriting detail the shallower levels still needed. Both are fixed,
+// so the round trip is now exact.
+TEST(HaarWaveletTest, ForwardThenInverseReconstructsTheInput) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
     }
 
-    const std::vector<float> values = {1.0f, 2.0f, 3.0f, 4.0f};
+    for (const size_t n : {size_t{4}, size_t{8}, size_t{16}, size_t{32}}) {
+        std::vector<float> values(n);
+        for (size_t i = 0; i < n; ++i) {
+            values[i] = static_cast<float>(i + 1);
+        }
+        DeviceBuffer signal(values);
+
+        const auto forward = haar_wavelet_forward(signal.data(), values.size());
+        const auto reconstructed = haar_wavelet_inverse(forward, values.size());
+        const auto output = to_host(reconstructed, values.size());
+
+        ASSERT_EQ(output.size(), values.size()) << "n=" << n;
+        for (size_t i = 0; i < values.size(); ++i) {
+            EXPECT_NEAR(output[i], values[i], 1e-4f) << "n=" << n << " sample " << i;
+        }
+    }
+}
+
+// A constant signal has zero detail, so it would hide a broken reconstruction.
+// The alternating signal exercises the detail coefficients at every level.
+TEST(HaarWaveletTest, AlternatingSignalSurvivesTheRoundTrip) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    const std::vector<float> values = {1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f};
     DeviceBuffer signal(values);
 
     const auto forward = haar_wavelet_forward(signal.data(), values.size());
-    ASSERT_EQ(forward.levels, 2u);
-
     const auto reconstructed = haar_wavelet_inverse(forward, values.size());
     const auto output = to_host(reconstructed, values.size());
-    ASSERT_EQ(output.size(), values.size());
 
-    bool exact = true;
     for (size_t i = 0; i < values.size(); ++i) {
-        if (std::abs(output[i] - values[i]) > 1e-4f) {
-            exact = false;
-        }
+        EXPECT_NEAR(output[i], values[i], 1e-4f) << "sample " << i;
     }
-    EXPECT_FALSE(exact)
-        << "the round trip now reconstructs exactly — update this test and the "
-           "comment above, the detail-coefficient defect appears to be fixed";
 }
 
 }  // namespace cuda::signal::test
