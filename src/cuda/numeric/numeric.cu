@@ -96,7 +96,18 @@ MonteCarloResult monte_carlo_integration(float (*func)(float), float a, float b,
 
 IntegrationResult trapezoidal_integration(float (*func)(float), float a, float b, size_t n) {
     IntegrationResult result;
-    float h = (b - a) / n;
+
+    // h = (b - a) / n divides by the interval count, so n == 0 produced inf and
+    // propagated NaN through every field. An empty integration range is zero.
+    if (n == 0) {
+        result.value = 0.0f;
+        result.intervals = 0;
+        result.error_estimate = 0.0f;
+        result.converged = true;
+        return result;
+    }
+
+    const float h = (b - a) / static_cast<float>(n);
 
     memory::Buffer<float> values(n + 1);
     float* h_values = static_cast<float*>(malloc((n + 1) * sizeof(float)));
@@ -120,7 +131,17 @@ IntegrationResult trapezoidal_integration(float (*func)(float), float a, float b
 
 IntegrationResult simpson_integration(float (*func)(float), float a, float b, size_t n) {
     IntegrationResult result;
-    float h = (b - a) / (2 * n);
+
+    // Same division by the interval count as the trapezoidal rule.
+    if (n == 0) {
+        result.value = 0.0f;
+        result.intervals = 0;
+        result.error_estimate = 0.0f;
+        result.converged = true;
+        return result;
+    }
+
+    const float h = (b - a) / (2.0f * static_cast<float>(n));
 
     memory::Buffer<float> f0(n), f1(n), f2(n);
     float* h_f0 = static_cast<float*>(malloc(n * sizeof(float)));
@@ -226,6 +247,24 @@ RootFindingResult newton_raphson(float (*func)(float), float (*deriv)(float), fl
 
 InterpolationResult linear_interpolation(const float* x, const float* y, size_t n) {
     InterpolationResult result;
+
+    // The coefficient count is (n - 1) * 2, which underflows to SIZE_MAX for
+    // n == 0 and asked the allocator for 32 exabytes ("out of memory"). Fewer
+    // than two points describe no segment at all.
+    if (n < 2) {
+        result.n = n;
+        result.x = memory::Buffer<float>(n);
+        result.y = memory::Buffer<float>(n);
+        result.coeffs = memory::Buffer<float>(0);
+        if (n > 0) {
+            CUDA_CHECK(cudaMemcpy(result.x.data(), x, n * sizeof(float),
+                                  cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(result.y.data(), y, n * sizeof(float),
+                                  cudaMemcpyHostToDevice));
+        }
+        return result;
+    }
+
     result.n = n;
     result.x = memory::Buffer<float>(n);
     result.y = memory::Buffer<float>(n);
