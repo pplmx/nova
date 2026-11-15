@@ -4,8 +4,31 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 
 namespace cuda::inference {
+
+namespace {
+
+/// Checks the inputs every sampler reads unconditionally: logits[0] is
+/// dereferenced before any size test, and temperature divides the logits.
+/// vocab_size == 0 aborted the process, a negative size surfaced as an unrelated
+/// std::vector error, and temperature == 0 made every probability NaN.
+void validate_sampling_inputs(int vocab_size, float temperature, const char* fn) {
+    if (vocab_size <= 0) {
+        throw std::invalid_argument(std::string(fn) +
+                                    ": vocab_size must be positive, got " +
+                                    std::to_string(vocab_size));
+    }
+    if (!(temperature > 0.0f)) {
+        throw std::invalid_argument(std::string(fn) +
+                                    ": temperature must be positive, got " +
+                                    std::to_string(temperature));
+    }
+}
+
+}  // namespace
 
 TopKSampler::TopKSampler(int k) : k_(k) {}
 
@@ -15,10 +38,12 @@ std::vector<std::pair<int, float>> TopKSampler::sample(
     float temperature,
     uint64_t seed
 ) {
+    validate_sampling_inputs(vocab_size, temperature, "TopKSampler::sample");
+
     const int effective_k = std::min(k_, vocab_size);
     std::vector<std::pair<int, float>> top_k(effective_k);
 
-    std::vector<float> probs(vocab_size);
+    std::vector<float> probs(static_cast<size_t>(vocab_size));
     float max_logit = logits[0];
     for (int i = 1; i < vocab_size; ++i) {
         max_logit = std::max(max_logit, logits[i]);
@@ -65,7 +90,9 @@ int TopPSampler::sample(
     float temperature,
     uint64_t seed
 ) {
-    std::vector<float> probs(vocab_size);
+    validate_sampling_inputs(vocab_size, temperature, "TopPSampler::sample");
+
+    std::vector<float> probs(static_cast<size_t>(vocab_size));
     float max_logit = logits[0];
     for (int i = 1; i < vocab_size; ++i) {
         max_logit = std::max(max_logit, logits[i]);
@@ -81,7 +108,7 @@ int TopPSampler::sample(
         probs[i] /= sum;
     }
 
-    std::vector<std::pair<int, float>> sorted(vocab_size);
+    std::vector<std::pair<int, float>> sorted(static_cast<size_t>(vocab_size));
     for (int i = 0; i < vocab_size; ++i) {
         sorted[i] = {i, probs[i]};
     }
@@ -250,7 +277,9 @@ std::vector<BeamHypothesis> BeamSearchManager::search(
         logits.copy_to(h_logits.data(), vocab_size);
         const float* logits_data = h_logits.data();
 
-        std::vector<float> probs(vocab_size);
+        validate_sampling_inputs(vocab_size, config_.temperature,
+                                 "BeamSearch::step");
+        std::vector<float> probs(static_cast<size_t>(vocab_size));
         float max_logit = logits_data[0];
         for (int i = 1; i < vocab_size; ++i) {
             max_logit = std::max(max_logit, logits_data[i]);
