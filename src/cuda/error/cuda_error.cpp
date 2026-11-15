@@ -10,28 +10,30 @@ std::string cuda_error_category::message(int ev) const {
 }
 
 std::string_view cuda_error_category::recovery_hint(int ev) const noexcept {
-    switch (ev) {
-        case 2:  // cudaErrorOutOfMemory
+    // Keyed on the cudaError_t enumerators, never on numeric literals. The
+    // literal version had drifted: cudaErrorNotReady is 600 (the hint sat on
+    // 500, so it never matched), 201 is cudaErrorDeviceUninitialized (not
+    // InvalidContext, so the wrong advice was given), 303 does not exist
+    // (shared-object symbol-not-found is 302), and 3 has no enumerator at all.
+    switch (static_cast<cudaError_t>(ev)) {
+        case cudaErrorMemoryAllocation:
             return "Try reducing batch size, freeing memory, or using a smaller tensor";
-        case 4:  // cudaErrorDeinitialized
-            return "CUDA driver was shut down - restart CUDA or reinitialize";
-        case 1:  // cudaErrorInvalidValue
+        case cudaErrorInvalidValue:
             return "Check parameter values are within valid ranges";
-        case 101:  // cudaErrorInvalidDevice
+        case cudaErrorInvalidDevice:
             return "Verify device ID is valid: nvidia-smi --query-gpu=index,name --format=csv";
-        case 100:  // cudaErrorNoDevice
+        case cudaErrorNoDevice:
             return "No CUDA device found - check CUDA installation and driver";
-        case 3:  // cudaErrorNotInitialized
-            return "Call cudaInit() or any CUDA function first to initialize";
-        case 201:  // cudaErrorInvalidContext
-            return "Invalid device context - call cudaSetDevice() to set a valid context";
-        case 301:  // file not found
+        case cudaErrorDeviceUninitialized:
+            return "The device was not initialized - call cudaFree(0) or cudaSetDevice() "
+                   "before allocating, and check for an earlier fatal error";
+        case cudaErrorFileNotFound:
             return "Check file paths and permissions";
-        case 303:  // shared object init failed
+        case cudaErrorSharedObjectSymbolNotFound:
             return "Shared library initialization failed - check library dependencies";
-        case 500:  // cudaErrorNotReady
+        case cudaErrorNotReady:
             return "Operation not yet complete - wait or check if async operation finished";
-        case 700:  // cudaErrorIllegalAddress
+        case cudaErrorIllegalAddress:
             return "Check array indices and memory addresses are valid";
         default:
             return "Consult CUDA documentation for this error code";
