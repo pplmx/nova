@@ -9,8 +9,12 @@ OccupancyAnalyzer::OccupancyAnalyzer(int device)
     : device_(device), sm_count_(0), max_threads_per_sm_(0),
       max_blocks_per_sm_(0), warp_size_(32) {
 
-    int old_device;
-    cudaGetDevice(&old_device);
+    // old_device must start at a known value: cudaGetDevice writes through the
+    // pointer and nobody checks its result, so on failure the uninitialised value
+    // was passed straight to cudaSetDevice at the end, switching the calling
+    // thread to an arbitrary device.
+    int old_device = 0;
+    const bool have_old_device = cudaGetDevice(&old_device) == cudaSuccess;
     cudaSetDevice(device_);
 
     cudaDeviceProp prop;
@@ -21,7 +25,9 @@ OccupancyAnalyzer::OccupancyAnalyzer(int device)
         warp_size_ = prop.warpSize;
     }
 
-    cudaSetDevice(old_device);
+    if (have_old_device) {
+        cudaSetDevice(old_device);
+    }
 }
 
 OccupancyAnalysis OccupancyAnalyzer::analyze(const void* kernel_func,
@@ -39,8 +45,12 @@ OccupancyAnalysis OccupancyAnalyzer::analyze(const void* kernel_func,
         return analysis;
     }
 
-    int old_device;
-    cudaGetDevice(&old_device);
+    // old_device must start at a known value: cudaGetDevice writes through the
+    // pointer and nobody checks its result, so on failure the uninitialised value
+    // was passed straight to cudaSetDevice at the end, switching the calling
+    // thread to an arbitrary device.
+    int old_device = 0;
+    const bool have_old_device = cudaGetDevice(&old_device) == cudaSuccess;
     cudaSetDevice(device_);
 
     cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
@@ -60,7 +70,9 @@ OccupancyAnalysis OccupancyAnalyzer::analyze(const void* kernel_func,
         analysis.min_blocks_for_full_occupancy = min_blocks;
     }
 
-    cudaSetDevice(old_device);
+    if (have_old_device) {
+        cudaSetDevice(old_device);
+    }
     return analysis;
 }
 
@@ -78,8 +90,12 @@ OccupancyRecommendation OccupancyAnalyzer::recommend(const void* kernel_func,
         return rec;
     }
 
-    int old_device;
-    cudaGetDevice(&old_device);
+    // old_device must start at a known value: cudaGetDevice writes through the
+    // pointer and nobody checks its result, so on failure the uninitialised value
+    // was passed straight to cudaSetDevice at the end, switching the calling
+    // thread to an arbitrary device.
+    int old_device = 0;
+    const bool have_old_device = cudaGetDevice(&old_device) == cudaSuccess;
     cudaSetDevice(device_);
 
     int block_size_hint = preferred_block_size > 0 ? preferred_block_size : 0;
@@ -109,7 +125,9 @@ OccupancyRecommendation OccupancyAnalyzer::recommend(const void* kernel_func,
         }
     }
 
-    cudaSetDevice(old_device);
+    if (have_old_device) {
+        cudaSetDevice(old_device);
+    }
     return rec;
 }
 
