@@ -388,6 +388,72 @@ BenchmarkResult benchmark_fp8_gemm_throughput(
     return result;
 }
 
+std::vector<BenchmarkResult> run_precision_comparison(
+    const float* a, const float* b, const float* c_ref,
+    int m, int k, int n) {
+
+    // Declared in benchmark.hpp but never defined, so every caller failed to
+    // link with "undefined reference to run_precision_comparison". It benchmarks
+    // the same GEMM shape at each quantisation precision and reports the error
+    // against a reference result, which is what the name promises.
+    std::vector<BenchmarkResult> results;
+
+    if (a == nullptr || b == nullptr || c_ref == nullptr || m <= 0 || k <= 0 || n <= 0) {
+        return results;
+    }
+
+    struct PrecisionCase {
+        const char* label;
+        float (*quantize)(float);   // per-element rounding used for this case
+    };
+
+    // Each case quantises the inputs to its grid, runs the product, and compares
+    // against the float reference. The error is therefore the error that
+    // precision introduces, not an artefact of the timing loop.
+    for (const PrecisionCase& test_case : {
+             PrecisionCase{"fp8_e4m3", [](float v) {
+                               return static_cast<float>(FP8E4M3(v));
+                           }},
+             PrecisionCase{"int8", [](float v) {
+                               return static_cast<float>(
+                                   static_cast<int8_t>(std::round(std::fmin(
+                                       std::fmax(v, -127.0f), 127.0f))));
+                           }},
+         }) {
+        BenchmarkResult result;
+        result.name = std::string("precision_compare_") + test_case.label + " " +
+                      std::to_string(m) + "x" + std::to_string(k) + "x" +
+                      std::to_string(n);
+        result.batch_size = m * n;
+        result.num_samples = 1;
+
+        // Max-abs error and relative error against the reference product.
+        double max_abs_error = 0.0;
+        double reference_norm = 0.0;
+        for (int i = 0; i < m; ++i) {
+            for (int j = 0; j < n; ++j) {
+                float sum = 0.0f;
+                for (int p = 0; p < k; ++p) {
+                    sum += test_case.quantize(a[i * k + p]) *
+                           test_case.quantize(b[p * n + j]);
+                }
+                const float reference = c_ref[i * n + j];
+                max_abs_error = std::max<double>(
+                    max_abs_error, std::fabs(static_cast<double>(sum - reference)));
+                reference_norm += static_cast<double>(reference) * reference;
+            }
+        }
+
+        result.relative_error = reference_norm > 0.0
+                                    ? static_cast<float>(max_abs_error / std::sqrt(reference_norm))
+                                    : static_cast<float>(max_abs_error);
+        result.accuracy_loss = result.relative_error;
+        results.push_back(std::move(result));
+    }
+
+    return results;
+}
+
 void generate_report(
     const std::vector<BenchmarkResult>& results,
     const std::string& output_path) {
