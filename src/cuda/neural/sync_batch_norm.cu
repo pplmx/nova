@@ -1,5 +1,8 @@
 #include "cuda/neural/sync_batch_norm.h"
 
+#include <stdexcept>
+#include <string>
+
 #include "cuda/device/reduce_kernels.h"
 #include "cuda/distributed/reduce.h"
 #include "cuda/memory/unique_ptr.h"
@@ -372,6 +375,21 @@ SyncBatchNorm::SyncBatchNorm(int num_features, float eps, float momentum)
       saved_input_(nullptr),
       normalized_(nullptr),
       saved_output_(nullptr) {
+
+    // eps exists to keep sqrt(variance + eps) away from zero. A non-positive
+    // value defeats that: with a constant input (variance 0) both eps = 0 and
+    // eps < 0 produced NaN in every output element, and a negative eps also
+    // asks sqrtf() for the root of a negative number in general. Reject it here
+    // rather than let training silently go NaN.
+    if (eps_ <= 0.0f) {
+        throw ::std::invalid_argument(
+            "SyncBatchNorm: eps must be positive, got " + ::std::to_string(eps_));
+    }
+    if (num_features_ <= 0) {
+        throw ::std::invalid_argument(
+            "SyncBatchNorm: num_features must be positive, got " +
+            ::std::to_string(num_features_));
+    }
 
     CUDA_CHECK(cudaMalloc(&running_mean_, num_features * sizeof(float)));
     CUDA_CHECK(cudaMalloc(&running_var_, num_features * sizeof(float)));
