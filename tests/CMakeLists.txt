@@ -169,6 +169,7 @@ add_executable(nova-tests
     sparse/checkpoint_manager_test.cpp
     sparse/logger_test.cpp
     sparse/fft_types_test.cpp
+    sparse/signal_processing_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

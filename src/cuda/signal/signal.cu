@@ -2,6 +2,8 @@
 
 #include <cufft.h>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #include <cstdlib>
 
 #include "cuda/device/error.h"
@@ -38,8 +40,17 @@ __global__ void fir_kernel(const float* signal, const float* coeffs, float* outp
     const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= signal_len) return;
 
+    // num_coeffs == 0 makes `num_coeffs - 1` wrap to SIZE_MAX, so the bounds test
+    // below always took the start=0 branch and the loop then read coeffs[] past
+    // its end. An empty filter has no taps, so every output is zero.
+    if (num_coeffs == 0) {
+        output[idx] = 0.0f;
+        return;
+    }
+
     float sum = 0.0f;
-    size_t start = (idx >= num_coeffs - 1) ? (idx - num_coeffs + 1) : 0;
+    const size_t span = num_coeffs - 1;
+    const size_t start = (idx >= span) ? (idx - span) : 0;
 
     for (size_t j = start; j <= idx; ++j) {
         sum += signal[j] * coeffs[idx - j];
@@ -58,8 +69,26 @@ void check_cufft(cufftResult status, const char* file, int line) {
 }  // namespace
 
 ConvolutionResult fft_convolution(const float* signal, size_t signal_len, const float* kernel, size_t kernel_len, BoundaryMode mode) {
-    size_t fft_size = next_optimal_fft_size(signal_len + kernel_len - 1);
-    size_t output_size = signal_len + kernel_len - 1;
+    // The linear convolution is signal_len + kernel_len - 1 long, which underflows
+    // to SIZE_MAX when both inputs are empty: the code then tried to allocate
+    // 16 EiB. An empty input has an empty convolution.
+    if (signal_len == 0 || kernel_len == 0) {
+        ConvolutionResult empty;
+        empty.output = memory::Buffer<float>(0);
+        empty.output_size = 0;
+        return empty;
+    }
+
+    // `mode` is not implemented — the result is the same full linear
+    // convolution regardless. Rejecting it is better than silently ignoring it
+    // and returning a buffer the caller believes honours the boundary rule.
+    if (mode != BoundaryMode::ZeroPadding) {
+        throw std::invalid_argument(
+            "fft_convolution: only BoundaryMode::ZeroPadding is implemented");
+    }
+
+    const size_t output_size = signal_len + kernel_len - 1;
+    const size_t fft_size = next_optimal_fft_size(output_size);
 
     ConvolutionResult result;
     result.output = memory::Buffer<float>(output_size);
@@ -91,6 +120,13 @@ ConvolutionResult fft_convolution(const float* signal, size_t signal_len, const 
 }
 
 WaveletResult haar_wavelet_forward(const float* signal, size_t n) {
+    if (n == 0) {
+        WaveletResult empty;
+        empty.coefficients = memory::Buffer<float>(0);
+        empty.levels = 0;
+        return empty;
+    }
+
     size_t levels = 0;
     size_t temp_n = n;
     while (temp_n > 1) {
@@ -120,6 +156,27 @@ WaveletResult haar_wavelet_forward(const float* signal, size_t n) {
 }
 
 memory::Buffer<float> haar_wavelet_inverse(const WaveletResult& coeffs, size_t original_size) {
+    // The level count and the size have to describe the same transform. A
+    // mismatched pair makes `original_size >> (levels - level)` reach zero, and
+    // the reconstruct kernel is then launched with a zero block count.
+    if (original_size == 0) {
+        return memory::Buffer<float>(0);
+    }
+    if (coeffs.levels >= sizeof(size_t) * 8) {
+        throw std::invalid_argument(
+            "haar_wavelet_inverse: level count " + std::to_string(coeffs.levels) +
+            " exceeds the representable depth for original_size " +
+            std::to_string(original_size));
+    }
+    for (size_t level = coeffs.levels; level > 0; --level) {
+        const size_t curr_n = original_size >> (coeffs.levels - level);
+        if (curr_n < 2) {
+            throw std::invalid_argument(
+                "haar_wavelet_inverse: level count " + std::to_string(coeffs.levels) +
+                " does not match original_size " + std::to_string(original_size));
+        }
+    }
+
     memory::Buffer<float> result(original_size);
 
     CUDA_CHECK(cudaMemcpy(result.data(), coeffs.coefficients.data(), original_size * sizeof(float), cudaMemcpyDeviceToDevice));
