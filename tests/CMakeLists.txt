@@ -19,6 +19,9 @@ add_executable(nova-tests
     scan_test.cu
     sort_test.cu
     matrix_mult_test.cu
+    histogram_test.cu
+    matrix_ops_test.cu
+    morphology_test.cu
     convolution_test.cu
     memory_pool_test.cpp
     memory_pool_metrics_test.cpp
@@ -155,6 +158,7 @@ add_executable(nova-tests
     quantize/quantize_ops_test.cpp
     quantize/fp8_activation_test.cpp
     quantize/fp8_kernels_test.cpp
+    gnn/gnn_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -182,6 +186,7 @@ set(CUDA_ERROR_DIR ${CMAKE_SOURCE_DIR}/include/cuda/error)
 set(CUDA_TIMEOUT_DIR ${CMAKE_SOURCE_DIR}/include/cuda/timeout)
 set(CUDA_SPARSE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/sparse)
 set(CUDA_QUANTIZE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/quantize)
+set(CUDA_GNN_DIR ${CMAKE_SOURCE_DIR}/include/cuda/gnn)
 set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
 target_link_libraries(nova-tests
@@ -219,8 +224,26 @@ target_include_directories(nova-tests PRIVATE
     ${CUDA_ERROR_DIR}
     ${CUDA_SPARSE_DIR}
     ${CUDA_QUANTIZE_DIR}
+    ${CUDA_GNN_DIR}
     ${DISTRIBUTED_TESTS_DIR}
 )
+
+# sparse/krylov_test.cpp is a standalone self-checking program (it defines its
+# own main and asserts on the solver results), so it cannot be linked into the
+# gtest binary. Build and register it separately.
+add_executable(krylov-standalone-tests
+    sparse/krylov_test.cpp
+)
+target_link_libraries(krylov-standalone-tests
+    PRIVATE
+    CUDA::cudart
+    cuda_impl
+)
+target_include_directories(krylov-standalone-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CUDA_SPARSE_DIR}
+)
+add_test(NAME krylov_standalone COMMAND krylov-standalone-tests)
 
 include(GoogleTest)
 gtest_discover_tests(nova-tests)

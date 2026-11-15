@@ -73,7 +73,7 @@ private:
     std::mt19937 rng_;
 };
 
-GraphSampler::SampledNeighbors GraphSampler::sample_neighbors(
+inline GraphSampler::SampledNeighbors GraphSampler::sample_neighbors(
     const sparse::SparseMatrixCSR<float>& graph,
     const std::vector<int>& seed_nodes,
     int num_samples) {
@@ -110,7 +110,7 @@ GraphSampler::SampledNeighbors GraphSampler::sample_neighbors(
     return result;
 }
 
-std::vector<int> GraphSampler::k_hop_aggregation(
+inline std::vector<int> GraphSampler::k_hop_aggregation(
     const sparse::SparseMatrixCSR<float>& graph,
     const std::vector<int>& seed_nodes,
     int k) {

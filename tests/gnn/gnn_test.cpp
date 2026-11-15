@@ -9,12 +9,12 @@ using namespace nova::gnn;
 
 class GNNTest : public ::testing::Test {
 protected:
-    sparse::SparseMatrixCSR<float> create_test_graph() {
+    nova::sparse::SparseMatrixCSR<float> create_test_graph() {
         std::vector<float> values = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
         std::vector<int> row_offsets = {0, 2, 4, 6};
         std::vector<int> col_indices = {1, 2, 0, 2, 0, 1};
 
-        return sparse::SparseMatrixCSR<float>(std::move(values), std::move(row_offsets),
+        return nova::sparse::SparseMatrixCSR<float>(std::move(values), std::move(row_offsets),
                                                std::move(col_indices), 3, 3);
     }
 };
@@ -32,7 +32,7 @@ TEST_F(GNNTest, MessagePassingForward) {
     EXPECT_GT(output[2], 0.0f);
 }
 
-TEST_F(GNNTest, GCN aggregation) {
+TEST_F(GNNTest, GCNAggregation) {
     auto graph = create_test_graph();
     std::vector<float> features = {1.0f, 2.0f, 3.0f};
     std::vector<float> output(3, 0.0f);

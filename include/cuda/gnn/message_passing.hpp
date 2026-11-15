@@ -88,7 +88,7 @@ private:
     AggregateFunction aggregate_fn_;
 };
 
-void MessagePassing::forward(const sparse::SparseMatrixCSR<float>& graph,
+inline void MessagePassing::forward(const sparse::SparseMatrixCSR<float>& graph,
                               const float* node_features,
                               float* output) {
     int num_nodes = graph.num_rows();
@@ -121,7 +121,7 @@ void MessagePassing::forward(const sparse::SparseMatrixCSR<float>& graph,
     }
 }
 
-void MessagePassing::gcn_aggregate(const sparse::SparseMatrixCSR<float>& graph,
+inline void MessagePassing::gcn_aggregate(const sparse::SparseMatrixCSR<float>& graph,
                                     const float* node_features,
                                     float* output) {
     int num_nodes = graph.num_rows();
@@ -139,7 +139,7 @@ void MessagePassing::gcn_aggregate(const sparse::SparseMatrixCSR<float>& graph,
     }
 }
 
-void MessagePassing::gcn_propagate(const sparse::SparseMatrixCSR<float>& graph,
+inline void MessagePassing::gcn_propagate(const sparse::SparseMatrixCSR<float>& graph,
                                     const float* node_features,
                                     float* output,
                                     int hops) {

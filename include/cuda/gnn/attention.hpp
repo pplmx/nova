@@ -65,7 +65,7 @@ private:
     float compute_attention(int src, int dst, const float* features);
 };
 
-float GraphAttention::compute_attention(int src, int dst, const float* features) {
+inline float GraphAttention::compute_attention(int src, int dst, const float* features) {
     float dot_product = 0.0f;
 
     for (int i = 0; i < in_features_; ++i) {
@@ -76,7 +76,7 @@ float GraphAttention::compute_attention(int src, int dst, const float* features)
     return std::tanh(dot_product / std::sqrt(static_cast<float>(in_features_)));
 }
 
-void GraphAttention::forward(const sparse::SparseMatrixCSR<float>& graph,
+inline void GraphAttention::forward(const sparse::SparseMatrixCSR<float>& graph,
                               const float* node_features,
                               float* output) {
     int num_nodes = graph.num_rows();
@@ -113,7 +113,7 @@ void GraphAttention::forward(const sparse::SparseMatrixCSR<float>& graph,
     }
 }
 
-void GraphAttention::set_attention_weights(const std::vector<float>& weights) {
+inline void GraphAttention::set_attention_weights(const std::vector<float>& weights) {
     weights_ = weights;
 }
 

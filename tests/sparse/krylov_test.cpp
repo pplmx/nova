@@ -88,7 +88,11 @@ public:
         }
 
         std::vector<T> Ax(n, T{0});
-        spmv(*matrix, x.data(), Ax.data());
+        // The (pointer, pointer) overload is the DEVICE one: passing host
+        // vectors to it makes cusparse dereference host addresses and the
+        // kernel faults. The host-vector overload stages the data and sizes
+        // Ax itself.
+        spmv(*matrix, x, Ax);
         T residual = T{0};
         for (int i = 0; i < n; ++i) {
             residual = std::max(residual, std::abs(Ax[i] - b[i]));
