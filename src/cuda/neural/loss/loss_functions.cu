@@ -89,11 +89,37 @@ float cross_entropy_loss(
     const CrossEntropyConfig& config,
     cudaStream_t stream
 ) {
+    // Dimension checks. With num_classes == 0 every max_logit stays -inf, sum_exp
+    // is 0 and the loss is NaN; with batch_size == 0 the mean divides by zero and
+    // the result was -nan. Both are rejected rather than returned as numbers.
+    if (batch_size < 0 || num_classes <= 0) {
+        throw std::invalid_argument(
+            "cross_entropy_loss: batch_size must be non-negative and num_classes "
+            "positive, got batch_size=" + std::to_string(batch_size) +
+            " num_classes=" + std::to_string(num_classes));
+    }
+    if (batch_size == 0) {
+        return 0.0f;
+    }
+
     int block_size = 256;
     int grid_size = (batch_size * num_classes + block_size - 1) / block_size;
 
     std::vector<float> log_probs(batch_size * num_classes);
     float total_loss = 0.0f;
+
+    // Every targets[b] indexes log_probs directly, so an out-of-range label read
+    // past the end of the buffer — measured to abort the process with
+    // "dumped core" for target 99 with 3 classes. Validate before the read and
+    // name the offending index in the error.
+    for (int b = 0; b < batch_size; ++b) {
+        if (targets[b] < 0 || targets[b] >= num_classes) {
+            throw std::invalid_argument(
+                "cross_entropy_loss: target " + std::to_string(targets[b]) +
+                " at index " + std::to_string(b) + " is outside [0, " +
+                std::to_string(num_classes) + ")");
+        }
+    }
 
     for (int b = 0; b < batch_size; ++b) {
         float max_logit = -INFINITY;
