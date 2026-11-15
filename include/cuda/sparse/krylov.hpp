@@ -185,8 +185,15 @@ public:
 
         T b_norm = detail::norm2(b, n);
         if (b_norm < std::numeric_limits<T>::epsilon()) {
+            // b == 0: the exact solution is x = 0. Report it AND write it —
+            // a converged result is a licence for the caller to read x, so
+            // returning without touching x handed back whatever happened to be
+            // in the caller's array.
+            detail::fill(x, T{0}, n);
             result.converged = true;
             result.iterations = 0;
+            result.residual_norm = T{0};
+            result.relative_residual = T{0};
             result.error_code = SolverError::SUCCESS;
             return result;
         }
@@ -300,8 +307,15 @@ public:
 
         T b_norm = detail::norm2(b, n);
         if (b_norm < std::numeric_limits<T>::epsilon()) {
+            // b == 0: the exact solution is x = 0. Report it AND write it —
+            // a converged result is a licence for the caller to read x, so
+            // returning without touching x handed back whatever happened to be
+            // in the caller's array.
+            detail::fill(x, T{0}, n);
             result.converged = true;
             result.iterations = 0;
+            result.residual_norm = T{0};
+            result.relative_residual = T{0};
             result.error_code = SolverError::SUCCESS;
             return result;
         }
@@ -549,8 +563,14 @@ public:
         T b_norm = detail::norm2(b, n);
 
         if (b_norm < std::numeric_limits<T>::epsilon()) {
+            // b == 0: x = 0 is exact. Write it, like the other solvers do.
+            for (int i = 0; i < n; ++i) {
+                x[i] = T{0};
+            }
             result.converged = true;
             result.iterations = 0;
+            result.residual_norm = T{0};
+            result.relative_residual = T{0};
             result.error_code = SolverError::SUCCESS;
             return result;
         }
@@ -752,8 +772,15 @@ public:
 
         T b_norm = detail::norm2(b, n);
         if (b_norm < std::numeric_limits<T>::epsilon()) {
+            // b == 0: the exact solution is x = 0. Report it AND write it —
+            // a converged result is a licence for the caller to read x, so
+            // returning without touching x handed back whatever happened to be
+            // in the caller's array.
+            detail::fill(x, T{0}, n);
             result.converged = true;
             result.iterations = 0;
+            result.residual_norm = T{0};
+            result.relative_residual = T{0};
             result.error_code = SolverError::SUCCESS;
             return result;
         }
