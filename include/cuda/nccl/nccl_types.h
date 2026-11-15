@@ -35,31 +35,40 @@ using ncclRedOp_t = int;
 using ncclDataType_t = int;
 using ncclResult_t = int;
 
-// Stub values for NCCL result codes
+// Stub values for NCCL result codes.
+//
+// These MUST equal the real ncclResult_t values. They did not: SystemError was
+// 1 (real 2), InProgress was 2 (real 7), and ncclTimeout does not exist in any
+// released nccl.h. Code that maps a status back to a severity in a non-NCCL
+// build then classified the wrong failure.
 constexpr int ncclSuccess = 0;
-constexpr int ncclSystemError = 1;
+constexpr int ncclUnhandledCudaError = 1;
+constexpr int ncclSystemError = 2;
 constexpr int ncclInternalError = 3;
-constexpr int ncclInProgress = 2;
-constexpr int ncclTimeout = 9;
 constexpr int ncclInvalidArgument = 4;
+constexpr int ncclInvalidUsage = 5;
+constexpr int ncclRemoteError = 6;
+constexpr int ncclInProgress = 7;
 
-// Stub values for common types
-constexpr int ncclFloat32 = 0;
-constexpr int ncclFloat64 = 1;
-constexpr int ncclFloat16 = 2;
-constexpr int ncclInt8 = 3;
-constexpr int ncclUint8 = 4;
-constexpr int ncclInt32 = 5;
-constexpr int ncclUint32 = 6;
-constexpr int ncclInt64 = 7;
-constexpr int ncclUint64 = 8;
+// Stub values for common types, matching ncclDataType_t.
+constexpr int ncclInt8 = 0;
+constexpr int ncclUint8 = 1;
+constexpr int ncclInt32 = 2;
+constexpr int ncclUint32 = 3;
+constexpr int ncclInt64 = 4;
+constexpr int ncclUint64 = 5;
+constexpr int ncclFloat16 = 6;
+constexpr int ncclFloat32 = 7;
+constexpr int ncclFloat64 = 8;
 constexpr int ncclBfloat16 = 9;
 
-// Stub values for reduction ops
+// Stub values for reduction ops, matching ncclRedOp_t. Max and Min were
+// previously defined the other way round, so a non-NCCL build computed a
+// minimum where the caller asked for a maximum.
 constexpr int ncclSum = 0;
 constexpr int ncclProd = 1;
-constexpr int ncclMin = 2;
-constexpr int ncclMax = 3;
+constexpr int ncclMax = 2;
+constexpr int ncclMin = 3;
 
 // Stub inline no-op functions for non-NCCL builds
 inline ncclResult_t ncclAllReduce(const void*, void*, size_t,
@@ -120,6 +129,9 @@ inline constexpr ncclDataType_t to_nccl_dtype(cudaDataType_t cuda_dtype) {
         case CUDA_R_32F:  return ncclFloat32;
         case CUDA_R_64F:  return ncclFloat64;
         case CUDA_R_32I:  return ncclInt32;
+        // CUDA_R_32U had no case and fell through to ncclFloat32, so a
+        // uint32 collective silently reinterpreted its data as float.
+        case CUDA_R_32U:  return ncclUint32;
         case CUDA_R_64I:  return ncclInt64;
         case CUDA_R_64U:  return ncclUint64;
         default:          return ncclFloat32;
