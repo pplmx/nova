@@ -8,11 +8,28 @@
 
 namespace cuda::testing {
 
+/**
+ * @brief Which check a boundary condition exercises
+ *
+ * run_all_boundaries dispatches on this. Before it existed every condition was
+ * judged with test_allocation(), so an alignment or grid-size expectation was
+ * decided by whether cudaMalloc succeeded — "misaligned" and
+ * "oversubscribed_grid" both reported "Unexpectedly succeeded" because a 255-byte
+ * and a 65535^2-byte allocation are perfectly legal.
+ */
+enum class BoundaryKind {
+    Allocation,   ///< Exercises test_allocation()
+    Alignment,    ///< Exercises test_alignment()
+    Compute,      ///< Exercises test_block_size()/test_grid_size()
+    SharedMemory  ///< Exercises test_shared_memory()
+};
+
 struct BoundaryCondition {
     const char* name;
     size_t value;
     bool should_succeed;
     const char* description;
+    BoundaryKind kind = BoundaryKind::Allocation;
 };
 
 class BoundaryConditionTest {
