@@ -299,9 +299,14 @@ TEST_F(PreconditionedSolverTest, GMRESSquareMatrixValidation) {
 }
 
 TEST_F(PreconditionedSolverTest, BiCGSTABSquareMatrixValidation) {
+    // A genuine 3x2 matrix: three values, three offsets, and every column
+    // index inside [0, 2). (The previous fixture listed column index 2 for a
+    // two-column matrix, i.e. a structurally invalid CSR; FromHostData rejects
+    // that now, so the case has to describe a real non-square matrix for the
+    // solver's own shape check to be what gets exercised.)
     std::vector<double> values = {1.0, 2.0, 3.0};
     std::vector<int> row_offsets = {0, 1, 2, 3};
-    std::vector<int> col_indices = {0, 1, 2};
+    std::vector<int> col_indices = {0, 1, 0};
     auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 3, 2);
     std::vector<double> b = {1.0, 1.0};
 

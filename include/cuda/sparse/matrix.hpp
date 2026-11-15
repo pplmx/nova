@@ -85,13 +85,17 @@ public:
                                                   float sparsity_threshold = 0.0f);
 
     /**
-     * @brief Create from host data
+     * @brief Create from host CSR arrays
      * @param values Non-zero values
-     * @param row_offsets Row offset array (size = rows + 1)
-     * @param col_indices Column indices
+     * @param row_offsets Row offset array (size = num_rows + 1)
+     * @param col_indices Column indices (one per value)
      * @param num_rows Number of rows
      * @param num_cols Number of columns
      * @return Sparse matrix with copied data
+     * @throws std::invalid_argument if the arrays do not describe a consistent
+     *         CSR for the given shape: wrong row_offsets length, a
+     *         col_indices/value count mismatch, offsets that do not run
+     *         0..nnz monotonically, or a column index outside [0, num_cols)
      */
     static SparseMatrix FromHostData(std::vector<T> values,
                                       std::vector<int> row_offsets,
@@ -210,6 +214,50 @@ SparseMatrix<T> SparseMatrix<T>::FromHostData(std::vector<T> values,
                                                std::vector<int> row_offsets,
                                                std::vector<int> col_indices,
                                                int num_rows, int num_cols) {
+    // Validate before allocating: the buffers are sized from (num_rows, values)
+    // while the copies below used the INPUT vector lengths, so a mismatched
+    // caller wrote past the device allocation (too long) or left trailing
+    // device memory uninitialized (too short) and got a corrupt matrix back.
+    if (num_rows < 0 || num_cols < 0) {
+        throw std::invalid_argument(
+            "SparseMatrix::FromHostData: negative shape " + std::to_string(num_rows) +
+            "x" + std::to_string(num_cols));
+    }
+    if (row_offsets.size() != static_cast<size_t>(num_rows) + 1) {
+        throw std::invalid_argument(
+            "SparseMatrix::FromHostData: row_offsets has " +
+            std::to_string(row_offsets.size()) + " entries, expected " +
+            std::to_string(num_rows + 1));
+    }
+    if (col_indices.size() != values.size()) {
+        throw std::invalid_argument(
+            "SparseMatrix::FromHostData: " + std::to_string(col_indices.size()) +
+            " column indices for " + std::to_string(values.size()) + " values");
+    }
+    if (row_offsets.front() != 0 ||
+        row_offsets.back() != static_cast<int>(values.size())) {
+        throw std::invalid_argument(
+            "SparseMatrix::FromHostData: row_offsets must run 0..nnz (" +
+            std::to_string(row_offsets.front()) + ".." +
+            std::to_string(row_offsets.back()) + " for nnz " +
+            std::to_string(values.size()) + ")");
+    }
+    for (int r = 0; r < num_rows; ++r) {
+        if (row_offsets[static_cast<size_t>(r) + 1] < row_offsets[static_cast<size_t>(r)]) {
+            throw std::invalid_argument(
+                "SparseMatrix::FromHostData: row_offsets decrease at row " +
+                std::to_string(r));
+        }
+    }
+    for (size_t k = 0; k < col_indices.size(); ++k) {
+        if (col_indices[k] < 0 || col_indices[k] >= num_cols) {
+            throw std::invalid_argument(
+                "SparseMatrix::FromHostData: column index " +
+                std::to_string(col_indices[k]) + " at position " +
+                std::to_string(k) + " is outside [0, " + std::to_string(num_cols) + ")");
+        }
+    }
+
     SparseMatrix<T> result(num_rows, num_cols, static_cast<int>(values.size()));
     result.values_buffer().copy_from(values.data(), static_cast<size_t>(values.size()));
     result.row_offsets_buffer().copy_from(row_offsets.data(), static_cast<size_t>(row_offsets.size()));
@@ -274,6 +322,16 @@ template<typename T>
 void SparseMatrix<T>::copy_to_host(std::vector<T>& out_values,
                                     std::vector<int>& out_row_offsets,
                                     std::vector<int>& out_col_indices) const {
+    // A default-constructed matrix owns zero-length buffers: there is nothing
+    // to copy, and asking CUDA to copy past them fails. Report the empty shape
+    // instead of throwing.
+    if (values_.size() == 0 && row_offsets_.size() == 0) {
+        out_values.clear();
+        out_row_offsets.clear();
+        out_col_indices.clear();
+        return;
+    }
+
     out_values.resize(static_cast<size_t>(nnz()));
     out_row_offsets.resize(static_cast<size_t>(num_rows_ + 1));
     out_col_indices.resize(static_cast<size_t>(nnz()));

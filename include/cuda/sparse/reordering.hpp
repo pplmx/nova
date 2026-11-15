@@ -110,6 +110,23 @@ ReorderingResult RCMReorderer<T>::reorder(const SparseMatrix<T>& A, bool in_plac
 
     (void)in_place;
 
+    // RCM relabels rows and columns with one permutation, which only makes
+    // sense for a square matrix. A rectangular one used to be accepted and then
+    // rewrote every column index through a permutation sized by rows() only —
+    // an out-of-bounds read that produced a silently corrupted matrix.
+    if (A.rows() != A.cols()) {
+        throw ReorderingError(
+            "RCMReorderer::reorder: matrix must be square, got " +
+            std::to_string(A.rows()) + "x" + std::to_string(A.cols()));
+    }
+
+    // An empty matrix reorders to itself. Bail out before staging a host copy:
+    // there is nothing to read and the copy would fail on the zero-length
+    // buffers.
+    if (n == 0) {
+        return result;
+    }
+
     result.original_bandwidth = compute_matrix_bandwidth(A);
 
     int start = find_starting_node(A);
@@ -163,6 +180,36 @@ template<typename T>
 SparseMatrix<T> RCMReorderer<T>::apply_reordering(const SparseMatrix<T>& A,
                                                   const ReorderingResult& result) {
     const int n = A.rows();
+
+    if (A.rows() != A.cols()) {
+        throw ReorderingError(
+            "RCMReorderer::apply_reordering: matrix must be square, got " +
+            std::to_string(A.rows()) + "x" + std::to_string(A.cols()));
+    }
+    if (static_cast<int>(result.permutation.size()) != n) {
+        throw ReorderingError(
+            "RCMReorderer::apply_reordering: permutation has " +
+            std::to_string(result.permutation.size()) + " entries for a " +
+            std::to_string(n) + "-row matrix");
+    }
+    if (n == 0) {
+        // SparseMatrix is move-only and a 0x0 matrix owns no buffers, so build
+        // the empty result in place rather than returning A by value.
+        return SparseMatrix<T>();
+    }
+
+    // A permutation that is not a bijection on [0, n) would make
+    // apply_permutation index its own tables out of bounds.
+    std::vector<char> seen(static_cast<size_t>(n), 0);
+    for (int p : result.permutation) {
+        if (p < 0 || p >= n || seen[static_cast<size_t>(p)]) {
+            throw ReorderingError(
+                "RCMReorderer::apply_reordering: permutation is not a bijection "
+                "on [0, " + std::to_string(n) + ")");
+        }
+        seen[static_cast<size_t>(p)] = 1;
+    }
+
     const int nnz = A.nnz();
 
     std::vector<T> h_values(nnz);
@@ -257,6 +304,11 @@ int RCMReorderer<T>::compute_bandwidth(const SparseMatrix<T>& A) {
 template<typename T>
 int RCMReorderer<T>::compute_matrix_bandwidth(const SparseMatrix<T>& A) {
     const int n = A.rows();
+
+    // Nothing to measure, and staging a host copy of empty buffers would fail.
+    if (n == 0) {
+        return 0;
+    }
 
     // Stage a host copy of the CSR arrays (device pointers cannot be read on
     // the CPU).
