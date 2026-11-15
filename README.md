@@ -289,11 +289,33 @@ ctest -j16
 | `ctest -j<N>`         | Run tests in parallel                           |
 | `make clean`          | Clean build artifacts                           |
 
+## Language standard split
+
+Host code builds as C++23 (`CMAKE_CXX_STANDARD 23`) and uses the C++23 standard
+library: `std::expected`, concepts, `std::span`, monadic `std::optional`. Device
+code does not: nvcc 12.9 accepts at most `-std=c++20`, and everything a `.cu`
+file reaches must respect that ceiling.
+
+`include/cuda/cpp_level.hpp` is the single place that records the split:
+
+- `NOVA_CPP23_HOST` — 1 when the translation unit really has the C++23 library.
+  It tests `__cpp_lib_expected` rather than `__cplusplus`, because g++ 13 in
+  `-std=c++23` mode reports `202100` and nvcc reports `202002` regardless.
+- `NOVA_DEVICE_REACHABLE` — defined for CUDA translation units by
+  `CMakeLists.txt`.
+- `NOVA_REQUIRE_CPP23_HOST("<header>")` — placed by a header that uses C++23.
+  Including it from device code stops the build with a message naming that
+  header instead of a confusing failure inside a template.
+
+A header that uses C++23 therefore cannot silently drift into the device include
+graph; the build tells you immediately.
+
 ## Requirements
 
 - CUDA Toolkit 20+
 - CMake 4.0+
-- C++23 compatible compiler
+- C++23 compatible compiler for host code; nvcc supports up to C++20, so device
+  code stays C++20 (see [Language standard split](#language-standard-split))
 - CUDA-capable GPU
 - (Optional) NCCL 2.25+ for multi-GPU collectives
 - (Optional) MPI 3.1+ for multi-node support

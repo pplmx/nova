@@ -23,6 +23,7 @@
 #pragma once
 
 #include "cuda/sparse/matrix.hpp"
+#include "cuda/sparse/sparse_concepts.hpp"
 #include <vector>
 #include <queue>
 #include <algorithm>
@@ -30,6 +31,9 @@
 #include <stdexcept>
 
 namespace nova::sparse {
+
+NOVA_REQUIRE_CPP23_HOST("reordering.hpp")
+
 
 /**
  * @brief Error for reordering operations
@@ -72,7 +76,7 @@ struct ReorderingResult {
  *
  * Reduces matrix bandwidth for better numerical stability and cache utilization.
  */
-template<typename T>
+template<SparseScalar T>
 class RCMReorderer {
 public:
     /** @brief Default constructor */
@@ -103,7 +107,7 @@ private:
                           const std::vector<int>& perm);
 };
 
-template<typename T>
+template<SparseScalar T>
 ReorderingResult RCMReorderer<T>::reorder(const SparseMatrix<T>& A, bool in_place) {
     ReorderingResult result;
     const int n = A.rows();
@@ -176,7 +180,7 @@ ReorderingResult RCMReorderer<T>::reorder(const SparseMatrix<T>& A, bool in_plac
     return result;
 }
 
-template<typename T>
+template<SparseScalar T>
 SparseMatrix<T> RCMReorderer<T>::apply_reordering(const SparseMatrix<T>& A,
                                                   const ReorderingResult& result) {
     const int n = A.rows();
@@ -222,7 +226,7 @@ SparseMatrix<T> RCMReorderer<T>::apply_reordering(const SparseMatrix<T>& A,
     return SparseMatrix<T>::FromHostData(h_values, h_row_offsets, h_col_indices, n, n);
 }
 
-template<typename T>
+template<SparseScalar T>
 int RCMReorderer<T>::find_starting_node(const SparseMatrix<T>& A) {
     const int n = A.rows();
 
@@ -247,7 +251,7 @@ int RCMReorderer<T>::find_starting_node(const SparseMatrix<T>& A) {
     return start_node;
 }
 
-template<typename T>
+template<SparseScalar T>
 std::vector<int> RCMReorderer<T>::bfs_level_order(const SparseMatrix<T>& A, int start_node) {
     const int n = A.rows();
 
@@ -296,12 +300,12 @@ std::vector<int> RCMReorderer<T>::bfs_level_order(const SparseMatrix<T>& A, int 
     return level_order;
 }
 
-template<typename T>
+template<SparseScalar T>
 int RCMReorderer<T>::compute_bandwidth(const SparseMatrix<T>& A) {
     return compute_matrix_bandwidth(A);
 }
 
-template<typename T>
+template<SparseScalar T>
 int RCMReorderer<T>::compute_matrix_bandwidth(const SparseMatrix<T>& A) {
     const int n = A.rows();
 
@@ -333,7 +337,7 @@ int RCMReorderer<T>::compute_matrix_bandwidth(const SparseMatrix<T>& A) {
     return max_bandwidth;
 }
 
-template<typename T>
+template<SparseScalar T>
 void RCMReorderer<T>::apply_permutation(std::vector<T>& values,
                                         std::vector<int>& row_offsets,
                                         std::vector<int>& col_indices,

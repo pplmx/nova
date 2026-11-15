@@ -127,6 +127,15 @@ if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --threads ${NCPU}")
 endif()
 
+# Mark CUDA translation units as device-reachable. nvcc stops at C++20 while the
+# host build is C++23, so a header that relies on C++23 must refuse to be
+# included here rather than fail later inside some unrelated .cu file. See
+# include/cuda/cpp_level.hpp.
+if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DNOVA_DEVICE_REACHABLE=1")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=-DNOVA_DEVICE_REACHABLE=1")
+endif()
+
 # Enable Unity build batch size based on CPU cores
 if(NOVA_ENABLE_UNITY_BUILD AND NCPU GREATER_EQUAL 64)
     set_property(GLOBAL PROPERTY UNITY_BUILD_BATCH_SIZE 64)

@@ -32,6 +32,7 @@
 #include "matrix.hpp"
 #include "preconditioner.hpp"
 #include "solver_errors.hpp"
+#include "sparse_concepts.hpp"
 #include <vector>
 #include <cmath>
 #include <limits>
@@ -40,13 +41,16 @@
 namespace nova {
 namespace sparse {
 
+NOVA_REQUIRE_CPP23_HOST("krylov.hpp")
+
+
 /**
  * @brief Result of iterative solver
  * @struct SolverResult
  * @tparam T Element type
  * @ingroup krylov
  */
-template<typename T>
+template<SparseScalar T>
 struct SolverResult {
     /** @brief Whether solver converged */
     bool converged = false;
@@ -63,7 +67,7 @@ struct SolverResult {
     std::vector<T> residual_history;
 };
 
-template<typename T>
+template<SparseScalar T>
 struct SolverConfig {
     T relative_tolerance = T{1e-6};
     T absolute_tolerance = T{1e-10};
@@ -72,7 +76,7 @@ struct SolverConfig {
 };
 
 namespace detail {
-    template<typename T>
+    template<SparseScalar T>
     T dot_product(const T* a, const T* b, int n) {
         T result = T{0};
         for (int i = 0; i < n; ++i) {
@@ -81,35 +85,35 @@ namespace detail {
         return result;
     }
 
-    template<typename T>
+    template<SparseScalar T>
     void axpby(T a, const T* x, T b, const T* y, T* z, int n) {
         for (int i = 0; i < n; ++i) {
             z[i] = a * x[i] + b * y[i];
         }
     }
 
-    template<typename T>
+    template<SparseScalar T>
     void axpy(T a, const T* x, T* y, int n) {
         for (int i = 0; i < n; ++i) {
             y[i] += a * x[i];
         }
     }
 
-    template<typename T>
+    template<SparseScalar T>
     void copy(const T* src, T* dst, int n) {
         for (int i = 0; i < n; ++i) {
             dst[i] = src[i];
         }
     }
 
-    template<typename T>
+    template<SparseScalar T>
     void scale(T* x, T alpha, int n) {
         for (int i = 0; i < n; ++i) {
             x[i] *= alpha;
         }
     }
 
-    template<typename T>
+    template<SparseScalar T>
     T norm2(const T* x, int n) {
         T sum = T{0};
         for (int i = 0; i < n; ++i) {
@@ -118,7 +122,7 @@ namespace detail {
         return std::sqrt(sum);
     }
 
-    template<typename T>
+    template<SparseScalar T>
     void fill(T* x, T value, int n) {
         for (int i = 0; i < n; ++i) {
             x[i] = value;
@@ -126,7 +130,7 @@ namespace detail {
     }
 }
 
-template<typename T>
+template<SparseScalar T>
 class KrylovSolver {
 public:
     explicit KrylovSolver(const SolverConfig<T>& config = {}) : config_(config) {}
@@ -145,7 +149,7 @@ protected:
     std::unique_ptr<Preconditioner<T>> preconditioner_;
 };
 
-template<typename T>
+template<SparseScalar T>
 class ConjugateGradient : public KrylovSolver<T> {
 public:
     using KrylovSolver<T>::KrylovSolver;
@@ -274,7 +278,7 @@ private:
     bool has_preconditioner_ = false;
 };
 
-template<typename T>
+template<SparseScalar T>
 class GMRES : public KrylovSolver<T> {
 public:
     GMRES(const SolverConfig<T>& config = {}, int restart = 50)
@@ -512,7 +516,7 @@ private:
     int restart_;
 };
 
-template<typename T>
+template<SparseScalar T>
 class GMRESGPU : public KrylovSolver<T> {
 public:
     GMRESGPU(const SolverConfig<T>& config = {}, int restart = 50)
@@ -717,7 +721,7 @@ private:
     int restart_;
 };
 
-template<typename T>
+template<SparseScalar T>
 class BiCGSTAB : public KrylovSolver<T> {
 public:
     using KrylovSolver<T>::KrylovSolver;

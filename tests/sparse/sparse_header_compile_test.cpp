@@ -22,6 +22,11 @@
 
 #include <cuda/sparse/roofline.hpp>
 
+#include <cuda/sparse/krylov.hpp>
+#include <cuda/sparse/preconditioner.hpp>
+#include <cuda/sparse/reordering.hpp>
+#include <cuda/sparse/sparse_concepts.hpp>
+
 #include <cuda/sparse/nvtx_sparse.hpp>
 
 #include <gtest/gtest.h>
@@ -61,6 +66,52 @@ void emit_nvtx_markers() {
 
 TEST(SparseHeaderCompileTest, NvtxMacrosExpandInEitherBuild) {
     EXPECT_NO_THROW(emit_nvtx_markers());
+}
+
+// The sparse templates used to accept any T and then fail deep inside the
+// implementation: SparseMatrix<std::string> produced six unrelated errors about
+// narrowing and missing operators. The concepts make the requirement part of
+// the interface. These pin which types are accepted, since a concept that is
+// too narrow would silently reject a legitimate instantiation.
+TEST(SparseHeaderCompileTest, SparseScalarAdmitsTheSupportedScalars) {
+    static_assert(SparseScalar<float>);
+    static_assert(SparseScalar<double>);
+    static_assert(SparseScalar<long double>);
+
+    static_assert(!SparseScalar<int>);
+    static_assert(!SparseScalar<unsigned>);
+    static_assert(!SparseScalar<bool>);
+    static_assert(!SparseScalar<char>);
+}
+
+TEST(SparseHeaderCompileTest, ConstrainedTemplatesStillInstantiate) {
+    // One instantiation per constrained template family, so a constraint that
+    // rejects the types the tree actually uses breaks here rather than in a
+    // downstream module.
+    JacobiPreconditioner<double> jacobi;
+    JacobiPreconditioner<float> jacobi_f;
+    EXPECT_DOUBLE_EQ(jacobi.omega(), 1.0);
+    EXPECT_FLOAT_EQ(jacobi_f.omega(), 1.0f);
+
+    ILUPreconditioner<double> ilu;
+    (void)ilu;
+
+    RCMReorderer<double> rcm;
+    (void)rcm;
+
+    ConjugateGradient<double> cg;
+    GMRES<double> gmres;
+    BiCGSTAB<double> bicgstab;
+    (void)cg;
+    (void)gmres;
+    (void)bicgstab;
+}
+
+TEST(SparseHeaderCompileTest, CppLevelDetectsHostCpp23) {
+    // The project builds host code as C++23 and device code as C++20; this
+    // macro is the single place that distinction is recorded.
+    static_assert(NOVA_CPP23_HOST == 1,
+                  "the host build is expected to provide C++23 library features");
 }
 
 TEST(SparseHeaderCompileTest, RooflineArithmeticIntensity) {

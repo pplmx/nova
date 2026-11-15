@@ -21,6 +21,7 @@
 #pragma once
 
 #include "cuda/sparse/matrix.hpp"
+#include "cuda/sparse/sparse_concepts.hpp"
 #include "cuda/memory/buffer.h"
 #include "cuda/device/error.h"
 #include <memory>
@@ -29,6 +30,9 @@
 #include <limits>
 
 namespace nova::sparse {
+
+NOVA_REQUIRE_CPP23_HOST("preconditioner.hpp")
+
 
 namespace memory = cuda::memory;
 
@@ -52,7 +56,7 @@ public:
  * Preconditioners transform the linear system Ax = b to a form
  * that converges faster with iterative methods.
  */
-template<typename T>
+template<SparseScalar T>
 class Preconditioner {
 public:
     virtual ~Preconditioner() = default;
@@ -64,7 +68,7 @@ public:
     virtual void apply(const memory::Buffer<T>& in, memory::Buffer<T>& out) = 0;
 };
 
-template<typename T>
+template<SparseScalar T>
 class JacobiPreconditioner : public Preconditioner<T> {
 public:
     explicit JacobiPreconditioner(T omega = T{1.0})
@@ -163,7 +167,7 @@ private:
 // with guidance. Use JacobiPreconditioner, or wire cusparse csrilu02 +
 // csrsm2 triangular solves behind the Preconditioner interface (tracked as a
 // feature task) before relying on ILU.
-template<typename T>
+template<SparseScalar T>
 class ILUPreconditioner : public Preconditioner<T> {
 public:
     ILUPreconditioner() = default;
