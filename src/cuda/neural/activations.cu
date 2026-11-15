@@ -150,6 +150,11 @@ void relu(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     relu_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, size
@@ -164,6 +169,11 @@ void relu_inplace(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     relu_inplace_kernel<<<grid_size, block_size, 0, stream>>>(
         data, size
@@ -180,6 +190,11 @@ void leaky_relu(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     leaky_relu_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, size, alpha
@@ -195,6 +210,11 @@ void leaky_relu_inplace(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     leaky_relu_inplace_kernel<<<grid_size, block_size, 0, stream>>>(
         data, size, alpha
@@ -210,6 +230,11 @@ void sigmoid(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     sigmoid_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, size
@@ -225,6 +250,11 @@ void tanh_activation(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     tanh_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, size
@@ -241,6 +271,11 @@ void silu_and_mul(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     silu_and_mul_kernel<<<grid_size, block_size, 0, stream>>>(
         gate, up, output, size
@@ -259,6 +294,11 @@ void silu_and_mul_backward(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     silu_and_mul_backward_kernel<<<grid_size, block_size, 0, stream>>>(
         gate, up, grad_output, grad_gate, grad_up, size
@@ -275,6 +315,11 @@ void elementwise_add(
 ) {
     int block_size = 256;
     int grid_size = (size + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     elementwise_add_kernel<<<grid_size, block_size, 0, stream>>>(
         a, b, output, size
@@ -289,9 +334,22 @@ void transpose(
     int cols,
     cudaStream_t stream
 ) {
-    const int total = rows * cols;
+    // rows * cols overflows int for a large matrix (e.g. 50000 x 50000), which
+    // wraps the element count negative and yields a nonsense grid. Multiply in
+    // the wider type and reject what cannot be launched.
+    const long long total_elements = static_cast<long long>(rows) * cols;
+    if (total_elements > static_cast<long long>(0x7fffffff)) {
+        throw std::invalid_argument(
+            "transpose: rows * cols exceeds the launchable element count");
+    }
+    const int total = static_cast<int>(total_elements);
     int block_size = 256;
     int grid_size = (total + block_size - 1) / block_size;
+    // An empty tensor is a legal input: a zero-sized grid is rejected with
+    // "invalid configuration argument", so there is nothing to launch.
+    if (grid_size == 0) {
+        return;
+    }
 
     transpose_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, rows, cols
