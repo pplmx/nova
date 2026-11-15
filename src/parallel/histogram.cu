@@ -1,4 +1,6 @@
 #include <cuda_runtime.h>
+#include <stdexcept>
+#include <string>
 
 #include "cuda/device/device_utils.h"
 #include "parallel/histogram.h"
@@ -62,7 +64,21 @@ __global__ __launch_bounds__(HIST_BLOCK_SIZE, 2) void histogramPerChannelKernel(
 }
 
 void computeHistogram(const uint8_t* d_input, uint32_t* d_histogram, size_t width, size_t height, int bins) {
-    CUDA_CHECK(cudaMemset(d_histogram, 0, bins * sizeof(uint32_t)));
+    // histogramKernel accumulates into exactly HIST_BINS buckets, because the
+    // pixel value is used as the bucket index and it is a uint8_t. The bins
+    // argument therefore cannot change the shape of the histogram: clearing only
+    // `bins` entries left the rest uninitialised, and a caller asking for fewer
+    // than 256 buckets got a buffer whose tail was never cleared while the kernel
+    // still wrote every index. Clearing HIST_BINS is the only correct size; a
+    // different bin count needs a value-remapping kernel, which does not exist.
+    if (bins != HIST_BINS) {
+        throw std::invalid_argument(
+            "computeHistogram: the kernel produces exactly " +
+            std::to_string(HIST_BINS) +
+            " buckets (one per uint8_t value); requested " +
+            std::to_string(bins));
+    }
+    CUDA_CHECK(cudaMemset(d_histogram, 0, HIST_BINS * sizeof(uint32_t)));
 
     int block = HIST_BLOCK_SIZE;
     int grid = 256;
