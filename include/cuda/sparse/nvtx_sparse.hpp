@@ -49,8 +49,9 @@ struct ScopedRange {
 #define NOVA_NVTX_SCOPED_RANGE(name) nova::sparse::nvtx::ScopedRange nova_nvtx_range_(name)
 #define NOVA_NVTX_MARKER(name) nvtxMarkA(name)
 
-}
-}
+}  // namespace nvtx
+}  // namespace sparse
+}  // namespace nova
 
 #else
 
@@ -58,8 +59,9 @@ namespace nova {
 namespace sparse {
 namespace nvtx {
 inline void* get_sparse_domain() { return nullptr; }
-}
-}
+}  // namespace nvtx
+}  // namespace sparse
+}  // namespace nova
 
 #define NOVA_NVTX_SCOPED_RANGE(name) ((void)0)
 #define NOVA_NVTX_MARKER(name) ((void)0)

@@ -23,7 +23,7 @@
 #define NOVA_CUDA_GNN_MESSAGE_PASSING_HPP
 
 #include <cuda/sparse/sparse_matrix.hpp>
-#include <cuda/memory/buffer.hpp>
+#include <cmath>
 #include <functional>
 #include <vector>
 

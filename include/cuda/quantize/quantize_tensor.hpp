@@ -28,11 +28,12 @@
 #ifndef NOVA_CUDA_QUANTIZE_TENSOR_HPP
 #define NOVA_CUDA_QUANTIZE_TENSOR_HPP
 
-#include <cuda/memory/buffer.hpp>
-#include <vector>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
-#include <type_traits>
 #include <optional>
+#include <type_traits>
+#include <vector>
 
 namespace nova {
 namespace quantize {

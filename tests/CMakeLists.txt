@@ -135,6 +135,7 @@ add_executable(nova-tests
     sparse/ilu_preconditioner_test.cpp
     sparse/hyb_matrix_test.cpp
     sparse/header_self_containment_test.cpp
+    sparse/sparse_header_compile_test.cpp
     sparse/preconditioned_solver_test.cpp
     sparse/preconditioner_benchmark_test.cpp
     performance/nvblox_metrics_test.cpp

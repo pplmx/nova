@@ -20,6 +20,8 @@
 #ifndef NOVA_CUDA_SPARSE_ROOFLINE_HPP
 #define NOVA_CUDA_SPARSE_ROOFLINE_HPP
 
+#include "sparse_matrix.hpp"
+
 #include <cuda_runtime.h>
 #include <cstddef>
 #include <cstdio>
