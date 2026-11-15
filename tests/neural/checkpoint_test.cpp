@@ -1,8 +1,8 @@
 /**
  * @file checkpoint_test.cpp
- * @brief Model checkpointing contracts (milestone v2.32, TASK-056)
+ * @brief Model checkpointing contracts (milestone v2.32)
  *
- * Milestone v2.32 (DEC-018): the host-round-trip family is complete and the
+ * Milestone v2.32: the host-round-trip family is complete and the
  * train stack is real, but nothing persists — a trained MicroTrainer /
  * TransformerTrainer dies with the process, interrupted runs can't resume, and
  * models can't be exported. This file pins the new persistence surface on the

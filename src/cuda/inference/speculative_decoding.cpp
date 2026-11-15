@@ -10,7 +10,7 @@ namespace cuda::inference {
 namespace {
 
 // Reject any configuration flag that selects a feature this module does not
-// implement (ISS-010): the config used to silently advertise tree attention,
+// implement: the config used to silently advertise tree attention,
 // async drafting, EAGLE-3 and xgrammar while every path ran plain chain-only
 // drafting — the per-flag no-ops made the advertised features a silent lie.
 // Fail fast at the two configuration boundaries (constructor / configure) so a
@@ -340,7 +340,7 @@ void SpeculativeDecodingRunner::apply_tree_attention_mask(
     // mask the identity, so there is nothing to apply here. The constructor /
     // configure() reject enable_tree_attention=true, so this guard is a
     // defensive backstop in case a config reaches the runner some other way
-    // (ISS-010): a requested tree mask must never be silently dropped.
+    // A requested tree mask must never be silently dropped.
     if (config_.enable_tree_attention) {
         throw std::runtime_error(
             "SpeculativeDecodingRunner::apply_tree_attention_mask: tree "

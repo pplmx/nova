@@ -2,9 +2,9 @@
  * @file tensor_parallel_attention_test.cpp
  * @brief Single-GPU (tp == 1) functional tests for TensorParallelMultiHeadAttention
  *
- * Milestone v2.26 (TASK-032 / DEC-012): no attention exists on the parallel
+ * Milestone v2.26: no attention exists on the parallel
  * path — the single-GPU MultiHeadAttention is an incomplete shell
- * (issue-v24-mha-incomplete: it scales a buffer and returns). This block
+ * (it scales a buffer and returns). This block
  * builds attention on the verified weight-sharded layer conventions. These
  * tests pin the tp == 1 path (uninitialized NcclContext -> effective tp 1):
  * forward and backward must match a host fp64 multi-head self-attention
@@ -422,7 +422,7 @@ TEST_F(TensorParallelAttentionTest, BackwardMatchesReference) {
 }
 
 // ============================================================================
-// v2.26 capstone (TASK-034): a mini-transformer — one attention block feeding
+// v2.26 capstone: a mini-transformer — one attention block feeding
 // a TensorParallelMLP, logits = MLP(attn(X)) — must train on the tp<=1 path:
 // loss descends over K AdamW steps and top-1 accuracy rises above chance.
 // The block/MLP forward+backward are separately host-validated, so the NEW

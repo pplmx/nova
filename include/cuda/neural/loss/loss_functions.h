@@ -41,7 +41,7 @@ float cross_entropy_loss(
  *
  * for reduction_mean (or without the /B when sum reduction), where softmax is
  * computed with max-subtraction for numerical stability. It is the layer
- * backward chain's upstream seed in an end-to-end training step (TASK-025).
+ * backward chain's upstream seed in an end-to-end training step.
  *
  * @param logits Device logits [batch_size x num_classes]
  * @param targets Device targets [batch_size]
@@ -62,7 +62,7 @@ void cross_entropy_logits_backward(
 );
 
 /**
- * @brief Device cross-entropy-with-logits scalar (milestone v2.30 / DEC-016)
+ * @brief Device cross-entropy-with-logits scalar (milestone v2.30)
  *
  * The host cross_entropy_loss() computes the mean-loss scalar from HOST
  * predictions, so the training drivers (MicroTrainer, TransformerTrainer)
@@ -92,7 +92,7 @@ void cross_entropy_loss_device(
 );
 
 /**
- * @brief Device top-1 accuracy (milestone v2.30 / DEC-016)
+ * @brief Device top-1 accuracy (milestone v2.30)
  *
  * Companion to cross_entropy_loss_device(): the training drivers' evaluate()
  * also round-trip the whole logits buffer to compute a host argmax loop. This

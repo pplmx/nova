@@ -8,8 +8,7 @@
  * Tests all-reduce, broadcast, all-gather, and barrier synchronization.
  * Multi-GPU tests run for real via a thread-per-rank harness (one thread per
  * device, each pinned with cudaSetDevice), the same pattern the NCCL suite
- * and distributed matmul use — see issue-v17-dist-ops-multigpu-untested for
- * the pre-v2.17 "Requires single GPU" skip audit. Single-GPU fallback tests
+ * and distributed matmul use. Single-GPU fallback tests
  * verify the code path works on single-GPU CI runners.
  */
 
@@ -46,8 +45,8 @@ using namespace cuda::mesh;
 
 // The thread-per-rank harness (RankBarrier + run_per_rank) lives in
 // distributed_test_common.h, shared with the NCCL suite, distributed matmul,
-// and SyncBatchNorm tests. The bounded barrier is the milestone v2.18 P3 /
-// TASK-003 harness-robustness fix: a rank thread that dies before reaching
+// and SyncBatchNorm tests. The bounded barrier is the milestone v2.18 P3
+// harness-robustness fix: a rank thread that dies before reaching
 // the barrier fails the suite with RankBarrierTimeout instead of hanging the
 // other ranks forever.
 using cuda::distributed::test::run_per_rank;
@@ -75,7 +74,7 @@ bool arrays_near(const float* a, const float* b, size_t count, float tol = 1e-3f
 // initialized). Initialization is idempotent across tests (R15 design);
 // failures (e.g. no NCCL in this build) report false. If the shared singleton
 // is broken (a prior genuine abort), it is self-healed first — a one-off flake
-// must not turn the rest of the suite into silent skips (TASK-003). GTEST_SKIP
+// must not turn the rest of the suite into silent skips. GTEST_SKIP
 // is a void-return macro, so the callers — not this predicate — issue the skip.
 bool multigpu_nccl_ready() {
     if (DeviceMesh::instance().device_count() < 2) {
@@ -442,12 +441,12 @@ TEST(DeviceMeshIntegration, MultiGpuAvailable) {
 
 // ============================================================================
 // Multi-GPU Real Tests — thread-per-rank harness
-// (issue-v17-dist-ops-multigpu-untested: these paths were never exercised;
-//  every "Requires single GPU" skip in this file had a single-GPU-only guard)
+// (these paths were never exercised; every "Requires single GPU" skip in this
+// file had a single-GPU-only guard)
 // ============================================================================
 
 // ============================================================================
-// MeshBarrier multi-GPU real tests — thread-per-rank (TASK-001, milestone v2.18)
+// MeshBarrier multi-GPU real tests — thread-per-rank (milestone v2.18)
 // ============================================================================
 //
 // The legacy MeshBarrier (barrier.cu, pre-v2.18) is a per-instance host
@@ -467,10 +466,9 @@ TEST(DeviceMeshIntegration, MultiGpuAvailable) {
 // before all ranks arrived). `released[d]` is set only after that check passes,
 // so the barrier must have genuinely waited for all ranks.
 //
-// P1 (TASK-001) proved these FAIL RED against the legacy event-poll MeshBarrier
-// (rank 0 released before rank 1 reached) — HYP-001 / EV-001. P2 (TASK-002)
-// converged barrier.cu onto NcclBarrier; they are now enabled as its acceptance
-// tests.
+// These FAILED RED against the legacy event-poll MeshBarrier (rank 0 released
+// before rank 1 reached). Converging barrier.cu onto NcclBarrier enabled them
+// as its acceptance tests.
 TEST_F(MeshBarrierTest, MultiGpu_BarrierRendezvous) {
     if (!multigpu_nccl_ready()) {
         GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";
@@ -748,9 +746,8 @@ TEST_F(DistributedBroadcastTest, MultiGpu_BroadcastDistinctData) {
 
 // The three MultiGpu_* data-op tests above were written in Round 17 P1 as
 // ready regression tests; P1 proved they FAIL against the legacy
-// host-staged/P2P implementations of the high-level distributed ops (see
-// issue-v17-dist-ops-multigpu-untested and ev-v17-p1-dist-ops-failures for the
-// observed failure modes). task-v17b-dist-ops-nccl-converge re-routed the ops
-// onto the verified NCCL layer, and the tests are now enabled: each posts a
-// genuine per-rank NCCL collective from one thread per device. `MeshBarrier`
-// convergence (per-instance host event poll) is tracked separately.
+// host-staged/P2P implementations of the high-level distributed ops. The ops
+// were re-routed onto the verified NCCL layer, and the tests are now enabled:
+// each posts a genuine per-rank NCCL collective from one thread per device.
+// `MeshBarrier` convergence (per-instance host event poll) is tracked
+// separately.

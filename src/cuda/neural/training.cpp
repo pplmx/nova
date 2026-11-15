@@ -2,7 +2,7 @@
  * @file training.cpp
  * @brief MicroTrainer — reusable end-to-end training driver (milestone v2.25)
  *
- * Milestone v2.25 (TASK-029 / DEC-011): v2.24 verified the per-layer
+ * Milestone v2.25: v2.24 verified the per-layer
  * optimizer step and the device CE-logits backward in isolation. MicroTrainer
  * composes them into a real training loop: forward -> device
  * cross_entropy_logits_backward (dlogits = (softmax - onehot)/B) -> MLP
@@ -92,8 +92,8 @@ float MicroTrainer::train_step(const float* input, const int* targets, int batch
     mlp_->step(*opt_gate_, *opt_up_, *opt_down_,
                dWg_->data(), dWu_->data(), dWd_->data(), step_no, nullptr);
 
-    // Device scalar for the reported loss (v2.30 / issue-v30-ce-loss-host-
-    // roundtrip): the loss is reduced on-device and ONE float is read back,
+    // Device scalar for the reported loss (v2.30): the loss is reduced
+    // on-device and ONE float is read back,
     // instead of the whole m*hidden logits buffer + host loop. Same mean-CE
     // scalar as the host cross_entropy_loss (fp64 parity in the P1 tests).
     loss::cross_entropy_loss_device(
@@ -145,7 +145,7 @@ void MicroTrainer::save_state(std::ostream& out) const {
     w.u32(cp::kVersion);
     w.u32(cp::kKindMicroTrainer);
     w.u32(static_cast<uint32_t>(tp_degree()));
-    // v3 (DEC-020): this rank's shard id, so a same-topology file from another
+    // v3: this rank's shard id, so a same-topology file from another
     // rank is rejected on load instead of silently restoring its shard.
     w.u32(cp::shard_rank(ctx_, tp_degree()));
     w.u32(static_cast<uint32_t>(hidden_dim_));
@@ -191,7 +191,7 @@ void MicroTrainer::load_state(std::istream& in) {
             std::to_string(ftp) + " vs trainer " +
             std::to_string(tp_degree()) + ")");
     }
-    // v3 (DEC-020): the writer's shard id must be this trainer's rank — a
+    // v3: the writer's shard id must be this trainer's rank — a
     // same-topology file from another rank matches every size check and used
     // to silently restore the wrong shard.
     const uint32_t frank = r.u32();
@@ -211,13 +211,13 @@ void MicroTrainer::load_state(std::istream& in) {
             std::to_string(hidden_dim_) + "x" +
             std::to_string(intermediate_size_) + ")");
     }
-    // Two-phase load (cpp-reviewer MEDIUM, RIL EV-040): read and validate
+    // Two-phase load (cpp-reviewer MEDIUM): read and validate
     // every tensor and moment record into host memory FIRST, then apply — a
     // corrupt/truncated stream throws with this trainer untouched (no partial
     // restore). Moment records are count-tagged; read_adamw_moments requires
     // count == 0 (fresh) or exactly the companion tensor's size.
     //
-    // v2.33 (DEC-019): records validate against THIS trainer's shard sizes
+    // v2.33: records validate against THIS trainer's shard sizes
     // (hidden x inter/tp etc.), so a tp=1 checkpoint won't load into a tp>1
     // trainer or vice versa — only the same topology roundtrips. Applied via
     // set_weight_shards (the no-slice shard uploader) instead of the

@@ -2,7 +2,7 @@
  * @file layer_norm_trainable_test.cpp
  * @brief Single-GPU tests for the v2.28 trainable LayerNorm class
  *
- * Milestone v2.28 (TASK-040 / DEC-014): the legacy layer_norm module was
+ * Milestone v2.28: the legacy layer_norm module was
  * forward-only (no backward, so untrainable) and its kernels were never
  * validated against a reference. This file pins the NEW trainable LayerNorm
  * (class cuda::neural::LayerNorm) contracts: device forward must equal a
@@ -13,7 +13,7 @@
  *
  * P1-RED: LayerNorm::forward/backward are provisional throw-stubs in this
  * milestone's P1, so these tests fail here and turn GREEN with the P2 device
- * kernels (TASK-041).
+ * kernels.
  */
 
 #include <gtest/gtest.h>
@@ -338,7 +338,7 @@ TEST_F(LayerNormTrainableTest, StepMovesGammaBeta) {
     EXPECT_NE(b2[0], 0.0f) << "beta must move under AdamW";
 }
 
-// v2.29 parallelized trainable LayerNorm forward (TASK-044): the
+// v2.29 parallelized trainable LayerNorm forward: the
 // block/warp-reduction kernels replace the one-thread-per-row path (fine at
 // hidden<=64, a per-row serialization bottleneck at scale). Pin them at
 // hidden=512 with rows>1 against the host fp64 reference; hidden well above a

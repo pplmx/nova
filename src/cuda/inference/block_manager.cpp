@@ -16,9 +16,9 @@ BlockManager::BlockManager(const BlockManagerConfig& config)
     // block pool backs the KV cache and is configured independently. Coupling
     // them made the allocator pool equal the (often small) scheduling count,
     // breaking long-prompt tests that pre-allocate more blocks than
-    // num_gpu_blocks advertises. RIL Round 9 misjudged this as "two knobs that
-    // silently disagree"; the tests are the contract. (commit 75913f5 reintroduced
-    // mismatches; reverted here.)
+    // num_gpu_blocks advertises. An earlier pass misjudged this as "two knobs
+    // that silently disagree"; the tests are the contract. (commit 75913f5
+    // reintroduced mismatches; reverted here.)
     kv_cache_ = std::make_unique<memory::KVCacheAllocator>(config_.kv_cache_config);
 
     attention_ = algo::create_flash_attention(config_.attention_config);
@@ -65,10 +65,10 @@ Sequence* BlockManager::create_sequence(int64_t sequence_id, int max_tokens) {
 
     Sequence* seq_ptr = seq.get();
     sequences_[sequence_id] = std::move(seq);
-    // Reuse freed block-table slots before handing out a fresh index (RIL
-    // TASK-079, ISS-019): the old ever-increasing counter exhausted the
-    // num_cpu_blocks-sized GPU table after that many cumulative create_sequence
-    // calls, after which every forward_batch threw out_of_range.
+    // Reuse freed block-table slots before handing out a fresh index: the old
+    // ever-increasing counter exhausted the num_cpu_blocks-sized GPU table after
+    // that many cumulative create_sequence calls, after which every
+    // forward_batch threw out_of_range.
     if (!free_indices_.empty()) {
         sequence_to_index_[sequence_id] = free_indices_.back();
         free_indices_.pop_back();

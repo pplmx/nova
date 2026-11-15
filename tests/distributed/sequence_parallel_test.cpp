@@ -13,8 +13,8 @@ protected:
     }
 
     // NOTE: single-GPU suite — deliberately no cudaDeviceReset() in TearDown
-    // (same shared-NcclContext rationale as SequenceParallelEdgeTest; RIL
-    // TASK-065 / ISS-004). stream_.reset() is the real cleanup.
+    // (same shared-NcclContext rationale as SequenceParallelEdgeTest).
+    // stream_.reset() is the real cleanup.
     void TearDown() override {
         stream_.reset();
     }

@@ -48,7 +48,7 @@ TEST_F(MultiHeadAttentionTest, SetDropout) {
 // The single-GPU MultiHeadAttention is a superseded non-functional shell
 // (v2.26 moved to TensorParallelMultiHeadAttention) that used to silently scale
 // uninitialized scratch and return without computing attention or writing
-// output — a garbage-producing no-op (issue-v24-mha-incomplete). It must fail
+// output — a garbage-producing no-op. It must fail
 // fast instead, so a caller never reads untouched/garbage output.
 TEST_F(MultiHeadAttentionTest, ForwardFailsFast_NotSilentNoop) {
     MultiHeadAttentionConfig config;

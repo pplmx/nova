@@ -7,7 +7,7 @@
  * uses a device reduction, and clipping scales on device — removing the D2H/H2D
  * full round-trips the host loops previously did. LAMB's layer-adaptation ratio
  * (phi_1/phi_2) is a host-computed scalar passed to the fused kernel
- * (v2.31 / DEC-017), so the per-element update runs on device like AdamW's.
+ * (v2.31), so the per-element update runs on device like AdamW's.
  */
 
 #include "cuda/neural/optimizers/optimizers.h"
@@ -40,9 +40,9 @@ void AdamWOptimizer::step(
         v_data_->fill(0.0f);
         initialized_ = true;
     }
-    // Grow guard (RIL TASK-079, ISS-017): previous rounds only allocated on the
-    // first step, so a later LARGER num_elements fed adamw_step_device a smaller
-    // m/v pair — an out-of-bounds device read/write (silent corruption or SEGV)
+    // Grow guard: previous rounds only allocated on the first step, so a later
+    // LARGER num_elements fed adamw_step_device a smaller m/v pair — an
+    // out-of-bounds device read/write (silent corruption or SEGV)
     // plus uninitialized moment state for the grown region. Mirror LAMB's
     // reallocate-and-zero-fill so a grown parameter buffer resumes cold.
     if (m_data_->size() < num_elements) {

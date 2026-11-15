@@ -45,7 +45,7 @@ TEST_F(SpeculativeDecodingTest, Configure) {
 }
 
 // Requesting an unimplemented feature must fail fast at the configuration
-// boundary rather than silently running plain chain-only drafting (ISS-010).
+// boundary rather than silently running plain chain-only drafting.
 TEST_F(SpeculativeDecodingTest, UnimplementedFeatureFlagsFailFast) {
     SpeculativeDecodingConfig tree;
     tree.enable_tree_attention = true;
@@ -117,7 +117,7 @@ TEST(SpeculativeDecodingConfig, DefaultValues) {
     EXPECT_EQ(config.draft_depth, 4);
     EXPECT_EQ(config.acceptance_threshold, 0.8f);
     // The unimplemented-feature flags default to false: the default path is
-    // the honest chain-only drafting actually implemented (ISS-010), and any
+    // the honest chain-only drafting actually implemented, and any
     // opt-in fails fast instead of silently lying about what it does.
     EXPECT_FALSE(config.enable_tree_attention);
     EXPECT_FALSE(config.enable_async_draft);
@@ -354,7 +354,7 @@ TEST_F(SpeculativeDecodingTest, KLDivergenceComputation) {
 
 TEST_F(SpeculativeDecodingTest, TreeAttentionMaskApplication) {
     // Tree attention is not implemented: requesting it must fail fast (a tree
-    // mask is never silently dropped — ISS-010), it must not "apply" a no-op.
+    // mask is never silently dropped), it must not "apply" a no-op.
     SpeculativeDecodingConfig config;
     config.enable_tree_attention = true;
     config.draft_depth = 3;

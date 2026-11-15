@@ -4,7 +4,7 @@
  * @file training.h
  * @brief End-to-end gradient training driver on the tensor-parallel stack
  *
- * Milestone v2.25 (TASK-027, DEC-011): v2.24 proved the parallel layers take a
+ * Milestone v2.25: v2.24 proved the parallel layers take a
  * single exact training step (weight parity vs host fp64), but the stack had
  * never been shown to actually *learn* — no loss-descent, no accuracy, no
  * long-run multi-GPU trajectory check. MicroTrainer turns the verified

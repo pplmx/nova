@@ -541,10 +541,10 @@ target_link_libraries(cuda_nccl PUBLIC
 )
 # The documented -DNOVA_ENABLE_NCCL=OFF switch (see option() above) must
 # actually disable NCCL: before this gate the compile definition was keyed only
-# off library discovery, so the option was a no-op (TASK-075). When enabled,
+# off library discovery, so the option was a no-op. When enabled,
 # keep the existing auto-detection (the NCCL_FOUND/NCCL::nccl branch is only
 # reached if cmake/FindNCCL.cmake is ever invoked — it is NOT today, so the
-# find_library fallback does the detection; see EV-055 for why FindNCCL is not
+# find_library fallback does the detection, which is why FindNCCL is not
 # activated as-is). The else() branch makes the OFF switch real.
 if(NOVA_ENABLE_NCCL)
         if(NCCL_FOUND AND TARGET NCCL::nccl)

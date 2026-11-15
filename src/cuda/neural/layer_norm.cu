@@ -139,7 +139,7 @@ void layer_norm_inference(
 }
 
 // ============================================================================
-// v2.28 trainable LayerNorm (TASK-041 / DEC-014): device forward + analytic
+// v2.28 trainable LayerNorm: device forward + analytic
 // backward with trainable affine gamma/beta. Collective-free — each row
 // normalizes independently over the (replicated) hidden dim.
 // ============================================================================
@@ -174,7 +174,7 @@ __device__ float ln_block_reduce_sum(float v, float* red) {
     return red[0];
 }
 
-// Forward: y = gamma * xhat + beta per row, one BLOCK per row (v2.29, TASK-045).
+// Forward: y = gamma * xhat + beta per row, one BLOCK per row (v2.29).
 // The row mean/variance are block reductions over the hidden dim instead of
 // the v2.28 one-thread-per-row serial sums (fine at hidden<=64, a per-row
 // serialization bottleneck at hidden>=512 — Round-28 LEARN M2). The reduction
@@ -209,7 +209,7 @@ __global__ void ln_forward_trainable_kernel(
 // dgamma/dbeta row contributions accumulated with atomics (the affine grads
 // are sums over the batch rows; float atomicAdd order only perturbs the sum at
 // ~ulp level, far inside the parity tolerance). Stats are block reductions
-// (v2.29, TASK-045), same ~ulp deviation budget as forward.
+// (v2.29), same ~ulp deviation budget as forward.
 __global__ void ln_backward_stats_kernel(
     const float* x, const float* gamma, const float* dy, float* dgamma,
     float* dbeta, float* stats, int m, int h, float eps) {

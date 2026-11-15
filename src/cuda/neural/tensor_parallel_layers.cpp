@@ -2,8 +2,8 @@
  * @file tensor_parallel_layers.cpp
  * @brief Weight-managed tensor-parallel layer implementations
  *
- * Milestone v2.21 (TASK-010 / issue-v20-tp-layers-stubs): these wrappers are
- * no longer fail-fast stubs (v2.20 DEC-006 disposition). Each layer owns the
+ * Milestone v2.21: these wrappers are
+ * no longer fail-fast stubs (v2.20 disposition). Each layer owns the
  * rank's shard of the model weight on device:
  *
  * - set_weight() uploads the full weight and slices this rank's shard using

@@ -23,7 +23,7 @@ namespace {
 
 // The thread-per-rank harness (RankBarrier + run_per_rank) lives in
 // distributed_test_common.h, shared with the NCCL suite, distributed ops, and
-// distributed matmul. The bounded barrier (milestone v2.18 P3 / TASK-003) makes
+// distributed matmul. The bounded barrier (milestone v2.18 P3) makes
 // a rank thread dying before the barrier a diagnosed failure instead of a hang.
 using cuda::distributed::test::run_per_rank;
 
@@ -47,7 +47,7 @@ bool multigpu_nccl_ready() {
         return false;
     }
     // Self-heal a broken singleton so a one-off genuine abort does not sink
-    // the rest of the suite into silent skips (TASK-003).
+    // the rest of the suite into silent skips.
     return cuda::distributed::test::heal_and_ready(ctx);
 }
 
@@ -404,7 +404,7 @@ TEST_F(SyncBatchNormTest, BackwardMatchesCPUReference) {
 // saved_var_ summed the local statistics without dividing by the number of
 // ranks, so normalization used R x the true global mean/variance and the
 // multi-GPU forward/backward diverged from the single-rank result (and the
-// tests above now gate to a single GPU). See task-v17c-syncbn-multigpu-backward.
+// tests above now gate to a single GPU).
 TEST_F(SyncBatchNormTest, MultiGpu_MatchesGlobalBatchReference) {
     if (!multigpu_nccl_ready()) {
         GTEST_SKIP() << "Requires >= 2 GPUs with NCCL_TESTS_AVAILABLE=1";

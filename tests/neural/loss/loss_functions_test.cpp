@@ -83,7 +83,7 @@ TEST_F(LossFunctionsTest, FocalLoss) {
     EXPECT_GT(loss, 0.0f);
 }
 
-// Regression for the focal_loss softmax denominator bug (TASK-077, the same
+// Regression for the focal_loss softmax denominator bug (the same
 // class cross_entropy_loss was already fixed for): the old code divided by the
 // running partial sum, so probs[class0] was always 1.0 and only the last class
 // saw the correct denominator. Non-uniform logits + host fp64 reference of the
@@ -206,7 +206,7 @@ TEST_F(LossFunctionsTest, CrossEntropyConfig) {
 }
 
 // ============================================================================
-// Milestone v2.24 / TASK-024 RED: device cross-entropy-with-logits backward.
+// Milestone v2.24 / RED: device cross-entropy-with-logits backward.
 // The host cross_entropy_loss() computes only the scalar (its device kernels
 // are dead code), so no grad-logits exist to seed a layer backward chain. This
 // test pins the analytic contract grad_logits[b*C+c] = (softmax_c - onehot)/B
@@ -269,11 +269,11 @@ TEST_F(LossFunctionsTest, CrossEntropyLogitsBackwardDevice) {
 }
 
 // ============================================================================
-// Milestone v2.30 (DEC-016 / TASK-048) — device cross-entropy-loss scalar.
+// Milestone v2.30 — device cross-entropy-loss scalar.
 // cross_entropy_loss_device computes the identical mean CE loss as the host
 // cross_entropy_loss but from device logits/targets, writing a single scalar
 // to [1] so the training drivers no longer round-trip the full m*C logits
-// buffer through the host every step (issue-v30-ce-loss-host-roundtrip).
+// buffer through the host every step.
 // Pinned against a host double-precision reference. RED against the
 // provisional throw-stub; GREEN with the P2 device reduction kernel.
 // ============================================================================

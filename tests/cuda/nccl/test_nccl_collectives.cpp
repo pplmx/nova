@@ -47,7 +47,7 @@ namespace {
 // first thread would otherwise burn part of safe_stream_wait's timeout while
 // the last thread is still starting up.
 //
-// The barrier is bounded (milestone v2.18 P3 / TASK-003 harness-robustness
+// The barrier is bounded (milestone v2.18 P3 harness-robustness
 // fix, shared in distributed_test_common.h): a rank thread that dies before
 // reaching the barrier fails the suite with RankBarrierTimeout instead of
 // hanging the other ranks forever.
@@ -250,7 +250,7 @@ TEST_F(NcclCollectivesTest, SafeNcclCallDetectsErrors) {
 }
 
 TEST_F(NcclCollectivesTest, AbortedCommPoisoningFailFast) {
-    // R16 review HIGH-B / milestone v2.18 P3 (TASK-003): when the error layer
+    // R16 review HIGH-B / milestone v2.18 P3: when the error layer
     // aborts a communicator (timeout / async error), the owning context must
     // learn about it — has_nccl() goes false so later users fail fast instead
     // of silently reusing the dead communicator and hanging. destroy() then

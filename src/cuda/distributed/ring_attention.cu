@@ -2,7 +2,7 @@
  * @file ring_attention.cu
  * @brief Device kernels for RingSequenceParallelism multi-GPU ring attention
  *
- * Milestone v2.22 (TASK-016): the ring algorithm walks P-1 remote KV blocks
+ * Milestone v2.22: the ring algorithm walks P-1 remote KV blocks
  * (sent clockwise / received counter-clockwise around the ring via NCCL P2P)
  * and accumulates partial attention over each block with the standard online
  * softmax (running max m_i + running denominator l_i), so the final output is

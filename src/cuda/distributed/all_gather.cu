@@ -10,8 +10,7 @@
  * Converged onto the verified NCCL layer in v2.17 (decision-v17-dist-ops-real-
  * multigpu). The pre-v2.17 P2P implementation read the caller's single
  * send_data as if every source had its own block, so each block came back as a
- * copy of the caller's own data — broken on real multi-GPU (see
- * issue-v17-dist-ops-multigpu-untested / ev-v17-p1-dist-ops-failures).
+ * copy of the caller's own data — broken on real multi-GPU.
  */
 
 #include "cuda/distributed/all_gather.h"

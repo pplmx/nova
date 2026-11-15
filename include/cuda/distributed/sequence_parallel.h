@@ -99,7 +99,7 @@ private:
     // The collective bodies live inline in gather_kv / scatter_output /
     // all_reduce_sequence; the private all_gather/reduce_scatter/all_reduce
     // _internal helpers that used to be declared here were removed — they were
-    // declared but never defined or called (ISS-012).
+    // declared but never defined or called.
 
     SequenceParallelConfig config_;
 };
@@ -242,7 +242,7 @@ inline void checked_collective(
     }
 }
 
-// Fail-fast gate for a configured communicator (TASK-074). When the caller
+// Fail-fast gate for a configured communicator. When the caller
 // wired an owning NcclContext and that context is broken (has_nccl() false —
 // a prior collective aborted and poisoned it), `config.comm` points at a DEAD
 // communicator. Touching it is undefined (observed to SEGV in the ring-abort
@@ -319,7 +319,7 @@ inline void SequenceParallelAttention::gather_kv(
     auto dtype = detail::to_nccl_dtype(float{});
     // Route the raw AllGather through the comm-error policy (checked_collective
     // / nccl_recovery.h): a broken comm is aborted and poisons has_nccl() so
-    // the self-healing initialize() path recovers, instead of the pre-TASK-018
+    // the self-healing initialize path recovers, instead of the pre-fix
     // behavior of silently discarding the ncclResult_t and scanning only the
     // CUDA error.
     detail::checked_collective(
@@ -516,7 +516,7 @@ inline void RingSequenceParallelism::send_recv_kv(
         // indeterminate state and must never be reused — abort it and notify
         // the owning context (has_nccl() -> false) so later collectives fail
         // fast and the self-healing initialize() path can recover, instead of
-        // the pre-TASK-018 behavior of throwing while leaving a poisoned comm
+        // the pre-fix behavior of throwing while leaving a poisoned comm
         // silently live for every subsequent user.
         cuda::nccl::poison_failed_comm(config_.comm, config_.nccl_context);
         throw std::runtime_error(
@@ -549,7 +549,7 @@ inline void RingSequenceParallelism::ring_attention(
         return;
     }
 
-    // Multi-GPU ring sequence parallelism (milestone v2.22 / TASK-016): each
+    // Multi-GPU ring sequence parallelism (milestone v2.22): each
     // rank owns a local sequence shard of Q/K/V. The ring walks P-1 remote
     // blocks (send_recv_kv) and accumulates each with online softmax, so the
     // per-rank output is the local queries' attention over the FULL KV

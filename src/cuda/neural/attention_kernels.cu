@@ -1,8 +1,8 @@
 /**
  * @file attention_kernels.cu
- * @brief Device multi-head SDPA kernels (milestone v2.29, TASK-044/045)
+ * @brief Device multi-head SDPA kernels (milestone v2.29)
  *
- * Milestone v2.29 (DEC-015): the public sdpa_forward/sdpa_backward in
+ * Milestone v2.29: the public sdpa_forward/sdpa_backward in
  * tensor_parallel_attention.cpp used to compute multi-head scaled-dot-product
  * attention ON THE HOST — full D2H copies, host loops over
  * m x local_heads x m x head_dim, H2D copies back — once per block per

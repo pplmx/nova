@@ -3,7 +3,7 @@
  * @brief Single-GPU (tp == 1) tests for the v2.28 pre-LN residual
  *        TransformerBlock and the deep TransformerTrainer
  *
- * Milestone v2.28 (TASK-040 / DEC-014): the v2.26 mini-transformer was a
+ * Milestone v2.28: the v2.26 mini-transformer was a
  * single unnormalized block — attention -> MLP, no LayerNorm, no residual.
  * This file pins the NEW contracts on the tp <= 1 path (uninitialized
  * NcclContext -> effective tp 1):
@@ -20,7 +20,7 @@
  * tensor_parallel_block_multigpu_test.cpp.
  *
  * P1-RED: TransformerBlock/TransformerTrainer are provisional throw-stubs, so
- * these tests fail here and turn GREEN with the P2 composition (TASK-041).
+ * these tests fail here and turn GREEN with the P2 composition.
  */
 
 #include <gtest/gtest.h>
@@ -725,7 +725,7 @@ TEST_F(TransformerBlockTest, BlockBackwardMatchesHostReferenceSeq2) {
 }
 
 // ============================================================================
-// v2.28 capstone single-GPU (TASK-040): a DEEP (N-block, pre-LN, residual)
+// v2.28 capstone single-GPU: a DEEP (N-block, pre-LN, residual)
 // mini-transformer — final LN head, logits == the [m x hidden] head output —
 // must train on the tp <= 1 path: loss descends over K AdamW steps and top-1
 // accuracy rises above chance. This is what v2.26's single unnormalized block

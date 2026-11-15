@@ -3,10 +3,10 @@
  * @brief Single-GPU (tp == 1) functional tests for the weight-managed
  *        TensorParallelLayers
  *
- * Milestone v2.21 (TASK-010 / issue-v20-tp-layers-stubs): the v1.3
+ * Milestone v2.21: the v1.3
  * ColumnParallelLayer / RowParallelLayer / TensorParallelMLP wrappers were
  * non-functional scaffolding that owned no weight storage and were disposed
- * as fail-fast stubs in v2.20 (DEC-006). This milestone implements them for
+ * as fail-fast stubs in v2.20. This milestone implements them for
  * real: each layer owns a device weight buffer (the rank's shard of the full
  * weight), set_weight() uploads and slices the full weight, and forward()
  * computes the documented sharded/replicated outputs.
@@ -253,7 +253,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, SetWeightOverwritesBuffer) {
 }
 
 // ============================================================================
-// v2.23 backward reference tests — milestone v2.23 P1 (TASK-019). These pin the
+// v2.23 backward reference tests — milestone v2.23 P1. These pin the
 // analytic gradient contract (dW = X^T dY, dX = dY W^T) on the tp<=1 path; they
 // are RED against the provisional throw-stub and go GREEN with the P2 backward.
 // ============================================================================
@@ -408,7 +408,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
 }
 
 // ============================================================================
-// v2.24 training-step reference tests (TASK-024, milestone P1). These pin the
+// v2.24 training-step reference tests (milestone P1). These pin the
 // step(optimizer, grad_weight_full, step) contract: with the analytic grad
 // (dW = X^T dY) of one forward/backward, applying AdamW via the layer must
 // leave the weight shard equal to a host double-precision AdamW on the same

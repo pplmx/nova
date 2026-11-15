@@ -84,7 +84,7 @@ TEST_F(ActivationTest, ActivationOptionsDefaults) {
     EXPECT_EQ(options.negative_slope, 0.01f);
 }
 
-// Milestone v2.21 (TASK-010): silu_and_mul is the gated-activation used by the
+// Milestone v2.21: silu_and_mul is the gated-activation used by the
 // weight-managed TensorParallelMLP (gate projection through SiLU, elementwise
 // with up). Pin it against the host formula out = silu(gate) * up.
 TEST_F(ActivationTest, SiluAndMulMatchesHostFormula) {

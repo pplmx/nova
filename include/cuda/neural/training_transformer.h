@@ -5,7 +5,7 @@
  * @brief Deep multi-block transformer training driver on the parallel stack
  *        (v2.28)
  *
- * Milestone v2.28 (TASK-039, DEC-014): MicroTrainer (v2.25) trains a single
+ * Milestone v2.28: MicroTrainer (v2.25) trains a single
  * unnormalized MLP; v2.26/27 added TP attention and device optimizers but the
  * trainable model is still one unnormalized block (attention -> MLP). This
  * driver turns the v2.28 TransformerBlock into a reusable deep training loop:

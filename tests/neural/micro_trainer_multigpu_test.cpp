@@ -2,7 +2,7 @@
  * @file micro_trainer_multigpu_test.cpp
  * @brief Real thread-per-rank multi-GPU tests for the MicroTrainer driver
  *
- * Milestone v2.25 (TASK-028 / DEC-011): v2.24 verified one training step is
+ * Milestone v2.25: v2.24 verified one training step is
  * weight-exact; this milestone's acceptance is that a *full multi-step
  * sharded training run* reproduces a host fp64 full-weight training
  * trajectory end-to-end (gate/up/down assembled shards AND the per-step loss

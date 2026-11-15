@@ -1,8 +1,8 @@
 /**
  * @file checkpoint_multigpu_test.cpp
- * @brief Multi-GPU rank-local checkpoint contracts (milestone v2.33, TASK-060)
+ * @brief Multi-GPU rank-local checkpoint contracts (milestone v2.33)
  *
- * Milestone v2.33 (DEC-019): v2.32 shipped exact trainer checkpointing
+ * Milestone v2.33: v2.32 shipped exact trainer checkpointing
  * (save_state/load_state + AdamW moment export/import, NSCK v1) but guarded
  * tp > 1 — with TP>1 the copy_* readbacks expose rank shards while set_* takes
  * full weights, so a rank-local checkpoint couldn't restore. These contracts

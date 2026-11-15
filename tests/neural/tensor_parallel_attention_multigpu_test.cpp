@@ -2,7 +2,7 @@
  * @file tensor_parallel_attention_multigpu_test.cpp
  * @brief Real thread-per-rank multi-GPU tests for TensorParallelMultiHeadAttention
  *
- * Milestone v2.26 (TASK-032 / DEC-012): the new TP attention block must match
+ * Milestone v2.26: the new TP attention block must match
  * a single-GPU full-weight reference on real multi-GPU, exactly like the
  * v2.21-25 layers. Each rank owns fully-local head shards (QKV column-
  * parallel), so the per-head SDPA has no cross-rank communication; only the
@@ -413,7 +413,7 @@ TEST_F(TensorParallelAttentionMultiGpuTest, MultiGpu_AttentionBackwardMatchesRef
 }
 
 // ============================================================================
-// v2.26 capstone multi-GPU (TASK-034): a mini-transformer — attention feeding
+// v2.26 capstone multi-GPU: a mini-transformer — attention feeding
 // the verified MLP, logits = MLP(attn(X)) — trains on real multi-GPU. Each
 // rank runs K identical AdamW steps over its shards; the assembled per-rank
 // weight shards after the run must match a single-GPU full-weight reference

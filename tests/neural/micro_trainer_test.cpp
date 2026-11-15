@@ -2,7 +2,7 @@
  * @file micro_trainer_test.cpp
  * @brief Single-GPU (tp == 1) tests for the MicroTrainer training driver
  *
- * Milestone v2.25 (TASK-028 / DEC-011): v2.24 proved the layers take a single
+ * Milestone v2.25: v2.24 proved the layers take a single
  * exact training step (weight parity vs host fp64), but the stack had never
  * been shown to actually learn. These tests pin the MicroTrainer contracts on
  * the tp <= 1 path with an uninitialized NcclContext (0 devices -> effective

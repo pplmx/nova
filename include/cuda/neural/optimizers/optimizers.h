@@ -40,7 +40,7 @@ public:
     void zero_momentum();
 
     /**
-     * @brief Moment-state export/import for checkpointing (v2.32, TASK-056)
+     * @brief Moment-state export/import for checkpointing (v2.32)
      *
      * momentum_capacity() is the m/v buffer size in elements — 0 for a fresh
      * optimizer that has never stepped. copy_moments_to D2Hs the buffers into
@@ -99,7 +99,7 @@ public:
 
 private:
     LAMBConfig config_;
-    // Device moment buffers (v2.31 / DEC-017): the update runs in a fused
+    // Device moment buffers (v2.31): the update runs in a fused
     // kernel instead of the former D2H -> host vector loop -> H2D (the same
     // change v2.27 made to AdamW).
     std::unique_ptr<cuda::memory::Buffer<float>> m_data_;
@@ -156,7 +156,7 @@ float gradient_norm_device(const float* grads, size_t n,
                            cudaStream_t stream);
 void clip_device(float* grads, size_t n, float scale, cudaStream_t stream);
 
-// Fused LAMB update kernel (milestone v2.31 / DEC-017): per-element
+// Fused LAMB update kernel (milestone v2.31): per-element
 // bias-corrected moments + trust-ratio update. `rtw` is the host-computed
 // layer-adaptation ratio (phi_1/phi_2, 1.0 when disabled) — a scalar kernel
 // arg, per-element `r = clamp(param/update, 1/clamp_val, clamp_val)`.

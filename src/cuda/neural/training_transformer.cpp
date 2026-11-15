@@ -2,7 +2,7 @@
  * @file training_transformer.cpp
  * @brief TransformerTrainer — deep multi-block training driver (v2.28)
  *
- * Milestone v2.28 (TASK-041 / DEC-014): MicroTrainer (v2.25) trains a single
+ * Milestone v2.28: MicroTrainer (v2.25) trains a single
  * unnormalized MLP. This driver turns the v2.28 TransformerBlock into a
  * reusable deep learning loop: N pre-LN residual blocks + a final LayerNorm
  * (the hidden == classes head), one AdamW per weight tensor (11N + 2, so each
@@ -231,8 +231,8 @@ float TransformerTrainer::train_step(const float* input, const int* targets,
             g[8]->data(), g[9]->data(), g[10]->data(), step_no);
     }
 
-    // Device scalar for the reported loss (v2.30 / issue-v30-ce-loss-host-
-    // roundtrip): the loss is reduced on-device and ONE float is read back,
+    // Device scalar for the reported loss (v2.30): the loss is reduced
+    // on-device and ONE float is read back,
     // instead of the whole m*hidden logits buffer + host loop. Same mean-CE
     // scalar as the host cross_entropy_loss (MicroTrainer seed contract).
     loss::cross_entropy_loss_device(
@@ -301,7 +301,7 @@ void TransformerTrainer::save_state(std::ostream& out) const {
     w.u32(cp::kVersion);
     w.u32(cp::kKindTransformerTrainer);
     w.u32(static_cast<uint32_t>(tp_degree()));
-    // v3 (DEC-020): this rank's shard id, so a same-topology file from another
+    // v3: this rank's shard id, so a same-topology file from another
     // rank is rejected on load instead of silently restoring its shard.
     w.u32(cp::shard_rank(ctx_, tp_degree()));
     w.u32(static_cast<uint32_t>(num_blocks_));
@@ -361,7 +361,7 @@ void TransformerTrainer::load_state(std::istream& in) {
             std::to_string(ftp) + " vs trainer " +
             std::to_string(tp_degree()) + ")");
     }
-    // v3 (DEC-020): the writer's shard id must be this trainer's rank — a
+    // v3: the writer's shard id must be this trainer's rank — a
     // same-topology file from another rank matches every size check and used
     // to silently restore the wrong shard.
     const uint32_t frank = r.u32();
@@ -390,7 +390,7 @@ void TransformerTrainer::load_state(std::istream& in) {
     // Records validate against THIS trainer's shard sizes (matmul /tp, LN
     // replicated full — v2.33), so only the same topology roundtrips; applied
     // via the block's shard setters (no-slice) rather than the full-weight
-    // set_block_weight. Two-phase load (cpp-reviewer MEDIUM, RIL EV-040):
+    // set_block_weight. Two-phase load (cpp-reviewer MEDIUM):
     // read + validate everything into host memory FIRST, then apply — a
     // corrupt/truncated stream throws with this trainer untouched.
     const int qkv = heads_ * head_dim_;

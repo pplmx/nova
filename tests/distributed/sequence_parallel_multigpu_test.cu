@@ -132,7 +132,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AllReduceSequence) {
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
             // Wire the owning context so a broken comm poisons has_nccl() and
-            // the self-healing initialize() path can recover (TASK-018).
+            // the self-healing initialize path can recover.
             .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
@@ -198,7 +198,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_GatherKV) {
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
             // Wire the owning context so a broken comm poisons has_nccl() and
-            // the self-healing initialize() path can recover (TASK-018).
+            // the self-healing initialize path can recover.
             .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
@@ -255,7 +255,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterReduceScatter) {
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
             // Wire the owning context so a broken comm poisons has_nccl() and
-            // the self-healing initialize() path can recover (TASK-018).
+            // the self-healing initialize path can recover.
             .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
@@ -280,8 +280,8 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterReduceScatter) {
 
 // RingSequenceParallelism's multi-GPU ring attention requires the feature dim
 // (config.hidden_dim) to interpret the Q/K/V buffers; without it the call must
-// fail fast (the pre-v2.22 path was a silent garbage no-op — issue-v19-ring-
-// parallel-noop). This pins the input-validation contract of the new path.
+// fail fast (the pre-v2.22 path was a silent garbage no-op). This pins the
+// input-validation contract of the new path.
 TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_RejectsMissingHiddenDim) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
@@ -319,10 +319,9 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_RejectsMissingHidden
 }
 
 // ============================================================================
-// v2.22 ring-attention acceptance — RingSequenceParallelism on real multi-GPU
-// (TASK-014 / issue-v19-ring-parallel-noop). P1 (TASK-015) shipped this as RED
-// against the DEC-004 fail-fast throw; P2 (TASK-016) implemented the ring and
-// it is now the GREEN acceptance gate.
+// v2.22 ring-attention acceptance — RingSequenceParallelism on real multi-GPU.
+// The P1 RED was against the fail-fast throw; P2 implemented the ring and it
+// is now the GREEN acceptance gate.
 // ============================================================================
 
 // Contract for the real ring attention: each rank owns a local sequence shard
@@ -477,7 +476,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
             .world_size = sp,
             .comm = static_cast<void*>(ctx.current_comm()),
             // Wire the owning context so a broken comm poisons has_nccl() and
-            // the self-healing initialize() path can recover (TASK-018).
+            // the self-healing initialize path can recover.
             .nccl_context = static_cast<void*>(&ctx),
         };
         SequenceParallelAttention sp_attn(cfg);
@@ -497,7 +496,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
 }
 
 // ============================================================================
-// v2.23 comm-error routing for the sequence-parallel layer (TASK-018). The
+// v2.23 comm-error routing for the sequence-parallel layer. The
 // raw NCCL collectives (gather_kv AllGather, scatter_output ReduceScatter,
 // all_reduce_sequence AllReduce, ring send_recv_kv P2P group) used to discard
 // the ncclResult_t and never inform the owning NcclContext, so a broken comm
@@ -507,10 +506,10 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
 // recovers, mirroring safe_nccl_call's caller-error vs broken-comm policy.
 // ============================================================================
 
-// The deterministic core of TASK-018, independent of NCCL's failure-mode
-// behavior: the seam the collectives call on a broken comm must abort the comm
-// and poison the owning context (has_nccl() -> false), and heal_and_ready must
-// restore a clean context afterward.
+// The deterministic core of the comm-error routing, independent of NCCL's
+// failure-mode behavior: the seam the collectives call on a broken comm must
+// abort the comm and poison the owning context (has_nccl() -> false), and
+// heal_and_ready must restore a clean context afterward.
 TEST_F(SequenceParallelMultiGpuTest, MultiGpu_CommPoisonSeam_FlipsHasNccl_AndHeals) {
     const int device_count = DeviceMesh::instance().device_count();
     if (device_count < 2) {
@@ -539,7 +538,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_CommPoisonSeam_FlipsHasNccl_AndHea
 
     // Self-healing recovery restores a clean context.
     EXPECT_TRUE(cuda::distributed::test::heal_and_ready(ctx))
-        << "self-healing initialize() must recover after comm poisoning (TASK-018)";
+        << "self-healing initialize() must recover after comm poisoning";
     EXPECT_TRUE(ctx.has_nccl());
     EXPECT_FALSE(ctx.broken());
 }
@@ -547,7 +546,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_CommPoisonSeam_FlipsHasNccl_AndHea
 // The comm-error routing shared by the SequenceParallelAttention raw
 // collectives (gather_kv / scatter_output / all_reduce_sequence all run through
 // detail::checked_collective) must surface an NCCL error as an exception — the
-// pre-TASK-018 code discarded the ncclResult_t and only scanned
+// pre-fix code discarded the ncclResult_t and only scanned
 // cudaGetLastError, so a reported failure silently looked like success. This is
 // host-only (no communicator is touched on the immediate-error path): a launch
 // that returns an error must throw, never return.
@@ -569,7 +568,7 @@ TEST_F(SequenceParallelMultiGpuTest, CollectiveError_IsSurfacedNotDiscarded) {
 }
 
 // The ring P2P KV exchange (send_recv_kv) must surface a dead communicator as
-// an exception on every rank — the pre-TASK-018 path only threw, leaving the
+// an exception on every rank — the pre-fix path only threw, leaving the
 // broken comm silently live for every later user; now the failure also routes
 // through the seam (nccl_recovery.h). The context is broken the way the error
 // layer leaves it — comms aborted + marked via the seam (a single ncclCommAbort
@@ -645,7 +644,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AbortedComm_RingThrows_AndRecovers
     EXPECT_FALSE(ctx.broken());
 }
 
-// TASK-074: once a broken comm has poisoned the owning NcclContext
+// Once a broken comm has poisoned the owning NcclContext
 // (has_nccl() false), a caller retrying a collective with the SAME config must
 // fail fast WITHOUT touching the dead communicator — touching it is undefined
 // (observed to SEGV). The gate must be the thing that throws, never the dead
@@ -708,7 +707,7 @@ TEST_F(SequenceParallelMultiGpuTest, BrokenContext_FailsFastBeforeTouchingDeadCo
     for (int d = 0; d < sp; ++d) {
         EXPECT_TRUE(threw[d])
             << "rank " << d << " reused a communicator of a broken context "
-               "instead of failing fast via the health gate (TASK-074)";
+               "instead of failing fast via the health gate";
     }
 
     EXPECT_TRUE(cuda::distributed::test::heal_and_ready(ctx))

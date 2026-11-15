@@ -68,7 +68,7 @@ TEST_F(OptimizersTest, AdamWZeroMomentumZerosMoments) {
 }
 
 TEST_F(OptimizersTest, AdamWStepGrowsMomentCapacityZeroed) {
-    // Regression (RIL TASK-079, ISS-017): AdamW only allocated m/v on the FIRST
+    // Regression: AdamW only allocated m/v on the FIRST
     // step, so a later LARGER num_elements ran the fused kernel over the stale
     // smaller buffers — an out-of-bounds device read/write — and the grown
     // region resumed from uninitialized memory. The moment pair must now grow
@@ -193,7 +193,7 @@ TEST_F(OptimizersTest, GradientClipperL2Config) {
 namespace cuda::neural::optimizers::test {
 
 // ============================================================================
-// v2.27 device-kernel parity tests (TASK-036 / DEC-013): the fused AdamW,
+// v2.27 device-kernel parity tests: the fused AdamW,
 // gradient-norm, and clip kernels must produce the exact same results as the
 // host formulas they replaced (the 9-blocking-D2H/H2D per step that the v2.25
 // cpp-review flagged).
@@ -325,7 +325,7 @@ TEST_F(OptimizersTest, AdamWDeviceMatchesHostFormula) {
 }
 
 // ============================================================================
-// Milestone v2.31 (DEC-017 / TASK-052) — device LAMB optimizer kernel.
+// Milestone v2.31 — device LAMB optimizer kernel.
 // detail::lamb_step_device must leave params element-for-element equal to the
 // host LAMBOptimizer::step math (the oracle in host_lamb above) over K steps,
 // for both layer-adaptation on/off and clamping on/off. Pinned against the

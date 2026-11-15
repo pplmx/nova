@@ -9,7 +9,7 @@
  * the identical RankBarrier + run_per_rank were copy-pasted across four test
  * files and could drift.
  *
- * Bounded barrier (milestone v2.18 P3 / TASK-003): the barrier wait times out
+ * Bounded barrier (milestone v2.18 P3): the barrier wait times out
  * after a configurable interval so a rank thread that dies before reaching the
  * barrier fails the suite with a clear diagnosis instead of hanging the other
  * ranks forever — previously the only way to produce an unkillable (>120s)
@@ -72,7 +72,7 @@ public:
 };
 
 // Self-healing multi-GPU-of-NCCL readiness gate for the distributed suites
-// (milestone v2.18 P3 / TASK-003). The suites share the process-wide
+// (milestone v2.18 P3). The suites share the process-wide
 // NcclContext singleton and deliberately never destroy it, so after a single
 // genuine timeout/async failure the context is broken (has_nccl()==false) and
 // — without recovery — every later test in the binary would silently GTEST_SKIP,

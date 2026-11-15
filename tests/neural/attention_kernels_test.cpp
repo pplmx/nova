@@ -1,8 +1,8 @@
 /**
  * @file attention_kernels_test.cpp
- * @brief Single-GPU kernel-level contracts for the v2.29 device SDPA (TASK-044)
+ * @brief Single-GPU kernel-level contracts for the v2.29 device SDPA
  *
- * Milestone v2.29 (DEC-015): the public sdpa_forward/sdpa_backward in
+ * Milestone v2.29: the public sdpa_forward/sdpa_backward in
  * tensor_parallel_attention.cpp compute multi-head scaled-dot-product
  * attention ON THE HOST (D2H -> host loops -> H2D), once per block per
  * train_step — the binding deep-transformer training-latency constraint
@@ -13,7 +13,7 @@
  * seq>1, heads>1, head_dim>1.
  *
  * P1-RED: the detail:: entries are provisional throw-stubs, so these tests
- * fail (throw) here and turn GREEN with the P2 device kernels (TASK-045).
+ * fail (throw) here and turn GREEN with the P2 device kernels.
  */
 
 #include <gtest/gtest.h>

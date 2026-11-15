@@ -102,7 +102,7 @@ __global__ void build_histogram_kernel(
     float max_val,
     int num_bins) {
 
-    // Dynamic shared memory sized to num_bins at launch (TASK-076): the old
+    // Dynamic shared memory sized to num_bins at launch: the old
     // fixed __shared__ uint32_t[256] wrote smem[bin] for bin up to num_bins-1
     // (the HistogramCalibrator default num_bins is 2048) — an out-of-bounds
     // shared-memory write, and bins >= 256 were never flushed to the host
@@ -311,7 +311,7 @@ void build_histogram(
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
 
-    // Dynamic shared memory must cover every possible bin (TASK-076): the
+    // Dynamic shared memory must cover every possible bin: the
     // calibrator's default num_bins=2048 previously overran a fixed 256-entry
     // shared buffer. 2048 bins * 4B is comfortably within the 48KB static
     // shared-memory limit per block.

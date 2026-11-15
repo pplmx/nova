@@ -141,9 +141,9 @@ void ShutdownCoordinator::initialize(const ShutdownConfig& config) {
 }
 
 void ShutdownCoordinator::shutdown() {
-    // Guard (RIL TASK-079, ISS-018): the old reset ran unconditionally while a
-    // detached shutdown thread (begin → checkpoint → finalize) was still
-    // touching phase/shutdown_complete — a data race, and PreemptionManager::
+    // Guard: the old reset ran unconditionally while a detached shutdown
+    // thread (begin → checkpoint → finalize) was still touching
+    // phase/shutdown_complete — a data race, and PreemptionManager::
     // shutdown() could reset state under the thread that "Completes" it. Refuse
     // the reset while a shutdown is MID-FLIGHT (in progress, not yet complete);
     // a completed shutdown still resets so the singleton is reusable.
@@ -201,10 +201,10 @@ bool ShutdownCoordinator::checkpoint_coordinated() {
     }
 
     if (!cb) {
-        // RIL TASK-079, ISS-018: the old code printed "Saving checkpoint before
-        // shutdown" and saved nothing. Never pretend — report the
-        // misconfiguration so an operator wires PreemptionManager::
-        // set_checkpoint_callback (or disables checkpoint_on_shutdown).
+        // The old code printed "Saving checkpoint before shutdown" and saved
+        // nothing. Never pretend — report the misconfiguration so an operator
+        // wires PreemptionManager::set_checkpoint_callback (or disables
+        // checkpoint_on_shutdown).
         std::cerr << "[Preemption] checkpoint_on_shutdown is enabled but no "
                      "checkpoint callback is registered — nothing was saved\n";
         return false;
@@ -263,8 +263,8 @@ std::chrono::milliseconds ShutdownCoordinator::get_elapsed_time() const {
 }
 
 std::chrono::seconds ShutdownCoordinator::get_remaining_timeout() const {
-    // RIL TASK-079, ISS-018: previously returned the static stored value and
-    // never counted down — a "timeout" that never elapsed. Compute from the
+    // Previously returned the static stored value and never counted down — a
+    // "timeout" that never elapsed. Compute from the
     // deadline (start + configured budget, extended by extend_timeout) against
     // the real clock, clamped at zero. Idle reports the full configured budget.
     if (!impl_->shutdown_in_progress.load()) {

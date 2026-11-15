@@ -134,7 +134,7 @@ float cross_entropy_loss(
     return config.reduction_mean ? total_loss / batch_size : total_loss;
 }
 
-// Device cross-entropy-with-logits backward (v2.24 / TASK-025):
+// Device cross-entropy-with-logits backward (v2.24):
 //   grad_logits[b*C+c] = (softmax_c(logits_b) - [c == targets[b]]) * scale
 // with scale = 1/B for reduction_mean (matching the host forward), 1 otherwise.
 // One thread per (b, c); the per-row max/sum is recomputed redundantly per
@@ -242,7 +242,7 @@ __device__ float ce_block_reduce_sum(float v, float* red) {
     return red[0];
 }
 
-// Mean/sum CE loss over a logits matrix, computed on-device (v2.30 / DEC-016).
+// Mean/sum CE loss over a logits matrix, computed on-device (v2.30).
 // One block per row: block-reduce the row max, then the row exp-sum, then
 // thread 0 atomicAdds -log_softmax(target), scaled by 1/batch (mean) or 1
 // (sum), into loss_out[0] (the wrapper zeroes it first). This is the exact
@@ -304,7 +304,7 @@ void cross_entropy_loss_device(
     const CrossEntropyConfig& config,
     cudaStream_t stream
 ) {
-    // Milestone v2.30 (DEC-016 / TASK-049 P2): device mean/sum CE loss. The
+    // Milestone v2.30 (P2): device mean/sum CE loss. The
     // public host cross_entropy_loss() keeps its signature for host callers;
     // this entry computes the identical scalar from device logits so the
     // training drivers no longer round-trip the full logits buffer (the same
@@ -373,7 +373,7 @@ float focal_loss(
         // still accumulating — probs[class 0] was exp(logit0)/exp(logit0) ==
         // 1.0 for every row regardless of the data, and only the final class
         // got the correct denominator (the same bug class cross_entropy_loss
-        // was already fixed for, TASK-077).
+        // was already fixed for).
         float sum_exp = 0.0f;
         for (int c = 0; c < num_classes; ++c) {
             sum_exp += expf(predictions[b * num_classes + c] - max_logit);

@@ -1,7 +1,7 @@
 /**
  * @file image_processing.cpp
  * @brief Image processing example: Sobel edge, Gaussian blur, morphology
- *        dilation — ported to the current cuda::* / plain image APIs (TASK-064;
+ *        dilation — ported to the current cuda::* / plain image APIs. The
  *        the nova::image::* API and PGMImage/load_pgm/save_pgm this example
  *        used no longer exist).
  * @example
@@ -123,7 +123,7 @@ int parse_args(int argc, char** argv, std::string& input, std::string& output,
         }
     }
     // Validate the kernel up front: the old example silently no-op'ed on an
-    // unknown --kernel and saved an uninitialized output image (ISS-003).
+    // unknown --kernel and saved an uninitialized output image.
     if (kernel != "sobel" && kernel != "blur" && kernel != "morphology") {
         fprintf(stderr, "Error: unknown kernel '%s' (choose sobel | blur | "
                         "morphology)\n", kernel.c_str());

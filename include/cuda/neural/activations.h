@@ -54,7 +54,7 @@ void tanh_activation(
 /**
  * @brief SiLU-gated linear unit: out[i] = silu(gate[i]) * up[i]
  *
- * The gated activation used by the tensor-parallel MLP (TASK-010 / v2.21):
+ * The gated activation used by the tensor-parallel MLP (v2.21):
  * gate passes through SiLU (x * sigmoid(x)), then is multiplied elementwise
  * by the up stream, matching the standard transformer FFN gate pattern.
  *

@@ -20,7 +20,7 @@ struct SpeculativeDecodingConfig {
      *  chain-only, so apply_tree_attention_mask is the identity. Keep false
      *  (the default); requesting it fails fast in the runner (constructor /
      *  configure) instead of silently decoding without the advertised tree
-     *  mask (ISS-010). */
+     *  mask. */
     bool enable_tree_attention = false;
     /** Asynchronous draft generation — NOT IMPLEMENTED: drafts are generated
      *  inline. Keep false (the default); requesting it fails fast. */

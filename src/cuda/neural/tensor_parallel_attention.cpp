@@ -12,12 +12,12 @@
  * input grad-input, summed to the full block grad-input.
  *
  * The multi-head SDPA itself (forward + analytic backward) runs on device in
- * attention_kernels.cu (milestone v2.29, DEC-015): the v2.26 host D2H/H2D
+ * attention_kernels.cu (milestone v2.29): the v2.26 host D2H/H2D
  * round-trip ran once per block per train_step and was the binding
  * deep-transformer training-latency constraint (Round-28 LEARN M3). The
  * public sdpa_forward/sdpa_backward now route straight to those kernels.
  * There is deliberately no dead device kernel here — the incomplete
- * single-GPU MultiHeadAttention (issue-v24-mha-incomplete) is the anti-pattern.
+ * single-GPU MultiHeadAttention is the anti-pattern.
  */
 
 #include "cuda/neural/tensor_parallel_attention.h"
@@ -41,7 +41,7 @@ namespace {
 }
 
 // The public SDPA surface routes straight to the device kernels in
-// attention_kernels.cu (milestone v2.29, DEC-015): the v2.26 host D2H/H2D
+// attention_kernels.cu (milestone v2.29): the v2.26 host D2H/H2D
 // round-trip + CPU loops ran once per block per train_step and were deleted.
 }  // namespace
 
@@ -86,7 +86,7 @@ TensorParallelMultiHeadAttention::TensorParallelMultiHeadAttention(
     // the QKV projections become zero-sized. Enforce per-head divisibility so
     // a wrong topology fails with a clear error, not a cuBLAS INVALID_VALUE
     // at forward time (v2.26 latent gap surfaced by v2.33's 8-GPU checkpoint
-    // test; cpp-reviewer MEDIUM, EV-044).
+    // test; cpp-reviewer MEDIUM).
     if (num_heads_ % tp_degree() != 0) {
         throw std::invalid_argument(
             "TensorParallelMultiHeadAttention: num_heads must divide evenly by "

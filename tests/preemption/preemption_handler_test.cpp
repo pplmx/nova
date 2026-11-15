@@ -49,7 +49,7 @@ TEST(PreemptionHandlerTest, RemainingTimeoutCountsDownDuringShutdown) {
     ASSERT_GE(initial, 0);
     ASSERT_LE(initial, 3);
 
-    // Regression (RIL TASK-079, ISS-018): this used to return a frozen value
+    // Regression: this used to return a frozen value
     // that never counted down. Let ~2s elapse; with a 2s-and-1 margin truncation
     // the remaining budget must strictly shrink.
     std::this_thread::sleep_for(std::chrono::milliseconds(2100));
@@ -83,7 +83,7 @@ TEST(PreemptionHandlerTest, CheckpointCoordinatedReportsMissingCallback) {
     cfg.shutdown_timeout = std::chrono::seconds(5);
     c.initialize(cfg);
 
-    // Regression (RIL TASK-079, ISS-018): with checkpointing requested but no
+    // Regression: with checkpointing requested but no
     // save wired, this printed "Saving checkpoint before shutdown" and saved
     // nothing. It must now report the misconfiguration, not pretend.
     c.set_checkpoint_callback(nullptr);
@@ -136,7 +136,7 @@ TEST(PreemptionHandlerTest, ShutdownRefusesResetWhileMidFlight) {
     c.request_shutdown(SIGTERM);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // Regression (RIL TASK-079, ISS-018): the old unconditional reset raced the
+    // Regression: the old unconditional reset raced the
     // finalizing thread. A mid-flight coordinator must refuse the reset.
     c.shutdown();
     EXPECT_TRUE(c.is_shutdown_in_progress())

@@ -13,7 +13,7 @@
  * broken on real multi-GPU (it read the caller's single send_data while
  * cudaSetDevice-swapping across all GPUs and could never gather distinct
  * per-rank contributions) and is not retained — see
- * issue-v17-dist-ops-multigpu-untested and ev-v17-p1-dist-ops-failures.
+ * observed failure modes.
  */
 
 #include "cuda/distributed/reduce.h"

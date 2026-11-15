@@ -85,7 +85,7 @@ TEST_F(CalibratorTest, HistogramCalibration) {
 }
 
 TEST_F(CalibratorTest, HistogramFullCoverage_2048Bins) {
-    // Regression (TASK-076): build_histogram_kernel used a fixed 256-entry
+    // Regression: build_histogram_kernel used a fixed 256-entry
     // shared buffer but binned into up to num_bins-1 == 2047 — an out-of-bounds
     // shared-memory write, and bins >= 256 were never flushed to the global
     // histogram, so calibration over the DEFAULT 2048 bins silently under-

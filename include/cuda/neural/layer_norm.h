@@ -90,7 +90,7 @@ void layer_norm_backward(
  * @class LayerNorm
  * @brief Trainable, replicated LayerNorm on the parallel stack (v2.28)
  *
- * Milestone v2.28 (TASK-039, DEC-014): the v2.21-27 stack trains exactly one
+ * Milestone v2.28: the v2.21-27 stack trains exactly one
  * model — an unnormalized single block (attention -> MLP). Real transformer
  * blocks are pre-norm (LN -> MHA -> +x -> LN -> MLP -> +x), and the legacy
  * free-function LayerNorm was forward-only (no backward, so untrainable).
@@ -202,7 +202,7 @@ private:
 };
 
 namespace detail {
-// v2.29 parallelized trainable LayerNorm compute (TASK-044/045): the P1 RED
+// v2.29 parallelized trainable LayerNorm compute: the P1 RED
 // contract surface for the block/warp-reduction kernels that replace the
 // one-thread-per-row ln_forward_trainable_kernel / ln_backward_stats_kernel
 // (Round-28 LEARN M2 — fine at hidden<=64, a per-row serialization bottleneck

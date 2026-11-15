@@ -2,7 +2,7 @@
  * @file tensor_parallel_block_multigpu_test.cpp
  * @brief Real thread-per-rank multi-GPU tests for the v2.28 deep transformer
  *
- * Milestone v2.28 (TASK-040 / DEC-014): the v2.26 mini-transformer shard==
+ * Milestone v2.28: the v2.26 mini-transformer shard==
  * single-GPU parity covered ONE unnormalized block. The deep transformer
  * (N pre-LN residual blocks + final LN) must train the same sharded as full:
  * each rank runs K identical AdamW steps over its block shards (and the
@@ -11,7 +11,7 @@
  * and the loss must descend on both.
  *
  * P1-RED: TransformerTrainer is a provisional throwing stub, so this test
- * fails here and turns GREEN with the P2 composition (TASK-041). Runs on
+ * fails here and turns GREEN with the P2 composition. Runs on
  * NCCL-enabled multi-GPU (2 & 4 GPUs, CUDA_VISIBLE_DEVICES=2,3+).
  */
 
@@ -109,7 +109,7 @@ void make_task(std::vector<float>& X, std::vector<int>& targets, int m,
 }
 
 // ============================================================================
-// v2.28 multi-GPU capstone (TASK-040): a DEEP (N-block, pre-LN, residual)
+// v2.28 multi-GPU capstone: a DEEP (N-block, pre-LN, residual)
 // mini-transformer with a final LN head trains on real multi-GPU. Each rank
 // runs K identical AdamW steps over its block shards + the replicated LN
 // gamma/beta; the assembled per-rank weights after the run must match a

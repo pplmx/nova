@@ -40,7 +40,7 @@ namespace cuda::distributed {
  * DistributedAllGather / DistributedBroadcast. The pre-v2.18 per-instance host
  * event-poll never enforced cross-rank arrival (events on empty internal
  * streams fire immediately), so ranks were released before all had reached the
- * barrier — see HYP-001 / EV-001.
+ * barrier.
  *
  * Thread safety: Safe for concurrent use from one thread per rank; each rank
  * thread enters the collective on its current device.

@@ -1,7 +1,7 @@
 /**
  * @file graph_algorithms.cpp
  * @brief Graph algorithm example: BFS + PageRank over a generated random graph
- *        — ported to the current cuda::graph API (TASK-064; the old
+ *        — ported to the current cuda::graph API. The old
  *        nova::graph::* API / CSRGraph(raw CSR arrays) ctor no longer exists;
  *        graphs are now built from an edge list via create_csr_from_edges).
  * @example

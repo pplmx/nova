@@ -16,7 +16,7 @@
  * against a single-GPU reference.
  *
  * P1 (round 19) shipped bug-finding variants of these as DISABLED_MultiGpu_*
- * and proved them RED (HYP-002 / EV-004): the ColumnParallel partition math
+ * and proved them RED: the ColumnParallel partition math
  * (contiguous-slice B/C offsets) produced wrong output against a row-major
  * matmul, n % tp != 0 was silently dropped instead of rejected, and RowParallel
  * ignored the rank index. P2 converged the implementation onto the corrected
@@ -390,7 +390,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallel) {
 
 // ============================================================================
 // v2.21 weight-managed layer acceptance — TensorParallelLayers on real multi-GPU
-// (TASK-010 / issue-v20-tp-layers-stubs, replacing the DEC-006 fail-fast stubs)
+// (replacing the fail-fast stubs)
 // ============================================================================
 
 // ColumnParallelLayer shards its weight along the output dimension: each rank
@@ -663,7 +663,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallelNonDivisibl
 }
 
 // ============================================================================
-// v2.23 backward acceptance — milestone v2.23 P1/TASK-019 (RED against the
+// v2.23 backward acceptance — milestone v2.23 P1 (RED against the
 // provisional throw-stub; GREEN with the P2 implementation). The row layer's
 // grad-input is local (matches the sharded-input layout); the column layer's
 // grad-input is the AllReduce of the per-rank dY W^T.
@@ -999,7 +999,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_Backward_MatchesRe
 }
 
 // ============================================================================
-// v2.24 end-to-end training-step acceptance (TASK-024, milestone P1). The
+// v2.24 end-to-end training-step acceptance (milestone P1). The
 // tensor-parallel stack has forward+backward but no way to train it: the loss
 // layer is host-side with no grad (its device kernels are dead code) and no
 // layer method steps the private weight shards. This test runs K identical

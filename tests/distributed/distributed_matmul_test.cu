@@ -44,8 +44,8 @@ using namespace cuda::mesh;
 
 // The thread-per-rank harness (RankBarrier + run_per_rank) lives in
 // distributed_test_common.h, shared with the NCCL suite, distributed ops, and
-// SyncBatchNorm tests. The bounded barrier is the milestone v2.18 P3 /
-// TASK-003 harness-robustness fix: a rank thread that dies before reaching
+// SyncBatchNorm tests. The bounded barrier is the milestone v2.18 P3
+// harness-robustness fix: a rank thread that dies before reaching
 // the barrier fails the suite with RankBarrierTimeout instead of hanging the
 // other ranks forever.
 using cuda::distributed::test::run_per_rank;
@@ -54,7 +54,7 @@ using cuda::distributed::test::RankBarrierTimeout;
 namespace {
 
 // Multi-GPU readiness for the shared NCCL singleton, self-healing a broken
-// context (TASK-003): after a genuine timeout/async abort the singleton is
+// context: after a genuine timeout/async abort the singleton is
 // broken and would otherwise turn every later matmul test into a silent skip.
 bool multigpu_nccl_ready() {
     auto& ctx = cuda::nccl::NcclContext::instance();

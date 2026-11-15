@@ -1,8 +1,8 @@
 /**
  * @file neural_net.cpp
  * @brief Neural network primitives example: fused matmul+bias+ReLU, LayerNorm,
- *        and per-row softmax over the current cuda:: API (re-integrated for
- *        TASK-064; the pre-v2 nova::* API this example used no longer exists).
+ *        and per-row softmax over the current cuda:: API. The pre-v2 nova::*
+ *        API this example used no longer exists.
  * @example
  *
  * Compile:

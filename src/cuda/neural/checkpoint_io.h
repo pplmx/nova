@@ -145,7 +145,7 @@ private:
 };
 
 // AdamW moment-pair record (count + m + v), shared by both trainers' save/load
-// (TASK-057). A count of 0 means the saved optimizer was fresh (zero moments).
+// A count of 0 means the saved optimizer was fresh (zero moments).
 inline void write_adamw_moments(Writer& w,
                                 const optimizers::AdamWOptimizer& opt) {
     const size_t cap = opt.momentum_capacity();

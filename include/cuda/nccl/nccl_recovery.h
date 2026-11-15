@@ -7,8 +7,8 @@
  * The comm-error layer (safe_nccl_call / safe_stream_wait) aborts a dead
  * communicator and notifies its owning NcclContext via mark_comm_aborted, so
  * has_nccl() goes false and later collectives fail fast instead of hanging —
- * and the owning context's re-initialize() path self-heals (v2.18 P3 /
- * TASK-003). Header-only code that launches NCCL directly instead of going
+ * and the owning context's re-initialize() path self-heals (v2.18 P3).
+ * Header-only code that launches NCCL directly instead of going
  * through that layer (sequence-parallel collectives, the ring KV P2P exchange)
  * must route its failures through the same seam, or a broken communicator is
  * silently reused and every later NCCL user in the process hangs.

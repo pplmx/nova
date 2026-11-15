@@ -127,7 +127,7 @@ void clip_device(float* grads, size_t n, float scale, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
-// Fused LAMB update (milestone v2.31 / DEC-017): the exact per-element math of
+// Fused LAMB update (milestone v2.31): the exact per-element math of
 // the host LAMBOptimizer::step loop, run on device — bias-corrected m/v, the
 // AdamW-style update, then the per-element trust ratio
 // r = clamp(|w|/|update|, 1/clamp_val, clamp_val) when layer adaptation is

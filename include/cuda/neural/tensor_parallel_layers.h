@@ -6,10 +6,10 @@
  *
  * Implements ColumnParallelLayer / RowParallelLayer / TensorParallelMLP used
  * in transformer architectures. Unlike the v1.3 scaffolding (which owned no
- * weight storage and was disposed as fail-fast stubs in v2.20, DEC-006), each
+ * weight storage and was disposed as fail-fast stubs in v2.20), each
  * layer owns the rank's shard of the model weights on device, set_weight()
  * uploads/slices the full weight, and forward() computes the documented
- * sharded/replicated outputs on real multi-GPU (milestone v2.21, TASK-010).
+ * sharded/replicated outputs on real multi-GPU (milestone v2.21).
  *
  * Semantics (Megatron-style weight sharding, matching the layer docs):
  * - ColumnParallelLayer splits W along the output dim; input replicated,
@@ -82,7 +82,7 @@ public:
     void set_weight(const float* weight);
 
     /**
-     * @brief Upload this rank's column shard directly (v2.33 / DEC-019)
+     * @brief Upload this rank's column shard directly (v2.33)
      *
      * The no-slice dual of copy_weight_shard: stores shard
      * [in_features x out_features/tp] (== the full weight at tp == 1) exactly
@@ -233,7 +233,7 @@ public:
     void set_weight(const float* weight);
 
     /**
-     * @brief Upload this rank's row shard directly (v2.33 / DEC-019)
+     * @brief Upload this rank's row shard directly (v2.33)
      *
      * The no-slice dual of copy_weight_shard for the row-parallel layer:
      * stores shard [in_features/tp x out_features] (== the full weight at
@@ -282,7 +282,7 @@ public:
      * End-to-end training surface for the row-parallel layer: extracts this
      * rank's contiguous row-block of the caller's full grad_weight buffer and
      * runs one AdamW step in place on the private rank shard. The shard step
-     * tiles to the full-weight update (see the class docs / DEC-010).
+     * tiles to the full-weight update (the class docs).
      *
      * @param optimizer AdamW optimizer (per-rank instance)
      * @param grad_weight Full grad-weight [in_features x out_features]

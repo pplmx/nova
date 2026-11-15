@@ -4,7 +4,7 @@
  * @file tensor_parallel_block.h
  * @brief Pre-LN residual transformer block on the parallel stack (v2.28)
  *
- * Milestone v2.28 (TASK-039, DEC-014): the v2.21-27 stack trains exactly one
+ * Milestone v2.28: the v2.21-27 stack trains exactly one
  * model — an unnormalized single block (attention -> MLP, logits =
  * MLP(attn(X))) — because the layer_norm module was forward-only (untrainable)
  * and no residual connection existed anywhere. A real transformer block is
@@ -90,7 +90,7 @@ public:
                     const float* wd);
 
     /**
-     * @brief Upload this rank's weight shards directly (v2.33 / DEC-019)
+     * @brief Upload this rank's weight shards directly (v2.33)
      *
      * The no-slice dual of copy_weights: the 7 matmul tensors are this rank's
      * shards (wq/wk/wv [hidden x qkv/tp], wo [(qkv/tp) x hidden], wg/wu

@@ -10,7 +10,7 @@ using namespace cuda::neural;
 // here destroys the CUDA context the shared NcclContext singleton's
 // communicators live on (undetectable to the context, per the v2.19
 // shared-reset convention), so an earlier suite's initialized communicators
-// go stale and a later multi-GPU suite hangs on them (RIL TASK-065 / ISS-004).
+// go stale and a later multi-GPU suite hangs on them.
 class TensorParallelTest : public ::testing::Test {};
 
 TEST_F(TensorParallelTest, RequiredBufferSizeFormula) {

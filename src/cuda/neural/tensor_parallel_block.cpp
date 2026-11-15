@@ -7,7 +7,7 @@
 namespace cuda::neural {
 
 // ============================================================================
-// v2.28 pre-LN residual transformer block (TASK-041 / DEC-014). Composition of
+// v2.28 pre-LN residual transformer block. Composition of
 // the verified pieces — LayerNorm (v2.28), TensorParallelMultiHeadAttention
 // (v2.26) and TensorParallelMLP (v2.21) — with residual adds (elementwise_add):
 //

@@ -4,10 +4,10 @@
  * @file tensor_parallel_attention.h
  * @brief Weight-sharded tensor-parallel Multi-Head Attention block (v2.26)
  *
- * Milestone v2.26 (TASK-031, DEC-012): the v2.21-25 stack can train a plain
+ * Milestone v2.26: the v2.21-25 stack can train a plain
  * MLP on the parallel path, but no attention exists there — the single-GPU
  * MultiHeadAttention (transformer/attention.h) is an incomplete shell
- * (issue-v24-mha-incomplete: it scales a buffer and returns without computing
+ * (it scales a buffer and returns without computing
  * QK^T/softmax/V). This block builds attention on the *verified* layer
  * conventions so a real transformer-block can be trained end-to-end:
  *
@@ -221,7 +221,7 @@ void sdpa_backward(const float* q, const float* k, const float* v,
                    cudaStream_t stream = nullptr);
 
 namespace detail {
-// v2.29 device multi-head SDPA (TASK-044/045): the GPU kernels that replace
+// v2.29 device multi-head SDPA: the GPU kernels that replace
 // the host D2H/H2D round-trip in sdpa_forward/sdpa_backward (the v2.26 header
 // deferred them to 'a later performance pass'; Round-28 LEARN M3 named the
 // per-block host round-trip the binding deep-trainer latency). Same semantics

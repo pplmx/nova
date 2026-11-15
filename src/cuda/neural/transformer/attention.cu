@@ -63,8 +63,8 @@ __global__ void softmax_kernel(T* data, int batch_size, int num_heads, int seq_l
     }
 }
 
-// Adds the positional encoding to every batch row's embeddings (TASK-077 /
-// ISS-013): each of the `batch_size` rows receives the same per-position
+// Adds the positional encoding to every batch row's embeddings: each of the
+// `batch_size` rows receives the same per-position
 // encoding, so output[(b*seq_len+p)*embed_dim + d] =
 // input[..] + encoding[p*embed_dim + d]. Previously forward() memcpy'd the
 // encoding OVER the input (losing the embeddings) and only touched the first
@@ -110,7 +110,7 @@ void MultiHeadAttention::forward(
     // tensor_parallel_attention.cpp's "anti-pattern" note). The old shell used
     // to scale an uninitialized scratch buffer and return without ever
     // computing attention or writing `output` — a silent garbage-producing
-    // no-op (issue-v24-mha-incomplete). Fail fast instead, so a caller gets an
+    // no-op. Fail fast instead, so a caller gets an
     // explicit error rather than reading untouched/garbage output.
     (void)query;
     (void)key;
@@ -173,8 +173,8 @@ void PositionalEncoding::forward(
         return;
     }
 
-    // output = input + positional encoding, repeated per batch row (TASK-077 /
-    // ISS-013): previously the encoding was memcpy'd OVER the input — the first
+    // output = input + positional encoding, repeated per batch row: previously
+    // the encoding was memcpy'd OVER the input — the first
     // sequence's embeddings were discarded and later batch rows got no encoding
     // at all.
     const int total = batch_size * seq_len * config_.embed_dim;

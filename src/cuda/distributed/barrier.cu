@@ -8,12 +8,11 @@
  * Single-GPU fallback is a plain cudaDeviceSynchronize.
  *
  * This converges the last unconverged high-level distributed op onto the
- * verified NCCL layer (see DEC-001 / issue-v17-meshbarrier-multigpu). The
- * pre-v2.18 implementation was a per-instance host event-poll: it recorded an
- * event per device on internally-created (empty) streams and host-polled for
- * completion — those events fire immediately, so a rank was released without
- * any cross-rank arrival signal (wrong barrier semantics; proven by the
- * MultiGpu_*Rendezvous tests — HYP-001 / EV-001).
+ * verified NCCL layer. The pre-v2.18 implementation was a per-instance host
+ * event-poll: it recorded an event per device on internally-created (empty)
+ * streams and host-polled for completion — those events fire immediately, so a
+ * rank was released without any cross-rank arrival signal (wrong barrier
+ * semantics; proven by the MultiGpu_*Rendezvous tests).
  */
 
 #include "cuda/distributed/barrier.h"

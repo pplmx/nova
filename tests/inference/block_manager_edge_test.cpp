@@ -216,7 +216,7 @@ TEST_F(BlockManagerEdgeTest, ForwardBatchWithMultipleSequences) {
 }
 
 TEST_F(BlockManagerEdgeTest, SequenceIndexSpaceReusedAcrossCreateFreeChurn) {
-    // Regression (RIL TASK-079, ISS-019): sequence → GPU block-table-slot
+    // Regression: sequence → GPU block-table-slot
     // indices were handed out with an ever-increasing counter that never reused
     // freed slots, so after num_cpu_blocks cumulative create_sequence calls
     // (128 in this fixture) the next sequence landed past the table and EVERY
