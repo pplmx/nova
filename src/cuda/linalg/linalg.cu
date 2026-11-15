@@ -31,10 +31,21 @@ void check_cusolver(cusolverStatus_t status, const char* file, int line) {
 #define CUSOLVER_CHECK(call) check_cusolver(call, __FILE__, __LINE__)
 
 float compute_condition_number(const float* s, size_t rank) {
-    if (rank == 0) return 0.0f;
-    float max_s = s[0];
-    float min_s = s[rank - 1];
-    return (min_s > 0) ? (max_s / min_s) : 0.0f;
+    // The condition number is sigma_max / sigma_min, so it grows without bound
+    // as the matrix approaches singularity.
+    //
+    // Returning 0 in that case inverted the meaning: a condition number of zero
+    // describes a perfectly conditioned matrix, so the worst case was reported
+    // as the best. A singular matrix now reports infinity, and an empty
+    // spectrum (no singular values at all) reports NaN rather than a number that
+    // looks like a good condition.
+    if (rank == 0) return std::numeric_limits<float>::quiet_NaN();
+    const float max_s = s[0];
+    const float min_s = s[rank - 1];
+    if (!(min_s > 0.0f)) {
+        return std::numeric_limits<float>::infinity();
+    }
+    return max_s / min_s;
 }
 
 struct SymEigen {
@@ -122,7 +133,9 @@ void svd(const float* A, size_t m, size_t n, SVDResult& result, SVDMode mode) {
     result.S = memory::Buffer<float>(0);
     result.Vt = memory::Buffer<float>(0);
     result.actual_rank = 0;
-    result.condition_number = 0.0f;
+    // An empty matrix has no condition number; NaN rather than a value that
+    // reads as well-conditioned.
+    result.condition_number = std::numeric_limits<float>::quiet_NaN();
     if (m == 0 || n == 0) return;
 
     // SVD via the Gram matrix + host Jacobi rotations, instead of cuSOLVER's
@@ -203,7 +216,19 @@ void svd(const float* A, size_t m, size_t n, SVDResult& result, SVDMode mode) {
     result.U.copy_from(hU.data(), hU.size());
     result.S.copy_from(hS.data(), hS.size());
     result.Vt.copy_from(hVt.data(), hVt.size());
-    result.actual_rank = min_dim;
+    // The numerical rank counts singular values above a tolerance relative to
+    // the largest; reporting min_dim unconditionally claimed a full-rank matrix
+    // even when one or more singular values were zero.
+    const float largest = hS.empty() ? 0.0f : hS[0];
+    const float rank_tolerance =
+        largest * static_cast<float>(min_dim) * std::numeric_limits<float>::epsilon();
+    size_t numerical_rank = 0;
+    for (size_t i = 0; i < min_dim; ++i) {
+        if (hS[i] > rank_tolerance) {
+            ++numerical_rank;
+        }
+    }
+    result.actual_rank = numerical_rank;
     result.condition_number = compute_condition_number(hS.data(), min_dim);
 }
 
@@ -211,7 +236,8 @@ void eigenvalue_decomposition(const float* A, size_t n, EVDResult& result) {
     if (n == 0) {
         result.eigenvalues = memory::Buffer<float>(0);
         result.eigenvectors = memory::Buffer<float>(0);
-        result.condition_number = 0.0f;
+        // No spectrum means no condition number; NaN keeps it from looking good.
+        result.condition_number = std::numeric_limits<float>::quiet_NaN();
         return;
     }
 
@@ -251,7 +277,12 @@ void eigenvalue_decomposition(const float* A, size_t n, EVDResult& result) {
         max_ev = std::max(max_ev, sg.w[i]);
         min_ev = std::min(min_ev, sg.w[i]);
     }
-    result.condition_number = (min_ev > 0.0f) ? (max_ev / min_ev) : 0.0f;
+    // Same semantic inversion as compute_condition_number: a non-positive
+    // minimum eigenvalue means the matrix is singular or indefinite, which is the
+    // worst conditioning, not a condition number of zero.
+    result.condition_number = (min_ev > 0.0f)
+                                  ? (max_ev / min_ev)
+                                  : std::numeric_limits<float>::infinity();
 }
 
 void qr_decomposition(const float* A, size_t m, size_t n, QRResult& result) {
