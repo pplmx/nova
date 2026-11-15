@@ -178,6 +178,7 @@ add_executable(nova-tests
     sparse/raytrace_primitives_test.cpp
     sparse/matrix_add_test.cpp
     sparse/numeric_test.cpp
+    sparse/optimizers_kernels_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
