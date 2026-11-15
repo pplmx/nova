@@ -24,6 +24,8 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -40,24 +42,37 @@ namespace nova::logging::test {
 
 namespace {
 
+// A fixed filename collided when the suite ran under `ctest -j`: every process
+// pointed freopen() at the same path, so one test read another's output or read
+// the file after a peer had truncated it. The name now carries the pid and a
+// per-call counter, and the file is uniquely owned by this call.
 std::string capture_log(const std::function<void()>& emit) {
-    // Redirect stderr into a temporary file for the duration of the call.
+    static std::atomic<unsigned> counter{0};
+
+    const auto path =
+        std::filesystem::temp_directory_path() /
+        ("nova_logger_test." + std::to_string(::getpid()) + "." +
+         std::to_string(counter.fetch_add(1)) + ".log");
+
     std::fflush(stderr);
-    const auto path = std::filesystem::temp_directory_path() / "nova_logger_test.txt";
     FILE* saved = stderr;
     FILE* redirected = std::freopen(path.string().c_str(), "w", stderr);
     if (redirected == nullptr) {
+        stderr = saved;
         return {};
     }
 
     emit();
 
     std::fflush(stderr);
+    // freopen replaced the C stream backing stderr; point it back at the
+    // original before reading the captured file.
     stderr = saved;
 
     std::ifstream input(path, std::ios::binary);
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
+    input.close();
     std::filesystem::remove(path);
     return contents;
 }

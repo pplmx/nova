@@ -1,7 +1,55 @@
 #include "cuda/device/device_utils.h"
 #include "cuda/device/reduce_kernels.h"
 
+#include <limits>
+
 namespace cuda::device {
+
+namespace {
+
+/**
+ * @brief Identity element for a reduction operation
+ *
+ * The out-of-range slots of the last block contribute this value, so it must be
+ * neutral for the operation: 0 for SUM, the lowest representable value for MAX,
+ * and the highest for MIN. Initialising every slot to T{} (zero) was only
+ * correct for SUM — for MAX over an all-negative array the padding zero won and
+ * the kernel returned 0, and for MIN over an all-positive array it returned 0
+ * the same way.
+ *
+ * The bounds are built with bit operations because std::numeric_limits members
+ * are __host__ functions, which a __device__ function cannot call without
+ * --expt-relaxed-constexpr.
+ */
+template <typename T>
+__device__ constexpr T reduce_identity(ReduceOp op) {
+    if constexpr (std::numeric_limits<T>::is_integer) {
+        constexpr T kAllBits = static_cast<T>(~static_cast<T>(0));
+        constexpr int kWidth = static_cast<int>(sizeof(T) * 8);
+        constexpr T kSignBit = static_cast<T>(static_cast<T>(1) << (kWidth - 1));
+        switch (op) {
+            case ReduceOp::SUM: return T{};
+            case ReduceOp::MAX:
+                return std::numeric_limits<T>::is_signed ? kSignBit : T{};
+            case ReduceOp::MIN:
+                return std::numeric_limits<T>::is_signed ? static_cast<T>(kAllBits ^ kSignBit)
+                                                         : kAllBits;
+        }
+        return T{};
+    } else {
+        // for float/double, build the largest finite magnitude without calling
+        // any __host__ constexpr helper.
+        const T huge = static_cast<T>(1e38) * static_cast<T>(1e38);
+        switch (op) {
+            case ReduceOp::SUM: return T{};
+            case ReduceOp::MAX: return -huge;
+            case ReduceOp::MIN: return huge;
+        }
+        return T{};
+    }
+}
+
+}  // namespace
 
 // Basic parallel reduction kernel
 // Each block reduces a segment of size 2*blockDim.x using tree reduction
@@ -20,8 +68,9 @@ __global__ __launch_bounds__(REDUCE_BLOCK_SIZE, 2) void reduce_basic_kernel(cons
     // This 2-element-per-thread pattern hides memory latency
     const size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
 
-    // Initialize to identity value for the reduction operation
-    T val = T{};
+    // Initialize to the operation's identity, not zero: zero is only neutral
+    // for SUM.
+    T val = reduce_identity<T>(op);
 
     // Load first element (bounds check required for non-multiple-of-2 sizes)
     if (i < size) {
@@ -80,7 +129,7 @@ __global__ __launch_bounds__(REDUCE_BLOCK_SIZE, 2) void reduce_optimized_kernel(
     // Same 2-element-per-thread initial load pattern
     const size_t i = blockIdx.x * blockDim.x * 2 + threadIdx.x;
 
-    T val = T{};
+    T val = reduce_identity<T>(op);
     if (i < size) {
         val = input[i];
     }
@@ -108,7 +157,8 @@ __global__ __launch_bounds__(REDUCE_BLOCK_SIZE, 2) void reduce_optimized_kernel(
     // Final warp reduction across warp results in shared memory
     // Only first WARP_SIZE threads participate
     if (tid < WARP_SIZE) {
-        val = (tid < blockDim.x / WARP_SIZE) ? sdata[tid] : T{};
+        val = (tid < blockDim.x / WARP_SIZE) ? sdata[tid]
+                                             : reduce_identity<T>(op);
     }
     val = warp_reduce(val, op);
 

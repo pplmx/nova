@@ -257,6 +257,26 @@ target_include_directories(krylov-standalone-tests PRIVATE
 )
 add_test(NAME krylov_standalone COMMAND krylov-standalone-tests)
 
+# reduce_kernels.h is nvcc-only (it names threadIdx/__syncthreads at namespace
+# scope), so its test is a .cu file built into its own executable. Registering it
+# with gtest_discover_tests would run a CUDA binary during discovery of the host
+# test target.
+add_executable(reduce_kernels-tests
+    device/reduce_kernels_test.cu
+    ${CMAKE_SOURCE_DIR}/src/cuda/device/reduce_kernels.cu
+)
+target_link_libraries(reduce_kernels-tests
+    PRIVATE
+    CUDA::cudart
+    GTest::gtest
+    GTest::gtest_main
+)
+target_include_directories(reduce_kernels-tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/include/cuda/device
+)
+add_test(NAME reduce_kernels COMMAND reduce_kernels-tests)
+
 include(GoogleTest)
 gtest_discover_tests(nova-tests)
 
