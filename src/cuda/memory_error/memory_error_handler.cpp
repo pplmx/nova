@@ -22,7 +22,16 @@ struct DeviceHealthMonitor::Impl {
 };
 
 DeviceHealthMonitor& DeviceHealthMonitor::instance() {
+    // impl_ is a unique_ptr the class never allocated: the constructor is
+    // `= default`, so every member dereferenced a null Impl and the first call
+    // through any of them crashed. Allocate it here, where the singleton is
+    // created and the lifetime is unambiguous.
     static DeviceHealthMonitor monitor;
+    static const bool initialized = [&monitor] {
+        monitor.impl_ = std::make_unique<DeviceHealthMonitor::Impl>();
+        return true;
+    }();
+    (void)initialized;
     return monitor;
 }
 
@@ -162,6 +171,11 @@ struct MemoryErrorHandler::Impl {
 
 MemoryErrorHandler& MemoryErrorHandler::instance() {
     static MemoryErrorHandler handler;
+    static const bool initialized = [&handler] {
+        handler.impl_ = std::make_unique<MemoryErrorHandler::Impl>();
+        return true;
+    }();
+    (void)initialized;
     return handler;
 }
 
@@ -191,7 +205,9 @@ void MemoryErrorHandler::handle_error(const MemoryError& error) {
     {
         std::lock_guard lock(impl_->callback_mutex);
         for (auto& callback : impl_->error_callbacks) {
-            callback(error);
+            if (callback) {
+                callback(error);
+            }
         }
     }
 
@@ -205,6 +221,16 @@ void MemoryErrorHandler::handle_error(const MemoryError& error) {
 void MemoryErrorHandler::register_error_callback(
     std::function<void(const MemoryError&)> callback) {
     std::lock_guard lock(impl_->callback_mutex);
+    if (!callback) {
+        // Passing an empty function is how a caller unregisters. Storing it
+        // made the list call bad_function_call on the next error, and because
+        // the list only ever grew there was no way to take a callback back.
+        impl_->error_callbacks.clear();
+        return;
+    }
+    // One callback at a time: re-registering replaces, so a destroyed
+    // listener's lambda cannot outlive it.
+    impl_->error_callbacks.clear();
     impl_->error_callbacks.push_back(std::move(callback));
 }
 
@@ -359,6 +385,11 @@ struct DegradationManager::Impl {
 
 DegradationManager& DegradationManager::instance() {
     static DegradationManager manager;
+    static const bool initialized = [&manager] {
+        manager.impl_ = std::make_unique<DegradationManager::Impl>();
+        return true;
+    }();
+    (void)initialized;
     return manager;
 }
 
@@ -392,6 +423,22 @@ bool DegradationManager::can_recover(DegradationLevel level) const {
 void DegradationManager::attempt_recovery() {
     impl_->recovery_attempts++;
     impl_->level.store(DegradationLevel::Nominal);
+}
+
+MemoryError CudaErrorDetector::create_error(cudaError_t error, int device_id,
+                                             size_t attempted_size) {
+    // Was declared in the header but never defined, so any caller failed to
+    // link. Classify through this detector so the category and severity match
+    // the rest of the API.
+    MemoryError mem_error;
+    mem_error.cuda_error = error;
+    mem_error.device_id = device_id;
+    mem_error.attempted_size = attempted_size;
+    mem_error.timestamp = std::chrono::steady_clock::now();
+    mem_error.category = classify_error(error);
+    mem_error.severity = classify_severity(mem_error.category, error);
+    mem_error.message = get_error_description(error);
+    return mem_error;
 }
 
 MemoryError make_memory_error(cudaError_t error, int device_id,
