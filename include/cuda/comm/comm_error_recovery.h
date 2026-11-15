@@ -1,6 +1,13 @@
 #pragma once
 
+#include <cmath>
 #include <functional>
+#include <memory>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <thread>
+
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -96,16 +103,73 @@ public:
 
     template<typename Func>
     auto execute_with_retry(Func&& func, const std::string& operation_name)
-        -> std::invoke_result_t<Func>;
+        -> std::invoke_result_t<Func> {
+        // A template's definition must be reachable from every call site, so it
+        // lives here rather than in the .cpp (where it could never be
+        // instantiated: "declared using local type ... used but never defined").
+        if (is_circuit_open()) {
+            throw std::runtime_error("Circuit breaker is open for: " + operation_name);
+        }
+
+        int attempt = 0;
+        while (true) {
+            try {
+                auto result = func();
+                impl_->record_success();
+                return result;
+            } catch (const std::exception&) {
+                ++attempt;
+                if (attempt >= impl_->config.max_attempts) {
+                    impl_->record_failure();
+                    throw;
+                }
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(impl_->get_retry_delay_ms(attempt)));
+            }
+        }
+    }
 
     void reset_circuit_breaker();
     bool is_circuit_open() const;
 
 private:
+    // Defined after the class because it needs RetryConfig, which is nested.
+    struct State;
     RetryHandler() = default;
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::unique_ptr<State> impl_;
+};
+
+struct RetryHandler::State {
+    RetryHandler::RetryConfig config;
+    std::atomic<int> consecutive_failures{0};
+    std::atomic<bool> circuit_open{false};
+    std::chrono::steady_clock::time_point circuit_opened_at;
+    std::chrono::seconds circuit_breaker_window{60};
+    std::default_random_engine rng{std::random_device{}()};
+
+    void record_success() { consecutive_failures.store(0); }
+
+    void record_failure() {
+        consecutive_failures.fetch_add(1);
+        if (consecutive_failures.load() >= 5) {
+            circuit_open.store(true);
+            circuit_opened_at = std::chrono::steady_clock::now();
+        }
+    }
+
+    int get_retry_delay_ms(int attempt) {
+        auto base_delay = static_cast<int>(config.initial_delay.count());
+        auto delay = static_cast<int>(base_delay * std::pow(config.backoff_multiplier, attempt - 1));
+        delay = std::min(delay, static_cast<int>(config.max_delay.count()));
+
+        if (config.use_jitter) {
+            std::uniform_int_distribution<int> dist(0, delay / 2);
+            delay += dist(rng);
+        }
+
+        return delay;
+    }
 };
 
 class ErrorClassifier {
@@ -144,7 +208,13 @@ public:
                          int device_id,
                          cudaStream_t stream,
                          const std::string& operation_name)
-        -> std::invoke_result_t<CollectiveFunc>;
+        -> std::invoke_result_t<CollectiveFunc> {
+        // Same reason as execute_with_retry: the definition has to be visible.
+        (void)device_id;
+        (void)stream;
+        return RetryHandler::instance().execute_with_retry(
+            [&func]() { return func(); }, operation_name);
+    }
 
     void set_timeout_threshold(std::chrono::seconds timeout);
 

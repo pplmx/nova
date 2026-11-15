@@ -161,6 +161,7 @@ add_executable(nova-tests
     gnn/gnn_test.cpp
     sparse/cuda_error_test.cpp
     sparse/memory_error_handler_test.cpp
+    sparse/comm_error_recovery_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

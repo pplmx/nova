@@ -622,6 +622,11 @@ target_include_directories(cuda_comm PUBLIC
 target_link_libraries(cuda_comm PUBLIC
         CUDA::cudart
         Threads::Threads
+        # comm_error_recovery.cpp switches its whole NCCL error classification
+        # on NOVA_NCCL_ENABLED, which cuda_nccl exports. Without this link the
+        # macro was undefined in that translation unit, so #if treated it as 0
+        # and classify_from_nccl returned Unknown for every NCCL status.
+        cuda_nccl
 )
 
 add_library(cuda_memory_error STATIC ${MEMORY_ERROR_SOURCES})

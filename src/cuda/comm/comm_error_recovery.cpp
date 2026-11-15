@@ -37,7 +37,14 @@ struct HealthMonitor::Impl {
 };
 
 HealthMonitor& HealthMonitor::instance() {
+    // impl_ is a unique_ptr that nothing allocated: the constructor is
+    // `= default`, so the first member call dereferenced a null pointer.
     static HealthMonitor monitor;
+    static const bool initialized = [&monitor] {
+        monitor.impl_ = std::make_unique<HealthMonitor::Impl>();
+        return true;
+    }();
+    (void)initialized;
     return monitor;
 }
 
@@ -157,30 +164,15 @@ std::optional<HealthMonitor::HealthStatus> HealthMonitor::get_status(void* comm_
     return status;
 }
 
-struct RetryHandler::Impl {
-    RetryConfig config;
-    std::atomic<int> consecutive_failures{0};
-    std::atomic<bool> circuit_open{false};
-    std::chrono::steady_clock::time_point circuit_opened_at;
-    std::chrono::seconds circuit_breaker_window{60};
-    std::default_random_engine rng{std::random_device{}()};
 
-    int get_retry_delay_ms(int attempt) {
-        auto base_delay = static_cast<int>(config.initial_delay.count());
-        auto delay = static_cast<int>(base_delay * std::pow(config.backoff_multiplier, attempt - 1));
-        delay = std::min(delay, static_cast<int>(config.max_delay.count()));
-
-        if (config.use_jitter) {
-            std::uniform_int_distribution<int> dist(0, delay / 2);
-            delay += dist(rng);
-        }
-
-        return delay;
-    }
-};
 
 RetryHandler& RetryHandler::instance() {
     static RetryHandler handler;
+    static const bool initialized = [&handler] {
+        handler.impl_ = std::make_unique<RetryHandler::State>();
+        return true;
+    }();
+    (void)initialized;
     return handler;
 }
 
@@ -212,41 +204,9 @@ bool RetryHandler::is_circuit_open() const {
     return true;
 }
 
-template<typename Func>
-auto RetryHandler::execute_with_retry(Func&& func, const std::string& operation_name)
-    -> std::invoke_result_t<Func> {
-
-    if (is_circuit_open()) {
-        throw std::runtime_error("Circuit breaker is open for: " + operation_name);
-    }
-
-    int attempt = 0;
-    while (true) {
-        try {
-            auto result = func();
-            impl_->consecutive_failures.store(0);
-            return result;
-        } catch (const std::exception& e) {
-            attempt++;
-
-            if (attempt >= impl_->config.max_attempts) {
-                impl_->consecutive_failures.fetch_add(1);
-
-                if (impl_->consecutive_failures.load() >= 5) {
-                    impl_->circuit_open.store(true);
-                    impl_->circuit_opened_at = std::chrono::steady_clock::now();
-                }
-
-                throw;
-            }
-
-            auto delay_ms = impl_->get_retry_delay_ms(attempt);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-        }
-    }
-}
-
 ErrorClassifier& ErrorClassifier::instance() {
+    // Stateless: every classification is a pure function of its arguments, so
+    // there is nothing to allocate here.
     static ErrorClassifier classifier;
     return classifier;
 }
@@ -263,14 +223,20 @@ ErrorCategory ErrorClassifier::classify_from_nccl(int nccl_result) {
     if (nccl_result == ncclRemoteError) {
         return ErrorCategory::NetworkError;
     }
-    if (nccl_result == ncclTransportFailure) {
-        return ErrorCategory::NetworkError;
+    if (nccl_result == ncclInProgress) {
+        // Not an error: the operation is still running. Reporting Unknown keeps
+        // it out of the retry path.
+        return ErrorCategory::Unknown;
     }
-    if (nccl_result == ncclTimeoutError) {
-        return ErrorCategory::Timeout;
-    }
+    // Only enumerators present in every released nccl.h are used here. The
+    // names this replaced (ncclTransportFailure, ncclTimeoutError) do not
+    // exist in any released header, and newer releases add members rather than
+    // renaming them — the block had never been compiled because
+    // NOVA_NCCL_ENABLED did not reach this translation unit.
     if (nccl_result == ncclSystemError) {
-        return ErrorCategory::HardwareError;
+        // A system error in NCCL is a transport/host-level failure, not a
+        // hardware fault; keep it in the network bucket so retry applies.
+        return ErrorCategory::NetworkError;
     }
     if (nccl_result == ncclInternalError) {
         return ErrorCategory::InternalError;
@@ -341,15 +307,24 @@ std::string ErrorClassifier::get_error_message(ErrorCategory category) const {
 }
 
 struct CommErrorRecovery::Impl {
-    HealthMonitor* health_monitor = nullptr;
-    RetryHandler* retry_handler = nullptr;
-    ErrorClassifier* error_classifier = nullptr;
+    // These singletons are valid from the moment they are constructed, so
+    // point at them here rather than only in initialize(). should_retry() and
+    // on_comm_error() dereference retry_handler/error_classifier, and calling
+    // them before initialize() used to dereference a null pointer.
+    HealthMonitor* health_monitor = &HealthMonitor::instance();
+    RetryHandler* retry_handler = &RetryHandler::instance();
+    ErrorClassifier* error_classifier = &ErrorClassifier::instance();
     std::chrono::seconds timeout_threshold{60};
     std::atomic<bool> initialized{false};
 };
 
 CommErrorRecovery& CommErrorRecovery::instance() {
     static CommErrorRecovery recovery;
+    static const bool initialized = [&recovery] {
+        recovery.impl_ = std::make_unique<CommErrorRecovery::Impl>();
+        return true;
+    }();
+    (void)initialized;
     return recovery;
 }
 
@@ -367,6 +342,8 @@ void CommErrorRecovery::initialize(HealthMonitor::ErrorCallback error_callback) 
 }
 
 void CommErrorRecovery::shutdown() {
+    // The pointers above refer to never-destroyed singletons, so stopping the
+    // monitor is all that is needed; they stay valid for a later initialize().
     if (impl_->health_monitor) {
         impl_->health_monitor->stop();
     }
@@ -397,21 +374,6 @@ void CommErrorRecovery::set_timeout_threshold(std::chrono::seconds timeout) {
     if (impl_->health_monitor) {
         impl_->health_monitor->set_timeout_threshold(timeout);
     }
-}
-
-template<typename CollectiveFunc>
-auto CommErrorRecovery::wrap_collective(CollectiveFunc&& func,
-                                        int device_id,
-                                        cudaStream_t stream,
-                                        const std::string& operation_name)
-    -> std::invoke_result_t<CollectiveFunc> {
-
-    return impl_->retry_handler->execute_with_retry(
-        [this, &func, device_id, stream]() {
-            return func();
-        },
-        operation_name
-    );
 }
 
 } // namespace nova::comm
