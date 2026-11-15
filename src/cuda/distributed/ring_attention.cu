@@ -108,7 +108,15 @@ __global__ void ring_attn_finalize_kernel(
     if (i >= local_seq) {
         return;
     }
-    const float inv = 1.0f / running_l[i];
+    // running_l is the sum of exp(score - max). When no key was visited it stays
+    // zero and 1/0 would turn the whole output row into NaN. A row with no keys
+    // has no weights to apply, so leave it at whatever the caller accumulated
+    // (ring_attn_init zeroes it).
+    const float l = running_l[i];
+    if (!(l > 0.0f)) {
+        return;
+    }
+    const float inv = 1.0f / l;
     float* o = out + static_cast<size_t>(i) * hidden;
     for (int c = 0; c < hidden; ++c) {
         o[c] *= inv;
@@ -127,6 +135,13 @@ void ring_attn_init(
 ) {
     const int threads = 256;
     const int blocks = (local_seq + threads - 1) / threads;
+    // An empty sequence produces a zero-sized grid, which CUDA rejects with
+    // "invalid configuration argument". ring_attn_block and ring_attn_finalize
+    // already guard this; ring_attn_init did not, so initialising an empty shard
+    // threw while the other two were no-ops.
+    if (blocks == 0) {
+        return;
+    }
     ring_attn_init_kernel<<<blocks, threads, 0, stream>>>(
         out, running_max, running_l, local_seq, hidden);
     CUDA_CHECK(cudaGetLastError());
