@@ -186,6 +186,7 @@ add_executable(nova-tests
     sparse/kernel_fusion_test.cpp
     sparse/boundary_testing_test.cpp
     sparse/timeline_export_test.cpp
+    sparse/fft_plan_validation_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

@@ -1,5 +1,7 @@
 #include "cuda/fft/fft.h"
 
+#include <limits>
+
 #include "cuda/device/error.h"
 
 namespace {
@@ -8,7 +10,10 @@ namespace {
     do {                                                                      \
         cufftResult err = call;                                                \
         if (err != CUFFT_SUCCESS) {                                           \
-            throw std::runtime_error("cuFFT error: " + std::to_string(err));  \
+            throw std::runtime_error(std::string("cuFFT error: ") +            \
+                                     ::cuda::fft::result_name(err) + " (" +   \
+                                     std::to_string(static_cast<int>(err)) +  \
+                                     ")");                                     \
         }                                                                     \
     } while (0)
 
@@ -47,7 +52,21 @@ FFTPlan::FFTPlan(size_t nx, size_t ny, size_t nz, Direction direction, Transform
 }
 
 void FFTPlan::create_plan_1d(size_t size, TransformType type) {
-    int n = static_cast<int>(size);
+    // A zero-length transform has no meaning, and a size above INT_MAX
+    // truncates to an implementation-defined int — the plan was then created for
+    // a completely different length (or rejected by cuFFT for a reason that
+    // named neither the parameter nor the cause). Validate before narrowing.
+    if (size == 0) {
+        throw std::invalid_argument(
+            "FFTPlan: transform size must be positive, got 0");
+    }
+    if (size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "FFTPlan: transform size " + std::to_string(size) +
+            " exceeds the cuFFT limit of " +
+            std::to_string(std::numeric_limits<int>::max()));
+    }
+    const int n = static_cast<int>(size);
     cufftType cufft_type;
 
     switch (type) {
@@ -71,6 +90,17 @@ void FFTPlan::create_plan_1d(size_t size, TransformType type) {
 }
 
 void FFTPlan::create_plan_2d(size_t nx, size_t ny, TransformType type) {
+    if (nx == 0 || ny == 0) {
+        throw std::invalid_argument(
+            "FFTPlan: 2D dimensions must be positive, got " + std::to_string(nx) +
+            " x " + std::to_string(ny));
+    }
+    if (nx > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        ny > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "FFTPlan: 2D dimensions exceed the cuFFT int limit, got " +
+            std::to_string(nx) + " x " + std::to_string(ny));
+    }
     cufftType cufft_type;
 
     switch (type) {
@@ -88,6 +118,19 @@ void FFTPlan::create_plan_2d(size_t nx, size_t ny, TransformType type) {
 }
 
 void FFTPlan::create_plan_3d(size_t nx, size_t ny, size_t nz, TransformType type) {
+    if (nx == 0 || ny == 0 || nz == 0) {
+        throw std::invalid_argument(
+            "FFTPlan: 3D dimensions must be positive, got " + std::to_string(nx) +
+            " x " + std::to_string(ny) + " x " + std::to_string(nz));
+    }
+    if (nx > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        ny > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+        nz > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "FFTPlan: 3D dimensions exceed the cuFFT int limit, got " +
+            std::to_string(nx) + " x " + std::to_string(ny) + " x " +
+            std::to_string(nz));
+    }
     cufftType cufft_type;
 
     switch (type) {
