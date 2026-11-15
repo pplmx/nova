@@ -31,6 +31,7 @@
 #include "sparse_ops.hpp"
 #include "matrix.hpp"
 #include "preconditioner.hpp"
+#include "solver_errors.hpp"
 #include <vector>
 #include <cmath>
 #include <limits>
@@ -38,31 +39,6 @@
 
 namespace nova {
 namespace sparse {
-
-/**
- * @brief Solver error codes
- * @enum SolverError
- * @ingroup krylov
- */
-enum class SolverError {
-    /** @brief Solver completed successfully */
-    SUCCESS = 0,
-
-    /** @brief Maximum iterations reached without convergence */
-    MAX_ITERATIONS,
-
-    /** @brief Numerical breakdown occurred */
-    BREAKDOWN,
-
-    /** @brief Invalid or malformed matrix */
-    INVALID_MATRIX,
-
-    /** @brief Failed to meet convergence tolerance */
-    CONVERGENCE_FAILURE,
-
-    /** @brief Preconditioner failed or is invalid */
-    PRECONDITIONER_ERROR
-};
 
 /**
  * @brief Result of iterative solver

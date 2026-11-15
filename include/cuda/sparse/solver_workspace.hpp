@@ -13,10 +13,13 @@
 #ifndef NOVA_CUDA_SPARSE_SOLVER_WORKSPACE_HPP
 #define NOVA_CUDA_SPARSE_SOLVER_WORKSPACE_HPP
 
-#include <vector>
+#include "solver_errors.hpp"
+#include <algorithm>
 #include <cmath>
-#include <sstream>
 #include <numeric>
+#include <sstream>
+#include <string>
+#include <vector>
 
 namespace nova {
 namespace sparse {

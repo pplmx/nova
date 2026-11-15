@@ -15,9 +15,11 @@
 #define NOVA_CUDA_SPARSE_HYB_MATRIX_HPP
 
 #include "sparse_matrix.hpp"
-#include <vector>
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace nova {
 namespace sparse {
@@ -39,10 +41,23 @@ public:
     /**
      * @brief Create HYB matrix from CSR
      * @param csr Source CSR matrix
-     * @param threshold_divisor Split threshold divisor
+     * @param threshold_divisor Split threshold divisor: rows with more than
+     *        max_nnz_per_row / threshold_divisor entries go to ELL, the rest to
+     *        COO. Must be positive.
      * @return HYB matrix representation
+     * @throws std::invalid_argument if threshold_divisor is not positive
      */
     static SparseMatrixHYB FromCSR(const SparseMatrixCSR<T>& csr, int threshold_divisor = 2) {
+        // The divisor goes straight into an integer division; zero trapped as
+        // SIGFPE and killed the process, and a negative value silently moved
+        // every row into ELL. Reject both instead of computing a meaningless
+        // threshold.
+        if (threshold_divisor <= 0) {
+            throw std::invalid_argument(
+                "SparseMatrixHYB::FromCSR: threshold_divisor must be positive, got " +
+                std::to_string(threshold_divisor));
+        }
+
         SparseMatrixHYB result;
         result.num_rows_ = csr.num_rows();
         result.num_cols_ = csr.num_cols();
