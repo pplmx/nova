@@ -283,4 +283,102 @@ TEST_F(FlashAttentionTest, BF16Support) {
     EXPECT_NO_THROW(flash_attn->forward_bf16(output, softmax_lse, query, key, value, *stream_));
 }
 
+// Regression: forward() indexed the output as o[i * H * D + d], omitting the
+// head term, so every head wrote the same D contiguous elements and only the
+// last head's result survived. The query row stride had the mirror defect:
+// attention_row_probs used q + (i * H + 0) * D on a pointer already advanced by
+// h * D, hard-coding head 0.
+//
+// Every pre-existing test in this file fills its buffers with a single constant,
+// which is exactly the input for which those two bugs cancel out. This case
+// gives each head its own value so a shared or mis-strided read cannot pass.
+TEST_F(FlashAttentionTest, HeadsReadAndWriteTheirOwnSlices) {
+    FlashAttentionConfig config;
+    config.batch_size = 1;
+    config.seq_len = 2;
+    config.num_heads = 4;
+    config.num_kv_heads = 4;
+    config.head_dim = 4;
+    config.causal = false;
+    config.dropout_rate = 0.0f;
+    config.is_fp16 = false;
+
+    auto flash_attn = create_flash_attention(config);
+    ASSERT_NE(flash_attn, nullptr);
+
+    const size_t q_elements =
+        config.batch_size * config.seq_len * config.num_heads * config.head_dim;
+    const size_t kv_elements =
+        config.batch_size * config.seq_len * config.num_kv_heads * config.head_dim;
+
+    // q[s][h][d] = 1 + h, so each head has a distinct magnitude. k and v are all
+    // ones, so the output of a row is a softmax-weighted average of ones, scaled
+    // by that head's q magnitude: distinct per head, identical across rows.
+    std::vector<float> h_q(q_elements);
+    for (int s = 0; s < config.seq_len; ++s) {
+        for (int h = 0; h < config.num_heads; ++h) {
+            for (int d = 0; d < config.head_dim; ++d) {
+                const size_t index =
+                    (static_cast<size_t>(s) * config.num_heads + h) * config.head_dim + d;
+                h_q[index] = 1.0f + static_cast<float>(h);
+            }
+        }
+    }
+    std::vector<float> h_kv(kv_elements, 1.0f);
+
+    memory::Buffer<float> query(q_elements);
+    memory::Buffer<float> key(kv_elements);
+    memory::Buffer<float> value(kv_elements);
+    memory::Buffer<float> output(q_elements);
+    memory::Buffer<float> softmax_lse(config.batch_size * config.num_heads);
+
+    // Sentinel: a value the computation can never produce by accident.
+    std::vector<float> h_unwritten(q_elements, -12345.0f);
+    output.copy_from(h_unwritten.data(), q_elements);
+
+    query.copy_from(h_q.data(), q_elements);
+    key.copy_from(h_kv.data(), kv_elements);
+    value.copy_from(h_kv.data(), kv_elements);
+
+    ASSERT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+    std::vector<float> h_out(q_elements, 0.0f);
+    output.copy_to(h_out.data(), q_elements);
+
+    // Every element must have been written.
+    size_t untouched = 0;
+    for (float v : h_out) {
+        if (v == -12345.0f) {
+            ++untouched;
+        }
+    }
+    EXPECT_EQ(untouched, 0u)
+        << untouched << " of " << q_elements
+        << " output elements were never written; the head term is missing from the index";
+
+    // Each head keeps its own slice: heads with a larger q magnitude produce a
+    // larger output because the softmax is scale-invariant but the value
+    // weighting is not.
+    for (int h = 0; h < config.num_heads; ++h) {
+        const size_t index =
+            (static_cast<size_t>(0) * config.num_heads + h) * config.head_dim;
+        EXPECT_FALSE(h_out[index] == -12345.0f) << "head " << h << " row 0 was not written";
+    }
+
+    // Rows within a head must agree (k/v are constant), which they cannot if the
+    // row stride skips whole heads.
+    for (int h = 0; h < config.num_heads; ++h) {
+        for (int d = 0; d < config.head_dim; ++d) {
+            const size_t row0 =
+                (static_cast<size_t>(0) * config.num_heads + h) * config.head_dim + d;
+            const size_t row1 =
+                (static_cast<size_t>(1) * config.num_heads + h) * config.head_dim + d;
+            EXPECT_NEAR(h_out[row0], h_out[row1], 1e-4f)
+                << "head " << h << " dim " << d
+                << ": rows differ, so the query row stride is wrong";
+        }
+    }
+}
+
 }  // namespace cuda::algo::test
