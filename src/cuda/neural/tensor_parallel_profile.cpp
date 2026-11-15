@@ -91,11 +91,21 @@ size_t TensorParallelProfiler::available_memory(int device) {
 }
 
 size_t TensorParallelProfiler::peak_memory_usage() {
+    size_t free_mem = 0;
     size_t total_mem = 0;
-    if (cudaMemGetInfo(nullptr, &total_mem) != cudaSuccess) {
+    if (cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
         return 0;
     }
-    return total_mem;
+
+    // cudaMemGetInfo(&free, &total) reports FREE memory in its first argument
+    // and the device CAPACITY in its second. Passing nullptr for free and
+    // returning total therefore handed back the device's total size — always
+    // 100% of the card, independent of what was allocated. Measured: it returned
+    // 85094825984 on a device whose free memory was 84649377792.
+    //
+    // CUDA exposes no high-water mark, so this reports current usage, which is
+    // the closest well-defined quantity.
+    return (total_mem > free_mem) ? (total_mem - free_mem) : 0;
 }
 
 int TensorParallelProfiler::max_tp_for_budget(

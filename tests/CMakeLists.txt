@@ -181,6 +181,7 @@ add_executable(nova-tests
     sparse/optimizers_kernels_test.cpp
     sparse/linalg_decomposition_test.cpp
     sparse/ring_attention_test.cpp
+    sparse/tensor_parallel_profile_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

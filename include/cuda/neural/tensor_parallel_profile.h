@@ -78,8 +78,12 @@ public:
     static size_t available_memory(int device);
 
     /**
-     * @brief Get peak memory usage
-     * @return Peak memory in bytes
+     * @brief Get current device memory usage
+     * @return Bytes currently allocated on the device (total - free)
+     *
+     * @note CUDA has no API for a true high-water mark, so this reports current
+     *       usage. It previously returned the device's TOTAL capacity, because
+     *       cudaMemGetInfo's out-parameters were mixed up.
      */
     [[nodiscard]]
     static size_t peak_memory_usage();
