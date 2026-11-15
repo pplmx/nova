@@ -60,10 +60,13 @@ __global__ void matmul_bias_sigmoid_kernel(
 template <typename T>
 __global__ void compute_row_sum_kernel(
     const T* input,
+    const T* gamma,
+    const T* beta,
     T* sum,
     int batch_size,
     int seq_len,
-    int hidden_size
+    int hidden_size,
+    T eps
 ) {
     int b = blockIdx.x;
     int i = blockIdx.y;
@@ -71,11 +74,30 @@ __global__ void compute_row_sum_kernel(
     if (b >= batch_size || i >= seq_len) return;
 
     int idx = b * seq_len + i;
-    T local_sum = 0;
     int offset = idx * hidden_size;
 
+    // The denominator has to be the sum of the SAME quantity the numerator uses:
+    // exp(layernormed). The previous version summed exp(raw input), so the two
+    // kernels divided by different quantities and the row did not sum to one —
+    // measured at 0.588 for a row that must sum to 1.
+    T mean = 0;
     for (int j = 0; j < hidden_size; ++j) {
-        local_sum += expf(input[offset + j]);
+        mean += input[offset + j];
+    }
+    mean /= hidden_size;
+
+    T variance = 0;
+    for (int j = 0; j < hidden_size; ++j) {
+        const T diff = input[offset + j] - mean;
+        variance += diff * diff;
+    }
+    variance /= hidden_size;
+    const T std_dev = sqrtf(variance + eps);
+
+    T local_sum = 0;
+    for (int j = 0; j < hidden_size; ++j) {
+        const T normalized = (input[offset + j] - mean) / std_dev;
+        local_sum += expf(gamma[j] * normalized + beta[j]);
     }
 
     if (threadIdx.x == 0) {
@@ -131,9 +153,19 @@ FusionKernelRegistry& FusionKernelRegistry::instance() {
 }
 
 void FusionKernelRegistry::register_fusion(const std::string& name, bool enabled) {
-    if (name == "matmul_bias") matmul_bias_enabled_ = enabled;
-    else if (name == "matmul_bias_activation") matmul_bias_activation_enabled_ = enabled;
-    else if (name == "layernorm_softmax") layernorm_softmax_enabled_ = enabled;
+    // Keep config_ in step with the per-fusion flags: is_fusion_enabled reads the
+    // flags while get_config returns config_, so updating only one of them made
+    // the two views disagree.
+    if (name == "matmul_bias") {
+        matmul_bias_enabled_ = enabled;
+        config_.fuse_matmul_bias = enabled;
+    } else if (name == "matmul_bias_activation") {
+        matmul_bias_activation_enabled_ = enabled;
+        config_.fuse_matmul_bias_activation = enabled;
+    } else if (name == "layernorm_softmax") {
+        layernorm_softmax_enabled_ = enabled;
+        config_.fuse_layernorm_softmax = enabled;
+    }
 }
 
 void FusionKernelRegistry::enable_fusion(const std::string& name) {
@@ -152,7 +184,13 @@ bool FusionKernelRegistry::is_fusion_enabled(const std::string& name) const {
 }
 
 void FusionKernelRegistry::set_config(const FusionConfig& config) {
+    // Storing config_ alone left the per-fusion flags untouched, so
+    // set_config(FusionConfig{}) — the obvious way to restore defaults — then
+    // is_fusion_enabled(...) reported the OLD values. Both views are updated.
     config_ = config;
+    matmul_bias_enabled_ = config.fuse_matmul_bias;
+    matmul_bias_activation_enabled_ = config.fuse_matmul_bias_activation;
+    layernorm_softmax_enabled_ = config.fuse_layernorm_softmax;
 }
 
 FusionConfig FusionKernelRegistry::get_config() const {
@@ -227,7 +265,7 @@ void FusedLayerNormSoftmax::forward(
     dim3 block(256);
     dim3 grid(batch_size, seq_len);
     compute_row_sum_kernel<float><<<grid, block, 0, stream>>>(
-        input, row_sum, batch_size, seq_len, hidden_size_);
+        input, gamma, beta, row_sum, batch_size, seq_len, hidden_size_, eps_);
 
     int n = batch_size * seq_len * hidden_size_;
     int block_size = 256;
