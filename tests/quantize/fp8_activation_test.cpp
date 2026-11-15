@@ -342,12 +342,16 @@ TEST_F(FP8ActivationTest, FP8E5M2Gelu) {
 
     cudaMemcpy(output.data(), d_output, n * sizeof(FP8E5M2), cudaMemcpyDeviceToHost);
 
+    // E5M2 has 2 mantissa bits, so a step is ~12.5% of the value: rounding to
+    // the nearest representable value alone can exceed kTol (0.1). Assert
+    // within one quantization step of the format instead.
+    constexpr float kE5M2Tol = 0.13f;
     for (size_t i = 0; i < n; ++i) {
         float orig_float = static_cast<float>(input[i]);
         float out_float = static_cast<float>(output[i]);
         float expected = reference_gelu(orig_float);
         float rel_err = relative_error(expected, out_float);
-        EXPECT_LE(rel_err, kTol) << "Mismatch at index " << i;
+        EXPECT_LE(rel_err, kE5M2Tol) << "Mismatch at index " << i;
     }
 
     cudaFree(d_input);

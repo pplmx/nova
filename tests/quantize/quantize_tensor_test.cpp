@@ -1,6 +1,8 @@
 #include "quantize_tensor.hpp"
 
 #include <gtest/gtest.h>
+
+#include <span>
 #include <vector>
 #include <cmath>
 
@@ -17,7 +19,7 @@ protected:
 
 TEST_F(QuantizationTest, Int8QuantizationCreatesTensor) {
     auto data = create_test_data();
-    auto quantized = QuantizedInt8::FromFloat(data.data(), data.size());
+    auto quantized = quantize_int8_from_float(data);
 
     ASSERT_TRUE(quantized.has_value());
     EXPECT_EQ(quantized->size(), data.size());
@@ -26,7 +28,7 @@ TEST_F(QuantizationTest, Int8QuantizationCreatesTensor) {
 
 TEST_F(QuantizationTest, Int8QuantizationHasCorrectScale) {
     auto data = create_test_data();
-    auto quantized = QuantizedInt8::FromFloat(data.data(), data.size());
+    auto quantized = quantize_int8_from_float(data);
 
     ASSERT_TRUE(quantized.has_value());
     EXPECT_GT(quantized->metadata().scale, 0.0f);
@@ -34,7 +36,7 @@ TEST_F(QuantizationTest, Int8QuantizationHasCorrectScale) {
 
 TEST_F(QuantizationTest, Int8DequantizationRecoversValues) {
     auto data = create_test_data();
-    auto quantized = QuantizedInt8::FromFloat(data.data(), data.size());
+    auto quantized = quantize_int8_from_float(data);
 
     ASSERT_TRUE(quantized.has_value());
     auto recovered = quantized->ToFloat();
@@ -48,7 +50,7 @@ TEST_F(QuantizationTest, Int8DequantizationRecoversValues) {
 
 TEST_F(QuantizationTest, Int8CustomScale) {
     auto data = create_test_data();
-    auto quantized = QuantizedInt8::FromFloat(data.data(), data.size(), 0.02f);
+    auto quantized = quantize_int8_from_float(data, 0.02f);
 
     ASSERT_TRUE(quantized.has_value());
     EXPECT_FLOAT_EQ(quantized->metadata().scale, 0.02f);
@@ -56,7 +58,7 @@ TEST_F(QuantizationTest, Int8CustomScale) {
 
 TEST_F(QuantizationTest, FP16QuantizationCreatesTensor) {
     auto data = create_test_data();
-    auto quantized = QuantizedFP16::FromFloat(data.data(), data.size());
+    auto quantized = quantize_fp16_from_float(data);
 
     ASSERT_TRUE(quantized.has_value());
     EXPECT_EQ(quantized->size(), data.size());
@@ -65,7 +67,7 @@ TEST_F(QuantizationTest, FP16QuantizationCreatesTensor) {
 
 TEST_F(QuantizationTest, FP16DequantizationAccuracy) {
     auto data = create_test_data();
-    auto quantized = QuantizedFP16::FromFloat(data.data(), data.size());
+    auto quantized = quantize_fp16_from_float(data);
 
     ASSERT_TRUE(quantized.has_value());
     auto recovered = quantized->ToFloat();
@@ -79,7 +81,7 @@ TEST_F(QuantizationTest, FP16DequantizationAccuracy) {
 
 TEST_F(QuantizationTest, QuantizationMetadataAccessible) {
     auto data = create_test_data();
-    auto int8_quant = QuantizedInt8::FromFloat(data.data(), data.size());
+    auto int8_quant = quantize_int8_from_float(data);
 
     ASSERT_TRUE(int8_quant.has_value());
     EXPECT_EQ(int8_quant->metadata().mode, QuantizationMode::PerTensor);
@@ -88,7 +90,7 @@ TEST_F(QuantizationTest, QuantizationMetadataAccessible) {
 
 TEST_F(QuantizationTest, ShapePreserved) {
     std::vector<float> data(24, 1.0f);
-    auto quantized = QuantizedInt8::FromFloat(data.data(), data.size());
+    auto quantized = quantize_int8_from_float(data);
 
     ASSERT_TRUE(quantized.has_value());
     ASSERT_EQ(quantized->shape().size(), 1);

@@ -51,7 +51,7 @@ public:
                                                Precision output_precision);
 };
 
-void QuantizedMatmul::forward(const QuantizedInt8& a,
+inline void QuantizedMatmul::forward(const QuantizedInt8& a,
                                const QuantizedInt8& b,
                                QuantizedInt8& output,
                                int m, int k, int n) {
@@ -63,6 +63,22 @@ void QuantizedMatmul::forward(const QuantizedInt8& a,
     float scale_b = b.metadata().scale;
     float output_scale = scale_a * scale_b;
 
+    // The accumulator holds the INTEGER dot product of the two int8 quantized
+    // operands (|sum| can reach 127*127*k), not a real value:
+    //
+    //   real[i][j] = scale_a * scale_b * int_sum[i][j]
+    //
+    // Two bugs lived here. First, the raw integer was scaled by scale_a*scale_b
+    // and stored directly as the int8 result, so the byte was meaningless.
+    // Second, even after dequantizing correctly, reusing a's scale as the
+    // output scale cannot work: k can push |real| far past 127 * scale_a, so
+    // every entry saturated.
+    //
+    // An int8 result needs its own scale. Derive it from the largest magnitude
+    // in the integer accumulator, which keeps the full int8 range in use and
+    // makes the store lossless up to one quantization step.
+    std::vector<int32_t> int_sums(static_cast<size_t>(m) * static_cast<size_t>(n), 0);
+    int32_t max_abs_sum = 0;
     for (int i = 0; i < m; ++i) {
         for (int j = 0; j < n; ++j) {
             int32_t sum = 0;
@@ -70,17 +86,38 @@ void QuantizedMatmul::forward(const QuantizedInt8& a,
                 sum += static_cast<int32_t>(a_data[i * k + p]) *
                        static_cast<int32_t>(b_data[p * n + j]);
             }
-            float quantized = sum * output_scale;
-
-            quantized = std::max(-127.0f, std::min(127.0f, quantized));
-            output_data[i * n + j] = static_cast<int8_t>(std::round(quantized));
+            int_sums[static_cast<size_t>(i) * static_cast<size_t>(n) + static_cast<size_t>(j)] = sum;
+            max_abs_sum = std::max(max_abs_sum, std::abs(sum));
         }
     }
 
-    output = QuantizedInt8(std::move(output_data), a.metadata(), {m, n});
+    // real_max = output_scale * max_abs_sum must fit in 127 * out_scale, so
+    // out_scale = scale_a * scale_b * max_abs_sum / 127.
+    const float result_scale =
+        (max_abs_sum > 0)
+            ? (output_scale * static_cast<float>(max_abs_sum) / 127.0f)
+            : 1.0f;
+    const float inverse_result_scale = 1.0f / result_scale;
+
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < n; ++j) {
+            const float real =
+                static_cast<float>(int_sums[static_cast<size_t>(i) * static_cast<size_t>(n) +
+                                            static_cast<size_t>(j)]) * output_scale;
+            float value = real * inverse_result_scale;
+            value = std::max(-127.0f, std::min(127.0f, value));
+            output_data[static_cast<size_t>(i) * static_cast<size_t>(n) + static_cast<size_t>(j)] =
+                static_cast<int8_t>(std::lround(value));
+        }
+    }
+
+    QuantizationMetadata meta = a.metadata();
+    meta.scale = result_scale;
+    meta.zero_point = 0.0f;
+    output = QuantizedInt8(std::move(output_data), meta, {m, n});
 }
 
-std::vector<float> QuantizedMatmul::mixed_precision(const float* a,
+inline std::vector<float> QuantizedMatmul::mixed_precision(const float* a,
                                                      const int8_t* b,
                                                      const float* scale_b,
                                                      int m, int k, int n,
@@ -101,14 +138,14 @@ std::vector<float> QuantizedMatmul::mixed_precision(const float* a,
     return output;
 }
 
-void quantized_matmul(const QuantizedInt8& a,
+inline void quantized_matmul(const QuantizedInt8& a,
                       const QuantizedInt8& b,
                       QuantizedInt8& output,
                       int m, int k, int n) {
     QuantizedMatmul::forward(a, b, output, m, k, n);
 }
 
-std::vector<float> mixed_precision_matmul(const float* a,
+inline std::vector<float> mixed_precision_matmul(const float* a,
                                            const int8_t* b,
                                            const float* scale_b,
                                            int m, int k, int n,

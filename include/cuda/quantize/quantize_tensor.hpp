@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <type_traits>
 #include <vector>
 
@@ -79,40 +80,40 @@ struct alignas(2) float16 {
     operator float() const;
 };
 
-float16::float16(float f) {
-    uint32_t bits = 0;
+inline float16::float16(float f) {
+    const uint16_t sign = std::signbit(f) ? 0x8000 : 0;
     if (f == 0.0f) {
-        value = 0;
+        value = sign;
         return;
     }
 
-    bool negative = f < 0;
     f = std::abs(f);
 
-    int exp;
+    // frexp returns f == mantissa * 2^exp with mantissa in [0.5, 1), while IEEE
+    // half stores 1.<frac> * 2^(exp_field - 15). Converting between the two
+    // means the field is (exp - 1) + 15, not exp + 15: the previous code was
+    // off by one and encoded 1.0f as 0x4000, which decodes to 2.0f.
+    int exp = 0;
     float mantissa = std::frexp(f, &exp);
+    const int exp_field = exp - 1 + 15;
 
-    exp += 15;
-    if (exp <= 0) {
-        value = negative ? 0x8000 : 0;
+    if (exp_field <= 0) {
+        // Underflows the smallest normal (2^-14); flush to signed zero rather
+        // than pretend a subnormal was produced.
+        value = sign;
         return;
     }
-    if (exp >= 31) {
-        value = negative ? 0xFC00 : 0x7C00;
+    if (exp_field >= 31) {
+        value = sign | 0x7C00;  // overflow to infinity
         return;
     }
 
-    mantissa = mantissa * 2.0f - 1.0f;
-    mantissa = mantissa * 1024.0f;
-
-    uint16_t sign = negative ? 0x8000 : 0;
-    uint16_t exp_bits = static_cast<uint16_t>(exp) << 10;
-    uint16_t mantissa_bits = static_cast<uint16_t>(mantissa);
-
-    value = sign | exp_bits | mantissa_bits;
+    const float frac = (mantissa * 2.0f - 1.0f) * 1024.0f;
+    value = static_cast<uint16_t>(sign | (static_cast<uint16_t>(exp_field) << 10) |
+                                  (static_cast<uint16_t>(std::lround(frac)) & 0x03FF));
 }
 
-float16::operator float() const {
+inline float16::operator float() const {
     if (value == 0) return 0.0f;
 
     uint16_t sign = (value & 0x8000) >> 15;
@@ -136,12 +137,6 @@ public:
         , metadata_(meta)
         , shape_(std::move(shape)) {}
 
-    static std::optional<QuantizedTensor<int8_t>> FromFloat(
-        const float* data, size_t size, float scale = 0.0f);
-
-    static std::optional<QuantizedTensor<float16>> FromFloat(
-        const float* data, size_t size);
-
     std::vector<float> ToFloat() const;
 
     const T* data() const { return data_.data(); }
@@ -158,16 +153,35 @@ private:
     std::vector<int> shape_;
 };
 
-template<>
-std::optional<QuantizedTensor<int8_t>> QuantizedTensor<int8_t>::FromFloat(
-    const float* data, size_t size, float scale) {
+/**
+ * @brief Quantize float values to int8 with a per-tensor scale
+ * @param data Source values; the span carries both the pointer and length
+ * @param scale Per-tensor scale, or <= 0 to derive it from the max |value|
+ * @return Quantized tensor, or nullopt for an empty or non-finite input
+ *
+ * @note A free function rather than a static member of QuantizedTensor: the two
+ *       conversions have different return types, so as members of one class
+ *       template they formed an overload set that a plain `std::vector<float>`
+ *       argument matched ambiguously.
+ */
+inline std::optional<QuantizedTensor<int8_t>> quantize_int8_from_float(
+    std::span<const float> data, float scale = 0.0f) {
 
+    const size_t size = data.size();
     if (size == 0) return std::nullopt;
+
+    // A NaN or an infinity in the input poisons max_val, and every later clamp
+    // then produces a constant tensor that looks quantized. Reject it instead.
+    for (const float value : data) {
+        if (!std::isfinite(value)) {
+            return std::nullopt;
+        }
+    }
 
     if (scale <= 0.0f) {
         float max_val = 0.0f;
-        for (size_t i = 0; i < size; ++i) {
-            max_val = std::max(max_val, std::abs(data[i]));
+        for (const float value : data) {
+            max_val = std::max(max_val, std::abs(value));
         }
         scale = max_val / 127.0f;
     }
@@ -191,10 +205,15 @@ std::optional<QuantizedTensor<int8_t>> QuantizedTensor<int8_t>::FromFloat(
     return QuantizedTensor<int8_t>(std::move(quantized), meta, {static_cast<int>(size)});
 }
 
-template<>
-std::optional<QuantizedTensor<float16>> QuantizedTensor<float16>::FromFloat(
-    const float* data, size_t size) {
+/**
+ * @brief Convert float values to half precision
+ * @param data Source values
+ * @return Quantized tensor, or nullopt for an empty input
+ */
+inline std::optional<QuantizedTensor<float16>> quantize_fp16_from_float(
+    std::span<const float> data) {
 
+    const size_t size = data.size();
     if (size == 0) return std::nullopt;
 
     std::vector<float16> quantized(size);

@@ -499,6 +499,7 @@ set(SRC_CUDA_QUANTIZE ${CMAKE_SOURCE_DIR}/src/cuda/quantize)
 
 set(QUANTIZE_SOURCES
         ${SRC_CUDA_QUANTIZE}/fp8_kernels.cu
+        ${SRC_CUDA_QUANTIZE}/fp8_activation.cu
         ${SRC_CUDA_QUANTIZE}/fp8_gemm.cu
         ${SRC_CUDA_QUANTIZE}/int8_kernels.cu
         ${SRC_CUDA_QUANTIZE}/calibrator.cpp

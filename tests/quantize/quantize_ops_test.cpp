@@ -1,6 +1,8 @@
 #include "quantize_ops.hpp"
 
 #include <gtest/gtest.h>
+
+#include <span>
 #include <vector>
 #include <cmath>
 
@@ -37,8 +39,8 @@ TEST_F(QuantizedOpsTest, QuantizedMatmulProducesOutput) {
     auto a_fp = create_matrix_a();
     auto b_fp = create_matrix_b();
 
-    auto a = QuantizedInt8::FromFloat(a_fp.data(), a_fp.size());
-    auto b = QuantizedInt8::FromFloat(b_fp.data(), b_fp.size());
+    auto a = quantize_int8_from_float(a_fp);
+    auto b = quantize_int8_from_float(b_fp);
 
     ASSERT_TRUE(a.has_value());
     ASSERT_TRUE(b.has_value());
@@ -57,8 +59,8 @@ TEST_F(QuantizedOpsTest, QuantizedMatmulAccuracyWithinOnePercent) {
     auto b_fp = create_matrix_b();
     auto expected = expected_fp32_result();
 
-    auto a = QuantizedInt8::FromFloat(a_fp.data(), a_fp.size());
-    auto b = QuantizedInt8::FromFloat(b_fp.data(), b_fp.size());
+    auto a = quantize_int8_from_float(a_fp);
+    auto b = quantize_int8_from_float(b_fp);
 
     ASSERT_TRUE(a.has_value());
     ASSERT_TRUE(b.has_value());
@@ -80,10 +82,14 @@ TEST_F(QuantizedOpsTest, MixedPrecisionMatmulProducesCorrectOutput) {
     auto a_fp = create_matrix_a();
     auto b_fp = create_matrix_b();
 
-    auto b_quant = QuantizedInt8::FromFloat(b_fp.data(), b_fp.size());
+    auto b_quant = quantize_int8_from_float(b_fp);
     ASSERT_TRUE(b_quant.has_value());
 
-    std::vector<float> scale_b(b_quant->size() / b_fp.size(), b_quant->metadata().scale);
+    // mixed_precision reads one scale per inner dimension step (p < k), so the
+    // array must have k entries. This used to be
+    // `b_quant->size() / b_fp.size()`, which is 1 for any matrix, so the
+    // function indexed past the end of a one-element vector.
+    std::vector<float> scale_b(3, b_quant->metadata().scale);
 
     auto result = mixed_precision_matmul(
         a_fp.data(), b_quant->data(), scale_b.data(),
@@ -94,8 +100,13 @@ TEST_F(QuantizedOpsTest, MixedPrecisionMatmulProducesCorrectOutput) {
 
     auto expected = expected_fp32_result();
     for (size_t i = 0; i < expected.size(); ++i) {
-        float diff = std::abs(result[i] - expected[i]);
-        EXPECT_LE(diff, 0.1f);
+        // An absolute 0.1 tolerance is below int8 resolution for results of
+        // this magnitude: b's entries (7..12) span roughly 2/255 of the int8
+        // range per step, and a 3-term dot product magnifies that. Compare
+        // relatively so the assertion still catches a wrong formula without
+        // demanding sub-quantization accuracy.
+        float relative_error = std::abs(result[i] - expected[i]) / std::abs(expected[i]);
+        EXPECT_LE(relative_error, 0.01f) << "index " << i;
     }
 }
 
@@ -103,10 +114,14 @@ TEST_F(QuantizedOpsTest, MixedPrecisionWithFP16Output) {
     auto a_fp = create_matrix_a();
     auto b_fp = create_matrix_b();
 
-    auto b_quant = QuantizedInt8::FromFloat(b_fp.data(), b_fp.size());
+    auto b_quant = quantize_int8_from_float(b_fp);
     ASSERT_TRUE(b_quant.has_value());
 
-    std::vector<float> scale_b(b_quant->size() / b_fp.size(), b_quant->metadata().scale);
+    // mixed_precision reads one scale per inner dimension step (p < k), so the
+    // array must have k entries. This used to be
+    // `b_quant->size() / b_fp.size()`, which is 1 for any matrix, so the
+    // function indexed past the end of a one-element vector.
+    std::vector<float> scale_b(3, b_quant->metadata().scale);
 
     auto result = mixed_precision_matmul(
         a_fp.data(), b_quant->data(), scale_b.data(),
@@ -124,10 +139,14 @@ TEST_F(QuantizedOpsTest, RuntimePrecisionToggle) {
     auto a_fp = create_matrix_a();
     auto b_fp = create_matrix_b();
 
-    auto b_quant = QuantizedInt8::FromFloat(b_fp.data(), b_fp.size());
+    auto b_quant = quantize_int8_from_float(b_fp);
     ASSERT_TRUE(b_quant.has_value());
 
-    std::vector<float> scale_b(b_quant->size() / b_fp.size(), b_quant->metadata().scale);
+    // mixed_precision reads one scale per inner dimension step (p < k), so the
+    // array must have k entries. This used to be
+    // `b_quant->size() / b_fp.size()`, which is 1 for any matrix, so the
+    // function indexed past the end of a one-element vector.
+    std::vector<float> scale_b(3, b_quant->metadata().scale);
 
     auto fp32_result = mixed_precision_matmul(
         a_fp.data(), b_quant->data(), scale_b.data(),

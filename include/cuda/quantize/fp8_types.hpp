@@ -76,11 +76,19 @@ private:
         exp += EXP_BIAS - 1;
 
         if (exp <= 0) {
-            uint8_t sign_bit = sign ? 0x80 : 0;
-            if (exp < -MANTISSA_BITS) return sign_bit;
-            int shift = -(exp - 1);
-            uint32_t m = static_cast<uint32_t>(mantissa * 2.0f * (1 << (MANTISSA_BITS + shift)));
-            return sign_bit | (m & 0x7F);
+            // Subnormal: a multiple of 2^(1-BIAS) with the exponent field 0, so
+            // the stored field is value / 2^(1-BIAS). Folding the exponent into
+            // the mantissa bits (the old expression) leaked it into the top
+            // bits and produced a wrong magnitude for every subnormal input.
+            // Subnormal step = 2^(1-BIAS-MANTISSA_BITS), i.e. the fraction
+            // granularity of the smallest binade.
+            const float step = std::ldexp(1.0f, 1 - EXP_BIAS - MANTISSA_BITS);
+            const int field = static_cast<int>(std::lround(f / step));
+            if (field <= 0) return sign;
+            if (field >= (1 << MANTISSA_BITS)) {
+                return sign | static_cast<uint8_t>(1 << MANTISSA_BITS);
+            }
+            return sign | static_cast<uint8_t>(field);
         }
 
         if (exp >= 15) {
@@ -90,8 +98,21 @@ private:
         mantissa = mantissa * 2.0f - 1.0f;
         mantissa = mantissa * (1 << MANTISSA_BITS);
 
+        // Rounding the fraction can carry into the exponent: 1.9545 rounds to
+        // fraction 8 in a 3-bit field, which is the first value of the NEXT
+        // binade. Masking it to 0 and leaving the exponent alone silently
+        // encoded 1.0 instead of the nearest representable 2.0.
+        int rounded = static_cast<int>(std::lround(mantissa));
+        if (rounded >= (1 << MANTISSA_BITS)) {
+            rounded = 0;
+            ++exp;
+            if (exp >= 15) {
+                return sign | POS_INF;
+            }
+        }
+
         uint8_t exp_bits = static_cast<uint8_t>(exp) << MANTISSA_BITS;
-        uint8_t mantissa_bits = static_cast<uint8_t>(std::round(mantissa)) & ((1 << MANTISSA_BITS) - 1);
+        uint8_t mantissa_bits = static_cast<uint8_t>(rounded) & ((1 << MANTISSA_BITS) - 1);
 
         return sign | exp_bits | mantissa_bits;
     }
@@ -107,10 +128,20 @@ private:
         int exp_bits = (bits >> MANTISSA_BITS) & 0x0F;
         uint8_t mantissa_bits = bits & ((1 << MANTISSA_BITS) - 1);
 
-        int exp = exp_bits - EXP_BIAS;
-        float mantissa = 1.0f + static_cast<float>(mantissa_bits) / (1 << MANTISSA_BITS);
+        // exp_bits == 0 encodes 0.<mantissa> * 2^(1-BIAS), not
+        // 1.<mantissa> * 2^(-BIAS): decoding it with the normal formula turned
+        // small values into much larger ones.
+        if (exp_bits == 0) {
+            const float sub = static_cast<float>(mantissa_bits) *
+                              std::ldexp(1.0f, 1 - EXP_BIAS - MANTISSA_BITS);
+            return negative ? -sub : sub;
+        }
 
-        float result = mantissa * std::ldexp(1.0f, exp);
+        const int exp = exp_bits - EXP_BIAS;
+        const float mantissa =
+            1.0f + static_cast<float>(mantissa_bits) / (1 << MANTISSA_BITS);
+
+        const float result = mantissa * std::ldexp(1.0f, exp);
         return negative ? -result : result;
     }
 };
