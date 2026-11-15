@@ -57,8 +57,14 @@ void ray_box_intersect_batch(
     size_t num_boxes,
     cudaStream_t stream
 ) {
-    int block_size = 256;
-    int grid_size = static_cast<int>((num_rays + block_size - 1) / block_size);
+    // A zero-ray batch produces a zero-sized grid, which CUDA rejects with
+    // "invalid configuration argument". An empty workload is a no-op.
+    if (num_rays == 0 || num_boxes == 0) {
+        return;
+    }
+
+    const int block_size = 256;
+    const int grid_size = static_cast<int>((num_rays + block_size - 1) / block_size);
     ray_box_intersect_kernel<<<grid_size, block_size, 0, stream>>>(
         rays, boxes, results, num_rays, num_boxes
     );
@@ -73,8 +79,12 @@ void ray_sphere_intersect_batch(
     size_t num_spheres,
     cudaStream_t stream
 ) {
-    int block_size = 256;
-    int grid_size = static_cast<int>((num_rays + block_size - 1) / block_size);
+    if (num_rays == 0 || num_spheres == 0) {
+        return;
+    }
+
+    const int block_size = 256;
+    const int grid_size = static_cast<int>((num_rays + block_size - 1) / block_size);
     ray_sphere_intersect_kernel<<<grid_size, block_size, 0, stream>>>(
         rays, spheres, results, num_rays, num_spheres
     );

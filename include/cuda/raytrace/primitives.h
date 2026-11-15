@@ -272,4 +272,43 @@ struct IntersectionStats {
     }
 };
 
+/**
+ * @brief Test a batch of rays against a batch of boxes
+ *
+ * Defined in src/cuda/raytrace/primitives.cu but previously declared nowhere:
+ * the symbol was exported by the library while no translation unit could name
+ * it, so the entry point existed without being usable.
+ *
+ * For each ray, every box is tested and the nearest hit (smallest t_near) is
+ * written to results[ray_index]. A ray that hits nothing gets hit == false.
+ *
+ * @param rays Device array of num_rays rays
+ * @param boxes Device array of num_boxes boxes
+ * @param results Device array receiving one BoxHit per ray
+ * @param stream Stream used for the launch
+ */
+void ray_box_intersect_batch(
+    const Ray* rays,
+    const AABB* boxes,
+    AABB::BoxHit* results,
+    size_t num_rays,
+    size_t num_boxes,
+    cudaStream_t stream = nullptr
+);
+
+/**
+ * @brief Test a batch of rays against a batch of spheres
+ *
+ * Same contract as ray_box_intersect_batch, selecting the nearest hit by
+ * t_enter and reporting `inside` for rays that start within a sphere.
+ */
+void ray_sphere_intersect_batch(
+    const Ray* rays,
+    const Sphere* spheres,
+    Sphere::SphereHit* results,
+    size_t num_rays,
+    size_t num_spheres,
+    cudaStream_t stream = nullptr
+);
+
 }  // namespace cuda::raytrace

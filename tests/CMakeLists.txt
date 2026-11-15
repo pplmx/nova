@@ -175,6 +175,7 @@ add_executable(nova-tests
     sparse/uncovered_headers_test.cpp
     sparse/quantize_benchmark_test.cpp
     sparse/cublas_gemm_test.cpp
+    sparse/raytrace_primitives_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
