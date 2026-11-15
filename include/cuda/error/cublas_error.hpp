@@ -260,11 +260,18 @@ private:
  * @def CUBLAS_CHECK
  * @ingroup cublas_error
  */
+// device/error.h also defines CUBLAS_CHECK, with different semantics (it throws
+// CublasException from the call site). Both used to be unconditional, so a
+// translation unit including both headers picked whichever came second — the
+// include order silently chose the exception type and message format. This
+// definition now yields to the other one when both are present.
+#ifndef CUBLAS_CHECK
 #define CUBLAS_CHECK(call) \
     do { \
         static_assert(sizeof(#call) > 0, "CUBLAS_CHECK requires a cuBLAS call"); \
         nova::error::cublas_error_guard nova_cublas_err_guard{#call, __FILE__, __LINE__}; \
         nova_cublas_err_guard.check(call); \
     } while (0)
+#endif
 
 } // namespace nova::error

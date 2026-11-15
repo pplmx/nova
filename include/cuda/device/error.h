@@ -38,7 +38,29 @@ namespace cuda::device {
         cublasStatus_t status_;
 
         static auto format_error(cublasStatus_t status, const char* file, int line) -> ::std::string {
-            return ::std::string(file) + ":" + ::std::to_string(line) + " - cuBLAS error: " + ::std::to_string(static_cast<int>(status));
+            // Report the enumerator, not the bare integer. "cuBLAS error: 3"
+            // tells a caller nothing; CUBLAS_STATUS_ALLOC_FAILED does. This
+            // stays local rather than calling nova::error::cublas_status_name so
+            // this lower-level header keeps no dependency on that layer.
+            return ::std::string(file) + ":" + ::std::to_string(line) +
+                   " - cuBLAS error: " + status_name(status) + " (" +
+                   ::std::to_string(static_cast<int>(status)) + ")";
+        }
+
+        static auto status_name(cublasStatus_t status) -> const char* {
+            switch (status) {
+                case CUBLAS_STATUS_SUCCESS: return "CUBLAS_STATUS_SUCCESS";
+                case CUBLAS_STATUS_NOT_INITIALIZED: return "CUBLAS_STATUS_NOT_INITIALIZED";
+                case CUBLAS_STATUS_ALLOC_FAILED: return "CUBLAS_STATUS_ALLOC_FAILED";
+                case CUBLAS_STATUS_INVALID_VALUE: return "CUBLAS_STATUS_INVALID_VALUE";
+                case CUBLAS_STATUS_ARCH_MISMATCH: return "CUBLAS_STATUS_ARCH_MISMATCH";
+                case CUBLAS_STATUS_MAPPING_ERROR: return "CUBLAS_STATUS_MAPPING_ERROR";
+                case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
+                case CUBLAS_STATUS_INTERNAL_ERROR: return "CUBLAS_STATUS_INTERNAL_ERROR";
+                case CUBLAS_STATUS_NOT_SUPPORTED: return "CUBLAS_STATUS_NOT_SUPPORTED";
+                case CUBLAS_STATUS_LICENSE_ERROR: return "CUBLAS_STATUS_LICENSE_ERROR";
+                default: return "CUBLAS_STATUS_UNKNOWN";
+            }
         }
     };
 

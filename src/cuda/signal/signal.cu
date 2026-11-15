@@ -1,4 +1,5 @@
 #include "cuda/signal/signal_processing.h"
+#include <cuda/fft/fft_types.h>
 
 #include <cufft.h>
 #include <cmath>
@@ -80,7 +81,12 @@ __global__ void scale_kernel(float* data, float factor, int n) {
 
 void check_cufft(cufftResult status, const char* file, int line) {
     if (status != CUFFT_SUCCESS) {
-        throw std::runtime_error(std::string(file) + ":" + std::to_string(line) + " - cuFFT error: " + std::to_string(static_cast<int>(status)));
+        // fft_types.h already maps every cufftResult to its enumerator name;
+        // reporting the bare integer here made a failure an opaque number.
+        throw std::runtime_error(std::string(file) + ":" + std::to_string(line) +
+                                 " - cuFFT error: " +
+                                 ::cuda::fft::result_name(status) + " (" +
+                                 std::to_string(static_cast<int>(status)) + ")");
     }
 }
 

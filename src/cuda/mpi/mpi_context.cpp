@@ -15,11 +15,33 @@ namespace {
 std::mutex init_mutex;
 }
 
+namespace {
+
+/// MPI can describe its own error codes; the exception used to print only the
+/// integer, discarding the message MPI_Error_string already provides. Without
+/// MPI linked there is no such table, so the code stays the only information.
+std::string mpi_error_text(int error_code) {
+#if NOVA_MPI_ENABLED
+    char buffer[MPI_MAX_ERROR_STRING] = {};
+    int length = 0;
+    if (MPI_Error_string(error_code, buffer, &length) == MPI_SUCCESS && length > 0) {
+        return std::string(buffer, static_cast<size_t>(length));
+    }
+    return "unknown MPI error";
+#else
+    (void)error_code;
+    return "MPI support is not enabled in this build";
+#endif
+}
+
+}  // namespace
+
 MpiException::MpiException(int error_code, const char* expr,
                            const char* file, int line)
-    : std::runtime_error("MPI error " + std::to_string(error_code) +
-                         " in " + std::string(expr) + " at " +
-                         std::string(file) + ":" + std::to_string(line)),
+    : std::runtime_error("MPI error " + mpi_error_text(error_code) + " (" +
+                         std::to_string(error_code) + ") in " +
+                         std::string(expr) + " at " + std::string(file) + ":" +
+                         std::to_string(line)),
       error_code_(error_code) {}
 
 MpiContext& MpiContext::instance() {
