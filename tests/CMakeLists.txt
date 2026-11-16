@@ -222,6 +222,7 @@ add_executable(nova-tests
     sparse/matrix_elementwise_edge_test.cpp
     sparse/fp8_conversion_edge_test.cpp
     sparse/launch_error_check_test.cpp
+    sparse/int8_calibration_edge_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

@@ -205,6 +205,12 @@ void quantize_f32_to_int8(
     const float* src, int8_t* dst, size_t n,
     QuantizationParams params,
     cudaStream_t stream) {
+    // Nothing to convert. Both siblings compute_minmax and build_histogram already
+    // return early for an empty input; without it the zero-sized grid produced
+    // "invalid configuration argument" — measured for both quantize and dequantize.
+    if (n == 0) {
+        return;
+    }
 
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
@@ -227,6 +233,12 @@ void dequantize_int8_to_f32(
     const int8_t* src, float* dst, size_t n,
     QuantizationParams params,
     cudaStream_t stream) {
+    // Nothing to convert. Both siblings compute_minmax and build_histogram already
+    // return early for an empty input; without it the zero-sized grid produced
+    // "invalid configuration argument" — measured for both quantize and dequantize.
+    if (n == 0) {
+        return;
+    }
 
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
@@ -265,6 +277,12 @@ void quantize_f32_to_int8_with_calibration(
     const float* src, int8_t* dst, size_t n,
     float min_val, float max_val,
     cudaStream_t stream) {
+    // Nothing to convert. Both siblings compute_minmax and build_histogram already
+    // return early for an empty input; without it the zero-sized grid produced
+    // "invalid configuration argument" — measured for both quantize and dequantize.
+    if (n == 0) {
+        return;
+    }
 
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
@@ -283,6 +301,19 @@ void build_histogram(
     size_t n, float min_val, float max_val,
     int num_bins,
     cudaStream_t stream) {
+
+    // An empty sample set has no histogram, and a zero-bin histogram has no output.
+    // Both used to fall through to cudaMalloc(0) / cudaMemset(..., 0) and fail with a
+    // bare "invalid argument" that named neither the parameter nor the cause — measured
+    // for n == 0 and num_bins == 0.
+    if (n == 0) {
+        return;
+    }
+    if (num_bins <= 0) {
+        throw ::std::invalid_argument(
+            "build_histogram: num_bins must be positive, got " +
+            ::std::to_string(num_bins));
+    }
 
     bool data_needs_copy = false;
     cudaPointerAttributes attr;
