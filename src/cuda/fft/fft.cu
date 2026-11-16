@@ -230,15 +230,27 @@ __global__ void scale_kernel(float* data, size_t n, float scale) {
 }
 
 void magnitude(const cuComplex* input, float* output, size_t n, cudaStream_t stream) {
+    // Zero bins is an ordinary request and would make a zero-sized grid; the FFTPlan
+    // entry points above already reject n == 0. Both of these also lacked the launch
+    // check every other entry point in this file performs, so a failure here would have
+    // surfaced at whatever CUDA call ran next.
+    if (n == 0) {
+        return;
+    }
     int block_size = 256;
     int grid_size = static_cast<int>((n + block_size - 1) / block_size);
     magnitude_kernel<<<grid_size, block_size, 0, stream>>>(input, output, n);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void power_spectrum(const cuComplex* input, float* output, size_t n, cudaStream_t stream) {
+    if (n == 0) {
+        return;
+    }
     int block_size = 256;
     int grid_size = static_cast<int>((n + block_size - 1) / block_size);
     power_kernel<<<grid_size, block_size, 0, stream>>>(input, output, n);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 template FFTPlan make_fft_plan<float>(size_t size, Direction dir);

@@ -691,16 +691,31 @@ void sync_batch_norm_forward_inference(
     float eps,
     cudaStream_t stream
 ) {
+    // Every other entry point in this file validates its extents; this one did not, so an
+    // empty input produced a zero-sized grid. Measured: both batch_size == 0 and
+    // spatial_size == 0 left cudaErrorInvalidConfiguration (9) pending on the error
+    // channel. And unlike its eighteen siblings it never called CUDA_CHECK, so the error
+    // was not raised here — it surfaced at whatever CUDA call ran next, which is how a
+    // missing launch check turns into a confusing failure somewhere else.
+    if (batch_size <= 0 || spatial_size <= 0) {
+        throw ::std::invalid_argument(
+            "sync_batch_norm_forward_inference: batch_size and spatial_size must be "
+            "positive, got batch_size=" + ::std::to_string(batch_size) +
+            " spatial_size=" + ::std::to_string(spatial_size));
+    }
+
     int n = batch_size * num_features * spatial_size;
     int block_size = 256;
 
     inference_normalize_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         input, running_mean, running_var, output,
         batch_size, num_features, spatial_size, eps);
+    CUDA_CHECK(cudaGetLastError());
 
     scale_bias_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(
         output, gamma, beta, output,
         batch_size, num_features, spatial_size);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 void sync_batch_norm_backward(

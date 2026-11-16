@@ -205,13 +205,21 @@ void fused_matmul_bias(
     int num_features,
     cudaStream_t stream
 ) {
+    // An empty batch has nothing to fuse. Without this the grid is zero-sized and the
+    // launch fails with "invalid configuration argument"; the file's other kernels
+    // already check their launch, these three did not.
+    if (batch_size <= 0 || num_features <= 0) {
+        return;
+    }
     int n = batch_size * num_features;
     int block_size = 256;
     int grid_size = (n + block_size - 1) / block_size;
 
     matmul_bias_kernel<float><<<grid_size, block_size, 0, stream>>>(
         matmul_out, bias, output, batch_size, num_features);
+    CUDA_CHECK(cudaGetLastError());
 }
+
 
 void fused_matmul_bias_relu(
     const float* matmul_out,
@@ -221,13 +229,21 @@ void fused_matmul_bias_relu(
     int num_features,
     cudaStream_t stream
 ) {
+    // An empty batch has nothing to fuse. Without this the grid is zero-sized and the
+    // launch fails with "invalid configuration argument"; the file's other kernels
+    // already check their launch, these three did not.
+    if (batch_size <= 0 || num_features <= 0) {
+        return;
+    }
     int n = batch_size * num_features;
     int block_size = 256;
     int grid_size = (n + block_size - 1) / block_size;
 
     matmul_bias_relu_kernel<float><<<grid_size, block_size, 0, stream>>>(
         matmul_out, bias, output, batch_size, num_features);
+    CUDA_CHECK(cudaGetLastError());
 }
+
 
 void fused_matmul_bias_sigmoid(
     const float* matmul_out,
@@ -237,13 +253,21 @@ void fused_matmul_bias_sigmoid(
     int num_features,
     cudaStream_t stream
 ) {
+    // An empty batch has nothing to fuse. Without this the grid is zero-sized and the
+    // launch fails with "invalid configuration argument"; the file's other kernels
+    // already check their launch, these three did not.
+    if (batch_size <= 0 || num_features <= 0) {
+        return;
+    }
     int n = batch_size * num_features;
     int block_size = 256;
     int grid_size = (n + block_size - 1) / block_size;
 
     matmul_bias_sigmoid_kernel<float><<<grid_size, block_size, 0, stream>>>(
         matmul_out, bias, output, batch_size, num_features);
+    CUDA_CHECK(cudaGetLastError());
 }
+
 
 FusedLayerNormSoftmax::FusedLayerNormSoftmax(int hidden_size, float eps)
     : hidden_size_(hidden_size), eps_(eps) {}

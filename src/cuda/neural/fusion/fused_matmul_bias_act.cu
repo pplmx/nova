@@ -122,6 +122,12 @@ void FusedMatmulBiasAct::forward_fallback(
     ));
 
     int num_elements = m * n;
+    // An empty tensor needs no activation, and ActivationType::None launches nothing in
+    // either branch, so the only thing a zero count can do here is create a zero-sized
+    // grid that the runtime rejects with "invalid configuration argument".
+    if (num_elements == 0) {
+        return;
+    }
     int block_size = 256;
     int grid_size = (num_elements + block_size - 1) / block_size;
 
@@ -312,7 +318,10 @@ void apply_activation(
                 break;
         }
     }
+
+    CUDA_CHECK(cudaGetLastError());
 }
+
 
 template void apply_activation<float>(
     float*, size_t, ActivationType, float, cudaStream_t);
