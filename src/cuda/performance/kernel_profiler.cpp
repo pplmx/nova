@@ -1,4 +1,6 @@
 #include <cuda/performance/kernel_profiler.h>
+#include <stdexcept>
+#include <string>
 
 #include "cuda/device/error.h"
 
@@ -124,16 +126,30 @@ float OccupancyCalculator::calculate_theoretical_occupancy(
         return 0.0f;
     }
 
+    // Both divisions below use a caller-supplied value as the divisor. A zero block
+    // size or zero registers-per-thread performed integer division by zero, which
+    // aborts the process; a negative block size slipped through the clamp (min of a
+    // negative and the device maximum keeps the negative) and produced a nonsense
+    // occupancy of 1.0. Reject the inputs instead.
+    if (threads_per_block <= 0) {
+        throw std::invalid_argument(
+            "calculate_theoretical_occupancy: threads_per_block must be positive, "
+            "got " + std::to_string(threads_per_block));
+    }
+
     int threads_per_block_clamped = std::min(threads_per_block, prop.maxThreadsPerBlock);
     int max_blocks_per_sm = std::min(
         prop.maxThreadsPerMultiProcessor / threads_per_block_clamped,
         prop.maxBlocksPerMultiProcessor
     );
 
+    // A kernel compiled without register pressure reports 0; treat that as "no
+    // register limit" rather than dividing by zero.
     int registers_per_block = registers_per_thread * threads_per_block_clamped;
-    int max_blocks_by_registers = prop.regsPerBlock > 0
-        ? prop.regsPerBlock / registers_per_block
-        : prop.maxBlocksPerMultiProcessor;
+    int max_blocks_by_registers =
+        (prop.regsPerBlock > 0 && registers_per_block > 0)
+            ? prop.regsPerBlock / registers_per_block
+            : prop.maxBlocksPerMultiProcessor;
     max_blocks_per_sm = std::min(max_blocks_per_sm, max_blocks_by_registers);
 
     if (prop.sharedMemPerBlock > 0) {
