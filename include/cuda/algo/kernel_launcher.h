@@ -128,11 +128,28 @@ public:
 
     /**
      * @brief Sets block size to device-optimal value
-     * @param device_id GPU device ID (default: current device)
+     * @param device_id GPU device ID; -1 means the device this thread currently has
+     *        selected. The default used to be a literal 0, which contradicted this
+     *        documentation: on a machine with more than one kind of GPU, a caller running
+     *        on device 4 got device 0's block size. The value is harmless on homogeneous
+     *        hardware, which is why nothing failed, but it is not what the header
+     *        promised.
      * @return Reference to this launcher for chaining
      */
-    KernelLauncher& auto_block(int device_id = 0) & {
-        block_ = dim3{static_cast<unsigned int>(cuda::performance::get_optimal_block_size(device_id)), 1, 1};
+    KernelLauncher& auto_block(int device_id = -1) & {
+        int device = device_id;
+        if (device < 0) {
+            device = 0;
+            const cudaError_t status = cudaGetDevice(&device);
+            if (status != cudaSuccess) {
+                // Falling back to 0 keeps the old behaviour when no device is selected;
+                // the launch itself will report the real problem.
+                (void)cudaGetLastError();
+                device = 0;
+            }
+        }
+        block_ = dim3{static_cast<unsigned int>(
+                          cuda::performance::get_optimal_block_size(device)), 1, 1};
         return *this;
     }
 
