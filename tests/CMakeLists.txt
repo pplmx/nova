@@ -196,6 +196,7 @@ add_executable(nova-tests
     sparse/sampling_validation_test.cpp
     sparse/pagerank_result_test.cpp
     sparse/graph_container_state_test.cpp
+    sparse/sssp_reported_stats_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

@@ -12,14 +12,29 @@ namespace cuda::algo::sssp {
 
 constexpr float INF = std::numeric_limits<float>::infinity();
 
-template <typename Weight>
-void delta_stepping(const graph::CSRGraph& graph, int source, Weight* distances,
-                    Weight delta = Weight{1.0}, cudaStream_t stream = nullptr);
+/// Outcome of a shortest-path run. Returned by the solver entry points so a caller
+/// can distinguish "settled" from "ran out of rounds" from "negative cycle".
+struct RunStats {
+    int iterations = 0;
+    bool converged = false;
+    bool negative_cycle = false;
+};
 
 template <typename Weight>
-void bellman_ford(const graph::CSRGraph& graph, int source, Weight* distances,
-                  cudaStream_t stream = nullptr);
+RunStats delta_stepping(const graph::CSRGraph& graph, int source, Weight* distances,
+                        Weight delta = Weight{1.0}, cudaStream_t stream = nullptr);
 
+template <typename Weight>
+RunStats bellman_ford(const graph::CSRGraph& graph, int source, Weight* distances,
+                      cudaStream_t stream = nullptr);
+
+template <typename Weight>
+RunStats compute_distances(const graph::CSRGraph& graph, int source, Weight delta,
+                           Weight* distances, cudaStream_t stream = nullptr);
+
+/// Convenience overload that allocates the output. The caller gets the distances
+/// but cannot see the run statistics; use the pointer overload when convergence
+/// or negative-cycle detection matters.
 template <typename Weight>
 memory::Buffer<Weight> compute_distances(const graph::CSRGraph& graph, int source,
                                          Weight delta = Weight{1.0},
@@ -28,8 +43,13 @@ memory::Buffer<Weight> compute_distances(const graph::CSRGraph& graph, int sourc
 struct SSSPResult {
     memory::Buffer<float> distances;
     int num_vertices;
+    /// False when the graph contains a negative cycle reachable from the source.
     bool converged;
+    /// Relaxation rounds actually performed (0 when the run short-circuited).
     int iterations;
+    /// True when an extra relaxation pass still improved a distance, which makes
+    /// every reported distance meaningless: they are unbounded below.
+    bool negative_cycle = false;
 };
 
 SSSPResult run(const graph::CSRGraph& graph, int source,
