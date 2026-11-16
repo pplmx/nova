@@ -207,6 +207,71 @@ TEST(ImageMorphologyEdgeTest, SharpeningAUniformImageIsTheIdentity) {
     }
 }
 
+TEST(ImageMorphologyEdgeTest, OpeningAndClosingAreComposites) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // Both are defined in terms of the two primitives: opening is erode-then-dilate,
+    // closing is dilate-then-erode. Checking the composite against the primitives
+    // applied by hand is the only way to tell an implemented composition from a
+    // plausible-looking one.
+    constexpr size_t width = 10, height = 10;
+    const uint8_t fill = 120;
+
+    RgbImage input(width, height, fill);
+    RgbImage staged(width, height, 0);
+    RgbImage expected(width, height, 0);
+    RgbImage actual(width, height, 0);
+
+    // Reference: apply the two steps explicitly.
+    erodeImage(input.data(), staged.data(), width, height, 3);
+    dilateImage(staged.data(), expected.data(), width, height, 3);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    openingImage(input.data(), actual.data(), width, height, 3);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    EXPECT_EQ(actual.read(), expected.read())
+        << "openingImage must be erode followed by dilate";
+
+    // And closing the other way round.
+    dilateImage(input.data(), staged.data(), width, height, 3);
+    erodeImage(staged.data(), expected.data(), width, height, 3);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    closingImage(input.data(), actual.data(), width, height, 3);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    EXPECT_EQ(actual.read(), expected.read())
+        << "closingImage must be dilate followed by erode";
+}
+
+TEST(ImageMorphologyEdgeTest, OpeningAndClosingHandleEmptyExtents) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // These two call cudaMalloc for an intermediate buffer, so an empty extent used to
+    // reach cudaMalloc(0) before reaching the guarded primitives.
+    (void)cudaGetLastError();
+
+    EXPECT_NO_THROW(openingImage(nullptr, nullptr, 0, 8, 3));
+    EXPECT_NO_THROW(openingImage(nullptr, nullptr, 8, 0, 3));
+    EXPECT_NO_THROW(closingImage(nullptr, nullptr, 0, 0, 3));
+    EXPECT_NO_THROW(closingImage(nullptr, nullptr, 4, 0, 3));
+
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
+}
+
+// A case asserting that repeated composites do not leak was written and then removed:
+// it compared cudaMemGetInfo before and after, and after injecting a deliberate leak
+// into openingImage it STILL PASSED. The CUDA allocator keeps freed blocks in its pool,
+// so the free figure does not move for a small per-call leak — the same reason a leak
+// check of this shape failed in an earlier round on a different module. Measuring this
+// properly needs a tool that tracks allocations, not a device-wide snapshot, and that
+// measurement belongs in a dedicated leak-check suite rather than here.
+
 TEST(ImageMorphologyEdgeTest, ThresholdSplitsOnTheGivenValue) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";

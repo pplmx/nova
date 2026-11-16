@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 
 #include "cuda/device/device_utils.h"
+#include <cuda/memory/unique_ptr.h>
 #include "image/morphology.h"
 
 __global__ __launch_bounds__(256, 2) void sharpenKernel(const uint8_t* input, uint8_t* output, size_t width, size_t height, float strength) {
@@ -180,21 +181,27 @@ void dilateImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t
 }
 
 void openingImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t height, int kernel_size) {
-    uint8_t* temp;
-    CUDA_CHECK(cudaMalloc(&temp, width * height * 3 * sizeof(uint8_t)));
-
-    erodeImage(d_input, temp, width, height, kernel_size);
-    dilateImage(temp, d_output, width, height, kernel_size);
-
-    CUDA_CHECK(cudaFree(temp));
+    if (width == 0 || height == 0) {
+        return;
+    }
+    // RAII rather than a raw cudaMalloc/cudaFree pair: erodeImage and its partner both
+    // throw on a CUDA failure, and the freeing call sat after them, so any exception
+    // leaked the whole intermediate buffer. This is the same defect that
+    // sync_batch_norm.cu's backward pass had, fixed the same way.
+    cuda::memory::unique_ptr<uint8_t> temp(width * height * 3);
+    erodeImage(d_input, temp.get(), width, height, kernel_size);
+    dilateImage(temp.get(), d_output, width, height, kernel_size);
 }
 
 void closingImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t height, int kernel_size) {
-    uint8_t* temp;
-    CUDA_CHECK(cudaMalloc(&temp, width * height * 3 * sizeof(uint8_t)));
-
-    dilateImage(d_input, temp, width, height, kernel_size);
-    erodeImage(temp, d_output, width, height, kernel_size);
-
-    CUDA_CHECK(cudaFree(temp));
+    if (width == 0 || height == 0) {
+        return;
+    }
+    // RAII rather than a raw cudaMalloc/cudaFree pair: dilateImage and its partner both
+    // throw on a CUDA failure, and the freeing call sat after them, so any exception
+    // leaked the whole intermediate buffer. This is the same defect that
+    // sync_batch_norm.cu's backward pass had, fixed the same way.
+    cuda::memory::unique_ptr<uint8_t> temp(width * height * 3);
+    dilateImage(d_input, temp.get(), width, height, kernel_size);
+    erodeImage(temp.get(), d_output, width, height, kernel_size);
 }
