@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <stdexcept>
+#include <string>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -55,6 +57,24 @@ private:
     template <typename Func>
     AutotuneResult tune_internal(Func kernel_func) {
         AutotuneResult best_result;
+
+        // A search needs both dimensions to have candidates and at least one
+        // measurement per candidate. Without these guards the loop body never ran
+        // and the FLT_MAX sentinel below was returned as the measured time, or
+        // measure_iterations == 0 produced 0/0 = NaN, which compares false against
+        // the sentinel and left it in place too. Both reported 3.40282e+38 ms as
+        // the best time — a value no timing can produce.
+        if (config_.block_sizes.empty() || config_.grid_sizes.empty()) {
+            throw std::invalid_argument(
+                "Autotuner: the search space needs at least one block size and one "
+                "grid size");
+        }
+        if (config_.measure_iterations <= 0) {
+            throw std::invalid_argument(
+                "Autotuner: measure_iterations must be positive, got " +
+                std::to_string(config_.measure_iterations));
+        }
+
         best_result.best_time_ms = std::numeric_limits<float>::max();
 
         for (int block_size : config_.block_sizes) {

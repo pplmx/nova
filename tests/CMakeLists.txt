@@ -203,6 +203,7 @@ add_executable(nova-tests
     sparse/fp8_gemm_test.cpp
     sparse/benchmark_units_test.cpp
     sparse/kernel_stats_sentinel_test.cpp
+    sparse/autotuner_search_space_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
