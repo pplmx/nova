@@ -58,6 +58,15 @@ void sharpenImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_
     if (width == 0 || height == 0) {
         return;
     }
+    // sharpenKernel only writes interior pixels: it returns early on the first and
+    // last row and column, where the 3x3 stencil would read outside the image. Those
+    // border pixels were left holding whatever the output allocation contained, and
+    // the caller read them back. Copying the input first makes the border the
+    // unmodified image, which is what "sharpening" means at an edge. Detected with
+    // compute-sanitizer --tool initcheck, which reported 66 uninitialized accesses on
+    // a 64x48 test image whose output was then copied to the host.
+    CUDA_CHECK(cudaMemcpy(d_output, d_input, width * height * 3, cudaMemcpyDeviceToDevice));
+
     dim3 block(16, 16);
     dim3 grid((width + 15) / 16, (height + 15) / 16);
 

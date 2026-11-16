@@ -578,7 +578,15 @@ void SyncBatchNorm::backward(
         input, saved_mean_, centered_input.get(),
         batch_size, num_features_, spatial_size);
 
-    compute_normalized_kernel<float><<<grid_size, block_size, 0, stream>>>(
+    // compute_normalized_kernel walks ELEMENTS (idx up to batch*features*spatial),
+    // so its grid must cover that many. It used grid_size, which is derived from
+    // num_features_ for the per-feature kernels launched around it: with
+    // batch=4, features=32, spatial=8 the element count is 1024 but grid_size * 256
+    // is 256, so three quarters of normalized_tmp was never written and
+    // backward_dgamma_kernel read it. compute-sanitizer --tool initcheck reported
+    // exactly those 768 uninitialized reads.
+    const int normalized_blocks = (n + block_size - 1) / block_size;
+    compute_normalized_kernel<float><<<normalized_blocks, block_size, 0, stream>>>(
         centered_input.get(), saved_var_, normalized_tmp.get(),
         batch_size, num_features_, spatial_size, eps_);
 

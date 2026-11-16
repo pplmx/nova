@@ -134,6 +134,79 @@ TEST(ImageMorphologyEdgeTest, BuffersArePackedRgb) {
     }
 }
 
+// Regression: the border of a sharpened image used to hold uninitialised memory.
+TEST(ImageMorphologyEdgeTest, SharpenedBorderHoldsTheOriginalPixels) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // The stencil cannot be evaluated on the first or last row and column, so those
+    // pixels are left as they were. Before the output was seeded from the input they
+    // held whatever the allocation contained: compute-sanitizer --tool initcheck
+    // reported 66 uninitialized accesses when a 64x48 result was copied back to the
+    // host. The existing SharpenOutputInRange case could not see this because
+    // EXPECT_GE on a uint8_t and EXPECT_LE against 255 are both always true.
+    constexpr size_t width = 16, height = 12;
+    RgbImage input(width, height, 0);
+
+    // A gradient so every pixel differs from its neighbours.
+    std::vector<uint8_t> host(static_cast<size_t>(width) * height * 3, 0);
+    for (size_t i = 0; i < host.size(); ++i) {
+        host[i] = static_cast<uint8_t>((i * 7) % 200 + 20);
+    }
+    ASSERT_EQ(cudaMemcpy(input.data(), host.data(), host.size(),
+                         cudaMemcpyHostToDevice), cudaSuccess);
+
+    RgbImage output(width, height, 0xFF);  // poison, so an untouched byte shows up
+    sharpenImage(input.data(), output.data(), width, height, 1.0f);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    const auto result = output.read();
+    ASSERT_EQ(result.size(), host.size());
+
+    const auto index_of = [width](size_t x, size_t y) { return (y * width + x) * 3; };
+
+    for (size_t x = 0; x < width; ++x) {
+        for (const size_t y : {size_t{0}, height - 1}) {
+            const size_t base = index_of(x, y);
+            for (size_t c = 0; c < 3; ++c) {
+                EXPECT_EQ(result[base + c], host[base + c])
+                    << "border pixel (" << x << "," << y << ") channel " << c;
+            }
+        }
+    }
+    for (size_t y = 0; y < height; ++y) {
+        for (const size_t x : {size_t{0}, width - 1}) {
+            const size_t base = index_of(x, y);
+            for (size_t c = 0; c < 3; ++c) {
+                EXPECT_EQ(result[base + c], host[base + c])
+                    << "border pixel (" << x << "," << y << ") channel " << c;
+            }
+        }
+    }
+}
+
+TEST(ImageMorphologyEdgeTest, SharpeningAUniformImageIsTheIdentity) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // The Laplacian is zero on a flat region, so the whole image must come back
+    // unchanged at any strength.
+    constexpr size_t width = 12, height = 12;
+    const uint8_t fill = 60;
+
+    RgbImage input(width, height, fill);
+    RgbImage output(width, height, 0xFF);
+
+    sharpenImage(input.data(), output.data(), width, height, 2.5f);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    for (const uint8_t value : output.read()) {
+        EXPECT_EQ(value, fill);
+    }
+}
+
 TEST(ImageMorphologyEdgeTest, ThresholdSplitsOnTheGivenValue) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
