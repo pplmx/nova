@@ -210,13 +210,38 @@ TEST_F(HistogramTest, EqualizeOutputRange) {
 }
 
 TEST_F(HistogramTest, EqualizeChangesImage) {
+    // A deliberately non-uniform distribution. The previous data was i % 256, which
+    // is uniform across the whole byte range; equalising a uniform histogram is the
+    // identity, so the assertion "the output must differ" was unsatisfiable for a
+    // correct implementation and could only ever have passed because the histogram was
+    // being zeroed first. Squaring the ramp concentrates the values in the low end,
+    // which equalisation must stretch.
     for (size_t i = 0; i < size_; ++i) {
-        h_input_[i] = static_cast<uint8_t>(i % 256);
+        const uint64_t span = (size_ > 1) ? static_cast<uint64_t>(size_ - 1) : 1;
+        const uint64_t scaled = static_cast<uint64_t>(i) * 255 / span;  // 0..255 ramp
+        h_input_[i] = static_cast<uint8_t>(scaled * scaled / 255);      // skewed low
     }
     uploadInput();
 
     computeHistogram(d_input_, d_histogram_, width_, height_);
-    CUDA_CHECK(cudaMemcpy(d_histogram_, h_histogram_.data(), NUM_BINS * sizeof(uint32_t), cudaMemcpyHostToDevice));
+
+    // This line used to copy h_histogram_ (all zeros, from its resize) back over the
+    // histogram computeHistogram had just produced, so equalizeHistogram ran against
+    // an empty distribution and returned an all-zero image. The assertion below only
+    // checked that the output DIFFERED from the input, which a degenerate result
+    // satisfies, so the test passed either way. Reading the histogram back is what the
+    // other cases in this file already do.
+    CUDA_CHECK(cudaMemcpy(h_histogram_.data(), d_histogram_, NUM_BINS * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+
+    uint32_t nonempty_bins = 0;
+    for (const uint32_t count : h_histogram_) {
+        if (count > 0) {
+            ++nonempty_bins;
+        }
+    }
+    ASSERT_GT(nonempty_bins, 0u)
+        << "the histogram handed to equalizeHistogram is empty, so the result would be "
+           "trivial";
 
     uint8_t *d_output;
     CUDA_CHECK(cudaMalloc(&d_output, size_ * sizeof(uint8_t)));
@@ -233,7 +258,7 @@ TEST_F(HistogramTest, EqualizeChangesImage) {
             break;
         }
     }
-    EXPECT_TRUE(changed);
+    EXPECT_TRUE(changed) << "equalising a non-uniform image must change it";
 
     CUDA_CHECK(cudaFree(d_output));
 }
