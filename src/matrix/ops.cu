@@ -19,6 +19,12 @@ __global__ __launch_bounds__(256, 2) void transposeKernel(const T* input, T* out
 
 template <typename T>
 void transposeMatrix(const T* d_input, T* d_output, int rows, int cols) {
+    // An empty or negative extent produces a zero-sized grid dimension, which CUDA
+    // rejects with a generic "invalid configuration argument" that names neither the
+    // parameter nor the cause. Transposing nothing is a no-op.
+    if (rows <= 0 || cols <= 0) {
+        return;
+    }
     dim3 block(TILE_SIZE, TILE_SIZE);
     dim3 grid((cols + TILE_SIZE - 1) / TILE_SIZE, (rows + TILE_SIZE - 1) / TILE_SIZE);
 
@@ -49,6 +55,10 @@ __global__ __launch_bounds__(256, 2) void transposeTiledKernel(const T* input, T
 
 template <typename T>
 void transposeMatrixTiled(const T* d_input, T* d_output, int rows, int cols) {
+    // Same zero-grid condition as transposeMatrix above.
+    if (rows <= 0 || cols <= 0) {
+        return;
+    }
     dim3 block(TILE_SIZE, TILE_SIZE);
     dim3 grid((cols + TILE_SIZE - 1) / TILE_SIZE, (rows + TILE_SIZE - 1) / TILE_SIZE);
 
