@@ -148,8 +148,14 @@ namespace cuda::memory {
             total_allocated_ -= bytes;
             total_available_ += bytes;
 
+            // A fully released block keeps its allocation so it can serve the next
+            // request; that is the point of pooling. The pointer must NOT be cleared
+            // here: clear() and the destructor release blocks by checking block.ptr,
+            // so nulling it leaked the whole block. Measured with
+            // compute-sanitizer --tool memcheck --leak-check full: a pool that had one
+            // block allocated and fully released leaked 4096 bytes, while a pool that
+            // only preallocated without ever allocating released nothing.
             if (block.offset == 0) {
-                block.ptr = nullptr;
                 block.stream_id = -1;
             }
         }
