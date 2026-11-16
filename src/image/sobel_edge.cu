@@ -7,7 +7,18 @@ __global__ __launch_bounds__(256, 2) void sobelKernel(const uint8_t* input, uint
     size_t x = blockIdx.x * blockDim.x + threadIdx.x;
     size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x == 0 || x >= width - 1 || y == 0 || y >= height - 1) {
+    // The launch grid rounds width and height up to whole 16x16 blocks, so threads
+    // outside the image exist. The boundary branch below writes through an index
+    // computed from x and y; without this early return those threads wrote past the
+    // end of the output buffer. Measured on a 10x10 image with a 300-byte buffer:
+    // compute-sanitizer reports "Invalid __global__ write of size 1 bytes ... out of
+    // bounds", which cudaGetLastError does not surface because the overrun lands in
+    // the allocator's padding.
+    if (x >= width || y >= height) {
+        return;
+    }
+
+    if (x == 0 || x == width - 1 || y == 0 || y == height - 1) {
         size_t outIdx = (y * width + x) * 3;
         output[outIdx] = 0;
         output[outIdx + 1] = 0;
@@ -36,6 +47,10 @@ __global__ __launch_bounds__(256, 2) void sobelKernel(const uint8_t* input, uint
 }
 
 void sobelEdgeDetection(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t height, float threshold) {
+    if (width == 0 || height == 0) {
+        return;
+    }
+
     CUDA_CHECK(cudaMemset(d_output, 0, width * height * 3));
 
     dim3 block(16, 16);

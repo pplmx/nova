@@ -210,6 +210,7 @@ add_executable(nova-tests
     sparse/sdpa_head_dim_test.cpp
     sparse/transpose_edge_test.cpp
     sparse/image_morphology_edge_test.cpp
+    sparse/sobel_edge_bounds_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
