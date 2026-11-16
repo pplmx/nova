@@ -48,7 +48,13 @@ bool device_available() {
 class DeviceArray {
 public:
     explicit DeviceArray(const std::vector<float>& host) : count_(host.size()) {
-        cudaMalloc(&ptr_, count_ > 0 ? count_ : 1);
+        // count_ is an element count; the allocation and the memset below both use
+        // bytes. This originally allocated count_ bytes and then memset count_ * 4,
+        // so every such buffer was a quarter of the size the code believed. The
+        // kernels wrote past it, which compute-sanitizer reports as
+        // "Invalid __global__ read ... out of bounds" and which no assertion in the
+        // test could see.
+        cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(float));
         if (count_ > 0) {
             cudaMemcpy(ptr_, host.data(), count_ * sizeof(float),
                        cudaMemcpyHostToDevice);
@@ -56,8 +62,8 @@ public:
     }
 
     explicit DeviceArray(size_t count) : count_(count) {
-        cudaMalloc(&ptr_, count_ > 0 ? count_ : 1);
-        cudaMemset(ptr_, 0, count_ > 0 ? count_ * sizeof(float) : sizeof(float));
+        cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(float));
+        cudaMemset(ptr_, 0, (count_ > 0 ? count_ * sizeof(float) : sizeof(float)));
     }
 
     ~DeviceArray() {
