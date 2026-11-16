@@ -59,16 +59,19 @@ size_t free_bytes() {
 
 // Regression: five runs leaked 8388608 bytes.
 //
-// NOTE ON RELIABILITY: this case reads process-wide free-memory snapshots, so any
-// other process allocating between the two reads is indistinguishable from a leak.
-// It therefore fails under `ctest -j16` with ~1900 tests and passes in isolation.
+// NOTE ON RELIABILITY: this case reads DEVICE-WIDE free-memory snapshots
+// (cudaMemGetInfo aggregates every process), so any other process allocating
+// between the two reads is indistinguishable from a leak. It therefore cannot run
+// concurrently with other GPU tests. It lives in its own suite name so CMake can
+// exclude it from the parallel discovery set and register it separately with
+// RUN_SERIAL, which is where it means something.
 // A batch-to-batch comparison was tried to work around that and is NOT usable: a
 // steady per-run leak drops both batches equally, so the difference is near zero
 // and the test stops detecting the very defect it exists for. The measurement is
 // kept, with the constraint stated: run this suite serially, or with no competing
 // GPU work, for the leak check to mean anything. It does catch the pre-fix code
 // there, reporting 6291456 bytes lost across five runs against a 262144 tolerance.
-TEST(RobustnessProfileTest, RepeatedRunsDoNotLeakDeviceMemory) {
+TEST(RobustnessProfileSerialTest, RepeatedRunsDoNotLeakDeviceMemory) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
     }
@@ -162,7 +165,10 @@ TEST(RobustnessProfileTest, SafetyReportIsRepeatable) {
     EXPECT_EQ(first.issues_found, second.issues_found);
 }
 
-TEST(RobustnessProfileTest, SafetyReportDoesNotLeakBetweenCalls) {
+// Same constraint as RepeatedRunsDoNotLeakDeviceMemory: device-wide free-memory
+// snapshots cannot distinguish a leak from a neighbour allocating, so this lives in
+// the serial suite too.
+TEST(RobustnessProfileSerialTest, SafetyReportDoesNotLeakBetweenCalls) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
     }

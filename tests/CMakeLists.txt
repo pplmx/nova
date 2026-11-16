@@ -347,7 +347,16 @@ target_include_directories(segmented_sort-tests PRIVATE
 add_test(NAME segmented_sort COMMAND segmented_sort-tests)
 
 include(GoogleTest)
-gtest_discover_tests(nova-tests)
+# The leak measurement reads device-wide free memory, so it cannot share the
+# device with another test process. Exclude it from the parallel discovery set and
+# register it separately as a serial test.
+gtest_discover_tests(nova-tests
+    TEST_FILTER "-RobustnessProfileSerialTest.*"
+)
+
+add_test(NAME robustness_profile_serial
+         COMMAND nova-tests --gtest_filter=RobustnessProfileSerialTest.*)
+set_tests_properties(robustness_profile_serial PROPERTIES RUN_SERIAL TRUE)
 
 # Fuzz Testing
 include(CMakeFuzz.txt)
