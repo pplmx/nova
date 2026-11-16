@@ -201,6 +201,7 @@ add_executable(nova-tests
     sparse/device_bandwidth_formula_test.cpp
     sparse/fp8_activation_kernels_test.cpp
     sparse/fp8_gemm_test.cpp
+    sparse/benchmark_units_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

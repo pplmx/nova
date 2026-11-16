@@ -48,8 +48,14 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_quantization(
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    float total_bytes = static_cast<float>(data.size()) * sizeof(float) * config_.benchmark_runs;
-    result.throughput_gbps = total_bytes / duration.count();
+    // throughput_gbps is printed as GB/s, so the byte count must be scaled by the
+    // duration in seconds and then divided by 1e9. Dividing bytes by microseconds
+    // yields MB/s, which reported values ~1000x too large: a 1 MiB buffer measured
+    // as 364088.88 GB/s against a device whose peak is about 2039 GB/s.
+    const float total_bytes =
+        static_cast<float>(data.size()) * sizeof(float) * config_.benchmark_runs;
+    result.throughput_gbps =
+        total_bytes / (static_cast<float>(duration.count()) * 1e3f);
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
     CUDA_CHECK(cudaMemcpy(quantized.data(), d_quantized, data.size() * sizeof(FP8E4M3), cudaMemcpyDeviceToHost));
@@ -100,8 +106,12 @@ BenchmarkResult QuantizationBenchmark::benchmark_int8_quantization(
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    float total_bytes = static_cast<float>(data.size()) * sizeof(float) * config_.benchmark_runs;
-    result.throughput_gbps = total_bytes / duration.count();
+    // Same unit correction as the quantization benchmark above: bytes per
+    // microsecond is MB/s, not GB/s.
+    const float total_bytes =
+        static_cast<float>(data.size()) * sizeof(float) * config_.benchmark_runs;
+    result.throughput_gbps =
+        total_bytes / (static_cast<float>(duration.count()) * 1e3f);
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
     CUDA_CHECK(cudaFree(d_data));
@@ -154,9 +164,16 @@ BenchmarkResult QuantizationBenchmark::benchmark_fp8_gemm(
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    size_t flops = 2ULL * m * k * n;
-    float total_flops = static_cast<float>(flops) * config_.benchmark_runs;
-    result.throughput_gbps = total_flops / duration.count();
+    // This field is printed as GB/s, but the value here is a compute rate. Report
+    // the memory traffic the product actually moves (each operand is one byte in
+    // FP8) so the number means what its name and its printf say.
+    const size_t operand_bytes =
+        (static_cast<size_t>(m) * k + static_cast<size_t>(k) * n +
+         static_cast<size_t>(m) * n) * sizeof(FP8E4M3);
+    const float total_bytes =
+        static_cast<float>(operand_bytes) * config_.benchmark_runs;
+    result.throughput_gbps =
+        total_bytes / (static_cast<float>(duration.count()) * 1e3f);
     result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
     CUDA_CHECK(cudaFree(d_a));
@@ -374,9 +391,15 @@ BenchmarkResult benchmark_fp8_gemm_throughput(
     float ms;
     CUDA_CHECK(cudaEventElapsedTime(&ms, start, end));
 
-    size_t flops = 2ULL * m * k * n;
-    float total_flops = static_cast<float>(flops) * num_runs * 1e9f;
-    result.throughput_gbps = total_flops / (ms * 1e6f);
+    // cudaEventElapsedTime reports milliseconds, so bytes / ms * 1e3 = bytes/s and
+    // bytes/s / 1e9 = GB/s. The previous expression multiplied the FLOP count by
+    // 1e9 and divided by ms * 1e6, which both mixed FLOPs into a GB/s field and
+    // scaled it to a figure no hardware could produce.
+    const size_t operand_bytes =
+        (static_cast<size_t>(m) * k + static_cast<size_t>(k) * n +
+         static_cast<size_t>(m) * n) * sizeof(FP8E4M3);
+    const float total_bytes = static_cast<float>(operand_bytes) * num_runs;
+    result.throughput_gbps = total_bytes / ms * 1e3f / 1e9f;
     result.latency_us = ms * 1000.0f / num_runs;
 
     CUDA_CHECK(cudaEventDestroy(start));
