@@ -58,6 +58,12 @@ inline std::size_t grid_for(std::size_t n) {
     return (n + kBlockSize - 1) / kBlockSize;
 }
 
+/// True when the launch has nothing to do. A zero-sized grid is rejected by CUDA
+/// with "invalid configuration argument", which report_launch_error only prints to
+/// stderr — so an empty tensor produced a launch failure that no caller could
+/// observe through cudaGetLastError, because reading the error clears it.
+inline bool empty_launch(std::size_t n) { return n == 0; }
+
 inline void report_launch_error(const char* name) {
     const cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -69,18 +75,27 @@ inline void report_launch_error(const char* name) {
 
 template<typename T>
 void relu(const T* input, T* output, std::size_t n, cudaStream_t stream) {
+    if (empty_launch(n)) {
+        return;
+    }
     relu_kernel<<<grid_for(n), kBlockSize, 0, stream>>>(input, output, n);
     report_launch_error("relu");
 }
 
 template<typename T>
 void gelu(const T* input, T* output, std::size_t n, cudaStream_t stream) {
+    if (empty_launch(n)) {
+        return;
+    }
     gelu_kernel<<<grid_for(n), kBlockSize, 0, stream>>>(input, output, n);
     report_launch_error("gelu");
 }
 
 template<typename T>
 void sigmoid(const T* input, T* output, std::size_t n, cudaStream_t stream) {
+    if (empty_launch(n)) {
+        return;
+    }
     sigmoid_kernel<<<grid_for(n), kBlockSize, 0, stream>>>(input, output, n);
     report_launch_error("sigmoid");
 }
@@ -88,6 +103,9 @@ void sigmoid(const T* input, T* output, std::size_t n, cudaStream_t stream) {
 template<typename T>
 void leaky_relu(const T* input, T* output, std::size_t n, float alpha,
                 cudaStream_t stream) {
+    if (empty_launch(n)) {
+        return;
+    }
     leaky_relu_kernel<<<grid_for(n), kBlockSize, 0, stream>>>(input, output, n, alpha);
     report_launch_error("leaky_relu");
 }
