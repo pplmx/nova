@@ -91,7 +91,9 @@ DeviceMemoryBandwidth DeviceMemoryBandwidth::query(int device) {
     result.d2h_gbps = 0;
     result.d2d_gbps = 0;
 
-    int old_device;
+    // Start from a known value: if cudaGetDevice failed, CUDA_CHECK throws before
+    // the restore site, so this only guards against a future non-throwing form.
+    int old_device = 0;
     CUDA_CHECK(cudaGetDevice(&old_device));
     CUDA_CHECK(cudaSetDevice(device));
 
@@ -102,11 +104,20 @@ DeviceMemoryBandwidth DeviceMemoryBandwidth::query(int device) {
         CUDA_CHECK(cudaDeviceGetAttribute(&memory_clock_khz, cudaDevAttrMemoryClockRate, device));
         CUDA_CHECK(cudaDeviceGetAttribute(&memory_bus_width, cudaDevAttrGlobalMemoryBusWidth, device));
 
-        double memory_clock_ghz = memory_clock_khz / 1e6;
-        double bus_width_bytes = memory_bus_width / 8.0;
+        // Peak bandwidth = clock * bus width * 2 / 8. The factor of two is the
+        // DDR double-pumping that every GDDR/HBM part uses: two transfers per
+        // clock. Without it the result was EXACTLY half the real figure — measured
+        // 968.5 GB/s for the d2d path on an A100-80GB whose specification and
+        // measured peak are both 2039 GB/s. The same formula elsewhere in this
+        // repository (get_device_properties in device_info.h) already applies the
+        // factor of two.
+        const double memory_clock_ghz = memory_clock_khz / 1e6;
+        const double bus_width_bytes = memory_bus_width / 8.0;
 
-        double peak_bandwidth = memory_clock_ghz * bus_width_bytes;
+        const double peak_bandwidth = memory_clock_ghz * bus_width_bytes * 2.0;
 
+        // Achieving a fixed fraction of peak differs by direction: device-to-device
+        // copies avoid the PCIe link entirely.
         result.h2d_gbps = peak_bandwidth * 0.9;
         result.d2h_gbps = peak_bandwidth * 0.9;
         result.d2d_gbps = peak_bandwidth * 0.95;
