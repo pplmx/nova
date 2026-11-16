@@ -28,11 +28,12 @@ CacheMetrics CacheAnalyzer::analyze(int device_id) {
         return metrics;
     }
 
-    metrics.available = true;
-
-    metrics.l1_hit_rate = 0.85;
-    metrics.l2_hit_rate = 0.95;
-    metrics.texture_hit_rate = 0.99;
+    // The hit rates that used to be set here (0.85, 0.95, 0.99) were literals, not
+    // measurements: no counter was read, and analyze_kernel() picked its numbers by
+    // substring-matching the kernel name. They were plausible enough to be mistaken for
+    // real results by anything that logged them, which is worse than reporting nothing.
+    metrics.available = false;
+    metrics.error_message = "cache hit rates require CUPTI, which this build does not use";
 
     return metrics;
 }
@@ -51,20 +52,16 @@ CacheMetrics CacheAnalyzer::analyze_kernel(const std::string& kernel_name, int d
         return metrics;
     }
 
-    metrics.available = true;
-
-    if (kernel_name.find("shared") != std::string::npos) {
-        metrics.l1_hit_rate = 0.95;
-        metrics.l2_hit_rate = 0.98;
-    } else if (kernel_name.find("global") != std::string::npos) {
-        metrics.l1_hit_rate = 0.70;
-        metrics.l2_hit_rate = 0.85;
-    } else {
-        metrics.l1_hit_rate = 0.85;
-        metrics.l2_hit_rate = 0.92;
-    }
-
-    metrics.texture_hit_rate = 0.99;
+    // These numbers were chosen by substring-matching the kernel name against "shared"
+    // and "global" — a kernel called "shared_matmul" got 95% L1 and one called "matmul"
+    // got 85%, with nothing measured either way. Reporting a fabricated figure under a
+    // field named l1_hit_rate is the most damaging shape a stub can take, because the
+    // value looks like data.
+    (void)kernel_name;
+    (void)device_id;
+    metrics.available = false;
+    metrics.error_message = "per-kernel cache hit rates require CUPTI, which this build "
+                           "does not use";
 
     return metrics;
 }
@@ -78,7 +75,11 @@ std::string CacheAnalyzer::get_error_message() const {
 }
 
 bool CacheAnalyzer::check_cupti_availability() {
-    return true;
+    // Nothing in this file links against CUPTI or calls into it, so the honest answer is
+    // that cache counters are not available. This used to return true unconditionally,
+    // which let analyze() and analyze_kernel() run to completion and hand back invented
+    // hit rates (see below).
+    return false;
 }
 
 BandwidthAnalysis::BandwidthAnalysis()

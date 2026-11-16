@@ -216,6 +216,8 @@ add_executable(nova-tests
     sparse/fft_roundtrip_test.cpp
     sparse/softmax_kernel_test.cpp
     sparse/memory_pool_release_test.cpp
+    sparse/dashboard_export_test.cpp
+    sparse/cache_analyzer_honesty_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

@@ -206,7 +206,16 @@ std::string DashboardGenerator::generate_html() const {
 }
 
 bool DashboardGenerator::write_files(const std::string& output_dir) const {
-    return true;
+    // This used to return true without touching the filesystem, and generate_html
+    // returns a placeholder saying the C++ implementation does not exist. A caller that
+    // checked the return value concluded a dashboard had been written; measured, the
+    // output directory was never even created.
+    //
+    // Reporting false is the honest answer and is what a caller can act on: either use
+    // the Python generator the placeholder names, or treat the C++ path as unavailable.
+    // Returning true here would keep a silent no-op indistinguishable from success.
+    (void)output_dir;
+    return false;
 }
 
 }  // namespace cuda::performance::dashboard

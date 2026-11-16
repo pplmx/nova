@@ -106,6 +106,10 @@ public:
     [[nodiscard]] std::string generate_html() const;
     [[nodiscard]] std::string generate_json() const;
 
+    /// Not implemented in C++: generate_html() returns a placeholder pointing at
+    /// scripts/benchmark/generate_performance_dashboard.py, and this function writes
+    /// nothing. It returns false to say so. It previously returned true, which made a
+    /// no-op indistinguishable from a successful export.
     [[nodiscard]] bool write_files(const std::string& output_dir) const;
 
 private:
