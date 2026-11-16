@@ -538,6 +538,18 @@ void SyncBatchNorm::backward(
     int spatial_size,
     cudaStream_t stream
 ) {
+    // An empty batch or spatial extent has nothing to differentiate, and both
+    // divisions below break on it: the element count is zero (zero-sized grids,
+    // which CUDA rejects as "invalid configuration argument") and
+    // batch_size * spatial_size is zero (1/0 = inf, which then multiplies every
+    // gradient). Measured before the fix: an illegal memory access for both.
+    if (batch_size <= 0 || spatial_size <= 0) {
+        throw ::std::invalid_argument(
+            "SyncBatchNorm::backward: batch_size and spatial_size must be positive, "
+            "got batch_size=" + ::std::to_string(batch_size) +
+            " spatial_size=" + ::std::to_string(spatial_size));
+    }
+
     int n = batch_size * num_features_ * spatial_size;
     int block_size = 256;
     int grid_size = (num_features_ + block_size - 1) / block_size;

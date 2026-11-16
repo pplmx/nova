@@ -206,6 +206,7 @@ add_executable(nova-tests
     sparse/autotuner_search_space_test.cpp
     sparse/occupancy_calculator_test.cpp
     sparse/fp_determinism_verdict_test.cpp
+    sparse/sync_batch_norm_backward_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
@@ -358,13 +359,20 @@ include(GoogleTest)
 # The leak measurement reads device-wide free memory, so it cannot share the
 # device with another test process. Exclude it from the parallel discovery set and
 # register it separately as a serial test.
+# Suites whose assertions compare device-wide memory snapshots: they cannot share the
+# device with another test process, so they are excluded from the parallel discovery
+# set and registered separately with RUN_SERIAL.
 gtest_discover_tests(nova-tests
-    TEST_FILTER "-RobustnessProfileSerialTest.*"
+    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*"
 )
 
 add_test(NAME robustness_profile_serial
          COMMAND nova-tests --gtest_filter=RobustnessProfileSerialTest.*)
 set_tests_properties(robustness_profile_serial PROPERTIES RUN_SERIAL TRUE)
+
+add_test(NAME tensor_parallel_serial
+         COMMAND nova-tests --gtest_filter=TensorParallelSerialTest.*)
+set_tests_properties(tensor_parallel_serial PROPERTIES RUN_SERIAL TRUE)
 
 # Fuzz Testing
 include(CMakeFuzz.txt)

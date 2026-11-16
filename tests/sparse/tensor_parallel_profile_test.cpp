@@ -44,7 +44,9 @@ bool device_available() {
 }  // namespace
 
 // Regression: this returned the device total, not its usage.
-TEST(TensorParallelProfilerTest, PeakMemoryUsageReportsUsageNotCapacity) {
+// Same constraint as AvailableMemoryIsFreeMemory: it compares two device-wide
+// snapshots, which a neighbour's allocations can shift between reads.
+TEST(TensorParallelSerialTest, PeakMemoryUsageReportsUsageNotCapacity) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
     }
@@ -78,7 +80,12 @@ TEST(TensorParallelProfilerTest, PeakMemoryUsageReportsUsageNotCapacity) {
 // available_memory was always correct; this pins its contract rather than
 // guarding a past defect. The peak_memory_usage regression is the separate test
 // above, which is where the swapped-argument bug actually lived.
-TEST(TensorParallelProfilerTest, AvailableMemoryIsFreeMemory) {
+// Device-wide snapshots cannot be compared under a parallel test run: cudaMemGetInfo
+// aggregates every process, so a neighbour allocating between the two reads looks
+// like a wrong answer. A 1% margin failed first, then 20%; the right fix is to give
+// the measurement the device to itself, so it lives in the serial suite registered
+// with RUN_SERIAL rather than being loosened until it can no longer detect anything.
+TEST(TensorParallelSerialTest, AvailableMemoryIsFreeMemory) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
     }
