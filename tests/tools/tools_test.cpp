@@ -135,7 +135,23 @@ TEST_F(ToolsTest, BandwidthAnalyzerReport) {
     BandwidthAnalyzer& analyzer = BandwidthAnalyzer::instance();
     analyzer.clear();
 
+    // 4096 bytes in 2 ms is 2.048 MB/s, i.e. 0.002048 GB/s.
     analyzer.record_operation("test_op", 4096, 2.0f);
+
+    // This case used to stop after writing a file, so it passed whether the report
+    // contained the operation, was empty, or failed to write at all. Asserting on the
+    // recorded statistics is what makes it a test.
+    const auto stats = analyzer.get_stats();
+    ASSERT_FALSE(stats.empty()) << "the recorded operation produced no statistics";
+    ASSERT_EQ(stats.front().name, "test_op");
+    EXPECT_EQ(stats.front().total_bytes, 4096u);
+    EXPECT_FLOAT_EQ(stats.front().total_duration_ms, 2.0f);
+
+    // bytes / (ms * 1e6) = GB/s
+    const float expected_gbps = 4096.0f / (2.0f * 1e6f);
+    EXPECT_NEAR(stats.front().bandwidth_gbps, expected_gbps, 1e-6f)
+        << "bandwidth must be bytes over seconds in GB/s";
+
     analyzer.export_report("/tmp/bandwidth_report.md");
 }
 

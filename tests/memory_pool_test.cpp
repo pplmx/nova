@@ -149,6 +149,18 @@ TEST_F(BufferTest, VoidBufferCopyFrom) {
     cuda::memory::Buffer<void> buffer(100);
     std::vector<char> host(100, 42);
     buffer.copy_from(host.data(), 100);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    // This case used to end after the copy, so it passed whether or not the copy did
+    // anything at all: a no-op implementation, a silently failed memcpy, or a wrong
+    // direction would all satisfy it. Reading the bytes back is what makes it a test.
+    std::vector<char> readback(100, 0);
+    buffer.copy_to(readback.data(), 100);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    for (size_t i = 0; i < readback.size(); ++i) {
+        ASSERT_EQ(readback[i], 42) << "byte " << i << " did not survive the round trip";
+    }
 }
 
 TEST_F(BufferTest, VoidBufferRelease) {

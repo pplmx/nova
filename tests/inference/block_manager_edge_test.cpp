@@ -759,6 +759,30 @@ TEST_F(LongPromptIntegrationTest, LongPromptKVCacheStats) {
     config.block_size = 16;
     config.num_gpu_blocks = 256;
     config.max_model_len = 8192;
+
+    // This case used to build the config and stop there, so it passed without
+    // constructing a BlockManager at all — no code under test ran. It now checks that
+    // the statistics follow actual allocation.
+    //
+    // The assertions are relative rather than absolute: num_gpu_blocks is a request,
+    // and the manager sizes the pool it actually got (4096 blocks on this device for a
+    // request of 256, measured). Asserting the literal 256, as my first version did,
+    // failed for that reason.
+    BlockManager manager(config);
+    const int free_before = manager.get_num_free_blocks();
+    ASSERT_GT(free_before, 0) << "a fresh pool must report available blocks";
+
+    Sequence* sequence = manager.create_sequence(1, 64);
+    ASSERT_NE(sequence, nullptr) << "the manager refused to create a sequence";
+
+    // A 64-token sequence at block_size 16 needs four blocks.
+    const int free_after = manager.get_num_free_blocks();
+    EXPECT_EQ(free_after, free_before - 4)
+        << "handing out blocks must be reflected in the free count";
+
+    manager.free_sequence(1);
+    EXPECT_EQ(manager.get_num_free_blocks(), free_before)
+        << "freeing the sequence must return its blocks to the pool";
 }
 
 TEST_F(LongPromptIntegrationTest, LongPromptSequenceIsolation) {

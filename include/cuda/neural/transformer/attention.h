@@ -81,6 +81,10 @@ public:
     void get_encoding(float* output, int seq_len, cudaStream_t stream = nullptr);
 
     void set_dropout(float rate);
+    /// The dropout rate currently in effect. Exposed so a caller can confirm what it
+    /// set: without it the setter wrote a private field that nothing could read back,
+    /// and no test could distinguish a working setter from a no-op.
+    [[nodiscard]] float get_dropout() const { return config_.dropout_rate; }
     PositionalEncodingType get_type() const { return config_.type; }
 
 private:

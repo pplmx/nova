@@ -138,7 +138,13 @@ TEST_F(PositionalEncodingTest, SetDropout) {
     config.type = PositionalEncodingType::Sinusoidal;
 
     PositionalEncoding pos_enc(config);
+    // The default comes from the config; the setter must replace it.
+    EXPECT_FLOAT_EQ(pos_enc.get_dropout(), 0.0f);
+
     pos_enc.set_dropout(0.2f);
+    EXPECT_FLOAT_EQ(pos_enc.get_dropout(), 0.2f)
+        << "the setter must be observable through the getter; the previous version of "
+           "this case called the setter and asserted nothing";
 }
 
 TEST_F(PositionalEncodingTest, GetEncoding) {
