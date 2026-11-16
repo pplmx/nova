@@ -27,6 +27,12 @@ __global__ void dequantize_fp8_kernel(const SrcT* src, float* dst, size_t n, flo
 } // namespace detail
 
 void quantize_f32_to_fp8e4m3(const float* src, FP8E4M3* dst, size_t n, cudaStream_t stream) {
+    // Nothing to convert. The sibling file fp8_activation.cu already short-circuits on
+    // n == 0 (empty_launch); here the zero-sized grid reached CUDA and was rejected with
+    // a generic "invalid configuration argument".
+    if (n == 0) {
+        return;
+    }
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
 
@@ -40,6 +46,12 @@ void quantize_f32_to_fp8e4m3(const float* src, FP8E4M3* dst, size_t n, cudaStrea
 }
 
 void quantize_f32_to_fp8e5m2(const float* src, FP8E5M2* dst, size_t n, cudaStream_t stream) {
+    // Nothing to convert. The sibling file fp8_activation.cu already short-circuits on
+    // n == 0 (empty_launch); here the zero-sized grid reached CUDA and was rejected with
+    // a generic "invalid configuration argument".
+    if (n == 0) {
+        return;
+    }
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
 
@@ -53,6 +65,12 @@ void quantize_f32_to_fp8e5m2(const float* src, FP8E5M2* dst, size_t n, cudaStrea
 }
 
 void dequantize_fp8e4m3_to_f32(const FP8E4M3* src, float* dst, size_t n, float scale, cudaStream_t stream) {
+    // Nothing to convert. The sibling file fp8_activation.cu already short-circuits on
+    // n == 0 (empty_launch); here the zero-sized grid reached CUDA and was rejected with
+    // a generic "invalid configuration argument".
+    if (n == 0) {
+        return;
+    }
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
 
@@ -66,6 +84,12 @@ void dequantize_fp8e4m3_to_f32(const FP8E4M3* src, float* dst, size_t n, float s
 }
 
 void dequantize_fp8e5m2_to_f32(const FP8E5M2* src, float* dst, size_t n, float scale, cudaStream_t stream) {
+    // Nothing to convert. The sibling file fp8_activation.cu already short-circuits on
+    // n == 0 (empty_launch); here the zero-sized grid reached CUDA and was rejected with
+    // a generic "invalid configuration argument".
+    if (n == 0) {
+        return;
+    }
     constexpr size_t block_size = 256;
     size_t grid_size = (n + block_size - 1) / block_size;
 

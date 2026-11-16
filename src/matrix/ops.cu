@@ -79,7 +79,14 @@ __global__ __launch_bounds__(256, 2) void elementwiseAddKernel(const T* a, const
 
 template <typename T>
 void matrixElementwiseAdd(const T* d_a, const T* d_b, T* d_c, int rows, int cols) {
-    size_t total = rows * cols;
+    // The sibling transpose entry points in this file already return early for an empty
+    // extent. Without the guard a zero or negative rows/cols makes a zero-sized grid,
+    // which CUDA rejects with a generic "invalid configuration argument"; a negative
+    // product additionally wraps once converted to size_t. Both measured.
+    if (rows <= 0 || cols <= 0) {
+        return;
+    }
+    size_t total = static_cast<size_t>(rows) * static_cast<size_t>(cols);
     int block = 256;
     int grid = (total + block - 1) / block;
 
@@ -100,7 +107,11 @@ __global__ __launch_bounds__(256, 2) void elementwiseMultiplyKernel(const T* a, 
 
 template <typename T>
 void matrixElementwiseMultiply(const T* d_a, const T* d_b, T* d_c, int rows, int cols) {
-    size_t total = rows * cols;
+    // Same guard and the same reason as matrixElementwiseAdd above.
+    if (rows <= 0 || cols <= 0) {
+        return;
+    }
+    size_t total = static_cast<size_t>(rows) * static_cast<size_t>(cols);
     int block = 256;
     int grid = (total + block - 1) / block;
 
@@ -120,6 +131,10 @@ __global__ __launch_bounds__(256, 2) void scaleKernel(T* matrix, T scalar, size_
 
 template <typename T>
 void matrixScale(T* d_matrix, T scalar, int size) {
+    // Scaling nothing is a no-op; a negative size would make a negative grid dimension.
+    if (size <= 0) {
+        return;
+    }
     int block = 256;
     int grid = (size + block - 1) / block;
 
