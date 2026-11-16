@@ -225,6 +225,28 @@ void validate_sdpa_dims(int m, int local_heads, int head_dim, const char* fn) {
         throw std::invalid_argument(std::string(fn) +
                                     " requires positive m, local_heads, head_dim");
     }
+
+    // The kernel uses (kSdpaBlock / 32 + head_dim) floats of dynamic shared memory.
+    // Past the per-block limit CUDA rejects the launch with a generic "invalid
+    // argument", which names neither the parameter nor the limit — measured with
+    // head_dim = 20000, which needs 78 KiB against the 48 KiB default. Reject it
+    // here with the computed requirement so the caller knows what to change.
+    constexpr int kReductionSlots = kSdpaBlock / 32;
+    const size_t required_bytes =
+        static_cast<size_t>(kReductionSlots + head_dim) * sizeof(float);
+
+    int max_shared_per_block = 0;
+    if (cudaDeviceGetAttribute(&max_shared_per_block,
+                               cudaDevAttrMaxSharedMemoryPerBlock, 0) == cudaSuccess &&
+        max_shared_per_block > 0) {
+        if (required_bytes > static_cast<size_t>(max_shared_per_block)) {
+            throw std::invalid_argument(
+                std::string(fn) + ": head_dim " + std::to_string(head_dim) +
+                " needs " + std::to_string(required_bytes) +
+                " bytes of shared memory per block, exceeding the device limit of " +
+                std::to_string(max_shared_per_block));
+        }
+    }
 }
 
 }  // namespace

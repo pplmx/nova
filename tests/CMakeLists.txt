@@ -207,6 +207,7 @@ add_executable(nova-tests
     sparse/occupancy_calculator_test.cpp
     sparse/fp_determinism_verdict_test.cpp
     sparse/sync_batch_norm_backward_test.cpp
+    sparse/sdpa_head_dim_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
