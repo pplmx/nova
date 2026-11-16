@@ -36,7 +36,15 @@ public:
     void reset();
 
     struct DeterminismResult {
+        /// True only when at least two iterations were actually compared and every
+        /// one matched exactly. An empty buffer or a single iteration has nothing to
+        /// compare, so it cannot establish determinism.
         bool deterministic;
+        /// True when a comparison really happened. Without it a caller could not
+        /// tell "verified identical" from "never looked": the previous version
+        /// reported deterministic = true for null data and for iterations == 1,
+        /// having compared nothing at all.
+        bool verified;
         size_t iteration_count;
         double max_difference;
         double mean_difference;

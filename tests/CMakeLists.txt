@@ -205,6 +205,7 @@ add_executable(nova-tests
     sparse/kernel_stats_sentinel_test.cpp
     sparse/autotuner_search_space_test.cpp
     sparse/occupancy_calculator_test.cpp
+    sparse/fp_determinism_verdict_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)

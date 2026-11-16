@@ -61,14 +61,21 @@ void FPDeterminismControl::reset() {
 FPDeterminismControl::DeterminismResult
 FPDeterminismControl::verify_determinism(const void* data, size_t size, size_t iterations) {
     DeterminismResult result;
-    result.deterministic = true;
     result.iteration_count = iterations;
     result.max_difference = 0.0;
     result.mean_difference = 0.0;
 
+    // Nothing to compare: no buffer, or fewer than two samples. Reporting
+    // deterministic = true here claimed a verdict the function never reached —
+    // measured on null data and on iterations == 1. Both flags stay false so a
+    // caller can see that no comparison happened.
     if (iterations < 2 || data == nullptr || size == 0) {
+        result.deterministic = false;
+        result.verified = false;
         return result;
     }
+
+    result.verified = true;
 
     const double* values = static_cast<const double*>(data);
 
