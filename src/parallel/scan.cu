@@ -80,9 +80,22 @@ namespace detail {
         }
         __syncthreads();
 
+        // Hillis-Steele inclusive scan. Each step must be split into read, sync,
+        // write: without the barrier between the read and the write, thread `tid`
+        // reads temp[tid - offset] while thread `tid - offset` may be overwriting it
+        // in the same step. compute-sanitizer --tool racecheck reports exactly that
+        // on this kernel:
+        //     Race reported between Read access at
+        //     exclusiveScanOptimizedKernelImpl<int, 2>(...)+0x170
+        // The results happened to be right because the value a thread reads is from
+        // the previous step whenever the hardware schedules the read first, but that
+        // is a scheduling assumption, not a guarantee.
         for (int offset = 1; offset < size; offset *= 2) {
-            if (tid >= offset) {
-                temp[tid] += temp[tid - offset];
+            const T value = (tid >= static_cast<size_t>(offset)) ? temp[tid - offset]
+                                                                 : T{};
+            __syncthreads();
+            if (tid >= static_cast<size_t>(offset)) {
+                temp[tid] += value;
             }
             __syncthreads();
         }
