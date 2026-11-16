@@ -23,7 +23,15 @@ void KernelStatsCollector::record_kernel(const char* name,
             found = true;
             stat.invocations++;
             stat.total_time_us += elapsed_us;
-            stat.min_time_us = std::min(stat.min_time_us, static_cast<double>(elapsed_us));
+            // A launcher-created entry starts at 0 (see record_launch). The first
+            // timed invocation must seed the minimum rather than be clamped by it.
+            if (stat.invocations == 1) {
+                stat.min_time_us = elapsed_us;
+                stat.max_time_us = elapsed_us;
+            } else {
+                stat.min_time_us =
+                    std::min(stat.min_time_us, static_cast<double>(elapsed_us));
+            }
             stat.max_time_us = std::max(stat.max_time_us, static_cast<double>(elapsed_us));
             stat.avg_time_us = stat.total_time_us / stat.invocations;
             stat.blocks_launched += blocks;
@@ -65,6 +73,11 @@ void KernelStatsCollector::record_launch(const char* name,
         stat.invocations = 0;
         stat.blocks_launched = blocks;
         stat.threads_per_block = threads_per_block;
+        // min_time_us defaults to DBL_MAX so the first recorded timing replaces
+        // it. An entry created here has never been timed, so reporting DBL_MAX
+        // leaked that sentinel to callers while max_time_us and avg_time_us in the
+        // same struct reported 0. Nothing has been measured, so nothing is minimal.
+        stat.min_time_us = 0.0;
         stats_.push_back(stat);
     }
 }
