@@ -73,9 +73,22 @@ void PageRankResult::clear() {
         d_ranks = nullptr;
     }
     ranks = nullptr;
+    // num_vertices describes the buffers. Leaving it at the old size after the
+    // buffers are released made the object claim memory it no longer owns: a
+    // subsequent upload()/download() would copy num_vertices elements through a
+    // null pointer.
+    num_vertices = 0;
 }
 
 int PageRankResult::top_vertex() const {
+    // A default-constructed, cleared or moved-from result has no ranks at all:
+    // ranks is nullptr after a move and reads out of bounds for num_vertices == 0.
+    // Calling top_vertex() on such an object dereferenced null and aborted the
+    // process. There is no vertex to report, so say so rather than crash.
+    if (num_vertices <= 0 || ranks == nullptr) {
+        return -1;
+    }
+
     int best = 0;
     float best_rank = ranks[0];
     for (int v = 1; v < num_vertices; ++v) {

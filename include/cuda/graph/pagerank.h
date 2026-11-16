@@ -30,6 +30,11 @@ struct PageRankResult {
 
     float rank_at(int v) const { return ranks[v]; }
 
+    /**
+     * @brief Index of the highest-ranked vertex
+     * @return The vertex index, or -1 when the result holds no vertices
+     *         (default-constructed, cleared, or moved-from)
+     */
     int top_vertex() const;
     std::vector<int> top_k(int k) const;
 
