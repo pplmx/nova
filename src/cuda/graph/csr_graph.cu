@@ -83,12 +83,26 @@ void CSRGraph::clear() {
     weights = nullptr;
 
     free_device();
+
+    // The counts describe the buffers, which no longer exist. Leaving them set
+    // made memory_usage() report memory the object had already released (measured:
+    // 64 bytes for a 3-vertex graph after clear()) and let any traversal compute
+    // bounds from vertices it cannot read.
+    num_vertices = 0;
+    num_edges = 0;
 }
 
 size_t CSRGraph::memory_usage() const {
-    size_t host_mem = (num_vertices + 1) * sizeof(int) + num_edges * (sizeof(int) + sizeof(float));
-    size_t device_mem = host_mem;
-    return host_mem + device_mem;
+    // Report what is actually held. A default-constructed or cleared graph has no
+    // buffers, but the (num_vertices + 1) term still produced sizeof(int) and the
+    // function claimed 2 * sizeof(int) bytes — memory that does not exist.
+    if (row_offsets == nullptr) {
+        return 0;
+    }
+    const size_t host_mem = static_cast<size_t>(num_vertices + 1) * sizeof(int) +
+                            static_cast<size_t>(num_edges) *
+                                (sizeof(int) + sizeof(float));
+    return host_mem * 2;  // host copy plus the device copy
 }
 
 std::unique_ptr<CSRGraph> create_csr_from_edges(

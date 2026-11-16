@@ -75,6 +75,9 @@ TEST(TensorParallelProfilerTest, PeakMemoryUsageReportsUsageNotCapacity) {
     }
 }
 
+// available_memory was always correct; this pins its contract rather than
+// guarding a past defect. The peak_memory_usage regression is the separate test
+// above, which is where the swapped-argument bug actually lived.
 TEST(TensorParallelProfilerTest, AvailableMemoryIsFreeMemory) {
     if (!device_available()) {
         GTEST_SKIP() << "no CUDA device";
@@ -86,10 +89,14 @@ TEST(TensorParallelProfilerTest, AvailableMemoryIsFreeMemory) {
 
     const size_t available = TensorParallelProfiler::available_memory(0);
 
-    // Another process can take memory between the two calls, so allow a margin
-    // rather than demanding an exact match.
+    // Another process can take memory between the two calls. Under `ctest -j16`
+    // with ~1900 tests, other GPU tests allocate and free freely, so the drift is
+    // far larger than a serial run suggests: a 1% margin failed in the full suite
+    // while passing in isolation. The property being pinned is still meaningful at
+    // a wide margin — available_memory must reflect FREE memory, not the device
+    // capacity — because returning `total` would be off by the entire allocation.
     ASSERT_LE(available, total_mem);
-    const size_t slack = total_mem / 100;
+    const size_t slack = total_mem / 5;  // 20%
     EXPECT_LE(available, free_mem);
     EXPECT_GE(available + slack, free_mem);
 }

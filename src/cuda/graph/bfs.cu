@@ -1,4 +1,6 @@
 #include "cuda/graph/bfs.h"
+#include <stdexcept>
+#include <string>
 
 #include "cuda/device/error.h"
 
@@ -74,6 +76,21 @@ BFSResult& BFSResult::operator=(BFSResult&& other) noexcept {
 }
 
 void BFSResult::init_source(int source) {
+    // A moved-from, cleared or empty result owns no buffers: the fills below
+    // would be no-ops over zero elements, but distances[source] and
+    // visited[source] then write through null — measured "dumped core".
+    if (num_vertices <= 0 || distances == nullptr || visited == nullptr) {
+        throw std::invalid_argument(
+            "BFSResult::init_source: the result holds no vertices");
+    }
+    // source indexes both arrays directly, so an out-of-range vertex would write
+    // past them.
+    if (source < 0 || source >= num_vertices) {
+        throw std::invalid_argument(
+            "BFSResult::init_source: source " + std::to_string(source) +
+            " is outside [0, " + std::to_string(num_vertices) + ")");
+    }
+
     std::fill(distances, distances + num_vertices, -1);
     std::fill(visited, visited + num_vertices, false);
     distances[source] = 0;
@@ -103,6 +120,11 @@ void BFSResult::clear() {
     }
     distances = nullptr;
     visited = nullptr;
+    // The counts describe the buffers. Leaving them set after the buffers are
+    // released made a later upload()/download() copy num_vertices elements
+    // through null pointers, and memory_usage() report memory that is gone.
+    num_vertices = 0;
+    visited_count = 0;
 }
 
 size_t BFSResult::memory_usage() const {
