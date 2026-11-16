@@ -61,10 +61,14 @@ __global__ void fp8_gemm_kernel(
     }
 }
 
-template<int BLOCK_SIZE>
+/// Element-wise multiply-accumulate over a k-length dot product. Templated on the
+/// FP8 format so each encoding is decoded by its own conversion operator: an E5M2
+/// value reinterpreted as E4M3 decodes to a different number (0.5 is 0x38 in E5M2
+/// and 0x30 in E4M3), which silently produced wrong results.
+template<int BLOCK_SIZE, typename T>
 __global__ void fp8_gemm_naive_kernel(
-    const FP8E4M3* __restrict__ a,
-    const FP8E4M3* __restrict__ b,
+    const T* __restrict__ a,
+    const T* __restrict__ b,
     float* __restrict__ c,
     int m, int k, int n,
     float scale_a, float scale_b, float scale_out) {
@@ -176,7 +180,7 @@ void FP8GEMM::forward(
         (m + BLOCK_SIZE - 1) / BLOCK_SIZE
     );
 
-    detail::fp8_gemm_naive_kernel<BLOCK_SIZE><<<grid_dim, block_dim, 0, stream>>>(
+    detail::fp8_gemm_naive_kernel<BLOCK_SIZE, FP8E4M3><<<grid_dim, block_dim, 0, stream>>>(
         a, b, output, m, k, n,
         config.scale_a, config.scale_b, config.scale_out
     );
@@ -244,10 +248,12 @@ void FP8E5M2GEMM::forward(
         (m + BLOCK_SIZE - 1) / BLOCK_SIZE
     );
 
-    detail::fp8_gemm_naive_kernel<BLOCK_SIZE><<<grid_dim, block_dim, 0, stream>>>(
-        reinterpret_cast<const FP8E4M3*>(a),
-        reinterpret_cast<const FP8E4M3*>(b),
-        output, m, k, n,
+    // Instantiate with the caller's own format. Reinterpreting E5M2 as E4M3, as
+    // this did, decodes every value through the wrong exponent/mantissa split: a
+    // 1x1 product of 2 and 3 returned 5.0 instead of 6.0 because 3.0's E5M2 bit
+    // pattern is not 3.0 in E4M3.
+    detail::fp8_gemm_naive_kernel<BLOCK_SIZE, FP8E5M2><<<grid_dim, block_dim, 0, stream>>>(
+        a, b, output, m, k, n,
         config.scale_a, config.scale_b, config.scale_out
     );
 
