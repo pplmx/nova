@@ -119,8 +119,25 @@ void softmax(
     int inner_dim,
     cudaStream_t stream
 ) {
-    int grid_size = outer_dim;
-    int block_size = 256;
+    // The kernel writes one OUTPUT ELEMENT per thread (idx runs over
+    // outer_dim * inner_dim), so the grid must cover that many. It used to launch
+    // outer_dim blocks, which is 256x too few: measured on a 64x1024 input, only the
+    // first 16384 of 65536 elements were written and the rest kept whatever the output
+    // buffer held. The row sums of the result were off by up to 1.0.
+    //
+    // Each thread still walks the whole row to compute its own element's denominator,
+    // so this is O(inner) work per element. That is why it is 195x slower than
+    // softmax_stable (6.62 ms vs 0.034 ms on the same input) even when correct;
+    // softmax_stable is the entry point to use for anything larger than a toy.
+    if (outer_dim <= 0 || inner_dim <= 0) {
+        return;
+    }
+
+    const long long element_count =
+        static_cast<long long>(outer_dim) * static_cast<long long>(inner_dim);
+    const int block_size = 256;
+    const int grid_size =
+        static_cast<int>((element_count + block_size - 1) / block_size);
 
     softmax_kernel<<<grid_size, block_size, 0, stream>>>(
         input, output, outer_dim, inner_dim
