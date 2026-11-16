@@ -1,4 +1,5 @@
 #include "cuda/testing/integration.h"
+#include "cuda/observability/timeline.h"
 
 #include <chrono>
 #include <cuda_runtime.h>
@@ -69,22 +70,38 @@ E2ERobustnessProfileResult run_e2e_robustness_with_profiling() {
 
     IntegrationTestRunner runner;
 
+    // Each probe must release what it acquired. The originals returned the
+    // creation status and dropped the handle, so every run of this profile leaked
+    // 1 MiB of device memory plus a stream and an event — and a robustness suite
+    // that leaks is measuring the wrong thing.
     runner.add_test({"test_memory_allocation", "Memory allocation robustness",
         []() {
             void* ptr = nullptr;
-            return cudaMalloc(&ptr, 1024 * 1024) == cudaSuccess;
+            if (cudaMalloc(&ptr, 1024 * 1024) != cudaSuccess) {
+                return false;
+            }
+            const bool freed = cudaFree(ptr) == cudaSuccess;
+            return freed;
         }});
 
     runner.add_test({"test_stream_creation", "Stream creation robustness",
         []() {
-            cudaStream_t stream;
-            return cudaStreamCreate(&stream) == cudaSuccess;
+            cudaStream_t stream = nullptr;
+            if (cudaStreamCreate(&stream) != cudaSuccess) {
+                return false;
+            }
+            const bool destroyed = cudaStreamDestroy(stream) == cudaSuccess;
+            return destroyed;
         }});
 
     runner.add_test({"test_event_creation", "Event creation robustness",
         []() {
-            cudaEvent_t event;
-            return cudaEventCreate(&event) == cudaSuccess;
+            cudaEvent_t event = nullptr;
+            if (cudaEventCreate(&event) != cudaSuccess) {
+                return false;
+            }
+            const bool destroyed = cudaEventDestroy(event) == cudaSuccess;
+            return destroyed;
         }});
 
     runner.add_test({"test_context_sync", "Context synchronization",
@@ -123,24 +140,81 @@ MemorySafetyValidationResult validate_all_algorithm_memory_safety() {
         std::function<bool()> validate;
     };
 
+    // Every entry here used to be `return true;`. The function therefore reported
+    // all_safe = true with algorithms_validated = 6 having inspected nothing at
+    // all — a claim of memory-safety validation that no code backed. These probes
+    // exercise the device allocation path each algorithm depends on and release
+    // what they take, so the verdict reflects something real.
     std::vector<AlgorithmValidation> algorithms = {
         {"segmented_sort", []() {
+            // Needs a device scratch buffer for the per-segment sort.
+            void* scratch = nullptr;
+            if (cudaMalloc(&scratch, 64 * 1024) != cudaSuccess) {
+                return false;
+            }
+            cudaFree(scratch);
             return true;
         }},
         {"spmv", []() {
-            return true;
+            // Needs a device vector and a row pointer array.
+            float* values = nullptr;
+            int* columns = nullptr;
+            if (cudaMalloc(&values, 1024 * sizeof(float)) != cudaSuccess) {
+                return false;
+            }
+            const bool ok = cudaMalloc(&columns, 1024 * sizeof(int)) == cudaSuccess;
+            cudaFree(values);
+            if (ok) {
+                cudaFree(columns);
+            }
+            return ok;
         }},
         {"sample_sort", []() {
-            return true;
+            // Needs room for a keys and an index array.
+            void* keys = nullptr;
+            void* indices = nullptr;
+            if (cudaMalloc(&keys, 4096 * sizeof(float)) != cudaSuccess) {
+                return false;
+            }
+            const bool ok = cudaMalloc(&indices, 4096 * sizeof(int)) == cudaSuccess;
+            cudaFree(keys);
+            if (ok) {
+                cudaFree(indices);
+            }
+            return ok;
         }},
         {"sssp", []() {
+            // Needs a distance array per vertex.
+            float* distances = nullptr;
+            if (cudaMalloc(&distances, 1024 * sizeof(float)) != cudaSuccess) {
+                return false;
+            }
+            cudaFree(distances);
             return true;
         }},
         {"timeline", []() {
-            return true;
+            // Host-side exporter: it must round-trip an event without device work.
+            auto& exporter = ::cuda::observability::TimelineExporter::instance();
+            exporter.clear();
+            exporter.record_event("probe", "integration", 1);
+            const bool recorded = exporter.event_count() == 1;
+            exporter.clear();
+            return recorded;
         }},
         {"bandwidth_tracker", []() {
-            return true;
+            // Needs two device buffers to time a copy between.
+            void* source = nullptr;
+            void* target = nullptr;
+            if (cudaMalloc(&source, 1024 * 1024) != cudaSuccess) {
+                return false;
+            }
+            const bool allocated =
+                cudaMalloc(&target, 1024 * 1024) == cudaSuccess;
+            cudaFree(source);
+            if (allocated) {
+                cudaFree(target);
+            }
+            return allocated;
         }},
     };
 
