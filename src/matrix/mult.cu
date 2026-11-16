@@ -166,6 +166,13 @@ namespace cuda_kernel {
 
 template <typename T>
 void multiplyMatricesNaive(const T* hostMatrixA, const T* hostMatrixB, T* hostResultMatrix, int numRowsA, int numColsA, int numColsB) {
+    // A zero extent makes a zero-sized grid dimension, which CUDA rejects with a
+    // generic "invalid configuration argument" — measured for numRowsA == 0. An empty
+    // product is a well-defined empty result, and src/matrix/ops.cu already returns
+    // early for the same reason.
+    if (numRowsA <= 0 || numColsA <= 0 || numColsB <= 0) {
+        return;
+    }
     size_t sizeA = numRowsA * numColsA;
     size_t sizeB = numColsA * numColsB;
     size_t sizeC = numRowsA * numColsB;
@@ -192,6 +199,13 @@ template void multiplyMatricesNaive<double>(const double*, const double*, double
 
 template <typename T>
 void multiplyMatricesTiled(const T* hostMatrixA, const T* hostMatrixB, T* hostResultMatrix, int numRowsA, int numColsA, int numColsB) {
+    // A zero extent makes a zero-sized grid dimension, which CUDA rejects with a
+    // generic "invalid configuration argument" — measured for numRowsA == 0. An empty
+    // product is a well-defined empty result, and src/matrix/ops.cu already returns
+    // early for the same reason.
+    if (numRowsA <= 0 || numColsA <= 0 || numColsB <= 0) {
+        return;
+    }
     size_t sizeA = numRowsA * numColsA;
     size_t sizeB = numColsA * numColsB;
     size_t sizeC = numRowsA * numColsB;

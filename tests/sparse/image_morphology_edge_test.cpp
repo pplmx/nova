@@ -22,6 +22,7 @@
  *   silent over-read is worse than a crash, so the header now documents the packing.
  */
 
+#include <image/brightness.h>
 #include <image/morphology.h>
 
 #include <gtest/gtest.h>
@@ -271,6 +272,89 @@ TEST(ImageMorphologyEdgeTest, OpeningAndClosingHandleEmptyExtents) {
 // check of this shape failed in an earlier round on a different module. Measuring this
 // properly needs a tool that tracks allocations, not a device-wide snapshot, and that
 // measurement belongs in a dedicated leak-check suite rather than here.
+
+// Regression: this was the one function in src/image/ without an empty-extent guard.
+TEST(ImageMorphologyEdgeTest, BrightnessAcceptsEmptyExtents) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // A zero extent produced a zero-sized grid dimension, which CUDA rejects with a
+    // generic "invalid configuration argument" — measured for both width == 0 and
+    // height == 0. Every other image entry point already returned early.
+    (void)cudaGetLastError();
+
+    EXPECT_NO_THROW(adjustBrightnessContrast(nullptr, nullptr, 0, 8, 1.0f, 0.0f));
+    EXPECT_NO_THROW(adjustBrightnessContrast(nullptr, nullptr, 8, 0, 1.0f, 0.0f));
+    EXPECT_NO_THROW(adjustBrightnessContrast(nullptr, nullptr, 0, 0, 1.0f, 0.0f));
+
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess)
+        << "an empty image must not leave a launch error behind";
+}
+
+TEST(ImageMorphologyEdgeTest, BrightnessAppliesContrastThenOffset) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // out = clamp(contrast * in + offset). A 2x2 image (packed RGB) so the channel
+    // layout is exercised alongside the arithmetic.
+    constexpr size_t width = 2, height = 2;
+    const std::vector<uint8_t> input = {10, 20, 30,  40, 50, 60,
+                                        70, 80, 90,  100, 110, 120};
+
+    uint8_t* d_input = nullptr;
+    uint8_t* d_output = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_input, input.size()), cudaSuccess);
+    ASSERT_EQ(cudaMalloc(&d_output, input.size()), cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(d_input, input.data(), input.size(), cudaMemcpyHostToDevice),
+              cudaSuccess);
+
+    adjustBrightnessContrast(d_input, d_output, width, height, 2.0f, 10.0f);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    std::vector<uint8_t> result(input.size(), 0);
+    ASSERT_EQ(cudaMemcpy(result.data(), d_output, input.size(),
+                         cudaMemcpyDeviceToHost), cudaSuccess);
+
+    for (size_t i = 0; i < input.size(); ++i) {
+        const int expected = std::min(255, std::max(0, int(input[i]) * 2 + 10));
+        EXPECT_EQ(result[i], expected) << "byte " << i << " held " << int(input[i]);
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
+
+TEST(ImageMorphologyEdgeTest, BrightnessClampsInsteadOfWrapping) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    // 200 * 3 + 100 overflows a byte if the kernel casts without clamping; the result
+    // must saturate at 255 rather than wrap around.
+    constexpr size_t width = 1, height = 1;
+    const std::vector<uint8_t> input = {200, 200, 200};
+
+    uint8_t* d_input = nullptr;
+    uint8_t* d_output = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_input, 3), cudaSuccess);
+    ASSERT_EQ(cudaMalloc(&d_output, 3), cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(d_input, input.data(), 3, cudaMemcpyHostToDevice), cudaSuccess);
+
+    adjustBrightnessContrast(d_input, d_output, width, height, 3.0f, 100.0f);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+    std::vector<uint8_t> result(3, 0);
+    ASSERT_EQ(cudaMemcpy(result.data(), d_output, 3, cudaMemcpyDeviceToHost),
+              cudaSuccess);
+    for (const uint8_t value : result) {
+        EXPECT_EQ(value, 255) << "an overflowing result must saturate";
+    }
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+}
 
 TEST(ImageMorphologyEdgeTest, ThresholdSplitsOnTheGivenValue) {
     if (!device_available()) {

@@ -20,6 +20,13 @@ __global__ __launch_bounds__(256, 2) void brightnessContrastKernel(const uint8_t
 }
 
 void adjustBrightnessContrast(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t height, float contrast_factor, float brightness_offset) {
+    // Every sibling in src/image/ guards this; this one was missed. A zero extent makes a
+    // zero-sized grid dimension, which CUDA rejects with a generic "invalid configuration
+    // argument" — measured for both width == 0 and height == 0 — and adjusting nothing is
+    // an ordinary request.
+    if (width == 0 || height == 0) {
+        return;
+    }
     dim3 block(16, 16);
     dim3 grid((width + 15) / 16, (height + 15) / 16);
 
