@@ -24,13 +24,24 @@ public:
     const char* level_name() const;
     const char* level_description() const;
 
+    /// Records that the caller wants flush-to-zero behaviour. This is a REQUEST, not an
+    /// effect: FTZ is a compilation mode (-ftz=true) or an instruction-level setting in
+    /// device code, and no CUDA runtime call enables it for a running kernel. The flag
+    /// below is the only thing this changes; kernels compiled without FTZ keep their
+    /// denormal behaviour.
     void enable_flush_to_zero();
     void disable_flush_to_zero();
 
+    /// Records that the caller wants denormals-are-zero behaviour. Same caveat as
+    /// enable_flush_to_zero: DAZ is not switchable at runtime.
     void enable_denormals_are_zero();
     void disable_denormals_are_zero();
 
+    /// Whether enable_flush_to_zero() was requested. This does NOT mean the device is
+    /// flushing denormals.
     bool is_flush_to_zero_enabled() const { return ftz_enabled_; }
+    /// Whether enable_denormals_are_zero() was requested. This does NOT mean the device
+    /// is treating denormals as zero.
     bool is_denormals_are_zero_enabled() const { return daz_enabled_; }
 
     void reset();

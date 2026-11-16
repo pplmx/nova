@@ -136,4 +136,36 @@ TEST(FpDeterminismVerdictTest, SizeZeroWithNonNullPointerIsAlsoUnverified) {
     EXPECT_FALSE(result.deterministic);
 }
 
+// The FTZ/DAZ toggles record a request; they do not change device floating-point
+// behaviour. This case exists so the distinction is written down where a reader will
+// find it, because the old implementation called cudaDeviceSetCacheConfig and
+// cudaDeviceSetSharedMemConfig — cache preference and shared-memory bank width — which
+// have nothing to do with denormal handling, and the only test of the feature checked the
+// flag it had just set.
+TEST(FpDeterminismVerdictTest, FlushToZeroTogglesRecordIntentOnly) {
+    auto& control = FPDeterminismControl::instance();
+    const bool ftz_before = control.is_flush_to_zero_enabled();
+    const bool daz_before = control.is_denormals_are_zero_enabled();
+
+    control.enable_flush_to_zero();
+    EXPECT_TRUE(control.is_flush_to_zero_enabled())
+        << "the request must be observable";
+
+    control.enable_denormals_are_zero();
+    EXPECT_TRUE(control.is_denormals_are_zero_enabled());
+
+    control.disable_flush_to_zero();
+    control.disable_denormals_are_zero();
+    EXPECT_FALSE(control.is_flush_to_zero_enabled());
+    EXPECT_FALSE(control.is_denormals_are_zero_enabled());
+
+    // Restore so this case does not leak state into its neighbours.
+    if (ftz_before) {
+        control.enable_flush_to_zero();
+    }
+    if (daz_before) {
+        control.enable_denormals_are_zero();
+    }
+}
+
 }  // namespace cuda::testing::test

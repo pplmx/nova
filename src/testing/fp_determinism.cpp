@@ -34,8 +34,19 @@ const char* FPDeterminismControl::level_description() const {
     return LEVEL_DESCRIPTIONS[static_cast<size_t>(level_)];
 }
 
+// FTZ and DAZ are floating-point modes. They are selected per compilation unit with
+// -ftz=true / -prec-div=false, or per instruction in device code; there is no runtime
+// API that turns them on for a device. The previous implementation called
+// cudaDeviceSetCacheConfig and cudaDeviceSetSharedMemConfig — cache preference and
+// shared-memory bank width — neither of which affects denormal handling, and then set a
+// flag that only is_flush_to_zero_enabled() ever read. The result was a function that
+// reported success and changed nothing about floating-point behaviour: a test that calls
+// enable_flush_to_zero() and asks is_flush_to_zero_enabled() passes on an implementation
+// that does not exist.
+//
+// The state is still tracked so a caller can express intent and a future implementation
+// can honour it, but the documentation now says plainly what this does and does not do.
 void FPDeterminismControl::enable_flush_to_zero() {
-    cudaDeviceSetCacheConfig(cudaFuncCachePreferNone);
     ftz_enabled_ = true;
 }
 
@@ -44,7 +55,6 @@ void FPDeterminismControl::disable_flush_to_zero() {
 }
 
 void FPDeterminismControl::enable_denormals_are_zero() {
-    cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeFourByte);
     daz_enabled_ = true;
 }
 
