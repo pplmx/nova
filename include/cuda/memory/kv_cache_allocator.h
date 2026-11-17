@@ -100,7 +100,16 @@ public:
     KVCacheStats get_stats() const;
     void reset_stats();
 
-    int get_num_free_blocks() const { return static_cast<int>(free_list_.size()); }
+    /// Number of blocks currently available for allocation.
+    ///
+    /// Reads free_list_, which allocate() and every release path mutate under mutex_;
+    /// get_stats() in this same class already takes that lock, and this accessor did not.
+    /// racing a vector::size() against push_back/pop_back is a data race, and the value
+    /// read is not merely stale but undefined.
+    int get_num_free_blocks() const {
+        std::unique_lock lock(mutex_);
+        return static_cast<int>(free_list_.size());
+    }
     int get_block_size_tokens() const { return config_.block_size_tokens; }
 
     void* get_gpu_memory() { return gpu_memory_.data(); }

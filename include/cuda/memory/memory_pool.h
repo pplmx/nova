@@ -45,7 +45,16 @@ namespace cuda::memory {
         size_t total_allocated() const { return total_allocated_; }
         size_t total_available() const { return total_available_; }
         size_t num_blocks() const { return blocks_.size(); }
-        size_t num_allocations() const { return allocation_map_.size(); }
+        /// Number of live allocations.
+        ///
+        /// allocation_map_ is written by allocate() and deallocate() under mutex_; reading
+        /// its size from outside that lock races with them. get_metrics() in this class
+        /// already takes a lock for the fields it reports, so this accessor was the
+        /// inconsistent one.
+        size_t num_allocations() const {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return allocation_map_.size();
+        }
 
         PoolMetrics get_metrics() const;
         void defragment();

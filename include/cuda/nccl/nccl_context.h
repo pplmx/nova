@@ -263,7 +263,16 @@ public:
      * @brief Check if NCCL context is initialized
      * @return true if initialized
      */
-    [[nodiscard]] bool initialized() const { return initialized_; }
+    /// Whether initialize() has completed.
+    ///
+    /// initialized_ is written inside initialize() under init_mutex_, and this accessor
+    /// read it without one. A lock on the writer side does not protect the reader: the
+    /// pair is a data race, and broken_ next to it is atomic precisely because that was
+    /// understood for the other member.
+    [[nodiscard]] bool initialized() const {
+        std::lock_guard<std::mutex> lock(init_mutex_);
+        return initialized_;
+    }
 
     /**
      * @brief Get device count
@@ -275,7 +284,12 @@ public:
      * @brief Check if NCCL is available and functional
      * @return true if context has valid communicators
      */
-    [[nodiscard]] bool has_nccl() const { return initialized_ && !broken_ && !communicators_.empty(); }
+    /// Whether NCCL is usable: initialised, not broken, and has at least one communicator.
+    [[nodiscard]] bool has_nccl() const {
+        std::lock_guard<std::mutex> lock(init_mutex_);
+        return initialized_ && !broken_.load(std::memory_order_acquire) &&
+               !communicators_.empty();
+    }
 
     /**
      * @brief Record that a communicator was aborted by the error layer
