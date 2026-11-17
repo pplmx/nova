@@ -172,6 +172,10 @@ ScopedCapture::~ScopedCapture() {
         executor_.end_capture();
         executor_.instantiate();
     } catch (...) {
+        // Destructors are implicitly noexcept; letting end_capture's failure escape would
+        // call std::terminate. A capture that ends badly leaves the executor in a state its
+        // own status accessors report, which is where the caller can see it — not through
+        // an exception thrown from a scope exit.
     }
 }
 

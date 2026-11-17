@@ -63,6 +63,11 @@ TEST(SignalHandlerStateTest, ACoordinatedCheckpointWithoutACallbackReportsFailur
     config.shutdown_timeout = std::chrono::seconds(1);
     coordinator.initialize(config);
 
+    // The coordinator is a process-wide singleton and a callback registered by an earlier
+    // test survives. My first version of this case assumed a clean slate and failed when
+    // run after one that registered a callback — the assumption was wrong, not the code.
+    coordinator.set_checkpoint_callback(nullptr);
+
     EXPECT_FALSE(coordinator.checkpoint_coordinated())
         << "no callback is registered, so nothing can have been saved";
 }

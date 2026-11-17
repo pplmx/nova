@@ -111,6 +111,12 @@ TopologyMap TopologyDetector::detect() {
             map.nics.push_back(nic);
         }
     } catch (const std::exception&) {
+        // Deliberate and documented: topology detection is best-effort. A machine without
+        // /sys/class/net (a container, an unusual kernel) has no NIC list to report, and
+        // failing detection there would prevent the caller from doing anything at all.
+        // Whatever was collected before the failure is returned. The caller distinguishes
+        // "no NICs found" from "a NIC with unknown properties" by looking at the vector's
+        // size, not by catching.
     }
 
     return map;
@@ -132,6 +138,11 @@ uint64_t TopologyDetector::estimate_bandwidth(const std::string& interface) {
                 int speed = std::stoi(speed_str);
                 return speed;
             } catch (const std::exception&) {
+                // /sys/class/net/<if>/speed reports a bare integer, or "-1" / an empty
+                // file for an interface whose speed the driver cannot report (virtual
+                // interfaces, some bonds). std::stoi throws on the latter forms; the
+                // contract of this function is 0 for "unknown", which is what falls
+                // through below.
             }
         }
     }

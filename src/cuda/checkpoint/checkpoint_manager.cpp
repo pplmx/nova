@@ -494,6 +494,11 @@ std::vector<int> CheckpointManager::available_checkpoints() const {
                 int step = std::stoi(entry.substr(5));
                 checkpoints.push_back(step);
             } catch (...) {
+                // A directory entry that starts with "ckpt_" but is not followed by a
+                // number is not a checkpoint. Skipping it is the point of iterating; the
+                // alternative — failing the listing because one unrelated entry exists —
+                // would make the whole feature unusable in a directory anyone else can
+                // write to.
             }
         }
     }
