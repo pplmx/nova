@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace cuda::graph {
@@ -32,7 +33,25 @@ struct CSRGraph {
     int vertices() const { return num_vertices; }
     int edges() const { return num_edges; }
 
+    /**
+     * @brief Out-degree of vertex v
+     *
+     * @throws std::out_of_range if v is outside [0, num_vertices), or if the graph holds no
+     *         host arrays. Every other accessor here reads a count; this one indexes
+     *         row_offsets, and an out-of-range v read past the array without saying so. A
+     *         default-constructed graph dereferenced null on any call.
+     */
     int degree(int v) const {
+        if (row_offsets == nullptr) {
+            throw ::std::out_of_range(
+                "CSRGraph::degree: the graph holds no row_offsets; construct with dimensions "
+                "or fill it first");
+        }
+        if (v < 0 || v >= num_vertices) {
+            throw ::std::out_of_range(
+                "CSRGraph::degree: vertex " + ::std::to_string(v) + " is outside [0, " +
+                ::std::to_string(num_vertices) + ")");
+        }
         return row_offsets[v + 1] - row_offsets[v];
     }
 
