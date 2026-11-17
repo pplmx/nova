@@ -66,7 +66,15 @@ namespace cuda::memory {
         block.size = config_.block_size;
         block.offset = 0;
 
-        blocks_.push_back(block);
+        // push_back throws bad_alloc when the vector grows. Block is plain data, so that is
+        // the only way it fails, but if it does the block just allocated has no owner yet and
+        // would never be freed — the same shape as the constructor leaks fixed earlier.
+        try {
+            blocks_.push_back(block);
+        } catch (...) {
+            (void)cudaFree(ptr);
+            throw;
+        }
         total_available_ += config_.block_size;
 
         return &blocks_.back();
