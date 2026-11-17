@@ -159,6 +159,7 @@ add_executable(nova-tests
     sparse/nccl_enum_examples_test.cpp
     sparse/contrastive_loss_temperature_test.cpp
     sparse/pool_tuner_zero_size_test.cpp
+    sparse/syncbn_overflow_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

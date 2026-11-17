@@ -550,6 +550,20 @@ void SyncBatchNorm::backward(
             " spatial_size=" + ::std::to_string(spatial_size));
     }
 
+    // The element count below is an int product. This is the one failure mode here that would
+    // not announce itself: an overflow makes n negative, every kernel's `if (idx >= n) return;`
+    // then fires immediately, and the launch succeeds while doing nothing.
+    {
+        const int64_t elements = static_cast<int64_t>(batch_size) *
+                                 static_cast<int64_t>(num_features_) *
+                                 static_cast<int64_t>(spatial_size);
+        if (elements > static_cast<int64_t>(::std::numeric_limits<int>::max())) {
+            throw ::std::invalid_argument(
+                "SyncBatchNorm::backward: batch_size * num_features * spatial_size "
+                "overflows int, got " + ::std::to_string(elements));
+        }
+    }
+
     int n = batch_size * num_features_ * spatial_size;
     int block_size = 256;
     int grid_size = (num_features_ + block_size - 1) / block_size;
