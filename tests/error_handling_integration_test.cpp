@@ -94,7 +94,7 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutGuardWithRetry) {
     retry_executor executor(retry_cfg);
 
     int attempts = 0;
-    executor.execute([&]() {
+    const bool succeeded = executor.execute([&]() {
         ++attempts;
         if (timeout_manager::instance().is_expired(id)) {
             throw std::runtime_error("Operation timed out");
@@ -102,7 +102,18 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutGuardWithRetry) {
         return true;
     });
 
+    // The adapter below is the point of the case and none of it was checked: the operation
+    // is registered, the guard's clock is wired to the retry loop, and the call is
+    // unregistered on the way out. A suite where attempts stayed at zero, or where the
+    // operation was never tracked, passed just the same.
+    EXPECT_TRUE(succeeded) << "the operation should complete inside its 100 ms budget";
+    EXPECT_GE(attempts, 1) << "the retry executor must run the body at least once";
+    EXPECT_LE(attempts, 3) << "max_attempts is 3, so a successful first try is fine but "
+                              "more than three runs would ignore the configuration";
+
     timeout_manager::instance().end_operation(id);
+    EXPECT_EQ(timeout_manager::instance().active_count(), 0u)
+        << "end_operation must release the tracked operation";
 }
 
 TEST_F(ErrorHandlingIntegrationTest, BackwardCompatibility) {

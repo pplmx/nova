@@ -95,7 +95,21 @@ TEST_F(StreamTest, QueryAfterAsyncWork) {
     CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
                              cudaMemcpyHostToDevice, stream.get()));
 
+    // Busy-waiting until query() reports idle was the whole test and it asserted nothing.
+    // The read-back below is more than that, but it is not enough to catch a query() that
+    // lies: measured with query() mutated to return true unconditionally, this case still
+    // passed on every run, because the 400-byte copy completes before the read-back issues
+    // regardless of what the loop believed. So the assertion here catches a broken copy, not
+    // a broken query, and the difference is worth stating instead of implying the case
+    // proves more than it does.
     while (!stream.query()) {
+    }
+
+    std::vector<int> result(N, 0);
+    CUDA_CHECK(cudaMemcpy(result.data(), d_data, N * sizeof(int), cudaMemcpyDeviceToHost));
+    for (int i = 0; i < N; ++i) {
+        ASSERT_EQ(result[i], 42) << "index " << i
+                                 << ": the stream reported idle before the copy landed";
     }
 
     CUDA_CHECK(cudaFree(d_data));

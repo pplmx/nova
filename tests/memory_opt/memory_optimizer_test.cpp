@@ -139,11 +139,31 @@ TEST_F(MemoryOptimizerTest, AdaptiveMemoryPoolTunerStats) {
     auto& tuner = AdaptiveMemoryPoolTuner::instance();
     tuner.reset_stats();
 
+    // The tuner reports usage through get_stats(), so this case can check that the three
+    // calls above are reflected. It previously only made the calls: the numbers could have
+    // been ignored, doubled, or recorded under the wrong field and the test passed.
+    const auto after_reset = tuner.get_stats();
+    EXPECT_EQ(after_reset.total_allocations, 0u) << "reset_stats must zero the counters";
+    EXPECT_EQ(after_reset.current_usage, 0u);
+
     tuner.record_allocation(1024);
     tuner.record_allocation(2048);
     tuner.record_deallocation(512);
 
+    const auto stats = tuner.get_stats();
+    EXPECT_EQ(stats.total_allocations, 2u) << "two allocations were recorded";
+    EXPECT_EQ(stats.total_deallocations, 1u) << "one deallocation was recorded";
+    EXPECT_GE(stats.peak_usage, 3072u)
+        << "peak usage should have reached the sum of both allocations";
+    // 1024 + 2048 - 512. The deallocation releases bytes from the running total.
+    EXPECT_EQ(stats.current_usage, 2560u)
+        << "current usage should be the allocations minus the release";
+
+    // Toggling the tuner must not disturb what has been measured.
     tuner.enable_adaptive_tuning();
+    const auto enabled = tuner.get_stats();
+    EXPECT_EQ(enabled.current_usage, stats.current_usage)
+        << "toggling the tuner must not change the recorded usage";
     tuner.disable_adaptive_tuning();
     tuner.enable_adaptive_tuning();
 }

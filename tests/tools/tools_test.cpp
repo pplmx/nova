@@ -1,4 +1,7 @@
 #include <gtest/gtest.h>
+
+#include <unistd.h>
+#include <fstream>
 #include <cuda_runtime.h>
 #include <cuda/tools/bank_conflict_analyzer.h>
 #include <cuda/tools/timeline_visualizer.h>
@@ -89,8 +92,28 @@ TEST_F(ToolsTest, TimelineVisualizerExport) {
     visualizer.record_kernel("kernel1", 1.0f);
     visualizer.record_memory_op("memcpy", 1024, 0.5f);
 
-    visualizer.export_chrome_trace("/tmp/test_trace.json");
-    visualizer.export_json("/tmp/test_timeline.json");
+    // The two exports returned void and nothing was checked, so a writer that produced an
+    // empty file — or failed to open it — passed. Both paths are now inspected: the files
+    // must exist and contain the recorded names.
+    const std::string trace_path = "/tmp/nova_tools_trace_" + std::to_string(::getpid()) +
+                                   ".json";
+    const std::string json_path = "/tmp/nova_tools_timeline_" + std::to_string(::getpid()) +
+                                  ".json";
+
+    visualizer.export_chrome_trace(trace_path);
+    visualizer.export_json(json_path);
+
+    for (const std::string& path : {trace_path, json_path}) {
+        std::ifstream file(path);
+        ASSERT_TRUE(file.good()) << "the export did not create " << path;
+        const std::string contents((std::istreambuf_iterator<char>(file)),
+                                   std::istreambuf_iterator<char>());
+        EXPECT_FALSE(contents.empty()) << path << " is empty";
+        EXPECT_NE(contents.find("kernel1"), std::string::npos)
+            << path << " does not mention the recorded kernel";
+        file.close();
+        std::remove(path.c_str());
+    }
 }
 
 TEST_F(ToolsTest, TimelineVisualizerEnable) {
