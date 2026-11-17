@@ -143,6 +143,7 @@ add_executable(nova-tests
     sparse/multiply_exception_safety_test.cpp
     sparse/documented_examples_test.cpp
     sparse/device_pointer_contract_test.cpp
+    sparse/unique_ptr_ownership_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp
