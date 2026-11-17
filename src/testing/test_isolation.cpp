@@ -11,6 +11,7 @@
 
 #include <cuda_runtime.h>
 #include <map>
+#include <vector>
 #include <mutex>
 
 namespace cuda::testing {
@@ -106,11 +107,25 @@ struct SingletonRegistrations {
 }  // namespace
 
 void reset_all_singletons() {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (auto& pair : g_singletons) {
-        if (pair.second) {
-            pair.second();
+    // Copy the callbacks out and release the lock before running any of them.
+    //
+    // Calling them under g_mutex meant a resetter that reaches back into the registry —
+    // registering another singleton, or anything that does — would re-enter a non-recursive
+    // mutex. Running user code while holding a lock that user code may need is the same
+    // mistake the profiler's stop_timer made with its own mutex.
+    std::vector<std::function<void()>> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        callbacks.reserve(g_singletons.size());
+        for (auto& pair : g_singletons) {
+            if (pair.second) {
+                callbacks.push_back(pair.second);
+            }
         }
+    }
+
+    for (auto& callback : callbacks) {
+        callback();
     }
 }
 

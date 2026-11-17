@@ -228,6 +228,7 @@ add_executable(nova-tests
     sparse/profiler_deadlock_test.cpp
     sparse/signal_handler_state_test.cpp
     sparse/singleton_reset_registry_test.cpp
+    sparse/singleton_isolation_order_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
