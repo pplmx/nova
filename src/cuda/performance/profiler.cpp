@@ -73,7 +73,11 @@ void Profiler::stop_timer(const char* name) {
     float time_ms = 0.0f;
     CUDA_CHECK(cudaEventElapsedTime(&time_ms, timer.start, timer.stop));
 
-    record_kernel(name, time_ms);
+    // record_kernel() takes mutex_ itself, so calling it here deadlocked: this function
+    // already holds that lock and std::mutex is not recursive. Measured — start_timer()
+    // followed by stop_timer() never returned. The record is appended directly instead,
+    // which is what record_kernel does, under the lock this frame already owns.
+    kernel_metrics_.push_back({std::string(name), time_ms, 0, 0.0f});
 
     CUDA_CHECK(cudaEventDestroy(timer.start));
     CUDA_CHECK(cudaEventDestroy(timer.stop));

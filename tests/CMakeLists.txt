@@ -225,6 +225,7 @@ add_executable(nova-tests
     sparse/int8_calibration_edge_test.cpp
     sparse/auto_block_device_test.cpp
     sparse/locked_accessor_test.cpp
+    sparse/profiler_deadlock_test.cpp
 )
 
 set(CUDA_DEVICE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/device)
