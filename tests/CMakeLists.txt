@@ -168,6 +168,7 @@ add_executable(nova-tests
     sparse/csr_empty_graph_spmv_test.cpp
     sparse/csr_degree_bounds_test.cpp
     sparse/pagerank_bounds_test.cpp
+    sparse/pagerank_empty_graph_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

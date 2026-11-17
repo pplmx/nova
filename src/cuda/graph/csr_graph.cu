@@ -365,6 +365,13 @@ void compute_degrees(
     int* in_degrees,
     cudaStream_t stream
 ) {
+    // Guarded here as well as in pagerank_iteration: a zero-vertex graph yields a 0-block grid
+    // that the driver rejects. This function is public, so it should not depend on every caller
+    // remembering that. My first fix put the guard only in the caller and the call still failed.
+    if (graph.num_vertices <= 0) {
+        return;
+    }
+
     const int block_size = 256;
     const int vertex_grid = (graph.num_vertices + block_size - 1) / block_size;
 

@@ -212,6 +212,15 @@ void pagerank_iteration(
     const int n = graph.num_vertices;
     const int m = graph.num_edges;
 
+    // A zero-vertex graph has no ranks to iterate. Every step below assumes at least one
+    // vertex: compute_degrees launches on (n + 255) / 256 blocks — zero, which the driver
+    // rejects — vertex_grid has the same problem, and teleport divides by n. The guard has to
+    // come first; my first attempt put it after compute_degrees and the call still failed with
+    // "invalid configuration argument".
+    if (n <= 0) {
+        return;
+    }
+
     // Out-degrees are computed on-device from the uploaded CSR (the pre-v2
     // path rebuilt a host vector and block-copied it to the device every
     // iteration); graph.d_row_offsets must be uploaded, which pagerank() does.
@@ -274,6 +283,13 @@ PageRankResult pagerank(
     cudaStream_t stream
 ) {
     const int n = graph.num_vertices;
+
+    // A graph with no vertices has no ranks to compute, and the initial fill below divides by
+    // n. Returning an empty result is the meaningful answer; dividing by zero is not.
+    if (n <= 0) {
+        return PageRankResult(0);
+    }
+
     PageRankResult result(n);
 
     // The iteration loop below swaps local copies (d_prev_temp/d_next_temp), not these two, so
