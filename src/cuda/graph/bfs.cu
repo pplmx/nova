@@ -27,10 +27,18 @@ BFSResult::BFSResult(int num_vertices)
       d_visited(nullptr),
       visited_count(0),
       max_distance(0) {
+    // A throwing constructor does not run its own destructor, so anything acquired before the
+    // throw is lost. Both CUDA_CHECKs can fail — a large graph exhausting device memory is the
+    // ordinary way — and they sat after both host allocations.
     distances = new int[num_vertices];
-    visited = new bool[num_vertices];
-    CUDA_CHECK(cudaMalloc(&d_distances, num_vertices * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_visited, num_vertices * sizeof(bool)));
+    try {
+        visited = new bool[num_vertices];
+        CUDA_CHECK(cudaMalloc(&d_distances, num_vertices * sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_visited, num_vertices * sizeof(bool)));
+    } catch (...) {
+        clear();
+        throw;
+    }
 }
 
 BFSResult::~BFSResult() {
