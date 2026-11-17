@@ -152,6 +152,7 @@ add_executable(nova-tests
     sparse/layer_norm_optional_params_test.cpp
     sparse/cusparse_thread_safety_test.cpp
     sparse/peer_copy_thread_safety_test.cpp
+    sparse/buffer_thread_safety_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

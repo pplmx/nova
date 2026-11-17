@@ -48,7 +48,16 @@ namespace nova::sparse {
  * Provides GPU-resident sparse matrix storage with CSR format.
  * Data is stored in cuda::memory::Buffer for automatic management.
  *
- * @note Thread-safe buffer operations
+ * @note NOT thread-safe for mutation, despite what an earlier version of this note implied.
+ * The buffers below are cuda::memory::Buffer members with a raw pointer and a size and no
+ * lock: resize() and copy_from() write both, and the accessors at values_buffer() and its
+ * siblings hand out mutable references. Concurrent writes to one SparseMatrix — or to a
+ * buffer obtained from it — are a data race, and a concurrent resize can free the pointer
+ * another thread is reading.
+ *
+ * Separate objects are independent, and reading a fully built matrix from several threads is
+ * fine; that is the safe half of what the old note was reaching for.
+ *
  * @see cuda::memory::Buffer For memory management details
  */
 template<typename T>
