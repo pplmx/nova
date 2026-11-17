@@ -54,8 +54,8 @@ public:
      * Performs a collective reduction operation where each GPU contributes
      * its local data, and all GPUs receive the same reduced result.
      *
-     * @param send_data Input data on each GPU
-     * @param recv_data Output buffer (same on all GPUs after call)
+     * @param send_data Input data on each GPU (device pointer)
+     * @param recv_data Output buffer (device pointer; same on all GPUs after call)
      * @param count Number of elements
      * @param op Reduction operation to perform
      * @param dtype CUDA data type (default: CUDA_R_32F)
@@ -75,8 +75,8 @@ public:
      * Async variant that returns immediately. The caller must ensure
      * proper synchronization before accessing recv_data.
      *
-     * @param send_data Input data on each GPU
-     * @param recv_data Output buffer
+     * @param send_data Input data on each GPU (device pointer)
+     * @param recv_data Output buffer (device pointer)
      * @param count Number of elements
      * @param op Reduction operation
      * @param stream Base CUDA stream (operations use device-specific streams)

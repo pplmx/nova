@@ -79,8 +79,8 @@ public:
      *
      * Convenience wrapper that waits for completion.
      *
-     * @param send_data Input buffer
-     * @param recv_data Output buffer
+     * @param send_data Input buffer (device pointer)
+     * @param recv_data Output buffer (device pointer)
      * @param count Element count
      * @param dtype NCCL data type
      * @param op Reduction operation

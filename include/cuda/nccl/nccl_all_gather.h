@@ -58,8 +58,8 @@ public:
     /**
      * @brief Async all-gather across all devices
      *
-     * @param send_data Input buffer (device-local, send_count elements)
-     * @param recv_data Output buffer (must be send_count * device_count elements)
+     * @param send_data Input buffer (device pointer, send_count elements)
+     * @param recv_data Output buffer (device pointer, send_count * device_count elements)
      * @param send_count Number of elements each rank contributes
      * @param dtype NCCL data type
      * @param stream CUDA stream for ordering
@@ -75,8 +75,8 @@ public:
     /**
      * @brief Sync all-gather (blocking)
      *
-     * @param send_data Input buffer
-     * @param recv_data Output buffer
+     * @param send_data Input buffer (device pointer)
+     * @param recv_data Output buffer (device pointer)
      * @param send_count Element count per rank
      * @param dtype NCCL data type
      * @param stream CUDA stream

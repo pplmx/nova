@@ -47,8 +47,9 @@ public:
     /**
      * @brief All-gather: gather data from all GPUs
      *
-     * @param send_data Input: count elements from this GPU
-     * @param recv_data Output: count * n elements (all GPUs' data concatenated)
+     * @param send_data Input: count elements from this GPU (device pointer)
+     * @param recv_data Output: count * n elements, all GPUs' data concatenated
+     *                   (device pointer)
      * @param count Number of elements per GPU
      * @param dtype CUDA data type (default: CUDA_R_32F)
      *
@@ -63,8 +64,8 @@ public:
     /**
      * @brief Async all-gather with explicit stream
      *
-     * @param send_data Input data
-     * @param recv_data Output buffer
+     * @param send_data Input data (device pointer)
+     * @param recv_data Output buffer (device pointer, count * device_count elements)
      * @param count Elements per GPU
      * @param stream CUDA stream
      * @param dtype CUDA data type

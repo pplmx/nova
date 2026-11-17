@@ -56,8 +56,8 @@ public:
     /**
      * @brief Async reduce-scatter across all devices
      *
-     * @param send_data Input buffer (must be recv_count * device_count elements)
-     * @param recv_data Output buffer (recv_count elements)
+     * @param send_data Input buffer (device pointer, recv_count * device_count elements)
+     * @param recv_data Output buffer (device pointer, recv_count elements)
      * @param recv_count Number of elements to receive (per rank)
      * @param dtype NCCL data type
      * @param op NCCL reduction operation
@@ -75,8 +75,8 @@ public:
     /**
      * @brief Sync reduce-scatter (blocking)
      *
-     * @param send_data Input buffer
-     * @param recv_data Output buffer
+     * @param send_data Input buffer (device pointer)
+     * @param recv_data Output buffer (device pointer)
      * @param recv_count Element count per rank
      * @param dtype NCCL data type
      * @param op Reduction operation

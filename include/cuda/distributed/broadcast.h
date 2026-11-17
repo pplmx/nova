@@ -43,7 +43,7 @@ public:
     /**
      * @brief Broadcast data from root GPU to all other GPUs
      *
-     * @param data Data buffer (source on root, receives copy on others)
+     * @param data Data buffer (source on root, receives copy on others) (device pointer)
      * @param count Number of elements
      * @param root Source GPU rank (default: 0)
      * @param dtype CUDA data type (default: CUDA_R_32F)
@@ -59,7 +59,7 @@ public:
     /**
      * @brief Async broadcast with explicit stream
      *
-     * @param data Data buffer
+     * @param data Data buffer (device pointer)
      * @param count Number of elements
      * @param root Source GPU rank
      * @param stream CUDA stream for the operation

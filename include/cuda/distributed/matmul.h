@@ -96,9 +96,9 @@ public:
      * Distributes computation across all available GPUs.
      * On single-GPU systems, delegates to cuda::neural::matmul.
      *
-     * @param A Input matrix [m x k] (row-major)
-     * @param B Weight matrix [k x n] (row-major)
-     * @param C Output matrix [m x n] (row-major)
+     * @param A Input matrix [m x k] (row-major) (device pointer)
+     * @param B Weight matrix [k x n] (row-major) (device pointer)
+     * @param C Output matrix [m x n] (row-major) (device pointer)
      * @param m Number of rows in A and C
      * @param n Number of columns in B and C
      * @param k Number of columns in A and rows in B
@@ -120,9 +120,9 @@ public:
      * Non-blocking version with explicit stream. Useful for
      * overlapping with other GPU operations.
      *
-     * @param A Input matrix
-     * @param B Weight matrix
-     * @param C Output matrix
+     * @param A Input matrix (device pointer)
+     * @param B Weight matrix (device pointer)
+     * @param C Output matrix (device pointer)
      * @param m Rows in A and C
      * @param n Columns in B and C
      * @param k Inner dimension
@@ -146,9 +146,9 @@ public:
      * Delegates to cuda::neural::matmul. Used for single-GPU fallback
      * and as reference implementation for correctness testing.
      *
-     * @param A Input matrix
-     * @param B Weight matrix
-     * @param C Output matrix
+     * @param A Input matrix (device pointer)
+     * @param B Weight matrix (device pointer)
+     * @param C Output matrix (device pointer)
      * @param m Rows in A and C
      * @param n Columns in B and C
      * @param k Inner dimension
@@ -199,9 +199,9 @@ public:
      * before entering the collective. Transposed operands (trans_a/trans_b) are
      * not supported on this path and return ncclInvalidArgument.
      *
-     * @param A Full input matrix [m x k] on this rank's device
-     * @param B Full weight matrix [k x n] on this rank's device
-     * @param C Output matrix [m x n] on this rank's device (full after gather)
+     * @param A Full input matrix [m x k] on this rank's device (device pointer)
+     * @param B Full weight matrix [k x n] on this rank's device (device pointer)
+     * @param C Output matrix [m x n] on this rank's device (full after gather) (device pointer)
      * @param m Number of rows in A and C
      * @param n Number of columns in B and C
      * @param k Inner dimension
