@@ -7,7 +7,16 @@
  * Provides RAII wrapper for cuSPARSE library initialization and handle management.
  *
  * @note Automatically initializes cuSPARSE on construction
- * @note Thread-safe handle management
+ * @warning NOT thread-safe for concurrent use, despite what an earlier version of this
+ * note claimed. handle_ and stream_ belong to a process-wide singleton with no lock, and
+ * set_stream() writes both; sparse_ops.cu calls set_stream() before every SpMV. Two threads
+ * running SpMV concurrently therefore race, and one can end up issuing its operation on the
+ * other's stream.
+ *
+ * Making this thread-safe is not a local edit: a cuSPARSE handle carries stream affinity, so
+ * either each thread gets its own handle (extra driver resources) or the stream is never
+ * changed and every caller passes its own to cusparseSpMV. Until one of those is done, treat
+ * sparse operations as one thread per process.
  */
 
 #pragma once
