@@ -290,6 +290,25 @@ PageRankResult pagerank(
         return PageRankResult(0);
     }
 
+    // PageRank's recursion only has a fixed point for damping in [0, 1). Outside it
+    // teleport = (1 - damping) / n goes to zero or negative: at exactly 1 the walk never jumps
+    // and the iteration can cycle forever, above 1 the weights it accumulates are negative.
+    // None of the three options was checked.
+    if (!(options.damping >= 0.0f && options.damping < 1.0f)) {
+        throw ::std::invalid_argument(
+            "pagerank: damping must be in [0, 1), got " + ::std::to_string(options.damping));
+    }
+    if (!(options.tolerance > 0.0f)) {
+        throw ::std::invalid_argument(
+            "pagerank: tolerance must be positive, got " +
+            ::std::to_string(options.tolerance));
+    }
+    if (options.max_iterations <= 0) {
+        throw ::std::invalid_argument(
+            "pagerank: max_iterations must be positive, got " +
+            ::std::to_string(options.max_iterations));
+    }
+
     PageRankResult result(n);
 
     // The iteration loop below swaps local copies (d_prev_temp/d_next_temp), not these two, so
