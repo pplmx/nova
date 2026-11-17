@@ -1,5 +1,5 @@
 #include "fuzz_utils.hpp"
-#include <cuda/memory/memory_pool.hpp>
+#include <cuda/memory/memory_pool.h>
 #include <cuda_runtime.h>
 #include <cstring>
 
