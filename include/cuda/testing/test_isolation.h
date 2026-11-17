@@ -68,6 +68,17 @@ void reset_all_cuda_state();
  */
 void register_singleton_resetter(const char* name, std::function<void()> resetter);
 
+/**
+ * Removes a registration.
+ *
+ * Needed because the registry is process-wide while a callback registered by a test may
+ * capture that test's locals. Leaving such a callback registered and destroying the frame it
+ * points into is what produced a SIGBUS during a shuffled run: a later reset_all_singletons()
+ * invoked a lambda whose captured int no longer existed. A test that registers should
+ * unregister before it returns — or register a callback that captures nothing.
+ */
+void unregister_singleton_resetter(const char* name);
+
 /// Calls every registered resetter. Does nothing for a singleton that has not registered —
 /// see register_singleton_resetter() for what that means and why it matters.
 void reset_all_singletons();

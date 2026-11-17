@@ -20,6 +20,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <memory>
+
 #include <cuda_runtime.h>
 
 namespace singleton_reset_registry_test {
@@ -85,29 +88,35 @@ TEST(SingletonResetRegistryTest, ResettingClearsTheProfilerThatRegistered) {
 TEST(SingletonResetRegistryTest, RegisteringUnderTheSameNameReplacesRatherThanDuplicates) {
     // Names are keys in a map, and the header documents replacement. A second registration
     // must not grow the registry by one every time it runs.
+    //
+    // The callbacks below capture an atomic through a shared_ptr rather than a stack int.
+    // My first version captured locals by reference and left the registration in place when
+    // the test returned; the registry is process-wide, so a later reset_all_singletons()
+    // called into a destroyed frame. That was the SIGBUS a shuffled run kept producing.
+    // Unregistering at the end is the other half of the fix.
     const size_t before = cuda::testing::registered_singleton_count();
 
-    int first_calls = 0;
-    int second_calls = 0;
-    cuda::testing::register_singleton_resetter("replacement-probe",
-                                               [&first_calls] { ++first_calls; });
-    cuda::testing::register_singleton_resetter("replacement-probe",
-                                               [&second_calls] { ++second_calls; });
+    auto first_calls = std::make_shared<std::atomic<int>>(0);
+    auto second_calls = std::make_shared<std::atomic<int>>(0);
+
+    cuda::testing::register_singleton_resetter(
+        "replacement-probe", [first_calls] { first_calls->fetch_add(1); });
+    cuda::testing::register_singleton_resetter(
+        "replacement-probe", [second_calls] { second_calls->fetch_add(1); });
 
     EXPECT_EQ(cuda::testing::registered_singleton_count(), before + 1)
         << "the same name twice must leave one entry, not two";
 
     cuda::testing::reset_all_singletons();
-    EXPECT_EQ(first_calls, 0) << "the replaced callback must not run";
-    EXPECT_EQ(second_calls, 1);
-}
+    EXPECT_EQ(first_calls->load(), 0) << "the replaced callback must not run";
+    EXPECT_EQ(second_calls->load(), 1);
 
-// A case exercising execute_isolated() was written and then removed. It passed alone and
-// dumped core when run after the cases above: execute_isolated() calls
-// cudaDeviceReset() first, which invalidates every allocation and stream the earlier cases
-// had created in this process. That is a property of cudaDeviceReset under a shared test
-// binary, not of the registry — reset_all_singletons() is covered directly by
-// ResettingClearsTheProfilerThatRegistered, which does not need a device reset to make its
-// point.
+    cuda::testing::unregister_singleton_resetter("replacement-probe");
+    EXPECT_EQ(cuda::testing::registered_singleton_count(), before)
+        << "unregistering must remove the entry";
+
+    EXPECT_EQ(cuda::testing::registered_singleton_count(), before)
+        << "unregistering must remove the entry";
+}
 
 }  // namespace singleton_reset_registry_test

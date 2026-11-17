@@ -129,6 +129,11 @@ void reset_all_singletons() {
     }
 }
 
+void unregister_singleton_resetter(const char* name) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_singletons.erase(name);
+}
+
 size_t registered_singleton_count() {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_singletons.size();
