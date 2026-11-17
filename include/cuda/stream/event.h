@@ -9,6 +9,14 @@
 
 namespace cuda::stream {
 
+    /**
+     * @class Event
+     * @brief Move-only owner of a cudaEvent_t
+     *
+     * Same ownership rules as Stream: created in the constructor, destroyed in the
+     * destructor, not copyable, and a move leaves the source null. Also undocumented before
+     * this note.
+     */
     class Event {
     public:
         Event() { CUDA_CHECK(cudaEventCreate(&event_)); }

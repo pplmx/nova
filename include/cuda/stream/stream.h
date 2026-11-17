@@ -8,6 +8,22 @@
 
 namespace cuda::stream {
 
+    /**
+     * @class Stream
+     * @brief Move-only owner of a cudaStream_t
+     *
+     * Creates in the constructor and destroys in the destructor. Copying is deleted; moving
+     * leaves the source holding nullptr so its destructor does nothing. Moving onto an
+     * existing Stream destroys that one's stream first, so no handle is dropped.
+     *
+     * The file carried no documentation, which for the type every other module uses is worth
+     * correcting: a reader who assumed copyability or that the source stays valid after a
+     * move would be wrong on both counts.
+     *
+     * query() reports cudaErrorNotReady as false and rethrows any other error; its result is
+     * advisory — a stream that reports idle has finished enqueueing work, not necessarily
+     * finished running it on the device.
+     */
     class Stream {
     public:
         Stream() { CUDA_CHECK(cudaStreamCreate(&stream_)); }

@@ -145,6 +145,7 @@ add_executable(nova-tests
     sparse/device_pointer_contract_test.cpp
     sparse/unique_ptr_ownership_test.cpp
     sparse/priority_stream_pool_test.cpp
+    sparse/stream_event_ownership_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp
