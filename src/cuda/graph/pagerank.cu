@@ -1,6 +1,7 @@
 #include "cuda/graph/pagerank.h"
 
 #include "cuda/device/error.h"
+#include "cuda/memory/unique_ptr.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,8 +21,16 @@ PageRankResult::PageRankResult(int num_vertices)
       iterations(0),
       final_delta(0.0f) {
 
+    // A throwing constructor does not run its destructor, so a cudaMalloc failure here would
+    // leave the host array with no owner. Same shape as BFSResult, fixed the same way.
     ranks = new float[num_vertices];
-    CUDA_CHECK(cudaMalloc(&d_ranks, num_vertices * sizeof(float)));
+    try {
+        CUDA_CHECK(cudaMalloc(&d_ranks, num_vertices * sizeof(float)));
+    } catch (...) {
+        delete[] ranks;
+        ranks = nullptr;
+        throw;
+    }
 }
 
 PageRankResult::~PageRankResult() {
@@ -202,8 +211,10 @@ void pagerank_iteration(
     // Out-degrees are computed on-device from the uploaded CSR (the pre-v2
     // path rebuilt a host vector and block-copied it to the device every
     // iteration); graph.d_row_offsets must be uploaded, which pagerank() does.
-    int* d_out_degrees;
-    CUDA_CHECK(cudaMalloc(&d_out_degrees, n * sizeof(int)));
+    // Released by the destructor rather than at the end of the function: several CUDA_CHECKs
+    // below can throw and the free used to sit past all of them.
+    ::cuda::memory::unique_ptr<int> d_out_degrees_owned(n);
+    int* d_out_degrees = d_out_degrees_owned.get();
     compute_degrees(graph, d_out_degrees, nullptr, stream);
 
     const int block_size = 256;
@@ -238,7 +249,7 @@ void pagerank_iteration(
     );
     CUDA_CHECK(cudaGetLastError());
 
-    CUDA_CHECK(cudaFree(d_out_degrees));
+    // d_out_degrees is released by its unique_ptr destructor.
 }
 
 float compute_pagerank_delta(
@@ -261,10 +272,13 @@ PageRankResult pagerank(
     const int n = graph.num_vertices;
     PageRankResult result(n);
 
-    float* d_prev;
-    float* d_next;
-    CUDA_CHECK(cudaMalloc(&d_prev, n * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&d_next, n * sizeof(float)));
+    // The iteration loop below swaps local copies (d_prev_temp/d_next_temp), not these two, so
+    // owning them here is safe. Freed by the destructors rather than at the end of the
+    // function, past a loop full of CUDA_CHECKs.
+    ::cuda::memory::unique_ptr<float> d_prev_owned(n);
+    ::cuda::memory::unique_ptr<float> d_next_owned(n);
+    float* d_prev = d_prev_owned.get();
+    float* d_next = d_next_owned.get();
 
     std::fill(result.ranks, result.ranks + n, 1.0f / n);
 
@@ -313,8 +327,7 @@ PageRankResult pagerank(
 
     result.iterations = iters_run;
 
-    CUDA_CHECK(cudaFree(d_prev));
-    CUDA_CHECK(cudaFree(d_next));
+    // Released by the unique_ptr destructors.
 
     return result;
 }
