@@ -1,4 +1,5 @@
 #include "cuda/testing/test_isolation.h"
+#include "cuda/performance/profiler.h"
 #include "cuda/device/error.h"
 
 #include <cuda_runtime.h>
@@ -56,6 +57,23 @@ void register_singleton_resetter(const char* name, std::function<void()> resette
     g_singletons[name] = resetter;
 }
 
+namespace {
+
+/// Registers the singletons whose state must not survive between isolated tests. This was
+/// an empty registry: reset_all_singletons() walked nothing, so execute_isolated() reset the
+/// CUDA context and left every singleton holding whatever the previous test put there. The
+/// entry below is the first; further ones belong in their own translation units next to the
+/// definition of their reset method.
+struct SingletonRegistrations {
+    SingletonRegistrations() {
+        register_singleton_resetter("Profiler", [] {
+            cuda::performance::Profiler::instance().reset();
+        });
+    }
+} g_singleton_registrations;
+
+}  // namespace
+
 void reset_all_singletons() {
     std::lock_guard<std::mutex> lock(g_mutex);
     for (auto& pair : g_singletons) {
@@ -63,6 +81,11 @@ void reset_all_singletons() {
             pair.second();
         }
     }
+}
+
+size_t registered_singleton_count() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_singletons.size();
 }
 
 void reset_all_cuda_state() {

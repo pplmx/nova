@@ -40,8 +40,41 @@ private:
 
 void reset_all_cuda_state();
 
+/**
+ * Registers a reset callback for a process-wide singleton.
+ *
+ * `reset_all_singletons()` walks the registrations and calls each one; a singleton that
+ * does not register here is not reset by it. That distinction was invisible before this
+ * comment existed, and the registry was empty in the shipped code — the walk iterated
+ * nothing, so `reset_all_singletons()` silently did less than its name says.
+ *
+ * A singleton that holds mutable state between tests should register from its own
+ * translation unit, next to the definition of its reset method:
+ *
+ * @code
+ * namespace {
+ * struct Registrar {
+ *     Registrar() {
+ *         register_singleton_resetter("Profiler", [] {
+ *             Profiler::instance().reset();
+ *         });
+ *     }
+ * } g_registrar;
+ * }
+ * @endcode
+ *
+ * Names are used for diagnostics only; registering the same name twice replaces the
+ * previous callback rather than adding a second one.
+ */
 void register_singleton_resetter(const char* name, std::function<void()> resetter);
+
+/// Calls every registered resetter. Does nothing for a singleton that has not registered —
+/// see register_singleton_resetter() for what that means and why it matters.
 void reset_all_singletons();
+
+/// How many resetter registrations exist. Exposed so a test can assert the registry was
+/// populated rather than trusting that it was.
+size_t registered_singleton_count();
 
 class CUDAContextGuard {
 public:
