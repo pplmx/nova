@@ -3,6 +3,7 @@
 #include <string>
 
 #include "cuda/device/error.h"
+#include "cuda/memory/unique_ptr.h"
 
 #include <algorithm>
 #include <climits>
@@ -207,16 +208,19 @@ BFSResult bfs(
     // while d_next_dist/d_next_vis receive the freshly discovered frontier.
     // Merging (bfs_merge_kernel) folds the frontier into the accumulated state
     // and reports whether anything new was reached, which drives the loop.
-    int* d_dist;
-    bool* d_vis;
-    int* d_next_dist;
-    bool* d_next_vis;
-    int* d_changed;
-    CUDA_CHECK(cudaMalloc(&d_dist, n * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_vis, n * sizeof(bool)));
-    CUDA_CHECK(cudaMalloc(&d_next_dist, n * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_next_vis, n * sizeof(bool)));
-    CUDA_CHECK(cudaMalloc(&d_changed, sizeof(int)));
+    // Owned by unique_ptr: the loop below issues a dozen CUDA_CHECKs between these
+    // allocations and the frees that used to sit at the end of the function, so any failure
+    // left five device buffers with no owner.
+    ::cuda::memory::unique_ptr<int> d_dist_owned(n);
+    ::cuda::memory::unique_ptr<bool> d_vis_owned(n);
+    ::cuda::memory::unique_ptr<int> d_next_dist_owned(n);
+    ::cuda::memory::unique_ptr<bool> d_next_vis_owned(n);
+    ::cuda::memory::unique_ptr<int> d_changed_owned(1);
+    int* d_dist = d_dist_owned.get();
+    bool* d_vis = d_vis_owned.get();
+    int* d_next_dist = d_next_dist_owned.get();
+    bool* d_next_vis = d_next_vis_owned.get();
+    int* d_changed = d_changed_owned.get();
 
     CUDA_CHECK(cudaMemcpyAsync(d_dist, result.d_distances,
                                n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
@@ -293,11 +297,7 @@ BFSResult bfs(
         }
     }
 
-    CUDA_CHECK(cudaFree(d_dist));
-    CUDA_CHECK(cudaFree(d_vis));
-    CUDA_CHECK(cudaFree(d_next_dist));
-    CUDA_CHECK(cudaFree(d_next_vis));
-    CUDA_CHECK(cudaFree(d_changed));
+    // The working buffers are released by their destructors.
     return result;
 }
 
