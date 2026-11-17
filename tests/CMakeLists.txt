@@ -340,6 +340,26 @@ target_include_directories(krylov-standalone-tests PRIVATE
 )
 add_test(NAME krylov_standalone COMMAND krylov-standalone-tests)
 
+# The property tests each carry their own main() and print their own results, so they are
+# separate executables rather than part of nova-tests. They were present in the tree and built
+# by nothing at all: three runnable programmes that ctest never invoked. Each returns non-zero
+# when a property fails, so add_test() picks the failure up.
+foreach(prop_test algorithmic mathematical numerical)
+    add_executable(property-${prop_test}-tests
+        property/${prop_test}_tests.cpp
+    )
+    target_link_libraries(property-${prop_test}-tests
+        PRIVATE
+        CUDA::cudart
+        cuda_impl
+    )
+    target_include_directories(property-${prop_test}-tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/property
+    )
+    add_test(NAME property_${prop_test} COMMAND property-${prop_test}-tests)
+endforeach()
+
 # reduce_kernels.h is nvcc-only (it names threadIdx/__syncthreads at namespace
 # scope), so its test is a .cu file built into its own executable. Registering it
 # with gtest_discover_tests would run a CUDA binary during discovery of the host
