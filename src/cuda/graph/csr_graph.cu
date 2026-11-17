@@ -45,6 +45,16 @@ void CSRGraph::allocate_device() {
 }
 
 void CSRGraph::upload() {
+    // The driver happens to reject a null host source for the non-empty row_offsets copy, but
+    // that is its behaviour rather than this function's contract, and the two trailing copies
+    // have length zero for an empty graph — which a driver is free to accept without touching
+    // the pointer. State what the requirement is instead of relying on that.
+    if (row_offsets == nullptr) {
+        throw ::std::invalid_argument(
+            "CSRGraph::upload: row_offsets is null; construct with dimensions or fill the "
+            "graph before uploading");
+    }
+
     if (!d_row_offsets) allocate_device();
 
     CUDA_CHECK(cudaMemcpy(d_row_offsets, row_offsets, (num_vertices + 1) * sizeof(int), cudaMemcpyHostToDevice));
