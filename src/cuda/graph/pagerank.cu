@@ -115,15 +115,19 @@ std::vector<int> PageRankResult::top_k(int k) const {
         scored[v] = {ranks[v], v};
     }
 
+    // The result loop below already clamped with std::min(k, num_vertices); the partial_sort
+    // above it did not, so any k past the vertex count pushed the middle iterator past end().
+    // A negative k would do the same from the other side.
+    const int take = std::max(0, std::min(k, num_vertices));
     std::partial_sort(
         scored.begin(),
-        scored.begin() + k,
+        scored.begin() + take,
         scored.end(),
         [](const auto& a, const auto& b) { return a.first > b.first; }
     );
 
     std::vector<int> result;
-    for (int i = 0; i < std::min(k, num_vertices); ++i) {
+    for (int i = 0; i < take; ++i) {
         result.push_back(scored[i].second);
     }
     return result;

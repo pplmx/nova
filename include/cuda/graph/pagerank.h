@@ -2,6 +2,8 @@
 
 #include "cuda/graph/csr_graph.h"
 
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace cuda::graph {
@@ -28,7 +30,25 @@ struct PageRankResult {
     void download();
     void clear();
 
-    float rank_at(int v) const { return ranks[v]; }
+    /**
+     * @brief PageRank score of vertex v
+     *
+     * @throws std::out_of_range if v is outside [0, num_vertices), or if the result holds no
+     *         ranks. This is the only accessor here that indexes an array, and it checked
+     *         nothing — the same gap CSRGraph::degree had.
+     */
+    float rank_at(int v) const {
+        if (ranks == nullptr) {
+            throw ::std::out_of_range(
+                "PageRankResult::rank_at: the result holds no ranks");
+        }
+        if (v < 0 || v >= num_vertices) {
+            throw ::std::out_of_range(
+                "PageRankResult::rank_at: vertex " + ::std::to_string(v) +
+                " is outside [0, " + ::std::to_string(num_vertices) + ")");
+        }
+        return ranks[v];
+    }
 
     /**
      * @brief Index of the highest-ranked vertex
