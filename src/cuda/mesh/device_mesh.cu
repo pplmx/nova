@@ -96,8 +96,18 @@ void DeviceMesh::initialize() {
     }
 
     // Handle single-GPU case gracefully
+    //
+    // This reports 1 on a machine with no usable CUDA device, which is a deliberate choice
+    // and not an oversight: callers such as DistributedMemoryPool build one pool per
+    // reported device, and returning 0 there would make every such caller special-case an
+    // empty mesh. With 1, the calls that follow fail with a real CUDA error that names the
+    // problem, instead of the code silently doing nothing.
+    //
+    // What this cannot do is distinguish "one device" from "device enumeration failed" —
+    // the two are the same number by design. A caller that needs the distinction must call
+    // cudaGetDeviceCount itself. Stated here because nothing said it before.
     if (device_count_ <= 0) {
-        device_count_ = 1;  // Assume at least one device for operations
+        device_count_ = 1;
     }
 
     // Initialize peer capability map
