@@ -72,6 +72,19 @@ void csr_mv_transpose(
     cudaStream_t stream = nullptr
 );
 
+/**
+ * @brief Compute per-vertex in/out degrees on the device
+ *
+ * @warning Requires upload() to have been called on the graph. The kernels read d_row_offsets
+ * and d_columns, which are null until then, and nothing here checks: a caller that forgets gets
+ * a launch reading through null device pointers, which corrupts the CUDA context rather than
+ * failing an assertion. Every device-side operation in this header carries that requirement.
+ *
+ * @param graph       the CSR graph; must have been uploaded
+ * @param out_degrees device array of graph.num_vertices elements
+ * @param in_degrees  optional device array of graph.num_vertices elements; may be null
+ * @param stream      CUDA stream
+ */
 void compute_degrees(
     const CSRGraph& graph,
     int* out_degrees,

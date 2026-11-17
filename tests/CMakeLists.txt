@@ -164,6 +164,7 @@ add_executable(nova-tests
     sparse/validate_csr_null_test.cpp
     sparse/upload_empty_graph_test.cpp
     sparse/csr_from_edges_validation_test.cpp
+    sparse/csr_requires_upload_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp
