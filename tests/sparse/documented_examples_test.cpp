@@ -17,6 +17,7 @@
  */
 
 #include <cuda/distributed/all_gather.h>
+#include <cuda/distributed/broadcast.h>
 #include <cuda/distributed/matmul.h>
 #include <cuda/distributed/reduce.h>
 #include <cuda/mesh/device_mesh.h>
@@ -152,6 +153,55 @@ TEST(DocumentedExamplesTest, TheAllGatherExampleFollowsItsSingleGpuFallback) {
                          cudaMemcpyDeviceToHost), cudaSuccess);
 
     // The header says the input is copied through when there is only one device.
+    for (size_t i = 0; i < send_data.size(); ++i) {
+        EXPECT_FLOAT_EQ(recv_data[i], send_data[i]) << "index " << i;
+    }
+
+    (void)cudaFree(d_send);
+    (void)cudaFree(d_recv);
+}
+
+// reduce.h documents:
+//   DistributedReduce::all_reduce(send_data, recv_data, count, ReductionOp::Sum);
+// with device pointers, as the header now says.
+TEST(DocumentedExamplesTest, TheAllReduceExampleFollowsItsSingleDeviceIdentity) {
+    if (!device_available()) {
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    auto& mesh = cuda::mesh::DeviceMesh::instance();
+    mesh.initialize();
+    if (mesh.device_count() > 1) {
+        // Needs an initialised NCCL context, same as all_gather.
+        std::vector<float> data{1.0F, 2.0F};
+        bool threw = false;
+        try {
+            cuda::distributed::DistributedReduce::all_reduce(
+                data.data(), data.data(), data.size(),
+                cuda::distributed::ReductionOp::Sum);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        EXPECT_TRUE(threw) << "the multi-device path should refuse without NCCL";
+        return;
+    }
+
+    const std::vector<float> send_data{1.0F, 2.0F, 3.0F, 4.0F};
+    float* d_send = nullptr;
+    float* d_recv = nullptr;
+    ASSERT_EQ(cudaMalloc(&d_send, send_data.size() * sizeof(float)), cudaSuccess);
+    ASSERT_EQ(cudaMalloc(&d_recv, send_data.size() * sizeof(float)), cudaSuccess);
+    ASSERT_EQ(cudaMemset(d_recv, 0, send_data.size() * sizeof(float)), cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(d_send, send_data.data(), send_data.size() * sizeof(float),
+                         cudaMemcpyHostToDevice), cudaSuccess);
+
+    cuda::distributed::DistributedReduce::all_reduce(
+        d_send, d_recv, send_data.size(), cuda::distributed::ReductionOp::Sum);
+
+    // The header calls the single-device all-reduce the identity: recv must now hold send.
+    std::vector<float> recv_data(send_data.size(), -1.0F);
+    ASSERT_EQ(cudaMemcpy(recv_data.data(), d_recv, send_data.size() * sizeof(float),
+                         cudaMemcpyDeviceToHost), cudaSuccess);
     for (size_t i = 0; i < send_data.size(); ++i) {
         EXPECT_FLOAT_EQ(recv_data[i], send_data[i]) << "index " << i;
     }

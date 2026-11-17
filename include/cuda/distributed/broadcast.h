@@ -7,9 +7,15 @@
  * Broadcasts data from a root GPU to all other GPUs in the mesh.
  * Each non-root GPU receives a copy of the root's data.
  *
+ * @warning data must be a DEVICE pointer. With more than one device the pointer goes to
+ * NCCL, which does not dereference host memory. The single-device path returns without
+ * touching it, so a host pointer there appears to work and fails later when a second GPU is
+ * present — the kind of difference that shows up only on the machine that matters.
+ *
  * @example
  * @code
- * // Broadcast from GPU 0 to all other GPUs
+ * // Broadcast from GPU 0 to all other GPUs. data is a device allocation.
+ * float* data = nullptr;   // cudaMalloc'd, count elements on every rank
  * DistributedBroadcast::broadcast(data, count, root=0);
  * @endcode
  */

@@ -13,9 +13,16 @@
  * - Phase 2 (All-gather): Each GPU sends/receives N-1 times, gathering results
  * - Total: 2N-2 steps, O(N) bandwidth per GPU
  *
+ * @warning send_data and recv_data must be DEVICE pointers. The single-device path copies
+ * with cudaMemcpyDeviceToDevice and the multi-device path hands the pointers to NCCL. Host
+ * pointers fault — the same defect the all_gather and matmul examples had.
+ *
  * @example
  * @code
- * // Each GPU has local data, after call all GPUs have the sum
+ * // Each GPU has local data, after call all GPUs have the sum.
+ * // send_data and recv_data are device allocations, not host vectors.
+ * float* send_data = nullptr;   // cudaMalloc'd, count elements
+ * float* recv_data = nullptr;   // cudaMalloc'd, count elements
  * DistributedReduce::all_reduce(
  *     send_data, recv_data, count, ReductionOp::Sum);
  * @endcode
