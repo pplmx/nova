@@ -7,6 +7,7 @@
 #include "cuda/device/device_utils.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
+#include "cuda/memory/unique_ptr.h"
 #include "matrix/mult.h"
 #include "cuda/device/error.h"
 
@@ -27,17 +28,19 @@ void multiplyMatricesOnGPU(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
     size_t byteSizeB = numColsA * numColsB * sizeof(T);
     size_t byteSizeC = numRowsA * numColsB * sizeof(T);
 
-    // Device (GPU) memory pointers for matrices A, B, and result matrix C
-    T *deviceMatrixA, *deviceMatrixB, *deviceResultMatrix;
-
-    // Allocate memory for matrices on the GPU
-    CUDA_CHECK(cudaMalloc(&deviceMatrixA, byteSizeA));       // Allocate memory for matrix A on the GPU
-    CUDA_CHECK(cudaMalloc(&deviceMatrixB, byteSizeB));       // Allocate memory for matrix B on the GPU
-    CUDA_CHECK(cudaMalloc(&deviceResultMatrix, byteSizeC));  // Allocate memory for result matrix C on the GPU
+    // Device (GPU) memory for matrices A, B and the result, owned by unique_ptr so that a
+    // throwing CUDA_CHECK releases what was already allocated. These three allocations used
+    // to be raw pointers freed at the end of the function: if the second or third cudaMalloc
+    // failed — the ordinary way this function fails on a large problem — the ones before it
+    // leaked, and the copy below could leak all three. The other allocations in the tree use
+    // the same ownership type.
+    cuda::memory::unique_ptr<T> deviceMatrixA(static_cast<size_t>(numRowsA) * numColsA);
+    cuda::memory::unique_ptr<T> deviceMatrixB(static_cast<size_t>(numColsA) * numColsB);
+    cuda::memory::unique_ptr<T> deviceResultMatrix(static_cast<size_t>(numRowsA) * numColsB);
 
     // Copy matrices A and B from the host (CPU) to the device (GPU)
-    CUDA_CHECK(cudaMemcpy(deviceMatrixA, hostMatrixA, byteSizeA, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(deviceMatrixB, hostMatrixB, byteSizeB, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(deviceMatrixA.get(), hostMatrixA, byteSizeA, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(deviceMatrixB.get(), hostMatrixB, byteSizeB, cudaMemcpyHostToDevice));
 
     // Create a cuBLAS handle for matrix multiplication
     cublasHandle_t cublasHandle;
@@ -60,13 +63,20 @@ void multiplyMatricesOnGPU(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
                                  numRowsA,
                                  numColsA,  // m=N, n=M, k=K
                                  &alpha,    // Scalar alpha
-                                 deviceMatrixB,
-                                 numColsA,  // B: N×K, lda=K
-                                 deviceMatrixA,
-                                 numRowsA,  // A: K×M, lda=M
+                                 deviceMatrixB.get(),
+                                 numColsB,  // row-major K×N read as column-major N×K, so
+                                            // the leading dimension is N (= numColsB)
+                                 deviceMatrixA.get(),
+                                 numColsA,  // A: row-major M×K read as column-major K×M,
+                                            // so the leading dimension is K (= numColsA),
+                                            // not M. Passing M made cuBLAS reject every
+                                            // non-square product with
+                                            // CUBLAS_STATUS_INVALID_VALUE; the square
+                                            // cases this was tested with happen to satisfy
+                                            // lda >= K because M == K there.
                                  &beta,     // Scalar beta
-                                 deviceResultMatrix,
-                                 numRowsA));  // C: N×M, ldc=M
+                                 deviceResultMatrix.get(),
+                                 numColsB));  // C: N×M, ldc=N
     }
     // For double: Use cublasDgemm (double precision)
     else if constexpr (std::is_same_v<T, double>) {
@@ -77,13 +87,15 @@ void multiplyMatricesOnGPU(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
                                  numRowsA,
                                  numColsA,  // m=N, n=M, k=K
                                  &alpha,    // Scalar alpha
-                                 deviceMatrixB,
-                                 numColsA,  // B: N×K, lda=K
-                                 deviceMatrixA,
-                                 numRowsA,  // A: K×M, lda=M
+                                 deviceMatrixB.get(),
+                                 numColsB,  // row-major K×N read as column-major N×K, so
+                                            // the leading dimension is N (= numColsB)
+                                 deviceMatrixA.get(),
+                                 numColsA,  // leading dimension is K, as in the float
+                                            // branch above.
                                  &beta,     // Scalar beta
-                                 deviceResultMatrix,
-                                 numRowsA));  // C: N×M, ldc=M
+                                 deviceResultMatrix.get(),
+                                 numColsB));  // C: N×M, ldc=N
     }
     // If neither float nor double, throw a compile-time error
     else {
@@ -91,13 +103,10 @@ void multiplyMatricesOnGPU(const T* hostMatrixA, const T* hostMatrixB, T* hostRe
     }
 
     // Copy the result matrix from the device (GPU) back to the host (CPU)
-    CUDA_CHECK(cudaMemcpy(hostResultMatrix, deviceResultMatrix, byteSizeC, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(hostResultMatrix, deviceResultMatrix.get(), byteSizeC, cudaMemcpyDeviceToHost));
 
     // Clean up: Destroy cuBLAS handle and free the allocated GPU memory
     CUBLAS_CHECK(cublasDestroy(cublasHandle));  // Destroy cuBLAS context
-    CUDA_CHECK(cudaFree(deviceMatrixA));        // Free memory for matrix A
-    CUDA_CHECK(cudaFree(deviceMatrixB));        // Free memory for matrix B
-    CUDA_CHECK(cudaFree(deviceResultMatrix));   // Free memory for result matrix C
 }
 
 // Explicit template instantiations for float and double types
