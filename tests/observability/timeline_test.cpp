@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+
+#include <unistd.h>
 #include <fstream>
 #include <filesystem>
 
@@ -16,6 +18,12 @@ protected:
 
     void TearDown() override {
         TimelineExporter::instance().clear();
+        // SetUp overrides the process id with 1 so events are reproducible, and only the
+        // events were being cleared afterwards. The overridden id stayed on the singleton
+        // and every later test in the binary saw pid 1 — a test in another file that
+        // asserts the exported JSON carries ::getpid() failed only when this suite ran
+        // first. Restore what the singleton would have reported on its own.
+        TimelineExporter::instance().set_process_id(static_cast<int>(::getpid()));
     }
 };
 

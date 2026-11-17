@@ -3,6 +3,7 @@
 #include <chrono>
 #include <fstream>
 #include <mutex>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,12 @@ public:
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);
         events_.clear();
+        // pid_ is writable through set_process_id() and a test that changes it has no
+        // obvious reason to change it back; when it does not, every later reader in the
+        // same binary attributes its events to the wrong process. Clearing restores the
+        // value this exporter would have reported on its own, so clear() means "back to
+        // the state I started in" rather than "drop the events and keep the overrides".
+        pid_ = static_cast<int>(::getpid());
     }
 
     size_t event_count() const {

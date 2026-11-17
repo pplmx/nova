@@ -96,6 +96,28 @@ TEST(TimelineExporterTest, EventsCarryTheRealProcessId) {
         << "expected the current process id:\n" << json;
 }
 
+// clear() must undo a set_process_id() override, not just drop the events.
+TEST(TimelineExporterTest, ClearRestoresTheRealProcessId) {
+    auto& exporter = TimelineExporter::instance();
+    exporter.clear();
+
+    // An override of the kind a test makes to keep its output reproducible.
+    exporter.set_process_id(1);
+    exporter.record_event("overridden", "cat", 1);
+
+    exporter.record_event("after-clear", "cat", 2);
+    exporter.clear();
+    exporter.record_event("after-clear", "cat", 2);
+
+    const std::string path = temp_path("clear_pid");
+    ASSERT_TRUE(exporter.export_to_file(path));
+    const std::string json = slurp(path);
+    std::remove(path.c_str());
+
+    EXPECT_TRUE(contains(json, "\"pid\": " + std::to_string(::getpid()) + ","))
+        << "clear() should have discarded the overridden process id:\n" << json;
+}
+
 TEST(TimelineExporterTest, ExportProducesWellFormedTraceArrays) {
     auto& exporter = TimelineExporter::instance();
     exporter.clear();

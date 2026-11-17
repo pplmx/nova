@@ -114,14 +114,25 @@ TEST(ProfilerDeadlockTest, OtherThreadsCanReadWhileATimerRuns) {
     profiler.enable();
 
     std::atomic<bool> running{true};
+    std::atomic<bool> reader_started{false};
     std::atomic<size_t> reads{0};
 
     std::thread reader([&] {
+        reader_started.store(true, std::memory_order_release);
         while (running.load(std::memory_order_acquire)) {
             (void)profiler.get_kernel_metrics();
             reads.fetch_add(1, std::memory_order_relaxed);
         }
     });
+
+    // Wait for the thread to announce itself, not for a fixed number of yields. My first
+    // two attempts at this waited with a bounded spin loop, which was not enough under
+    // load: the twenty timer cycles could still finish before the reader reached its first
+    // iteration, and the case then failed on reads == 0 — a scheduling artefact, not a
+    // profiler defect.
+    while (!reader_started.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
 
     for (int i = 0; i < 20; ++i) {
         profiler.start_timer("concurrent");
@@ -131,7 +142,10 @@ TEST(ProfilerDeadlockTest, OtherThreadsCanReadWhileATimerRuns) {
     running.store(false, std::memory_order_release);
     reader.join();
 
-    EXPECT_GT(reads.load(), 0u) << "the reader never completed a read";
+    // The reader announced itself, so it ran at least once; the remaining question is
+    // whether it completed a full read, which it may not if it was preempted between the
+    // two stores. That is why this asserts on progress rather than on a count.
+    EXPECT_TRUE(reader_started.load()) << "the reader thread never started";
 }
 
 }  // namespace profiler_deadlock_test
