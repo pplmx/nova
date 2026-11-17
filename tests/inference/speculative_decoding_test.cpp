@@ -79,9 +79,19 @@ TEST_F(SpeculativeDecodingTest, UnimplementedFeatureFlagsFailFast) {
 }
 
 TEST_F(SpeculativeDecodingTest, SnapshotRollbackCommit) {
+    // These three calls return void and kv_snapshot_ is private with no accessor, so this
+    // case can only establish that the sequence is callable and does not fault. That is a
+    // real limit, not an oversight: the manager's own state is reachable through
+    // get_active_sequences(), but the snapshot itself is not exposed, so nothing here can
+    // show that a rollback restored anything.
+    const auto before = block_manager->get_active_sequences().size();
+
     spec_runner->snapshot_kv_state();
     spec_runner->rollback_kv_state();
     spec_runner->commit_kv_state();
+
+    EXPECT_EQ(block_manager->get_active_sequences().size(), before)
+        << "a snapshot/rollback/commit cycle must not create or drop sequences";
 }
 
 TEST(LogProbTracker, Record) {
@@ -395,7 +405,12 @@ TEST_F(SpeculativeDecodingTest, DraftTokensGenerationCount) {
 
     auto draft_tokens = spec_runner->generate_draft_tokens(embeddings, 32, stream,
         [](memory::Buffer<float>&, const std::vector<int64_t>&, bool, const stream::Stream&) {});
-    (void)draft_tokens;
+
+    // The name of this case is about a count and it asserted nothing. draft_depth is the
+    // number of tokens the drafter may propose per step, so the result cannot exceed it and
+    // a configured depth of five must not produce more.
+    EXPECT_LE(static_cast<int>(draft_tokens.size()), 5)
+        << "the drafter proposed more tokens than draft_depth allows";
 }
 
 TEST_F(SpeculativeDecodingTest, DecodeRunsReplayAndVerifiesPerPosition) {

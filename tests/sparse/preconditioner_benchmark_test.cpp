@@ -54,20 +54,35 @@ TEST_F(PreconditionerBenchmarkTest, CGIterationCountComparison) {
     auto result_no_prec = cg_no_prec.solve(A, b.data(), x.data());
     int iter_no_prec = result_no_prec.iterations;
 
+    const std::vector<double> x_no_prec = x;
+
     x.assign(n, 0.0);
+    std::vector<double> x_jacobi(n, 0.0);
     ConjugateGradient<double> cg_jacobi;
     auto jacobi = std::make_unique<JacobiPreconditioner<double>>();
     jacobi->setup(A);
     cg_jacobi.set_preconditioner(std::move(jacobi));
-    auto result_jacobi = cg_jacobi.solve(A, b.data(), x.data());
+    auto result_jacobi = cg_jacobi.solve(A, b.data(), x_jacobi.data());
     int iter_jacobi = result_jacobi.iterations;
 
     std::cout << "CG without preconditioner: " << iter_no_prec << " iterations\n";
     std::cout << "CG with Jacobi: " << iter_jacobi << " iterations\n";
 
-    if (iter_no_prec > 0) {
-        double reduction = 100.0 * (1.0 - static_cast<double>(iter_jacobi) / iter_no_prec);
-        std::cout << "Iteration reduction: " << reduction << "%\n";
+    // Both solvers must actually converge. This case used only to print the counts, so it
+    // passed whether or not the preconditioner was wired in, whether or not either solve
+    // converged, and whether or not the answers agreed. The iteration counts alone are not
+    // asserted on: on this small Laplacian both converge inside the same ten iterations, so
+    // a "preconditioning helps" assertion would be false here rather than informative.
+    EXPECT_EQ(result_no_prec.error_code, SolverError::SUCCESS);
+    EXPECT_EQ(result_jacobi.error_code, SolverError::SUCCESS);
+    EXPECT_GT(iter_no_prec, 0);
+    EXPECT_GT(iter_jacobi, 0);
+    EXPECT_LT(result_no_prec.relative_residual, 1e-6);
+    EXPECT_LT(result_jacobi.relative_residual, 1e-6);
+
+    // Both solve the same system, so they must land on the same answer.
+    for (int i = 0; i < n; ++i) {
+        EXPECT_NEAR(x_no_prec[i], x_jacobi[i], 1e-6) << "index " << i;
     }
 }
 
@@ -136,6 +151,25 @@ TEST_F(PreconditionerBenchmarkTest, JacobiWeightedVsStandard) {
 
     std::cout << "Jacobi (omega=1.0): " << result1.iterations << " iterations\n";
     std::cout << "Jacobi (omega=0.8): " << result2.iterations << " iterations\n";
+
+    // Two different relaxation factors must both converge, and a weighted Jacobi is not the
+    // identity: with a non-unit omega the answer is still A^-1 b, but the iterates differ, so
+    // requiring the converged solutions to match checks that omega_ actually reaches apply()
+    // rather than being stored and ignored.
+    EXPECT_EQ(result1.error_code, SolverError::SUCCESS);
+    EXPECT_EQ(result2.error_code, SolverError::SUCCESS);
+    EXPECT_LT(result1.relative_residual, 1e-6);
+    EXPECT_LT(result2.relative_residual, 1e-6);
+
+    for (int i = 0; i < n; ++i) {
+        EXPECT_NEAR(x1[i], x2[i], 1e-6)
+            << "index " << i << ": omega must not change the converged solution";
+    }
+
+    // And the omega value must survive the round trip through the preconditioner; an
+    // ignored parameter would read back as the default.
+    JacobiPreconditioner<double> probe(0.8);
+    EXPECT_NEAR(probe.omega(), 0.8, 1e-12);
 }
 
 }
