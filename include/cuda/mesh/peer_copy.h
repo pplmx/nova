@@ -35,8 +35,17 @@ namespace cuda::mesh {
  * @class PeerCopy
  * @brief Async peer-to-peer memory copy with validation and caching
  *
- * Provides thread-safe async P2P copy between GPUs. Validates peer access
- * before enabling and tracks enabled pairs to avoid redundant calls.
+ * Validates peer access before enabling and tracks enabled pairs in a std::set so a repeated
+ * enable is a no-op.
+ *
+ * @warning NOT thread-safe, though this note previously said it was. The enabled-pairs set
+ * (enabled_peer_pairs_, a std::set<std::pair<int,int>>) is read and written by
+ * enable_peer_access() with no lock, and that method is public and demonstrably called
+ * directly — the example above does so. Two threads enabling peer access at once race on the
+ * set; copy_async() alone does not touch it, so read-only use from several threads is fine.
+ *
+ * A caller that needs concurrent enabling should serialize calls to enable_peer_access(), or
+ * enable the pairs up front from one thread.
  *
  * @note Single-GPU fallback: If src_device == dst_device, uses normal
  *       cudaMemcpyAsync without requiring peer access.
