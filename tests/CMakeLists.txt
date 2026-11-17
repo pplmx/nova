@@ -161,6 +161,7 @@ add_executable(nova-tests
     sparse/pool_tuner_zero_size_test.cpp
     sparse/syncbn_overflow_test.cpp
     sparse/bfs_components_naming_test.cpp
+    sparse/validate_csr_null_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

@@ -329,6 +329,13 @@ void compute_degrees(
 
 bool validate_csr(const CSRGraph& graph) {
     if (graph.num_vertices < 0 || graph.num_edges < 0) return false;
+
+    // The host arrays are raw pointers and the default constructor leaves them null, so a
+    // caller validating a graph it never filled in would dereference nullptr right here.
+    // Reporting an invalid graph is what this function is for; crashing is not.
+    if (graph.row_offsets == nullptr) return false;
+    if (graph.num_edges > 0 && graph.columns == nullptr) return false;
+
     if (graph.row_offsets[0] != 0) return false;
     if (graph.row_offsets[graph.num_vertices] != graph.num_edges) return false;
 
