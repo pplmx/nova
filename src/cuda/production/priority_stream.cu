@@ -73,6 +73,17 @@ void PriorityStreamPool::release(PriorityStream stream) {
                 : (stream.priority() == StreamPriority::High) ? high_priority_pool_
                                                             : normal_priority_pool_;
 
+    // Reject a stream the pool already holds. Releasing the same handle twice put two copies
+    // of it in the vector, and cleanup() then called cudaStreamDestroy on it twice —
+    // measured: the second release of an acquired stream faults the process. Returning here
+    // is the only safe answer: the caller either mistook the handle for a different one or
+    // is releasing something it no longer owns, and neither is a reason to corrupt the pool.
+    for (const auto& existing : pool) {
+        if (existing.get() == stream.get()) {
+            return;
+        }
+    }
+
     if (pool.size() < pool_size_ * 2) {
         CUDA_CHECK(cudaStreamSynchronize(stream.get()));
         pool.push_back(stream);
