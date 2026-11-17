@@ -89,7 +89,13 @@ struct MpiConfig {
  * @brief MPI context with singleton pattern and RAII lifecycle
  *
  * Manages MPI initialization/finalization and provides rank discovery.
- * Thread-safe singleton ensures single initialization across the program.
+ * Thread-safe singleton ensures single initialization across the program: initialize() and
+ * finalize() take a mutex, so concurrent calls cannot both run MPI_Init.
+ *
+ * @warning That guarantee does not extend to the readers. local_rank_ is written under the
+ * mutex during initialize() and read without it by get_local_device_id(), which is public.
+ * Calling it from one thread while another is inside initialize() is a data race. Read the
+ * rank after initialization has returned, which is when it is meaningful anyway.
  */
 class MpiContext {
 public:
