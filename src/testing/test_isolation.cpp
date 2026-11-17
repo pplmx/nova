@@ -1,5 +1,12 @@
 #include "cuda/testing/test_isolation.h"
 #include "cuda/performance/profiler.h"
+#include "cuda/performance/kernel_profiler.h"
+#include "cuda/performance/autotuner.h"
+#include "cuda/performance/nvblox_metrics.h"
+#include "cuda/tools/timeline_visualizer.h"
+#include "cuda/observability/timeline.h"
+#include "cuda/error/timeout.hpp"
+#include "cuda/error/degrade.hpp"
 #include "cuda/device/error.h"
 
 #include <cuda_runtime.h>
@@ -68,6 +75,30 @@ struct SingletonRegistrations {
     SingletonRegistrations() {
         register_singleton_resetter("Profiler", [] {
             cuda::performance::Profiler::instance().reset();
+        });
+        register_singleton_resetter("KernelProfiler", [] {
+            cuda::performance::KernelProfiler::instance().reset();
+        });
+        register_singleton_resetter("AutotuneRegistry", [] {
+            cuda::performance::AutotuneRegistry::instance().clear();
+        });
+        register_singleton_resetter("NVBloxMetricsCollector", [] {
+            cuda::performance::NVBloxMetricsCollector::instance().reset();
+        });
+        register_singleton_resetter("BandwidthAnalyzer", [] {
+            cuda::tools::BandwidthAnalyzer::instance().clear();
+        });
+        register_singleton_resetter("TimelineVisualizer", [] {
+            cuda::tools::TimelineVisualizer::instance().clear();
+        });
+        register_singleton_resetter("TimelineExporter", [] {
+            cuda::observability::TimelineExporter::instance().clear();
+        });
+        register_singleton_resetter("timeout_manager", [] {
+            nova::error::timeout_manager::instance().reset();
+        });
+        register_singleton_resetter("degradation_manager", [] {
+            nova::error::degradation_manager::instance().reset();
         });
     }
 } g_singleton_registrations;
