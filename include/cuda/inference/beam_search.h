@@ -115,6 +115,11 @@ public:
 
 private:
     void initialize_beams(int prompt_length);
+    /// Declared but neither defined nor called. A scan for methods that have a declaration
+    /// in a header and no definition in src/ flags this one; it does not break the build
+    /// because nothing calls it, and no test can reach it. Left in place rather than removed
+    /// because the surrounding beam-search code is what the tests exercise and this is not
+    /// part of that; noted so the next reader does not assume it is usable.
     void expand_beams(
         const memory::Buffer<float>& logits,
         const stream::Stream& stream
