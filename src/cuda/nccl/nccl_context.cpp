@@ -187,10 +187,26 @@ void NcclContext::create_streams_and_comms() {
 #else
     // Without NCCL, create per-device streams so callers can use get_stream();
     // communicators_ stays nullptr and NCCL paths are guarded out.
-    for (int i = 0; i < device_count_; ++i) {
-        int device = device_ids_[i];
-        CUDA_CHECK(cudaSetDevice(device));
-        CUDA_CHECK(cudaStreamCreate(&streams_[i]));
+    //
+    // The NCCL branch above releases partial state through its joined threads' first_error.
+    // This branch had no equivalent, so a cudaStreamCreate failing on device i left devices
+    // 0..i-1's streams unreferenced — the vector held the handles but nothing released them.
+    // Same shape as MeshStreams::initialize, same fix.
+    try {
+        for (int i = 0; i < device_count_; ++i) {
+            int device = device_ids_[i];
+            CUDA_CHECK(cudaSetDevice(device));
+            CUDA_CHECK(cudaStreamCreate(&streams_[i]));
+        }
+    } catch (...) {
+        for (auto& s : streams_) {
+            if (s != nullptr && s != cudaStreamDefault) {
+                cudaStreamDestroy(s);
+                s = nullptr;
+            }
+        }
+        streams_.clear();
+        throw;
     }
 #endif
 }
