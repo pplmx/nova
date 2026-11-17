@@ -122,11 +122,37 @@ std::unique_ptr<CSRGraph> create_csr_from_edges(
     int num_vertices,
     int num_edges
 ) {
+    // counts[src_vertices[i]]++ indexes a host array with caller-supplied data and no bound, so
+    // a vertex id outside [0, num_vertices) corrupts the heap rather than being reported. The
+    // adjacency overload below validates its inputs; this one validated nothing.
+    if (num_vertices <= 0) {
+        throw ::std::invalid_argument(
+            "create_csr_from_edges: num_vertices must be positive, got " +
+            ::std::to_string(num_vertices));
+    }
+    if (num_edges < 0) {
+        throw ::std::invalid_argument(
+            "create_csr_from_edges: num_edges must not be negative, got " +
+            ::std::to_string(num_edges));
+    }
+    if (num_edges > 0 && (src_vertices == nullptr || dst_vertices == nullptr)) {
+        throw ::std::invalid_argument(
+            "create_csr_from_edges: num_edges is positive but a vertex array is null");
+    }
+
     auto graph = std::make_unique<CSRGraph>(num_vertices, num_edges);
 
     int* counts = new int[num_vertices]();
     for (int i = 0; i < num_edges; ++i) {
-        counts[src_vertices[i]]++;
+        const int src = src_vertices[i];
+        if (src < 0 || src >= num_vertices) {
+            delete[] counts;
+            throw ::std::out_of_range(
+                "create_csr_from_edges: src_vertices[" + ::std::to_string(i) + "] = " +
+                ::std::to_string(src) + " is outside [0, " +
+                ::std::to_string(num_vertices) + ")");
+        }
+        counts[src]++;
     }
 
     graph->row_offsets[0] = 0;
@@ -137,8 +163,20 @@ std::unique_ptr<CSRGraph> create_csr_from_edges(
     int* current_offset = new int[num_vertices]();
     for (int i = 0; i < num_edges; ++i) {
         int src = src_vertices[i];
+        const int dst = dst_vertices[i];
+        // A destination outside the vertex range produces a graph whose column indices are
+        // invalid. validate_csr reports that afterwards, but storing it silently leaves the
+        // constructor's own output malformed and makes the caller responsible for noticing.
+        if (dst < 0 || dst >= num_vertices) {
+            delete[] counts;
+            delete[] current_offset;
+            throw ::std::out_of_range(
+                "create_csr_from_edges: dst_vertices[" + ::std::to_string(i) + "] = " +
+                ::std::to_string(dst) + " is outside [0, " +
+                ::std::to_string(num_vertices) + ")");
+        }
         int pos = graph->row_offsets[src] + current_offset[src]++;
-        graph->columns[pos] = dst_vertices[i];
+        graph->columns[pos] = dst;
         graph->weights[pos] = weights ? weights[i] : 1.0f;
     }
 
