@@ -141,6 +141,7 @@ add_executable(nova-tests
     sparse/benchmark_dequantization_test.cpp
     sparse/declared_but_unimplemented_test.cpp
     sparse/multiply_exception_safety_test.cpp
+    sparse/documented_examples_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

@@ -70,12 +70,21 @@ struct DistributedMatmulOptions {
  * @note Single-GPU fallback: Delegates to cuda::neural::matmul
  *       No multi-GPU primitives are called when device_count <= 1
  *
+ * @warning A, B and C must be DEVICE pointers. The single-GPU fallback delegates to
+ * cuda::neural::matmul, which issues cuBLAS calls on them, and the multi-GPU path passes them
+ * to NCCL. A host pointer is used as-is and faults. Measured: calling matmul with host arrays
+ * raises "an illegal memory access was encountered".
+ *
  * @example
  * @code
  * DistributedMatmulOptions opts;
  * opts.alpha = 1.0f;
  * opts.beta = 0.0f;
  *
+ * // A, B and C are device allocations, not host vectors.
+ * float* A = nullptr;   // cudaMalloc'd, m * k elements
+ * float* B = nullptr;   // cudaMalloc'd, k * n elements
+ * float* C = nullptr;   // cudaMalloc'd, m * n elements
  * DistributedMatmul::matmul(A, B, C, m, n, k, opts);
  * @endcode
  */

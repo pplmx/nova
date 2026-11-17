@@ -7,9 +7,18 @@
  * Each GPU contributes its local data, and all GPUs receive the concatenated
  * results from all GPUs. The output buffer has size count * n GPUs.
  *
+ * @warning send_data and recv_data must be DEVICE pointers. The single-device path copies
+ * with cudaMemcpyDeviceToDevice and the multi-device path hands the pointers to NCCL; a host
+ * pointer from a std::vector or a stack array is passed through unchanged and faults. This
+ * was measured: calling all_gather with host arrays raises "an illegal memory access was
+ * encountered" at the cudaMemcpy in the fallback.
+ *
  * @example
  * @code
- * // Each GPU has count elements, after call all GPUs have count * n elements
+ * // Each GPU has count elements, after call all GPUs have count * n elements.
+ * // send_data and recv_data are device allocations, not host vectors.
+ * float* send_data = nullptr;   // cudaMalloc'd, count elements
+ * float* recv_data = nullptr;   // cudaMalloc'd, count * n elements
  * DistributedAllGather::all_gather(send_data, recv_data, count);
  * // recv_data layout: [GPU0_data, GPU1_data, ..., GPUn-1_data]
  * @endcode
