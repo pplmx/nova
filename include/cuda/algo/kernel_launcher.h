@@ -167,7 +167,12 @@ private:
  * @return Grid configuration with sufficient blocks
  */
 [[nodiscard]] constexpr inline dim3 calc_grid_1d(size_t n, dim3 block = {256, 1, 1}) {
-    return dim3{static_cast<unsigned int>((n + block.x - 1) / block.x), 1, 1};
+    // A zero-size input yields zero blocks, which CUDA rejects as "invalid configuration
+    // argument". Callers that legitimately pass 0 — an empty batch, a graph with no vertices —
+    // want the launch to do nothing, not to fail. Clamp to one block and let the kernel's own
+    // bound check discard the threads.
+    const size_t blocks = (n + block.x - 1) / block.x;
+    return dim3{static_cast<unsigned int>(blocks == 0 ? 1 : blocks), 1, 1};
 }
 
 /**
@@ -178,7 +183,11 @@ private:
  * @return Grid configuration with sufficient blocks
  */
 [[nodiscard]] constexpr inline dim3 calc_grid_2d(size_t w, size_t h, dim3 block = {16, 16, 1}) {
-    return dim3{static_cast<unsigned int>((w + block.x - 1) / block.x), static_cast<unsigned int>((h + block.y - 1) / block.y), 1};
+    // Same zero-block problem as calc_grid_1d, on either axis.
+    const size_t bx = (w + block.x - 1) / block.x;
+    const size_t by = (h + block.y - 1) / block.y;
+    return dim3{static_cast<unsigned int>(bx == 0 ? 1 : bx),
+                static_cast<unsigned int>(by == 0 ? 1 : by), 1};
 }
 
 /**
@@ -190,13 +199,19 @@ private:
  * @return Grid configuration with sufficient blocks
  */
 [[nodiscard]] constexpr inline dim3 calc_grid_3d(size_t x, size_t y, size_t z, dim3 block = {8, 8, 8}) {
-    return dim3{
-        static_cast<unsigned int>((x + block.x - 1) / block.x), static_cast<unsigned int>((y + block.y - 1) / block.y), static_cast<unsigned int>((z + block.z - 1) / block.z)};
+    // Same zero-block problem on any of the three axes.
+    const size_t bx = (x + block.x - 1) / block.x;
+    const size_t by = (y + block.y - 1) / block.y;
+    const size_t bz = (z + block.z - 1) / block.z;
+    return dim3{static_cast<unsigned int>(bx == 0 ? 1 : bx),
+                static_cast<unsigned int>(by == 0 ? 1 : by),
+                static_cast<unsigned int>(bz == 0 ? 1 : bz)};
 }
 
 [[nodiscard]] inline dim3 calc_grid_auto(size_t n, int device_id = 0) {
     dim3 block{static_cast<unsigned int>(cuda::performance::get_optimal_block_size(device_id)), 1, 1};
-    return dim3{static_cast<unsigned int>((n + block.x - 1) / block.x), 1, 1};
+    const size_t blocks = (n + block.x - 1) / block.x;
+    return dim3{static_cast<unsigned int>(blocks == 0 ? 1 : blocks), 1, 1};
 }
 
 [[nodiscard]] inline dim3 calc_grid_1d_auto(size_t n, int device_id = 0) {

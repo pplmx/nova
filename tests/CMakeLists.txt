@@ -171,6 +171,7 @@ add_executable(nova-tests
     sparse/pagerank_empty_graph_test.cpp
     sparse/csr_adjacency_validation_test.cpp
     sparse/pagerank_options_test.cpp
+    sparse/grid_helper_zero_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp
