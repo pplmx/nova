@@ -1,4 +1,5 @@
 #include "fuzz_utils.hpp"
+#include <cuda/memory/buffer.h>
 #include <cuda/algo/reduce.h>
 #include <parallel/scan.h>
 #include <parallel/sort.h>
@@ -27,10 +28,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     switch (op) {
         case 0: { // reduce
             try {
-                // Call the library, not a copy of it. The previous body summed the input
-                // with its own loop, so this fuzz target exercised nothing in the tree: any
-                // defect in reduce_sum would have been invisible to it.
-                const float result = cuda::algo::reduce_sum(input.data(), count);
+                // Call the library, not a copy of it: the previous body summed the input with
+                // its own loop, so this target exercised nothing in the tree.
+                //
+                // The data has to be staged onto the device first. reduce_sum hands the
+                // pointer straight to a kernel — my first version of this fix passed
+                // input.data() and faulted, which is how the missing device-pointer warning
+                // in cuda/algo/reduce.h was found.
+                cuda::memory::Buffer<float> d_input(input.size());
+                d_input.copy_from(input.data(), input.size());
+                const float result = cuda::algo::reduce_sum(d_input.data(), count);
                 (void)result;
             } catch (...) {
                 return 1; // Crash on error
