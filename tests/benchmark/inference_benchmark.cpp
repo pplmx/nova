@@ -7,7 +7,19 @@
 
 namespace cuda::inference::benchmark {
 
-static void BM_Throughput(benchmark::State& state) {
+// Attention buffers must match the geometry the Scheduler derives from its config:
+// batch_size x seq_len x num_heads x head_dim. These used to be 64 * 8 * 64 regardless, which
+// is short whenever the benchmark ran with more than one request in flight — and
+// FlashAttention::forward returned silently on a short buffer, so the benchmark measured a
+// no-op instead of failing. It throws now, so the sizes have to be computed.
+static size_t bench_attention_elements(const SchedulerConfig& config) {
+    return static_cast<size_t>(config.max_batch_size) *
+           static_cast<size_t>(config.max_sequence_length) *
+           static_cast<size_t>(config.num_heads) *
+           static_cast<size_t>(config.head_dim);
+}
+
+static void BM_Throughput(::benchmark::State& state) {
     CUDA_CHECK(cudaSetDevice(0));
     stream::Stream stream;
 
@@ -29,8 +41,9 @@ static void BM_Throughput(benchmark::State& state) {
     for (auto _ : state) {
         auto batch = scheduler->get_batch();
 
-        memory::Buffer<float> query(64 * 8 * 64);
-        memory::Buffer<float> output(64 * 8 * 64);
+        const size_t attn_elements = bench_attention_elements(config);
+        memory::Buffer<float> query(attn_elements);
+        memory::Buffer<float> output(attn_elements);
 
         scheduler->forward_batch(query, output, stream);
         CUDA_CHECK(cudaStreamSynchronize(stream.get()));
@@ -44,9 +57,9 @@ static void BM_Throughput(benchmark::State& state) {
 BENCHMARK(BM_Throughput)
     ->RangeMultiplier(2)
     ->Range(1, 32)
-    ->Unit(benchmark::kMillisecond);
+    ->Unit(::benchmark::kMillisecond);
 
-static void BM_KVCacheMemoryEfficiency(benchmark::State& state) {
+static void BM_KVCacheMemoryEfficiency(::benchmark::State& state) {
     CUDA_CHECK(cudaSetDevice(0));
     stream::Stream stream;
 
@@ -76,16 +89,16 @@ static void BM_KVCacheMemoryEfficiency(benchmark::State& state) {
     state.SetLabel("Waste: " + std::to_string(waste_percent) + "%");
 
     for (auto _ : state) {
-        benchmark::DoNotOptimize(stats);
+        ::benchmark::DoNotOptimize(stats);
     }
 }
 
 BENCHMARK(BM_KVCacheMemoryEfficiency)
     ->RangeMultiplier(2)
     ->Range(1, 16)
-    ->Unit(benchmark::kMillisecond);
+    ->Unit(::benchmark::kMillisecond);
 
-static void BM_LatencyPerToken(benchmark::State& state) {
+static void BM_LatencyPerToken(::benchmark::State& state) {
     CUDA_CHECK(cudaSetDevice(0));
     stream::Stream stream;
 
@@ -105,8 +118,9 @@ static void BM_LatencyPerToken(benchmark::State& state) {
         auto start = std::chrono::high_resolution_clock::now();
 
         auto batch = scheduler->get_batch();
-        memory::Buffer<float> query(64 * 8 * 64);
-        memory::Buffer<float> output(64 * 8 * 64);
+        const size_t attn_elements = bench_attention_elements(config);
+        memory::Buffer<float> query(attn_elements);
+        memory::Buffer<float> output(attn_elements);
 
         scheduler->forward_batch(query, output, stream);
         CUDA_CHECK(cudaStreamSynchronize(stream.get()));
@@ -121,9 +135,11 @@ static void BM_LatencyPerToken(benchmark::State& state) {
 }
 
 BENCHMARK(BM_LatencyPerToken)
-    ->Unit(benchmark::kMicrosecond)
+    ->Unit(::benchmark::kMicrosecond)
     ->MinTime(0.1);
 
-BENCHMARK_MAIN();
-
 }  // namespace cuda::inference::benchmark
+
+// Outside the namespace: BENCHMARK_MAIN() expands to a definition of main(), and inside
+// cuda::inference::benchmark it would be a nested main.
+BENCHMARK_MAIN();

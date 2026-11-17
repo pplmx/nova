@@ -198,13 +198,26 @@ TEST_F(BlockManagerTest, SequenceIsolation) {
     EXPECT_EQ(manager->get_sequence(2)->num_tokens, 16);
 }
 
+// Same helper as in block_manager_edge_test.cpp: attention buffers must match the
+// configured geometry. FlashAttention::forward used to return silently when they did not,
+// which let short buffers pass unnoticed; it throws now, so the sizes have to be derived
+// rather than guessed.
+inline size_t required_attention_elements(const BlockManagerConfig& config) {
+    const auto& a = config.attention_config;
+    return static_cast<size_t>(std::max(1, a.batch_size)) *
+           static_cast<size_t>(std::max(1, a.seq_len)) *
+           static_cast<size_t>(std::max(1, a.num_heads)) *
+           static_cast<size_t>(std::max(1, a.head_dim));
+}
+
 TEST_F(BlockManagerTest, ForwardBatchSequenceNotFound) {
     auto manager = std::make_unique<BlockManager>(config_);
 
     manager->create_sequence(1, 32);
 
-    memory::Buffer<float> query(32 * 4 * 64);
-    memory::Buffer<float> output(32 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> sequence_ids = {1, 999};
 
