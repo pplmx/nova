@@ -220,7 +220,18 @@ std::unique_ptr<CSRGraph> create_csr_from_adjacency(
     for (int v = 0; v < num_vertices; ++v) {
         int offset = graph->row_offsets[v];
         for (size_t i = 0; i < adjacency[v].size(); ++i) {
-            graph->columns[offset + i] = adjacency[v][i];
+            const int neighbour = adjacency[v][i];
+            // A neighbour index outside [0, num_vertices) produces a graph whose column
+            // indices are invalid. validate_csr would report that afterwards; storing it here
+            // means the constructor hands back a malformed result. create_csr_from_edges
+            // validates the same thing for its edge list, so this matches it.
+            if (neighbour < 0 || neighbour >= num_vertices) {
+                throw ::std::out_of_range(
+                    "create_csr_from_adjacency: adjacency[" + ::std::to_string(v) + "][" +
+                    ::std::to_string(i) + "] = " + ::std::to_string(neighbour) +
+                    " is outside [0, " + ::std::to_string(num_vertices) + ")");
+            }
+            graph->columns[offset + i] = neighbour;
             graph->weights[offset + i] = weights.empty() ? 1.0f : weights[v][i];
         }
     }
