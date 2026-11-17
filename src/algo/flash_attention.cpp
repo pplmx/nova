@@ -163,16 +163,36 @@ void FlashAttention::forward(
     const int S = config_.seq_len;
     const int D = config_.head_dim;
     if (B <= 0 || H <= 0 || S <= 0 || D <= 0) {
-        return;
+        // An empty geometry is a configuration error, not a request for no work; a silent
+        // return here was indistinguishable from a successful empty pass.
+        throw std::invalid_argument(
+            "FlashAttention::forward: batch_size, num_heads, seq_len and head_dim must all "
+            "be positive");
     }
 
     const int KH = std::max(1, config_.num_kv_heads);
     const size_t qe = static_cast<size_t>(B) * S * H * D;
     const size_t kve = static_cast<size_t>(B) * S * KH * D;
-    if (query.size() < qe || key.size() < kve || value.size() < kve ||
-        output.size() < qe || softmax_lse.size() < static_cast<size_t>(B) * H) {
-        return;
-    }
+
+    // A buffer too small for the configured geometry used to return silently, leaving output
+    // whatever the caller had in it. BlockManager::forward_batch passes caller-provided
+    // buffers against these dimensions, and a test that allocated half the required elements
+    // measured exactly that: forward_batch returned normally with the output untouched. The
+    // caller has no way to distinguish that from a computed result, so this throws and names
+    // the buffer, the requirement and what was supplied.
+    const auto require = [](const char* what, size_t supplied, size_t needed) {
+        if (supplied < needed) {
+            throw std::invalid_argument(
+                std::string("FlashAttention::forward: ") + what + " has " +
+                std::to_string(supplied) + " elements but the configured geometry needs " +
+                std::to_string(needed));
+        }
+    };
+    require("query", query.size(), qe);
+    require("key", key.size(), kve);
+    require("value", value.size(), kve);
+    require("output", output.size(), qe);
+    require("softmax_lse", softmax_lse.size(), static_cast<size_t>(B) * H);
 
     AttentionGeometry g{
         .batch = B, .heads = H, .kv_heads = KH, .seq = S, .dim = D,
@@ -237,7 +257,11 @@ void FlashAttention::forward_bf16(
     const int S = config_.seq_len;
     const int D = config_.head_dim;
     if (B <= 0 || H <= 0 || S <= 0 || D <= 0) {
-        return;
+        // An empty geometry is a configuration error, not a request for no work; a silent
+        // return here was indistinguishable from a successful empty pass.
+        throw std::invalid_argument(
+            "FlashAttention::forward: batch_size, num_heads, seq_len and head_dim must all "
+            "be positive");
     }
     const int KH = std::max(1, config_.num_kv_heads);
     const size_t qe = static_cast<size_t>(B) * S * H * D;
@@ -299,7 +323,11 @@ void FlashAttention::backward(
     const int S = config_.seq_len;
     const int D = config_.head_dim;
     if (B <= 0 || H <= 0 || S <= 0 || D <= 0) {
-        return;
+        // An empty geometry is a configuration error, not a request for no work; a silent
+        // return here was indistinguishable from a successful empty pass.
+        throw std::invalid_argument(
+            "FlashAttention::forward: batch_size, num_heads, seq_len and head_dim must all "
+            "be positive");
     }
     const int KH = std::max(1, config_.num_kv_heads);
     const size_t qe = static_cast<size_t>(B) * S * H * D;

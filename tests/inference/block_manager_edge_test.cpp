@@ -177,11 +177,25 @@ TEST_F(BlockManagerEdgeTest, AppendMultipleTimes) {
     EXPECT_GE(seq->block_table.size(), 10);
 }
 
+// Element counts the manager's attention geometry requires. Previously these tests
+// allocated 64 * 4 * 64 or 128 * 4 * 64 elements regardless of the configuration in use, which
+// is short of what FlashAttention::forward needs — and because that function returned
+// silently on a short buffer, the tests passed while computing nothing. Now forward throws,
+// so the buffers have to match the config they are run against.
+inline size_t required_attention_elements(const BlockManagerConfig& config) {
+    const auto& a = config.attention_config;
+    return static_cast<size_t>(std::max(1, a.batch_size)) *
+           static_cast<size_t>(std::max(1, a.seq_len)) *
+           static_cast<size_t>(std::max(1, a.num_heads)) *
+           static_cast<size_t>(std::max(1, a.head_dim));
+}
+
 TEST_F(BlockManagerEdgeTest, ForwardBatchWithEmptyBatch) {
     auto manager = std::make_unique<BlockManager>(config_);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> empty_batch;
     EXPECT_NO_THROW(manager->forward_batch(empty_batch, query, output, *stream_));
@@ -192,12 +206,29 @@ TEST_F(BlockManagerEdgeTest, ForwardBatchWithSingleSequence) {
 
     manager->create_sequence(1, 64);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1};
+    output.fill(-12345.0F);
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+    // EXPECT_NO_THROW alone accepted a forward_batch that did nothing at all. The call ends
+    // in attention_->forward(), so the output buffer must have been written. It is seeded
+    // with a sentinel first: Buffer does not zero-initialise, so without the fill this check
+    // would be reading whatever cudaMalloc happened to return.
+    std::vector<float> host(query.size(), -12345.0F);
+    output.copy_to(host.data(), host.size());
+    bool wrote_something = false;
+    for (float value : host) {
+        if (value != -12345.0F) {
+            wrote_something = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(wrote_something) << "forward_batch left the output buffer untouched";
 }
 
 TEST_F(BlockManagerEdgeTest, ForwardBatchWithMultipleSequences) {
@@ -207,12 +238,27 @@ TEST_F(BlockManagerEdgeTest, ForwardBatchWithMultipleSequences) {
     manager->create_sequence(2, 64);
     manager->create_sequence(3, 64);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1, 2, 3};
+    output.fill(-12345.0F);
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+    // Same reason as the single-sequence case: the batch size is what differs here, so the
+    // check is that a larger batch is still written rather than silently skipped.
+    std::vector<float> host(query.size(), -12345.0F);
+    output.copy_to(host.data(), host.size());
+    bool wrote_something = false;
+    for (float value : host) {
+        if (value != -12345.0F) {
+            wrote_something = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(wrote_something) << "a three-sequence batch left the output untouched";
 }
 
 TEST_F(BlockManagerEdgeTest, SequenceIndexSpaceReusedAcrossCreateFreeChurn) {
@@ -242,8 +288,9 @@ TEST_F(BlockManagerEdgeTest, SequenceIndexSpaceReusedAcrossCreateFreeChurn) {
     // capacity) row, so a real forward must not trip the index guard.
     const int64_t final_id = ++next_id;
     manager->create_sequence(final_id, 64);
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
     std::vector<int64_t> batch = {final_id};
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
@@ -254,8 +301,9 @@ TEST_F(BlockManagerEdgeTest, ForwardBatchWithMissingSequence) {
 
     manager->create_sequence(1, 64);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1, 999};
     EXPECT_THROW(manager->forward_batch(batch, query, output, *stream_), std::runtime_error);
@@ -302,8 +350,9 @@ TEST_F(BlockManagerEdgeTest, BlockTableSyncStream) {
 
     manager->create_sequence(1, 64);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config_);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     EXPECT_NO_THROW(manager->sync_block_tables(*stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
@@ -368,8 +417,9 @@ TEST_F(BlockManagerCudaGraphTest, ForwardBatchWithCudaGraphEnabled) {
     manager->create_sequence(1, 64);
     manager->create_sequence(2, 64);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1, 2};
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
@@ -399,8 +449,9 @@ TEST_F(BlockManagerCudaGraphTest, KVCacheAccessWithCudaGraph) {
         << "Creating sequences must allocate KV blocks under CUDA-graph config";
 
     // KV cache is usable when CUDA graphs are enabled: forward does not throw.
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
     std::vector<int64_t> batch = {1, 2};
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
@@ -539,8 +590,9 @@ TEST_F(DynamicBlockSizingTest, ForwardBatchWithDifferentBlockSizes) {
     manager16->create_sequence(1, 64);
     manager32->create_sequence(2, 64);
 
-    memory::Buffer<float> query(64 * 4 * 64);
-    memory::Buffer<float> output(64 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config32);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     EXPECT_NO_THROW(manager16->forward_batch({1}, query, output, *stream_));
     EXPECT_NO_THROW(manager32->forward_batch({2}, query, output, *stream_));
@@ -638,8 +690,9 @@ TEST_F(ChunkedPrefillTest, ChunkedPrefillWithForwardBatch) {
     manager->append_tokens(1, 64);
     manager->append_tokens(2, 128);
 
-    memory::Buffer<float> query(256 * 4 * 64);
-    memory::Buffer<float> output(256 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1, 2};
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
@@ -746,8 +799,9 @@ TEST_F(LongPromptIntegrationTest, LongPromptForwardBatch) {
     manager->append_tokens(1, 4096);
     manager->append_tokens(2, 2048);
 
-    memory::Buffer<float> query(8192 * 4 * 64);
-    memory::Buffer<float> output(8192 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1, 2};
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));
@@ -899,8 +953,9 @@ TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeCombinedSequences) {
     manager->append_tokens(4, 8);
     manager->append_tokens(5, 8);
 
-    memory::Buffer<float> query(256 * 4 * 64);
-    memory::Buffer<float> output(256 * 4 * 64);
+    const size_t attn_elements = required_attention_elements(config);
+    memory::Buffer<float> query(attn_elements);
+    memory::Buffer<float> output(attn_elements);
 
     std::vector<int64_t> batch = {1, 2, 3, 4, 5};
     EXPECT_NO_THROW(manager->forward_batch(batch, query, output, *stream_));

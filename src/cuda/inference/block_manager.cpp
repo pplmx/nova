@@ -156,6 +156,14 @@ void BlockManager::forward_batch(
 ) {
     std::shared_lock lock(sequence_mutex_);
 
+    // An empty batch is a legal no-op. Without this the call still reached
+    // attention_->forward(), which sizes softmax_lse from sequence_ids.size() — zero — and
+    // (now that forward rejects undersized buffers instead of returning silently) threw.
+    // Skipping the launch is what "no sequences to run" means.
+    if (sequence_ids.empty()) {
+        return;
+    }
+
     for (const int64_t seq_id : sequence_ids) {
         auto it = sequences_.find(seq_id);
         if (it == sequences_.end()) {

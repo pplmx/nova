@@ -47,35 +47,50 @@ TEST_F(SpeculativeDecodingTest, Configure) {
 // Requesting an unimplemented feature must fail fast at the configuration
 // boundary rather than silently running plain chain-only drafting.
 TEST_F(SpeculativeDecodingTest, UnimplementedFeatureFlagsFailFast) {
+    // Every case below expects the same exception type, and the messages are what tell the
+    // reader which flag was refused. EXPECT_THROW(..., std::exception) alone would be
+    // satisfied by a throw from anywhere in configure(), including an unrelated bug; naming
+    // the flag in the message makes the rejection specific. The helper checks the type and
+    // the text so both are pinned.
+    const auto expect_rejected_flag = [](auto&& callable, const std::string& flag) {
+        try {
+            callable();
+        } catch (const std::runtime_error& error) {
+            const std::string message = error.what();
+            EXPECT_NE(message.find(flag), std::string::npos)
+                << "the message does not name " << flag << ": " << message;
+            return;
+        } catch (const std::exception& other) {
+            FAIL() << "expected std::runtime_error naming " << flag
+                   << ", got a different exception: " << other.what();
+            return;
+        }
+        FAIL() << "expected " << flag << " to be rejected, but nothing was thrown";
+    };
+
     SpeculativeDecodingConfig tree;
     tree.enable_tree_attention = true;
-    EXPECT_THROW(spec_runner->configure(tree), std::exception)
-        << "enable_tree_attention=true must fail fast (tree attention is not "
-           "implemented) instead of silently skipping the tree mask";
+    expect_rejected_flag([&] { spec_runner->configure(tree); }, "enable_tree_attention");
 
     // The runner constructor must reject a tree-enabled config too (a config
     // can bypass configure() by going straight to the constructor).
     SpeculativeDecodingConfig by_ctor;
     by_ctor.enable_tree_attention = true;
-    EXPECT_THROW(
-        SpeculativeDecodingRunner thrown(block_manager.get(), by_ctor),
-        std::exception)
-        << "constructor must reject an unimplemented feature flag";
+    expect_rejected_flag(
+        [&] { SpeculativeDecodingRunner thrown(block_manager.get(), by_ctor); },
+        "enable_tree_attention");
 
     SpeculativeDecodingConfig async;
     async.enable_async_draft = true;
-    EXPECT_THROW(spec_runner->configure(async), std::exception)
-        << "enable_async_draft=true must fail fast";
+    expect_rejected_flag([&] { spec_runner->configure(async); }, "enable_async_draft");
 
     SpeculativeDecodingConfig eagle;
     eagle.enable_eagle3 = true;
-    EXPECT_THROW(spec_runner->configure(eagle), std::exception)
-        << "enable_eagle3=true must fail fast";
+    expect_rejected_flag([&] { spec_runner->configure(eagle); }, "enable_eagle3");
 
     SpeculativeDecodingConfig xgram;
     xgram.enable_xgrammar = true;
-    EXPECT_THROW(spec_runner->configure(xgram), std::exception)
-        << "enable_xgrammar=true must fail fast";
+    expect_rejected_flag([&] { spec_runner->configure(xgram); }, "enable_xgrammar");
 }
 
 TEST_F(SpeculativeDecodingTest, SnapshotRollbackCommit) {
