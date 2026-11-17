@@ -121,6 +121,62 @@ BenchmarkResult QuantizationBenchmark::benchmark_int8_quantization(
     return result;
 }
 
+// Declared in the header and never defined. Any caller got a link error naming this symbol
+// rather than a benchmark: the class advertises six measurements and shipped five. Found by
+// taking the address of every declared member and linking.
+BenchmarkResult QuantizationBenchmark::benchmark_dequantization(
+    const std::vector<int8_t>& data, Precision precision) {
+
+    BenchmarkResult result;
+    result.name = "Dequantization";
+    result.batch_size = static_cast<int>(data.size());
+    result.num_samples = config_.benchmark_runs;
+
+    int8_t* d_quantized;
+    CUDA_CHECK(cudaMalloc(&d_quantized, data.size() * sizeof(int8_t)));
+    float* d_output;
+    CUDA_CHECK(cudaMalloc(&d_output, data.size() * sizeof(float)));
+
+    CUDA_CHECK(cudaMemcpy(d_quantized, data.data(), data.size() * sizeof(int8_t),
+                          cudaMemcpyHostToDevice));
+
+    cuda::QuantizationParams params(0.1f);
+
+    for (int i = 0; i < config_.warmup_runs; ++i) {
+        cuda::dequantize_int8_to_f32(d_quantized, d_output, data.size(), params, stream_);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < config_.benchmark_runs; ++i) {
+        cuda::dequantize_int8_to_f32(d_quantized, d_output, data.size(), params, stream_);
+    }
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+    // Reads one byte per element and writes four, so the moved bytes are five per element —
+    // the same unit convention the neighbouring benchmarks use (bytes per microsecond).
+    const float total_bytes =
+        static_cast<float>(data.size()) * (sizeof(int8_t) + sizeof(float)) *
+        config_.benchmark_runs;
+    result.throughput_gbps =
+        total_bytes / (static_cast<float>(duration.count()) * 1e3f);
+    result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
+
+    // The output precision names what the caller asked the values to be interpreted as;
+    // recording it keeps the result self-describing rather than assuming FP32 downstream.
+    result.name += (precision == Precision::FP32) ? " (FP32)" : " (mixed)";
+
+    CUDA_CHECK(cudaFree(d_quantized));
+    CUDA_CHECK(cudaFree(d_output));
+
+    results_.push_back(result);
+    return result;
+}
+
 BenchmarkResult QuantizationBenchmark::benchmark_fp8_gemm(
     int m, int k, int n) {
 
