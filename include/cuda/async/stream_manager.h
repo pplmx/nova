@@ -5,6 +5,7 @@
  * @brief Stream lifecycle management with priority configuration
  */
 
+#include <algorithm>
 #include <cuda_runtime.h>
 
 #include <memory>

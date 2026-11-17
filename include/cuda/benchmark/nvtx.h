@@ -14,6 +14,7 @@
 
 #if defined(NOVA_NVTX_ENABLED) && NOVA_NVTX_ENABLED
 
+#include <cstdint>
 #include <nvtx3/nvtx3.hpp>
 
 namespace cuda::benchmark::nvtx {
@@ -97,6 +98,11 @@ inline void pop_range() {
 
 #else
 
+// The disabled build is the default one, and it uses std::int64_t below. <cstdint> was only
+// included inside the enabled branch, so a translation unit that took the #else path had no
+// declaration for it — found by compiling every header on its own.
+#include <cstdint>
+
 namespace cuda::benchmark::nvtx {
 
 struct MemoryDomain {};
@@ -108,12 +114,12 @@ struct BenchmarkDomain {};
 class ScopedRange {
 public:
     explicit ScopedRange(const char*) {}
-    void set_payload(int64_t) {}
+    void set_payload(std::int64_t) {}
     void set_message(const char*) {}
 };
 
 inline void mark(const char*) {}
-inline void mark_with_payload(const char*, int64_t) {}
+inline void mark_with_payload(const char*, std::int64_t) {}
 inline void push_range(const char*) {}
 inline void pop_range() {}
 

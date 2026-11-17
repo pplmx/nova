@@ -572,9 +572,15 @@ inline void RingSequenceParallelism::ring_attention(
             "RingSequenceParallelism::ring_attention: multi-GPU ring requires "
             "a live communicator (config.comm)");
     }
+#if NOVA_NCCL_ENABLED
+    // check_comm_healthy lives in the detail namespace, which only exists when NCCL is
+    // enabled. Calling it unconditionally meant this header did not compile in a build
+    // without NCCL — found by compiling every header on its own. Without NCCL there is no
+    // poisoned communicator to re-check, so the call is simply absent.
     detail::check_comm_healthy(
         "RingSequenceParallelism::ring_attention", config_.comm,
         config_.nccl_context);
+#endif
     // The ring must walk exactly the gates' parallelism degree: a config whose
     // world_size disagrees with sequence_parallel_size would silently attend
     // only a prefix of the full sequence — fail fast instead (the class of

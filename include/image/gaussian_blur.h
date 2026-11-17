@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include "cuda/memory/buffer.h"
 #include <cstddef>
