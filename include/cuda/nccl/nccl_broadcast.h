@@ -17,7 +17,7 @@
  *     weight_data,  // Source on root device
  *     recv_data,
  *     count,
- *     ncclDataType_t::ncclFloat32,
+ *     ncclFloat32,
  *     root_rank,    // Device 0 typically
  *     ctx.get_stream(device)
  * );

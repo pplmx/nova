@@ -156,6 +156,7 @@ add_executable(nova-tests
     sparse/mpi_context_thread_safety_test.cpp
     sparse/mesh_streams_partial_init_test.cpp
     sparse/bfs_result_ctor_test.cpp
+    sparse/nccl_enum_examples_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

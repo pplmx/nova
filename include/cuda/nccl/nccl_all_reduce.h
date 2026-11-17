@@ -31,10 +31,14 @@ namespace cuda::nccl {
  * ctx.initialize();
  *
  * NcclAllReduce reduce(ctx);
+ *
+ * // NCCL's op and type enums are C-style, not scoped: write ncclSum, not
+ * // ncclRedOp_t::ncclSum. The scoped form does not compile — ncclRedOp_t is a
+ * // typedef, not a class or namespace.
  * auto result = reduce.all_reduce_async(
  *     send_data, recv_data, count,
- *     ncclRedOp_t::ncclSum,
- *     ncclDataType_t::ncclFloat32,
+ *     ncclSum,
+ *     ncclFloat32,
  *     ctx.get_stream(0)
  * );
  * @endcode
