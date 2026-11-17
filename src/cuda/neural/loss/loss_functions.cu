@@ -435,6 +435,17 @@ float contrastive_loss(
     const ContrastiveLossConfig& config,
     cudaStream_t stream
 ) {
+    // temperature divides a cosine similarity twice below (once per similarity, once per
+    // negative pair), so zero produces inf and then exp(inf), and a negative value inverts the
+    // ordering of the pair weights. The default is 0.07, but nothing stopped a caller passing
+    // zero explicitly — cross_entropy_loss above rejects its own degenerate geometry in the
+    // same way and this function had no checks at all.
+    if (!(config.temperature > 0.0f)) {
+        throw std::invalid_argument(
+            "contrastive_loss: config.temperature must be positive, got " +
+            std::to_string(config.temperature));
+    }
+
     std::vector<float> similarities(batch_size);
 
     for (int b = 0; b < batch_size; ++b) {
