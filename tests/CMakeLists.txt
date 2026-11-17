@@ -154,6 +154,7 @@ add_executable(nova-tests
     sparse/peer_copy_thread_safety_test.cpp
     sparse/buffer_thread_safety_test.cpp
     sparse/mpi_context_thread_safety_test.cpp
+    sparse/mesh_streams_partial_init_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp

@@ -1,5 +1,6 @@
 #include <cuda/quantize/int8_kernels.hpp>
 #include "cuda/device/error.h"
+#include "cuda/memory/unique_ptr.h"
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cfloat>
@@ -324,17 +325,14 @@ void build_histogram(
     }
 
     const float* d_data = data;
-    float* d_data_alloc = nullptr;
+    // Owned by unique_ptr so the throwing calls below release it. This was a raw pointer
+    // freed near the end of the function: cudaMalloc succeeding and then cudaMemcpy or one of
+    // the CUDA_CHECKs below failing left the allocation with no owner.
+    ::cuda::memory::unique_ptr<float> d_data_owned(data_needs_copy ? n : 0);
     if (data_needs_copy) {
-        cudaError_t err = cudaMalloc(&d_data_alloc, n * sizeof(float));
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-        err = cudaMemcpy(d_data_alloc, data, n * sizeof(float), cudaMemcpyHostToDevice);
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-        d_data = d_data_alloc;
+        CUDA_CHECK(cudaMemcpy(d_data_owned.get(), data, n * sizeof(float),
+                              cudaMemcpyHostToDevice));
+        d_data = d_data_owned.get();
     }
 
     CUDA_CHECK(cudaMemset(histogram, 0, num_bins * sizeof(uint32_t)));
@@ -355,7 +353,6 @@ void build_histogram(
     } else {
         cudaStreamSynchronize(stream);
     }
-    if (d_data_alloc) cudaFree(d_data_alloc);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -385,31 +382,20 @@ void compute_minmax(
     }
 
     const float* d_data = data;
-    float* d_data_alloc = nullptr;
+    // All three buffers are owned by unique_ptr: the CUDA_CHECKs below throw, and the frees sat
+    // past every one of them, so a failure left whichever buffers had been allocated with no
+    // owner.
+    ::cuda::memory::unique_ptr<float> d_data_owned(data_needs_copy ? n : 0);
     if (data_needs_copy) {
-        cudaError_t err = cudaMalloc(&d_data_alloc, n * sizeof(float));
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-        err = cudaMemcpy(d_data_alloc, data, n * sizeof(float), cudaMemcpyHostToDevice);
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-        d_data = d_data_alloc;
+        CUDA_CHECK(cudaMemcpy(d_data_owned.get(), data, n * sizeof(float),
+                              cudaMemcpyHostToDevice));
+        d_data = d_data_owned.get();
     }
 
-    float* d_block_mins;
-    float* d_block_maxs;
-    {
-        cudaError_t err = cudaMalloc(&d_block_mins, grid_size * sizeof(float));
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-        err = cudaMalloc(&d_block_maxs, grid_size * sizeof(float));
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-    }
+    ::cuda::memory::unique_ptr<float> d_block_mins_owned(grid_size);
+    ::cuda::memory::unique_ptr<float> d_block_maxs_owned(grid_size);
+    float* d_block_mins = d_block_mins_owned.get();
+    float* d_block_maxs = d_block_maxs_owned.get();
 
     detail::compute_minmax_kernel<<<grid_size, block_size, 0, stream>>>(
         d_data, n, d_block_mins, d_block_maxs);
@@ -446,12 +432,12 @@ void compute_minmax(
         CUDA_CHECK(cudaMemcpy(max_val, &local_max, sizeof(float), cudaMemcpyHostToDevice));
     }
 
-    if (d_data_alloc) {
+    // The buffers are released by their unique_ptr destructors. A synchronisation is still
+    // wanted before returning: freeing while the kernel is in flight would leave the driver
+    // reading memory that has been returned to the pool.
+    if (d_data_owned.get() != nullptr) {
         CUDA_CHECK(cudaStreamSynchronize(stream == 0 ? 0 : stream));
-        CUDA_CHECK(cudaFree(d_data_alloc));
     }
-    CUDA_CHECK(cudaFree(d_block_mins));
-    CUDA_CHECK(cudaFree(d_block_maxs));
 }
 
 } // namespace cuda

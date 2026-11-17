@@ -61,15 +61,33 @@ void MeshStreams::initialize(int device_count) {
     streams_.resize(device_count);
     events_.resize(device_count);
 
-    for (int i = 0; i < device_count; ++i) {
-        // Set device before creating stream/event
-        CUDA_CHECK(cudaSetDevice(i));
+    // The two CUDA_CHECKs per iteration throw, and a failure part-way through used to leave
+    // every stream and event created before it unreferenced: the vectors held them, but
+    // nothing released them, because the destructor only runs on a fully constructed object.
+    // Release the partial set on the way out.
+    try {
+        for (int i = 0; i < device_count; ++i) {
+            // Set device before creating stream/event
+            CUDA_CHECK(cudaSetDevice(i));
 
-        // Create non-blocking stream for concurrency
-        CUDA_CHECK(cudaStreamCreateWithFlags(&streams_[i], cudaStreamNonBlocking));
+            // Create non-blocking stream for concurrency
+            CUDA_CHECK(cudaStreamCreateWithFlags(&streams_[i], cudaStreamNonBlocking));
 
-        // Create event with default flags
-        CUDA_CHECK(cudaEventCreate(&events_[i]));
+            // Create event with default flags
+            CUDA_CHECK(cudaEventCreate(&events_[i]));
+        }
+    } catch (...) {
+        for (int i = 0; i < device_count; ++i) {
+            if (events_[i] != nullptr) {
+                (void)cudaEventDestroy(events_[i]);
+                events_[i] = nullptr;
+            }
+            if (streams_[i] != nullptr) {
+                (void)cudaStreamDestroy(streams_[i]);
+                streams_[i] = nullptr;
+            }
+        }
+        throw;
     }
 
     initialized_ = true;

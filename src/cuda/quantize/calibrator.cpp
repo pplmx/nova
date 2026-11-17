@@ -2,6 +2,7 @@
 #include <cuda/quantize/int8_kernels.hpp>
 #include <cuda/quantize/fp8_types.hpp>
 #include "cuda/device/error.h"
+#include "cuda/memory/unique_ptr.h"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -72,28 +73,19 @@ CalibrationResult HistogramCalibrator::calibrate(
     min_val_ = d_min;
     max_val_ = d_max;
 
-    uint32_t* d_hist;
-    {
-        cudaError_t err = cudaMalloc(&d_hist, num_bins_ * sizeof(uint32_t));
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-    }
-    CUDA_CHECK(cudaMemset(d_hist, 0, num_bins_ * sizeof(uint32_t)));
+    // Owned by unique_ptr so the throwing calls below release it. This was a raw pointer
+    // freed at the end of the block: cudaMalloc succeeding and then cudaMemset,
+    // build_histogram or the copy failing left the allocation with no owner, and the free sat
+    // past every one of those throws.
+    ::cuda::memory::unique_ptr<uint32_t> d_hist(num_bins_);
 
-    cuda::build_histogram(data, d_hist, n, min_val_, max_val_, num_bins_, stream);
+    CUDA_CHECK(cudaMemset(d_hist.get(), 0, num_bins_ * sizeof(uint32_t)));
+
+    cuda::build_histogram(data, d_hist.get(), n, min_val_, max_val_, num_bins_, stream);
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    {
-        cudaError_t err = cudaMemcpy(histogram_.data(), d_hist, num_bins_ * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-        err = cudaFree(d_hist);
-        if (err != cudaSuccess) {
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);
-        }
-    }
+    CUDA_CHECK(cudaMemcpy(histogram_.data(), d_hist.get(),
+                          num_bins_ * sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
     float threshold = find_threshold_percentile(percentile_);
 
