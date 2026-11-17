@@ -37,6 +37,30 @@ struct LayerNormParams {
     bool elementwise_affine = true;
 };
 
+/**
+ * @brief Layer normalisation over the last normalized_shape elements of each row
+ *
+ * @param input             device pointer, batch_size * normalized_shape elements
+ * @param gamma             optional device pointer, normalized_shape elements. May be null;
+ *                          both gamma and beta are skipped together, so passing one without
+ *                          the other silently drops the affine step rather than applying half
+ *                          of it.
+ * @param beta              optional device pointer, normalized_shape elements; see gamma
+ * @param output            device pointer, batch_size * normalized_shape elements
+ * @param mean              REQUIRED device pointer, batch_size elements. Null faults inside
+ *                          the kernel — the per-row mean is written unconditionally, unlike
+ *                          gamma and beta which are guarded by an `if (gamma && beta)`.
+ *                          Measured: passing nullptr here raises "an illegal memory access
+ *                          was encountered".
+ * @param variance          REQUIRED device pointer, batch_size elements; see mean
+ * @param batch_size        number of rows
+ * @param normalized_shape  elements per row
+ * @param eps               variance floor
+ * @param stream            CUDA stream
+ *
+ * The asymmetry between the two optional parameters and the two required ones is not
+ * something a caller can infer from the signature, and nothing said it before.
+ */
 void layer_norm(
     const float* input,
     const float* gamma,

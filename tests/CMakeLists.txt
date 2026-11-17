@@ -149,6 +149,7 @@ add_executable(nova-tests
     sparse/sync_batch_norm_ownership_test.cpp
     sparse/move_semantics_audit_test.cpp
     sparse/reduce_nan_semantics_test.cpp
+    sparse/layer_norm_optional_params_test.cpp
     sparse/sparse_header_compile_test.cpp
     sparse/spmv_host_test.cpp
     sparse/krylov_zero_rhs_test.cpp
