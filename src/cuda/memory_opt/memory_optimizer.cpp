@@ -388,6 +388,10 @@ bool AdaptiveMemoryPoolTuner::should_grow() const {
     if (!adaptive_enabled_) return false;
     if (num_failures_ > 0) return true;
 
+    // A zero initial_pool_size makes utilization inf: should_grow() would then always answer
+    // yes and should_shrink() never. PoolTuningConfig is public and the field can be set to
+    // anything, so the divisor is checked rather than assumed.
+    if (config_.initial_pool_size == 0) return false;
     float utilization = static_cast<float>(current_usage_) / config_.initial_pool_size;
     return utilization > 0.8f;
 }
@@ -398,6 +402,7 @@ bool AdaptiveMemoryPoolTuner::should_shrink() const {
     if (!adaptive_enabled_) return false;
     if (total_allocations_ < 10) return false;
 
+    if (config_.initial_pool_size == 0) return false;
     float utilization = static_cast<float>(current_usage_) / config_.initial_pool_size;
     return utilization < config_.shrink_threshold;
 }
