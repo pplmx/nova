@@ -256,6 +256,13 @@ void csr_mv(
     float* y,
     cudaStream_t stream
 ) {
+    // A zero-vertex graph yields a 0-block grid, which CUDA rejects with "invalid
+    // configuration argument". y = A*x over no rows is an empty result, so declining to launch
+    // is the correct answer rather than an error.
+    if (graph.num_vertices <= 0) {
+        return;
+    }
+
     int block_size = 256;
     int grid_size = (graph.num_vertices + block_size - 1) / block_size;
 
@@ -310,6 +317,12 @@ void csr_mv_transpose(
     CUDA_CHECK(cudaMemsetAsync(y, 0, graph.num_vertices * sizeof(float), stream));
 
     int block_size = 256;
+    // Same zero-grid problem as csr_mv, but keyed on edges: no edges means the transpose
+    // product is y = 0, which the memset above has already written.
+    if (graph.num_edges <= 0) {
+        return;
+    }
+
     int grid_size = (graph.num_edges + block_size - 1) / block_size;
 
     csr_mv_transpose_kernel<<<grid_size, block_size, 0, stream>>>(
