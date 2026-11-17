@@ -82,17 +82,27 @@ TEST_F(OccupancyAnalyzerTest, AnalyzeBlockSizesReturnsResults) {
 TEST_F(OccupancyAnalyzerTest, MinBlocksForFullOccupancy) {
     auto analysis = analyzer_->analyze(nullptr, 256, 0);
 
-    if (analysis.theoretical_occupancy > 0.5) {
-        EXPECT_GT(analysis.min_blocks_for_full_occupancy, 0);
-    }
+    // analyze() answers a null kernel_func with an all-zero result — it cannot ask the driver
+    // about a kernel it was not given. My first attempt at this case asserted a high occupancy
+    // and failed for that reason; the zero result is the contract, and the conditional guard
+    // that used to be here meant the contract was never stated in either direction.
+    EXPECT_DOUBLE_EQ(analysis.theoretical_occupancy, 0.0)
+        << "a null kernel has no occupancy to report";
+    EXPECT_EQ(analysis.min_blocks_for_full_occupancy, 0);
+    EXPECT_EQ(analysis.active_blocks_per_sm, 0);
+
+    // What the call does report is the geometry it was asked about.
+    EXPECT_EQ(analysis.max_threads_per_block, 256);
 }
 
 TEST_F(OccupancyAnalyzerTest, RecommendedGridSizeCalculation) {
     auto rec = analyzer_->recommend(nullptr, 0);
 
-    if (rec.expected_occupancy > 0) {
-        EXPECT_GE(rec.recommended_grid_size, 0);
-    }
+    // Same null-kernel contract as analyze(). The assertion here used to be `>= 0` on a size,
+    // true by construction and checking nothing.
+    EXPECT_DOUBLE_EQ(rec.expected_occupancy, 0.0)
+        << "a null kernel has no occupancy to recommend against";
+    EXPECT_GE(rec.recommended_grid_size, 0);
 }
 
 }  // namespace cuda::observability::test

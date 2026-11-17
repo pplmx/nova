@@ -181,9 +181,16 @@ TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
 
     std::this_thread::sleep_for(std::chrono::milliseconds{30});
 
+    // The case is named for the callback being invoked; guarding the only assertion with
+    // `if (callback_invoked)` meant a callback that never fired asserted nothing and the case
+    // still passed. Callback delivery is the whole subject here.
+    EXPECT_TRUE(callback_invoked)
+        << "the watchdog should have expired a 5 ms operation during a 30 ms wait";
     if (callback_invoked) {
-        EXPECT_EQ(callback_id, id);
+        EXPECT_EQ(callback_id, id)
+            << "the callback must receive the id of the operation that expired";
     }
+    manager.end_operation(id);
 }
 
 TEST_F(TimeoutTest, ConfigDefaultTimeoutIsUsedWhenNotSpecified) {

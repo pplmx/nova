@@ -304,10 +304,13 @@ TEST_F(RCMReordererTest, BandwidthReductionRatio) {
 
     auto result = reorderer.reorder(matrix);
 
-    if (result.original_bandwidth > 0) {
-        EXPECT_GE(result.bandwidth_reduction_ratio, 0.0);
-        EXPECT_LE(result.bandwidth_reduction_ratio, 1.0);
-    }
+    // The ratio is bounded whatever the original bandwidth was, so the guard was not needed;
+    // it only meant that a result reporting zero bandwidth ran no assertion at all. The matrix
+    // is a fixed tridiagonal, so its bandwidth is known and worth pinning directly.
+    EXPECT_GT(result.original_bandwidth, 0)
+        << "a tridiagonal 10x10 matrix has a non-zero bandwidth";
+    EXPECT_GE(result.bandwidth_reduction_ratio, 0.0);
+    EXPECT_LE(result.bandwidth_reduction_ratio, 1.0);
 }
 
 TEST_F(RCMReordererTest, ReorderingResultPermutationIsPermutation) {
