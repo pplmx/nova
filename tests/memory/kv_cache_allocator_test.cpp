@@ -43,30 +43,29 @@ TEST_F(KVCacheAllocatorTest, Creation) {
 }
 
 TEST_F(KVCacheAllocatorTest, AllocationDeallocation) {
+    // Failure here is a failure, not an environment problem. Skipping when allocate() or
+    // free() throws would have reported "passed" for a cache that cannot allocate or cannot
+    // release, which is exactly what this case exists to check. Only construction may skip,
+    // since it needs device memory the test cannot provide on a saturated machine.
     std::unique_ptr<KVCacheAllocator> allocator;
     try {
         allocator = std::make_unique<KVCacheAllocator>(config_);
     } catch (const std::exception& e) {
         GTEST_SKIP() << "KVCacheAllocator creation failed: " << e.what();
     }
+    ASSERT_NE(allocator, nullptr);
 
     std::vector<KVCacheBlock*> blocks;
-    try {
-        blocks = allocator->allocate(1, 32);
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "KVCacheAllocator::allocate failed: " << e.what();
-    }
+    ASSERT_NO_THROW(blocks = allocator->allocate(1, 32))
+        << "allocate() throwing means the allocator is broken, not that the host is";
     ASSERT_EQ(blocks.size(), 2);
 
     auto stats = allocator->get_stats();
     EXPECT_EQ(stats.allocated_blocks, 2);
     EXPECT_EQ(stats.free_blocks, 126);
 
-    try {
-        allocator->free(1);
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "KVCacheAllocator::free failed: " << e.what();
-    }
+    ASSERT_NO_THROW(allocator->free(1))
+        << "free() throwing means the cache cannot release, which is a defect";
 
     stats = allocator->get_stats();
     EXPECT_EQ(stats.allocated_blocks, 0);

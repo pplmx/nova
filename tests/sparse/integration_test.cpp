@@ -180,21 +180,25 @@ TEST(SparseIntegrationTest, BiCGSTABConvergence) {
     BiCGSTAB<float> solver(config);
     auto result = solver.solve(*matrix, b.data(), x.data());
 
-    if (result.converged) {
-        EXPECT_LT(result.iterations, 100);
-        EXPECT_LT(result.relative_residual, config.relative_tolerance);
+    // A solver that fails to converge on a 50x50 tridiagonal system has failed, and saying so
+    // is the point of the case. This used to call GTEST_SKIP() when converged was false, and
+    // gtest counts a skipped test as passed — so a BiCGSTAB that never converged on anything
+    // would have left this file green forever.
+    ASSERT_TRUE(result.converged)
+        << "BiCGSTAB did not converge on a well-conditioned 50x50 system within "
+        << config.max_iterations << " iterations";
 
-        memory::Buffer<float> d_x(n), d_ax(n);
-        d_x.copy_from(x.data(), n);
-        spmv(*matrix, d_x.data(), d_ax.data());
-        std::vector<float> h_ax(n);
-        d_ax.copy_to(h_ax.data(), n);
+    EXPECT_LT(result.iterations, 100);
+    EXPECT_LT(result.relative_residual, config.relative_tolerance);
 
-        for (int i = 0; i < n; ++i) {
-            EXPECT_TRUE(approx_equal(h_ax[i], 1.0f, 1e-2f));
-        }
-    } else {
-        GTEST_SKIP() << "BiCGSTAB solver did not converge - known numerical stability issue";
+    memory::Buffer<float> d_x(n), d_ax(n);
+    d_x.copy_from(x.data(), n);
+    spmv(*matrix, d_x.data(), d_ax.data());
+    std::vector<float> h_ax(n);
+    d_ax.copy_to(h_ax.data(), n);
+
+    for (int i = 0; i < n; ++i) {
+        EXPECT_TRUE(approx_equal(h_ax[i], 1.0f, 1e-2f));
     }
 }
 
