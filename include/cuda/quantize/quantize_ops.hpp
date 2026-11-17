@@ -14,6 +14,7 @@
 #define NOVA_CUDA_QUANTIZE_OPS_HPP
 
 #include <cuda/quantize/quantize_tensor.hpp>
+#include <cuda/quantize/qat.hpp>
 #include <vector>
 #include <cmath>
 
@@ -25,7 +26,12 @@ namespace quantize {
  * @enum Precision
  * @ingroup quantize_ops
  */
-enum class Precision { FP32, FP16, INT8 };
+// Precision lives in qat.hpp. Defining it again here made the same name mean two different
+// things in nova::quantize: three enumerators in this header, five in qat.hpp. Any
+// translation unit including both failed to compile ("multiple definition of 'enum class
+// nova::quantize::Precision'"), and a build that pulled them into separate translation units
+// would have been an ODR violation rather than a compile error. This header uses FP32, FP16
+// and INT8, all of which qat.hpp already provides.
 
 /**
  * @brief Quantized matrix multiplication
