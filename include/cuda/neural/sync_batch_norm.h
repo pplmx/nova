@@ -18,8 +18,21 @@ public:
 
     SyncBatchNorm(const SyncBatchNorm&) = delete;
     SyncBatchNorm& operator=(const SyncBatchNorm&) = delete;
-    SyncBatchNorm(SyncBatchNorm&&) = default;
-    SyncBatchNorm& operator=(SyncBatchNorm&&) = default;
+
+    // Moves are deleted rather than defaulted. The members are raw cudaMalloc'd pointers
+    // that the destructor frees, so a defaulted move would copy the pointers and leave the
+    // source pointing at the same device memory — both destructors would then free it.
+    // Measured before this change:
+    //
+    //   a.running_mean        = 0x7fcd65200000
+    //   b.running_mean        = 0x7fcd65200000   (same)
+    //   a.running_mean after  = 0x7fcd65200000   (source not nulled)
+    //   cudaGetLastError()    = invalid argument after both destructed
+    //
+    // Deleting is the honest fix: nothing in the tree moves a SyncBatchNorm, and a real
+    // move would have to null nine pointers.
+    SyncBatchNorm(SyncBatchNorm&&) = delete;
+    SyncBatchNorm& operator=(SyncBatchNorm&&) = delete;
 
     void set_training(bool training);
     bool is_training() const { return training_; }
