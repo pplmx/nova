@@ -487,37 +487,44 @@ TEST_F(NcclCollectivesTest, UnifiedOpsDeviceCount) {
 
 #else  // NOVA_NCCL_ENABLED
 
+// Placeholders for the same names so a build without NCCL still reports what it is missing
+// rather than silently having no such tests. They were also named DISABLED_*, which is the
+// second half of a double disable: DISABLED_ removes them from the test list entirely, so
+// the GTEST_SKIP message that explains the absence was never printed. Which branch a build
+// takes is decided by NOVA_NCCL_ENABLED, not by the test runner, so DISABLED_ only ever hid
+// information here.
+
 namespace cuda::nccl {
 
-TEST(NcclCollectivesTest, DISABLED_AllReduceSum) {
+TEST(NcclCollectivesTest, AllReduceSum)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_BroadcastFromRoot) {
+TEST(NcclCollectivesTest, BroadcastFromRoot)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_BarrierSync) {
+TEST(NcclCollectivesTest, BarrierSync)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_TypeConversion) {
+TEST(NcclCollectivesTest, TypeConversion)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_AllGatherBasic) {
+TEST(NcclCollectivesTest, AllGatherBasic)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_ReduceScatterBasic) {
+TEST(NcclCollectivesTest, ReduceScatterBasic)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_GroupHandleBatched) {
+TEST(NcclCollectivesTest, GroupHandleBatched)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, DISABLED_UnifiedOpsHasNccl) {
+TEST(NcclCollectivesTest, UnifiedOpsHasNccl)) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
