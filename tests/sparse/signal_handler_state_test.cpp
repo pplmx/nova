@@ -19,6 +19,11 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <thread>
+
 namespace signal_handler_state_test {
 
 TEST(SignalHandlerStateTest, HandlerStateAgreesWithItsAccessors) {
@@ -91,6 +96,66 @@ TEST(SignalHandlerStateTest, AFailingCallbackIsReportedAsFailure) {
 
     EXPECT_FALSE(coordinator.checkpoint_coordinated())
         << "the callback reported failure and must not be reported as success";
+}
+
+// The signal path now runs through a self-pipe: the handler does nothing but write(2) a
+// byte, and a dispatcher thread runs the callback outside signal context. These cases
+// exercise that path end to end with raise(), which is the only way to see it.
+TEST(SignalHandlerDispatchTest, TheCallbackRunsAfterASignalIsRaised) {
+    nova::preemption::SignalHandler& handler =
+        nova::preemption::SignalHandler::instance();
+
+    std::atomic<int> received{0};
+    handler.set_shutdown_callback([&received](int signal) { received.store(signal); });
+    handler.install_handlers();
+
+    // Poll for the dispatcher rather than sleeping a fixed time: the point is that the
+    // callback eventually runs, not that it runs within some deadline.
+    std::raise(SIGUSR1);
+    for (int i = 0; i < 400 && received.load() == 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    EXPECT_EQ(received.load(), SIGUSR1)
+        << "the dispatcher thread should have seen the signal number through the pipe";
+    EXPECT_TRUE(handler.is_shutdown_requested())
+        << "the flag is set in the handler itself, so it is visible without waiting";
+
+    handler.uninstall_handlers();
+}
+
+TEST(SignalHandlerDispatchTest, TheFlagIsSetEvenIfNoCallbackIsRegistered) {
+    nova::preemption::SignalHandler& handler =
+        nova::preemption::SignalHandler::instance();
+    handler.install_handlers();
+
+    std::raise(SIGTERM);
+
+    // The handler stores the flag before anything else, so this must be true immediately.
+    EXPECT_TRUE(handler.is_shutdown_requested());
+    EXPECT_EQ(handler.received_signal(), SIGTERM);
+
+    handler.uninstall_handlers();
+}
+
+TEST(SignalHandlerDispatchTest, InstallAndUninstallAreRepeatable) {
+    nova::preemption::SignalHandler& handler =
+        nova::preemption::SignalHandler::instance();
+
+    // Each cycle builds a new self-pipe and joins a new dispatcher. A leak of either, or a
+    // join against a thread that already finished, would show up as a hang or a failure
+    // here rather than as a slow leak somewhere else.
+    for (int i = 0; i < 3; ++i) {
+            std::atomic<int> received{0};
+        handler.set_shutdown_callback([&received](int signal) { received.store(signal); });
+        handler.install_handlers();
+        std::raise(SIGUSR1);
+        for (int spin = 0; spin < 400 && received.load() == 0; ++spin) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        EXPECT_EQ(received.load(), SIGUSR1) << "cycle " << i;
+        handler.uninstall_handlers();
+    }
 }
 
 }  // namespace signal_handler_state_test

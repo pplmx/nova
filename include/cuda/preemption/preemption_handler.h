@@ -29,24 +29,19 @@ struct ShutdownConfig {
 /**
  * Installs handlers for SIGTERM and SIGUSR1.
  *
- * @warning The installed handler is NOT async-signal-safe, and this is not a small caveat.
- * POSIX allows only a short list of functions to be called from a signal handler, and the
- * handler here does several things outside it:
+ * The handler itself is async-signal-safe: it stores two lock-free atomics and writes one
+ * byte to a self-pipe. Everything else — taking a lock, reading the clock, invoking the
+ * registered callback — runs on a dispatcher thread that reads the other end of the pipe.
  *
- *   - takes a std::mutex (pthread_mutex_lock is not on the list; a signal arriving while
- *     the same thread holds g_signal_mutex deadlocks the process permanently)
- *   - calls SignalHandler::instance(), whose function-local static initialisation is not
- *     async-signal-safe on first use
- *   - reads a std::chrono::steady_clock, which is not on the list
- *   - invokes a std::function<void(int)>, which may allocate or lock internally
- *   - invokes whatever the user registered, which is by definition not restricted
+ * This replaced an implementation that did all of that work inside signal context, which
+ * POSIX does not permit: it took a std::mutex twice, called a function-local-static
+ * accessor, read a steady_clock and invoked a std::function. The mutex was the worst of
+ * those, because a signal arriving while the same thread held it deadlocked the process
+ * permanently.
  *
- * A correct implementation defers all of this out of the handler: write the signal number
- * to a self-pipe or signalfd in the handler, and run the callback from a thread that reads
- * it. That is a redesign of this class, not a local edit, so it has not been attempted.
- * Until then, treat the callback as best-effort: it is reliable when the signal arrives
- * while the main thread is idle, and it can deadlock or misbehave when the signal
- * interrupts code that already holds g_signal_mutex or is inside the allocator.
+ * The callback therefore runs on the dispatcher thread, not on the thread the signal
+ * interrupted. Code that the callback touches must be safe to call from that thread, and
+ * the callback should not assume the interrupted thread's state.
  */
 class SignalHandler {
 public:

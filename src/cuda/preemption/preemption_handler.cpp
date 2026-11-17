@@ -9,6 +9,10 @@
 #include <fstream>
 #include <sstream>
 
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+
 namespace nova::preemption {
 
 static std::atomic<bool> g_shutdown_requested{false};
@@ -16,9 +20,18 @@ static std::atomic<int> g_received_signal{0};
 static std::mutex g_signal_mutex;
 static std::chrono::steady_clock::time_point g_signal_time{};
 
+// Write end of the self-pipe. The handler's ONLY job is write(2) of one byte; everything
+// else happens on a thread reading the other end.
+static std::atomic<int> g_signal_pipe_write{-1};
+
 struct SignalHandler::Impl {
     bool installed = false;
     ShutdownCallback callback;
+
+    // Reader half of the self-pipe and the thread that services it.
+    int pipe_read_fd = -1;
+    std::thread dispatcher;
+    std::atomic<bool> dispatcher_stop{false};
 };
 
 SignalHandler& SignalHandler::instance() {
@@ -29,31 +42,74 @@ SignalHandler& SignalHandler::instance() {
 SignalHandler::SignalHandler()
     : impl_(std::make_unique<Impl>()) {}
 
+// Runs in signal context. POSIX permits only a short list of functions here, and write(2)
+// is on it. The previous implementation took a std::mutex twice, called
+// SignalHandler::instance() (function-local static initialisation), read a steady_clock and
+// invoked a std::function - none of which are async-signal-safe, and the mutex could
+// deadlock the process permanently if the signal interrupted a thread already holding it.
+// Now the handler publishes the signal number through the pipe and returns.
+//
+// The atomics below are also stored here rather than by the dispatcher thread: they are
+// lock-free on every supported target, and storing them keeps is_shutdown_requested()
+// correct for a caller that polls immediately after raise().
 void SignalHandler::signal_handler(int signal) {
-    {
-        std::lock_guard<std::mutex> lock(g_signal_mutex);
-        g_shutdown_requested.store(true, std::memory_order_relaxed);
-        g_received_signal.store(signal, std::memory_order_relaxed);
-        g_signal_time = std::chrono::steady_clock::now();
-    }
+    g_shutdown_requested.store(true, std::memory_order_relaxed);
+    g_received_signal.store(signal, std::memory_order_relaxed);
 
-    auto& instance = SignalHandler::instance();
-    auto& impl = *instance.impl_;
-
-    ShutdownCallback callback;
-    {
-        std::lock_guard<std::mutex> lock(g_signal_mutex);
-        callback = impl.callback;
-    }
-
-    if (callback) {
-        callback(signal);
+    const int fd = g_signal_pipe_write.load(std::memory_order_relaxed);
+    if (fd >= 0) {
+        const unsigned char byte = static_cast<unsigned char>(signal & 0x7f);
+        // A full pipe means the dispatcher is behind; the flags above are already set, so
+        // dropping the byte loses no information. Ignore EAGAIN and EINTR deliberately.
+        (void)!::write(fd, &byte, 1);
     }
 }
 
 void SignalHandler::install_handlers() {
     if (impl_->installed) {
         return;
+    }
+
+    // Self-pipe: the handler writes one byte, this thread reads it and does the real work
+    // outside signal context.
+    int fds[2] = {-1, -1};
+    if (::pipe(fds) != 0) {
+        std::cerr << "[Preemption] could not create the signal self-pipe; "
+                     "shutdown requests will set the flag but no callback will run"
+                  << std::endl;
+    } else {
+        // Non-blocking write end so a full pipe never stalls a signal handler.
+        ::fcntl(fds[1], F_SETFL, ::fcntl(fds[1], F_GETFL, 0) | O_NONBLOCK);
+        ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
+        impl_->pipe_read_fd = fds[0];
+        g_signal_pipe_write.store(fds[1], std::memory_order_release);
+
+        // Reset on every install: uninstall_handlers leaves this true, so a re-install
+        // without clearing it produced a dispatcher that exited on its first iteration and
+        // silently never ran the callback again. Caught by installing twice in a row.
+        impl_->dispatcher_stop.store(false, std::memory_order_release);
+        impl_->dispatcher = std::thread([this] {
+            unsigned char byte = 0;
+            while (!impl_->dispatcher_stop.load(std::memory_order_acquire)) {
+                const ssize_t got = ::read(impl_->pipe_read_fd, &byte, 1);
+                if (got == 1) {
+                    const int signal = static_cast<int>(byte);
+                    ShutdownCallback callback;
+                    {
+                        std::lock_guard<std::mutex> lock(g_signal_mutex);
+                        g_signal_time = std::chrono::steady_clock::now();
+                        callback = impl_->callback;
+                    }
+                    if (callback) {
+                        callback(signal);
+                    }
+                } else if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                } else if (got == 0) {
+                    break;  // write end closed
+                }
+            }
+        });
     }
 
     struct sigaction sa {};
@@ -79,6 +135,21 @@ void SignalHandler::uninstall_handlers() {
 
     sigaction(SIGTERM, &sa, nullptr);
     sigaction(SIGUSR1, &sa, nullptr);
+
+    // Tear down the self-pipe after the handlers are gone: no new byte can arrive, so
+    // closing the write end lets the dispatcher's pending read return 0 and its loop end.
+    const int write_fd = g_signal_pipe_write.exchange(-1, std::memory_order_acq_rel);
+    if (write_fd >= 0) {
+        ::close(write_fd);
+    }
+    impl_->dispatcher_stop.store(true, std::memory_order_release);
+    if (impl_->dispatcher.joinable()) {
+        impl_->dispatcher.join();
+    }
+    if (impl_->pipe_read_fd >= 0) {
+        ::close(impl_->pipe_read_fd);
+        impl_->pipe_read_fd = -1;
+    }
 
     impl_->installed = false;
 }
