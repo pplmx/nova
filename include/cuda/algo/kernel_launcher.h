@@ -85,7 +85,14 @@ public:
      * @tparam Args Argument types
      * @param kernel Pointer to the kernel function
      * @param args Arguments to pass to the kernel
-     * @throws CudaException if launch or configuration validation fails
+     * @throws CudaException if the launch itself fails
+     *
+     * @note This does no configuration validation, despite what this comment used to say:
+     * grid() and block() only assign, so an unsuitable configuration is reported by the driver
+     * as "invalid configuration argument" rather than by anything here. A zero-sized grid is
+     * what that looked like before calc_grid_1d and friends were clamped to one block; a block
+     * larger than the device allows, or more than the per-dimension maximum, still reaches the
+     * driver.
      */
     template <typename Kernel, typename... Args>
     void launch(Kernel* kernel, Args&&... args) {
