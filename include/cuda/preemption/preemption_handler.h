@@ -26,6 +26,28 @@ struct ShutdownConfig {
     bool coordinated_checkpoint{true};
 };
 
+/**
+ * Installs handlers for SIGTERM and SIGUSR1.
+ *
+ * @warning The installed handler is NOT async-signal-safe, and this is not a small caveat.
+ * POSIX allows only a short list of functions to be called from a signal handler, and the
+ * handler here does several things outside it:
+ *
+ *   - takes a std::mutex (pthread_mutex_lock is not on the list; a signal arriving while
+ *     the same thread holds g_signal_mutex deadlocks the process permanently)
+ *   - calls SignalHandler::instance(), whose function-local static initialisation is not
+ *     async-signal-safe on first use
+ *   - reads a std::chrono::steady_clock, which is not on the list
+ *   - invokes a std::function<void(int)>, which may allocate or lock internally
+ *   - invokes whatever the user registered, which is by definition not restricted
+ *
+ * A correct implementation defers all of this out of the handler: write the signal number
+ * to a self-pipe or signalfd in the handler, and run the callback from a thread that reads
+ * it. That is a redesign of this class, not a local edit, so it has not been attempted.
+ * Until then, treat the callback as best-effort: it is reliable when the signal arrives
+ * while the main thread is idle, and it can deadlock or misbehave when the signal
+ * interrupts code that already holds g_signal_mutex or is inside the allocator.
+ */
 class SignalHandler {
 public:
     static SignalHandler& instance();
