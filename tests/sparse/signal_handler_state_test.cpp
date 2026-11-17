@@ -19,6 +19,9 @@
 
 #include <gtest/gtest.h>
 
+#include <dirent.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -156,6 +159,38 @@ TEST(SignalHandlerDispatchTest, InstallAndUninstallAreRepeatable) {
         EXPECT_EQ(received.load(), SIGUSR1) << "cycle " << i;
         handler.uninstall_handlers();
     }
+}
+
+TEST(SignalHandlerDispatchTest, RepeatedInstallAndUninstallDoesNotLeakFileDescriptors) {
+    nova::preemption::SignalHandler& handler =
+        nova::preemption::SignalHandler::instance();
+
+    // install_handlers() creates a pipe and uninstall_handlers() must close both ends.
+    // Counting /proc/self/fd before and after a run of cycles is the direct check; a leak
+    // here would exhaust descriptors in a long-lived process that restarts preemption.
+    const auto count_open_fds = [] {
+        DIR* dir = ::opendir("/proc/self/fd");
+        if (dir == nullptr) {
+            return -1;
+        }
+        int count = 0;
+        while (::readdir(dir) != nullptr) {
+            ++count;
+        }
+        ::closedir(dir);
+        return count;
+    };
+
+    const int before = count_open_fds();
+    ASSERT_GT(before, 0) << "/proc/self/fd is not readable on this system";
+
+    for (int i = 0; i < 10; ++i) {
+        handler.install_handlers();
+        handler.uninstall_handlers();
+    }
+
+    const int after = count_open_fds();
+    EXPECT_EQ(after, before) << "10 install/uninstall cycles changed the descriptor count";
 }
 
 }  // namespace signal_handler_state_test
