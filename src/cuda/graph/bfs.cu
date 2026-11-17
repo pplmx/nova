@@ -312,6 +312,8 @@ void bfs_async(
     result = bfs(non_const_graph, source, stream);
 }
 
+// See the declaration in bfs.h: this counts distance-zero vertices, which for a completed
+// single-source BFS is just the source. It does not and cannot count connected components.
 int count_reachable_components(const BFSResult& result) {
     int components = 0;
     for (int v = 0; v < result.num_vertices; ++v) {

@@ -48,6 +48,21 @@ void bfs_async(
     cudaStream_t stream = nullptr
 );
 
+/**
+ * @brief Number of vertices at distance zero in the BFS result
+ *
+ * @warning The name says "components", but this does not count connected components and
+ * cannot: a BFSResult holds distances and a visited flag, no edge information, so nothing here
+ * can tell whether two unreached vertices belong to the same component. A single-source BFS
+ * leaves exactly one vertex at distance zero — the source — so for a completed traversal this
+ * returns 1 regardless of the graph or how many components it has.
+ *
+ * The implementation counts `distances[v] == 0`, which is the source marker; `-1` marks
+ * unreached. Nothing calls this function today, so it is marked deprecated rather than
+ * renamed; a caller that genuinely wants components needs a traversal per unvisited vertex,
+ * which this signature cannot express.
+ */
+[[deprecated("counts distance-zero vertices, not connected components; see the header")]]
 int count_reachable_components(const BFSResult& result);
 
 }  // namespace cuda::graph
