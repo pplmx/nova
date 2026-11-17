@@ -398,8 +398,25 @@ include(GoogleTest)
 # Suites whose assertions compare device-wide memory snapshots: they cannot share the
 # device with another test process, so they are excluded from the parallel discovery
 # set and registered separately with RUN_SERIAL.
+# The multi-GPU tests gate themselves on the NCCL_TESTS_AVAILABLE environment variable, while
+# the library decides at compile time whether NCCL is linked (NOVA_NCCL_ENABLED). Nothing
+# connected the two, so on a machine with NCCL the tests still reported SKIPPED — and gtest
+# counts a skipped test as passed, so ctest showed the group green while none of it ran.
+# Measured before this: ctest reported 49 passed; their verbose output held 132 SKIPPED lines;
+# no assertion in them executed.
+#
+# Derived from the same condition the library used, so the two cannot disagree.
+set(NOVA_NCCL_TESTS_ENV "")
+if(TARGET cuda_nccl)
+    get_target_property(_nova_nccl_defs cuda_nccl INTERFACE_COMPILE_DEFINITIONS)
+    if(_nova_nccl_defs MATCHES "NOVA_NCCL_ENABLED=1")
+        set(NOVA_NCCL_TESTS_ENV "NCCL_TESTS_AVAILABLE=1")
+    endif()
+endif()
+
 gtest_discover_tests(nova-tests
     TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*"
+    PROPERTIES ENVIRONMENT "${NOVA_NCCL_TESTS_ENV}"
 )
 
 add_test(NAME robustness_profile_serial
