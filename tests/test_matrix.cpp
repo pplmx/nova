@@ -1,3 +1,14 @@
+// DEAD FILE - not built, not registered in tests/CMakeLists.txt. Does not compile as written.
+//
+// Two of its four cases call addMatricesOnGPU, which no longer exists anywhere in the tree.
+// The current entry point is matrixAdd (include/matrix/add.h), which takes
+// memory::Buffer<float> rather than raw pointers, so the add cases need rewriting against it.
+// The multiply cases call multiplyMatricesOnGPU, which does still exist in
+// include/matrix/mult.h with a matching (A, B, result, rowsA, colsA, colsB) signature.
+//
+// Kept rather than deleted because removing test files is the maintainer's call. See
+// tests/fuzz/README_STATUS.md, which lists this file among the unbuilt sources.
+
 #include <gtest/gtest.h>
 
 #include <vector>

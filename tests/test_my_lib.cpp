@@ -1,3 +1,11 @@
+// DEAD FILE - not built, not registered in tests/CMakeLists.txt, and unrelated to this project.
+//
+// This is a gtest tutorial template: it exercises add/sub/mul/divide from a "my_lib.h" that has
+// never existed in this tree. It is not testing anything nova provides.
+//
+// Kept rather than deleted because removing test files is the maintainer's call. See
+// tests/fuzz/README_STATUS.md, which lists this file among the unbuilt sources.
+
 #include "gtest/gtest.h"
 #include "my_lib.h"
 
