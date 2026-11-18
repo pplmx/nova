@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <string>
+#include <set>
 #include <vector>
 
 namespace cuda::testing {
@@ -24,6 +25,17 @@ public:
     bool validate_allocation(const void* ptr, size_t size);
     bool validate_access(const void* ptr, size_t size);
     bool check_uninitialized(const void* ptr, size_t size);
+
+    /**
+     * @brief Report whether this address has already been presented to this validator
+     *
+     * Records @p ptr and returns false the second and every later time the same address is
+     * seen. It cannot actually tell a double free from a reuse: CUDA exposes no "was this
+     * released" query, and an address handed back by a later cudaMalloc looks identical. Treat
+     * a false result as worth investigating, not as proof.
+     *
+     * Was `return true;` unconditionally — it never reported anything.
+     */
     bool check_double_free(const void* ptr);
 
     void enable();
@@ -44,6 +56,7 @@ public:
     void reset() {
         validation_count_ = 0;
         error_count_ = 0;
+        seen_pointers_.clear();
     }
 
     size_t validation_count() const { return validation_count_; }
@@ -57,6 +70,7 @@ private:
     MemorySafetyTool tool_ = MemorySafetyTool::PoisonPattern;
     size_t validation_count_ = 0;
     size_t error_count_ = 0;
+    std::set<const void*> seen_pointers_;
 };
 
 class MemoryPoisonGuard {

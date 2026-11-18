@@ -2,6 +2,7 @@
 #include "cuda/testing/boundary_testing.h"
 
 #include <cstring>
+#include <string>
 
 namespace cuda::testing {
 
@@ -73,6 +74,22 @@ bool MemorySafetyValidator::check_uninitialized(const void* ptr, size_t size) {
 
 bool MemorySafetyValidator::check_double_free(const void* ptr) {
     if (!enabled_) return true;
+
+    validation_count_++;
+
+    if (ptr == nullptr) {
+        error_count_++;
+        return false;
+    }
+
+    // See the declaration: this detects a repeated address, which is not the same statement as
+    // "this was freed twice". It is the strongest claim the CUDA API allows.
+    const auto [it, inserted] = seen_pointers_.insert(ptr);
+    (void)it;
+    if (!inserted) {
+        error_count_++;
+        return false;
+    }
     return true;
 }
 
@@ -97,6 +114,21 @@ MemorySafetyValidator::ValidationResult MemorySafetyValidator::validate() {
         return result;
     }
 
+    // This used to be `result.valid = true; return result;` — a validation that could not
+    // fail, which is indistinguishable from no validation at all. It now summarises what the
+    // individual checks recorded: any error makes the result invalid, and the message says how
+    // many were seen of how many checks.
+    //
+    // It is a summary, not a fresh inspection: there is no list of allocations to re-examine,
+    // so the answer reflects check_*() calls made since the last reset().
+    result.valid = (error_count_ == 0);
+    result.bytes_checked = 0;
+
+    if (!result.valid) {
+        result.error_message = std::to_string(error_count_) + " error(s) across " +
+                               std::to_string(validation_count_) + " check(s)";
+    }
+
     return result;
 }
 
@@ -104,18 +136,33 @@ MemoryPoisonGuard::MemoryPoisonGuard(const void* ptr, size_t size)
     : ptr_(ptr), size_(size), is_poisoned_(false) {
 }
 
+// The pointee is device memory, so both the fill and the scan below have to go through a
+// staging buffer — exactly what check_uninitialized above already does and says why. These two
+// used to dereference the device pointer directly from the host: measured, a guard constructed
+// over a cudaMalloc'd block segfaults in the destructor and in is_poisoned(), exit code 139.
 MemoryPoisonGuard::~MemoryPoisonGuard() {
-    if (!is_poisoned_ && ptr_ != nullptr) {
-        uint8_t* bytes = const_cast<uint8_t*>(static_cast<const uint8_t*>(ptr_));
-        std::memset(bytes, POISON_BYTE, size_);
+    if (!is_poisoned_ && ptr_ != nullptr && size_ > 0) {
+        std::vector<uint8_t> poison(size_, POISON_BYTE);
+        // Best effort: a destructor cannot report a failure, and poisoning a block that has
+        // already been released is not worth terminating the process over.
+        (void)cudaMemcpy(const_cast<void*>(ptr_), poison.data(), size_,
+                         cudaMemcpyHostToDevice);
     }
 }
 
 bool MemoryPoisonGuard::is_poisoned() const {
-    if (ptr_ == nullptr) return false;
-    const uint8_t* bytes = static_cast<const uint8_t*>(ptr_);
+    if (ptr_ == nullptr || size_ == 0) return false;
+
+    std::vector<uint8_t> host_buf(size_);
+    if (cudaMemcpy(host_buf.data(), ptr_, size_, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        // Unreadable is not the same as unpoisoned, but this predicate has two answers and
+        // cannot raise. Reporting false keeps the destructor from writing to memory it could
+        // not read; callers wanting the distinction must check cudaGetLastError themselves.
+        (void)cudaGetLastError();
+        return false;
+    }
     for (size_t i = 0; i < size_; ++i) {
-        if (bytes[i] == POISON_BYTE) {
+        if (host_buf[i] == POISON_BYTE) {
             return true;
         }
     }
