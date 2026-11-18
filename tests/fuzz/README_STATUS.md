@@ -21,22 +21,33 @@ All three now compile.
 | `tests/fuzz/algorithm_fuzz.cpp` | `LLVMFuzzerTestOneInput` |
 | `tests/fuzz/matmul_fuzz.cpp` | `LLVMFuzzerTestOneInput` |
 | `tests/fuzz/memory_pool_fuzz.cpp` | `LLVMFuzzerTestOneInput` |
-| `tests/property/algorithmic_tests.cpp` | `int main()` |
-| `tests/property/mathematical_tests.cpp` | `int main()` |
-| `tests/property/numerical_tests.cpp` | `int main()` |
 
-The three fuzz targets are libFuzzer entries: they need a fuzzer driver to run and cannot be
-ctest cases as written. The three property tests each define their own `main` and are
-standalone programs, so registering them means three separate executables and three ctest
-entries, not adding them to nova-tests.
+"Compiles" is the whole claim — see the Fuzz targets section below for what each one does when
+it runs, which is not the same thing.
+
+The three property tests are registered now: each has its own `main` and is built as its own
+executable with its own ctest entry (`property_algorithmic`, `property_mathematical`,
+`property_numerical`).
+
+## Fuzz targets
+
+Only one of the three is worth a driver.
+
+| File | State |
+|---|---|
+| `tests/fuzz/algorithm_fuzz.cpp` | Calls the library (`cuda::algo::reduce_sum`, scan, sort). Needs a libFuzzer driver. |
+| `tests/fuzz/matmul_fuzz.cpp` | Calls nothing from nova — it multiplies with its own triple loop and checks that loop's output. Fuzzing it fuzzes this file. |
+| `tests/fuzz/memory_pool_fuzz.cpp` | Broken: `memset()` on a `cudaMalloc` pointer from the host. Would crash the harness, not the pool. Also never uses `MemoryPool`. |
+
+Each of the two has a note at the top of the file saying the same thing.
 
 ## Dead
 
 | File | Why |
 |---|---|
-| `tests/test_matrix.cpp` | calls `addMatricesOnGPU`, which no longer exists anywhere in the tree |
-| `tests/test_my_lib.cpp` | includes `my_lib.h`, which is not in the tree; a leftover scaffold |
+| `tests/test_matrix.cpp` | two of its four cases call `addMatricesOnGPU`, removed from the tree; its multiply cases do match the current `multiplyMatricesOnGPU` |
+| `tests/test_my_lib.cpp` | includes `my_lib.h`, which is not in the tree; a gtest tutorial template |
 
-Removing these, registering the working ones, and giving the fuzz targets a driver are
-decisions for the maintainer. This file records the state rather than making those choices
-silently.
+All four files carry a note at the top saying so. Removing them, and giving
+`algorithm_fuzz.cpp` a driver, are decisions for the maintainer. This file records the state
+rather than making those choices silently.

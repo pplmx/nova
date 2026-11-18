@@ -1,3 +1,21 @@
+// BROKEN - do not wire it to a libFuzzer driver without fixing it first.
+//
+// cudaMalloc returns a device pointer and the body then calls memset() on it from the host:
+//
+//     cudaMalloc(&ptr, alloc_size);
+//     memset(ptr, 0x42, std::min(alloc_size, size_t{256}));
+//
+// A host memset through a device pointer faults. This is the same mistake MemoryPoisonGuard had
+// (fixed in src/testing/memory_safety.cpp, commit 1e403a1): the pointee is device memory, so a
+// host write or scan has to be staged through cudaMemcpy. Connecting this target would make the
+// fuzzer report a crash that belongs to the harness, not to MemoryPool.
+//
+// It also does not use MemoryPool at all — it allocates with raw cudaMalloc and calls the result
+// "fuzzing a memory pool". The include of cuda/memory/memory_pool.h is unused by the body.
+//
+// Left in place rather than deleted because removing files is the maintainer's call. See
+// tests/fuzz/README_STATUS.md.
+
 #include "fuzz_utils.hpp"
 #include <cuda/memory/memory_pool.h>
 #include <cuda_runtime.h>

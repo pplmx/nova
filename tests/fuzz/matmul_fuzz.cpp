@@ -1,3 +1,13 @@
+// NOT A FUZZ TARGET FOR THIS PROJECT - do not wire it to a libFuzzer driver.
+//
+// The body generates two matrices, multiplies them with its own triple loop, then checks that
+// loop's output for NaN/Inf. It calls nothing from nova: no cuda::neural::matmul, no cuBLAS
+// path, not even a memory::Buffer. Fuzzing it would fuzz the arithmetic in this file.
+//
+// Left in place rather than deleted because removing files is the maintainer's call. See
+// tests/fuzz/README_STATUS.md. If this file is meant to exist, it needs rewriting to call the
+// library the way algorithm_fuzz.cpp calls reduce_sum.
+
 #include "fuzz_utils.hpp"
 #include <vector>
 #include <cmath>
