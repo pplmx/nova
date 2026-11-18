@@ -5,6 +5,7 @@
 #include <parallel/sort.h>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 
 namespace nova {
 namespace fuzz {
@@ -44,12 +45,36 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             }
             break;
         }
-        case 1: { // scan (inclusive prefix sum)
+        case 1: { // scan
             try {
-                std::vector<float> output(count);
-                output[0] = input[0];
-                for (size_t i = 1; i < count; ++i) {
-                    output[i] = output[i-1] + input[i];
+                // Calls the library. The previous body ran its own host-side prefix-sum
+                // loop, so this branch exercised the fuzz file rather than the tree.
+                //
+                // scan.h lives in cuda::algo; sort.h is in cuda::parallel. Both take
+                // memory::Buffer, which is why the data is staged on the device first.
+                cuda::memory::Buffer<float> d_in(input.size());
+                cuda::memory::Buffer<float> d_out(input.size());
+                d_in.copy_from(input.data(), input.size());
+                cuda::algo::inclusiveScan(d_in, d_out, count);
+
+                // A prefix sum is monotone non-decreasing only for non-negative input, so the
+                // invariant checked is the definitional one: last element equals the total.
+                std::vector<float> scanned(count);
+                d_out.copy_to(scanned.data(), count);
+                double running = 0.0;
+                for (size_t i = 0; i < count; ++i) {
+                    running += static_cast<double>(input[i]);
+                }
+                const float expected = static_cast<float>(running);
+                if (!std::isfinite(expected)) {
+                    return 0; // Accumulating fuzzed data overflows; the comparison is moot.
+                }
+                if (!std::isfinite(scanned[count - 1])) {
+                    return 0;
+                }
+                if (std::fabs(scanned[count - 1] - expected) >
+                    1e-3F * std::max(1.0F, std::fabs(expected))) {
+                    return 1; // Inclusive scan disagrees with the total
                 }
             } catch (...) {
                 return 1;
@@ -58,15 +83,19 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         }
         case 2: { // sort
             try {
-                // std::sort on a copy proved only that the standard library sorts. The scan
-                // and sort branches below still do local work because the library's
-                // parallel versions allocate device buffers, which a fuzz target cannot do
-                // once per input; noted rather than silently left.
-                std::vector<float> sorted = input;
-                std::sort(sorted.begin(), sorted.end());
-                for (size_t i = 1; i < sorted.size(); ++i) {
-                    if (sorted[i] < sorted[i-1]) {
-                        return 1; // Not sorted - crash
+                // Calls the library. The previous body copied the input and called std::sort,
+                // then checked the result — its own comment said it "proved only that the
+                // standard library sorts".
+                cuda::memory::Buffer<float> d_in(input.size());
+                cuda::memory::Buffer<float> d_out(input.size());
+                d_in.copy_from(input.data(), input.size());
+                cuda::parallel::bitonicSort(d_in, d_out, count);
+
+                std::vector<float> sorted(count);
+                d_out.copy_to(sorted.data(), count);
+                for (size_t i = 1; i < count; ++i) {
+                    if (sorted[i] < sorted[i - 1]) {
+                        return 1; // Not sorted
                     }
                 }
             } catch (...) {
