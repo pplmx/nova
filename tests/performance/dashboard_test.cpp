@@ -4,165 +4,165 @@
 
 namespace cuda::performance::dashboard::test {
 
-class DashboardExporterTest : public ::testing::Test {
-protected:
-    DashboardExporter exporter;
-};
+    class DashboardExporterTest : public ::testing::Test {
+    protected:
+        DashboardExporter exporter;
+    };
 
-TEST_F(DashboardExporterTest, DefaultConfig) {
-    auto config = exporter.get_config();
-    EXPECT_TRUE(config.include_roofline);
-    EXPECT_TRUE(config.include_fusion);
-    EXPECT_TRUE(config.include_bandwidth);
-    EXPECT_EQ(config.output_format, "json");
-}
+    TEST_F(DashboardExporterTest, DefaultConfig) {
+        auto config = exporter.get_config();
+        EXPECT_TRUE(config.include_roofline);
+        EXPECT_TRUE(config.include_fusion);
+        EXPECT_TRUE(config.include_bandwidth);
+        EXPECT_EQ(config.output_format, "json");
+    }
 
-TEST_F(DashboardExporterTest, EmptyExporter) {
-    EXPECT_TRUE(exporter.is_empty());
-}
+    TEST_F(DashboardExporterTest, EmptyExporter) {
+        EXPECT_TRUE(exporter.is_empty());
+    }
 
-TEST_F(DashboardExporterTest, ToJson) {
-    std::string json = exporter.to_json();
-    EXPECT_NE(json.find("header"), std::string::npos);
-    EXPECT_NE(json.find("roofline"), std::string::npos);
-    EXPECT_NE(json.find("fusion"), std::string::npos);
-    EXPECT_NE(json.find("bandwidth"), std::string::npos);
-}
+    TEST_F(DashboardExporterTest, ToJson) {
+        std::string json = exporter.to_json();
+        EXPECT_NE(json.find("header"), std::string::npos);
+        EXPECT_NE(json.find("roofline"), std::string::npos);
+        EXPECT_NE(json.find("fusion"), std::string::npos);
+        EXPECT_NE(json.find("bandwidth"), std::string::npos);
+    }
 
-TEST_F(DashboardExporterTest, ToCsv) {
-    std::string csv = exporter.to_csv();
-    EXPECT_NE(csv.find("section"), std::string::npos);
-    EXPECT_NE(csv.find("roofline"), std::string::npos);
-}
+    TEST_F(DashboardExporterTest, ToCsv) {
+        std::string csv = exporter.to_csv();
+        EXPECT_NE(csv.find("section"), std::string::npos);
+        EXPECT_NE(csv.find("roofline"), std::string::npos);
+    }
 
-TEST_F(DashboardExporterTest, Clear) {
-    exporter.clear();
-    EXPECT_TRUE(exporter.is_empty());
-}
+    TEST_F(DashboardExporterTest, Clear) {
+        exporter.clear();
+        EXPECT_TRUE(exporter.is_empty());
+    }
 
-class FlameGraphTest : public ::testing::Test {
-protected:
-    FlameGraphGenerator generator;
-};
+    class FlameGraphTest : public ::testing::Test {
+    protected:
+        FlameGraphGenerator generator;
+    };
 
-TEST_F(FlameGraphTest, EmptyGenerator) {
-    EXPECT_EQ(generator.event_count(), 0u);
-}
+    TEST_F(FlameGraphTest, EmptyGenerator) {
+        EXPECT_EQ(generator.event_count(), 0u);
+    }
 
-TEST_F(FlameGraphTest, AddEvent) {
-    ChromeTraceEvent event;
-    event.name = "kernel1";
-    event.category = "performance";
-    event.ph = "X";
-    event.ts = 1000;
-    event.dur = 100;
-    event.pid = 1;
-    event.tid = 1;
+    TEST_F(FlameGraphTest, AddEvent) {
+        ChromeTraceEvent event;
+        event.name = "kernel1";
+        event.category = "performance";
+        event.ph = "X";
+        event.ts = 1000;
+        event.dur = 100;
+        event.pid = 1;
+        event.tid = 1;
 
-    generator.add_event(event);
-    EXPECT_EQ(generator.event_count(), 1u);
-}
+        generator.add_event(event);
+        EXPECT_EQ(generator.event_count(), 1u);
+    }
 
-TEST_F(FlameGraphTest, BuildFlameGraph) {
-    ChromeTraceEvent event;
-    event.name = "matmul";
-    event.category = "algo";
-    event.ph = "X";
-    event.ts = 1000;
-    event.dur = 100;
-    event.pid = 1;
-    event.tid = 1;
+    TEST_F(FlameGraphTest, BuildFlameGraph) {
+        ChromeTraceEvent event;
+        event.name = "matmul";
+        event.category = "algo";
+        event.ph = "X";
+        event.ts = 1000;
+        event.dur = 100;
+        event.pid = 1;
+        event.tid = 1;
 
-    generator.add_event(event);
-    auto flame_graph = generator.build_flame_graph();
+        generator.add_event(event);
+        auto flame_graph = generator.build_flame_graph();
 
-    EXPECT_EQ(flame_graph.name, "root");
-    EXPECT_EQ(flame_graph.value, 100u);
-    EXPECT_GE(flame_graph.children.size(), 0u);
-}
+        EXPECT_EQ(flame_graph.name, "root");
+        EXPECT_EQ(flame_graph.value, 100u);
+        EXPECT_GE(flame_graph.children.size(), 0u);
+    }
 
-TEST_F(FlameGraphTest, ToJson) {
-    ChromeTraceEvent event;
-    event.name = "kernel1";
-    event.category = "test";
-    event.ph = "X";
-    event.ts = 1000;
-    event.dur = 50;
-    event.pid = 1;
-    event.tid = 1;
+    TEST_F(FlameGraphTest, ToJson) {
+        ChromeTraceEvent event;
+        event.name = "kernel1";
+        event.category = "test";
+        event.ph = "X";
+        event.ts = 1000;
+        event.dur = 50;
+        event.pid = 1;
+        event.tid = 1;
 
-    generator.add_event(event);
-    std::string json = generator.to_json();
-    EXPECT_NE(json.find("root"), std::string::npos);
-}
+        generator.add_event(event);
+        std::string json = generator.to_json();
+        EXPECT_NE(json.find("root"), std::string::npos);
+    }
 
-TEST_F(FlameGraphTest, ToChromeTrace) {
-    ChromeTraceEvent event;
-    event.name = "kernel1";
-    event.category = "test";
-    event.ph = "X";
-    event.ts = 1000;
-    event.dur = 50;
-    event.pid = 1;
-    event.tid = 1;
+    TEST_F(FlameGraphTest, ToChromeTrace) {
+        ChromeTraceEvent event;
+        event.name = "kernel1";
+        event.category = "test";
+        event.ph = "X";
+        event.ts = 1000;
+        event.dur = 50;
+        event.pid = 1;
+        event.tid = 1;
 
-    generator.add_event(event);
-    std::string trace = generator.to_chrome_trace();
-    EXPECT_NE(trace.find("kernel1"), std::string::npos);
-}
+        generator.add_event(event);
+        std::string trace = generator.to_chrome_trace();
+        EXPECT_NE(trace.find("kernel1"), std::string::npos);
+    }
 
-TEST_F(FlameGraphTest, Clear) {
-    ChromeTraceEvent event;
-    event.name = "kernel1";
-    event.category = "test";
-    event.ph = "X";
-    generator.add_event(event);
+    TEST_F(FlameGraphTest, Clear) {
+        ChromeTraceEvent event;
+        event.name = "kernel1";
+        event.category = "test";
+        event.ph = "X";
+        generator.add_event(event);
 
-    generator.clear();
-    EXPECT_EQ(generator.event_count(), 0u);
-}
+        generator.clear();
+        EXPECT_EQ(generator.event_count(), 0u);
+    }
 
-TEST_F(FlameGraphTest, FlameGraphNodeJson) {
-    FlameGraphNode node;
-    node.name = "test";
-    node.value = 100;
-    node.self_value = 50;
+    TEST_F(FlameGraphTest, FlameGraphNodeJson) {
+        FlameGraphNode node;
+        node.name = "test";
+        node.value = 100;
+        node.self_value = 50;
 
-    std::string json = node.to_json();
-    EXPECT_NE(json.find("test"), std::string::npos);
-    EXPECT_NE(json.find("value"), std::string::npos);
-}
+        std::string json = node.to_json();
+        EXPECT_NE(json.find("test"), std::string::npos);
+        EXPECT_NE(json.find("value"), std::string::npos);
+    }
 
-TEST_F(FlameGraphTest, NVTraceParser) {
-    NVTraceParser parser;
-    auto domain = parser.get_nvtx_domain("performance.nvblox");
-    EXPECT_EQ(domain, "nova.performance.nvblox");
+    TEST_F(FlameGraphTest, NVTraceParser) {
+        NVTraceParser parser;
+        auto domain = parser.get_nvtx_domain("performance.nvblox");
+        EXPECT_EQ(domain, "nova.performance.nvblox");
 
-    domain = parser.get_nvtx_domain("memory");
-    EXPECT_EQ(domain, "nova.memory");
-}
+        domain = parser.get_nvtx_domain("memory");
+        EXPECT_EQ(domain, "nova.memory");
+    }
 
-class DashboardGeneratorTest : public ::testing::Test {
-protected:
-    DashboardGenerator generator;
-};
+    class DashboardGeneratorTest : public ::testing::Test {
+    protected:
+        DashboardGenerator generator;
+    };
 
-TEST_F(DashboardGeneratorTest, EmptyGenerator) {
-    std::string json = generator.generate_json();
-    EXPECT_NE(json.find("dashboards"), std::string::npos);
-}
+    TEST_F(DashboardGeneratorTest, EmptyGenerator) {
+        std::string json = generator.generate_json();
+        EXPECT_NE(json.find("dashboards"), std::string::npos);
+    }
 
-TEST_F(DashboardGeneratorTest, GenerateHtml) {
-    std::string html = generator.generate_html();
-    EXPECT_FALSE(html.empty());
-}
+    TEST_F(DashboardGeneratorTest, GenerateHtml) {
+        std::string html = generator.generate_html();
+        EXPECT_FALSE(html.empty());
+    }
 
-TEST_F(DashboardGeneratorTest, AddExporter) {
-    DashboardExporter exporter;
-    generator.add_exporter(exporter);
+    TEST_F(DashboardGeneratorTest, AddExporter) {
+        DashboardExporter exporter;
+        generator.add_exporter(exporter);
 
-    std::string json = generator.generate_json();
-    EXPECT_NE(json.find("dashboards"), std::string::npos);
-}
+        std::string json = generator.generate_json();
+        EXPECT_NE(json.find("dashboards"), std::string::npos);
+    }
 
 }  // namespace cuda::performance::dashboard::test

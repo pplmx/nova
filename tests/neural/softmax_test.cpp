@@ -7,9 +7,7 @@ using namespace cuda::neural;
 
 class SoftmaxTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(SoftmaxTest, SoftmaxResultConstruction) {

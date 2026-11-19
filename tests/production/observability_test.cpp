@@ -6,17 +6,15 @@
 
 namespace {
 
-void reset() {
-    cudaDeviceReset();
-}
+    void reset() {
+        cudaDeviceReset();
+    }
 
-}
+}  // namespace
 
 class AsyncErrorTrackerTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(AsyncErrorTrackerTest, DefaultConstruction) {
@@ -105,9 +103,7 @@ TEST_F(AsyncErrorTrackerTest, ScopedErrorTracking) {
 
 class HealthMonitorTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(HealthMonitorTest, GetHealthSnapshot) {

@@ -14,8 +14,7 @@ protected:
         std::vector<int> row_offsets = {0, 2, 4, 6};
         std::vector<int> col_indices = {1, 2, 0, 2, 0, 1};
 
-        return nova::sparse::SparseMatrixCSR<float>(std::move(values), std::move(row_offsets),
-                                               std::move(col_indices), 3, 3);
+        return nova::sparse::SparseMatrixCSR<float>(std::move(values), std::move(row_offsets), std::move(col_indices), 3, 3);
     }
 };
 

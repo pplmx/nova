@@ -39,112 +39,115 @@
 
 namespace cuda::observability::test {
 
-// Regression: the nine handles were all nullptr.
-TEST(NvtxDomainsTest, EveryDomainIsDistinct) {
-    const std::set<NVTXDomainHandle> domains = {
-        NVTXDomains::Memory,  NVTXDomains::Device,   NVTXDomains::Algo,
-        NVTXDomains::API,     NVTXDomains::Production, NVTXDomains::Performance,
-        NVTXDomains::NVBlox,  NVTXDomains::Fusion,   NVTXDomains::Bandwidth,
-    };
+    // Regression: the nine handles were all nullptr.
+    TEST(NvtxDomainsTest, EveryDomainIsDistinct) {
+        const std::set<NVTXDomainHandle> domains = {
+            NVTXDomains::Memory,
+            NVTXDomains::Device,
+            NVTXDomains::Algo,
+            NVTXDomains::API,
+            NVTXDomains::Production,
+            NVTXDomains::Performance,
+            NVTXDomains::NVBlox,
+            NVTXDomains::Fusion,
+            NVTXDomains::Bandwidth,
+        };
 
-    EXPECT_EQ(domains.size(), 9u)
-        << "each domain must have its own identity, otherwise ranges cannot be "
-           "attributed";
-}
+        EXPECT_EQ(domains.size(), 9u) << "each domain must have its own identity, otherwise ranges cannot be "
+                                         "attributed";
+    }
 
-TEST(NvtxDomainsTest, HandlesAreNonNull) {
-    EXPECT_NE(NVTXDomains::Memory, nullptr);
-    EXPECT_NE(NVTXDomains::Device, nullptr);
-    EXPECT_NE(NVTXDomains::Algo, nullptr);
-    EXPECT_NE(NVTXDomains::API, nullptr);
-    EXPECT_NE(NVTXDomains::Production, nullptr);
-    EXPECT_NE(NVTXDomains::Performance, nullptr);
-    EXPECT_NE(NVTXDomains::NVBlox, nullptr);
-    EXPECT_NE(NVTXDomains::Fusion, nullptr);
-    EXPECT_NE(NVTXDomains::Bandwidth, nullptr);
-}
+    TEST(NvtxDomainsTest, HandlesAreNonNull) {
+        EXPECT_NE(NVTXDomains::Memory, nullptr);
+        EXPECT_NE(NVTXDomains::Device, nullptr);
+        EXPECT_NE(NVTXDomains::Algo, nullptr);
+        EXPECT_NE(NVTXDomains::API, nullptr);
+        EXPECT_NE(NVTXDomains::Production, nullptr);
+        EXPECT_NE(NVTXDomains::Performance, nullptr);
+        EXPECT_NE(NVTXDomains::NVBlox, nullptr);
+        EXPECT_NE(NVTXDomains::Fusion, nullptr);
+        EXPECT_NE(NVTXDomains::Bandwidth, nullptr);
+    }
 
-TEST(NvtxDomainsTest, HandlesAreUsableAsTemplateArguments) {
-    // A domain handle has to be a constant expression to serve as a template
-    // argument; if these became runtime values this would stop compiling.
-    static_assert(NVTXDomains::Memory != NVTXDomains::Device);
-    static_assert(NVTXDomains::Algo != NVTXDomains::API);
-    SUCCEED();
-}
+    TEST(NvtxDomainsTest, HandlesAreUsableAsTemplateArguments) {
+        // A domain handle has to be a constant expression to serve as a template
+        // argument; if these became runtime values this would stop compiling.
+        static_assert(NVTXDomains::Memory != NVTXDomains::Device);
+        static_assert(NVTXDomains::Algo != NVTXDomains::API);
+        SUCCEED();
+    }
 
-// Regression: the disabled branch declared ScopedRange with a TYPE parameter,
-// so this exact form failed to compile here while succeeding with NVTX on.
-TEST(ScopedRangeTest, TakesTheDomainAsAValueInBothConfigurations) {
-    ScopedRange<NVTXDomains::Memory> range("allocate");
-    ScopedRange<NVTXDomains::Algo> another("reduce");
-    (void)range;
-    (void)another;
-    SUCCEED();
-}
+    // Regression: the disabled branch declared ScopedRange with a TYPE parameter,
+    // so this exact form failed to compile here while succeeding with NVTX on.
+    TEST(ScopedRangeTest, TakesTheDomainAsAValueInBothConfigurations) {
+        ScopedRange<NVTXDomains::Memory> range("allocate");
+        ScopedRange<NVTXDomains::Algo> another("reduce");
+        (void)range;
+        (void)another;
+        SUCCEED();
+    }
 
-TEST(ScopedRangeTest, IsConstructibleFromAName) {
-    EXPECT_NO_THROW(ScopedRange<NVTXDomains::Device>("cudaMalloc"));
-    EXPECT_NO_THROW(([]{ ScopedRange<NVTXDomains::Fusion> r(nullptr); }()));
-}
+    TEST(ScopedRangeTest, IsConstructibleFromAName) {
+        EXPECT_NO_THROW(ScopedRange<NVTXDomains::Device>("cudaMalloc"));
+        EXPECT_NO_THROW(([] { ScopedRange<NVTXDomains::Fusion> r(nullptr); }()));
+    }
 
-TEST(ScopedRangeTest, IsAStackObject) {
-    // RAII semantics: constructing and destroying inside a scope must not throw.
-    EXPECT_NO_THROW({
-        ScopedRange<NVTXDomains::Performance> outer("outer");
-        {
-            ScopedRange<NVTXDomains::Performance> inner("inner");
-        }
-    });
-}
+    TEST(ScopedRangeTest, IsAStackObject) {
+        // RAII semantics: constructing and destroying inside a scope must not throw.
+        EXPECT_NO_THROW({
+            ScopedRange<NVTXDomains::Performance> outer("outer");
+            { ScopedRange<NVTXDomains::Performance> inner("inner"); }
+        });
+    }
 
-TEST(RangeHelpersTest, PushAndPopAreSafeWithoutATool) {
-    // With NVTX off these are no-ops; with it on they must still be balanced and
-    // must not fault when popped without a matching push.
-    EXPECT_NO_THROW(push_range<NVTXDomains::API>("collective"));
-    EXPECT_NO_THROW(pop_range<NVTXDomains::API>());
-}
+    TEST(RangeHelpersTest, PushAndPopAreSafeWithoutATool) {
+        // With NVTX off these are no-ops; with it on they must still be balanced and
+        // must not fault when popped without a matching push.
+        EXPECT_NO_THROW(push_range<NVTXDomains::API>("collective"));
+        EXPECT_NO_THROW(pop_range<NVTXDomains::API>());
+    }
 
-TEST(RangeHelpersTest, UnbalancedPopDoesNotCrash) {
-    // Regression guard for the thread-local depth counter: popping past empty
-    // must be a no-op rather than an out-of-bounds read of the handle stack.
-    EXPECT_NO_THROW(pop_range<NVTXDomains::API>());
-    EXPECT_NO_THROW(pop_range<NVTXDomains::API>());
-}
+    TEST(RangeHelpersTest, UnbalancedPopDoesNotCrash) {
+        // Regression guard for the thread-local depth counter: popping past empty
+        // must be a no-op rather than an out-of-bounds read of the handle stack.
+        EXPECT_NO_THROW(pop_range<NVTXDomains::API>());
+        EXPECT_NO_THROW(pop_range<NVTXDomains::API>());
+    }
 
-TEST(RangeHelpersTest, NestedRangesAreLifo) {
-    EXPECT_NO_THROW({
-        push_range<NVTXDomains::Algo>("outer");
-        push_range<NVTXDomains::Algo>("inner");
-        pop_range<NVTXDomains::Algo>();
-        pop_range<NVTXDomains::Algo>();
-    });
-}
+    TEST(RangeHelpersTest, NestedRangesAreLifo) {
+        EXPECT_NO_THROW({
+            push_range<NVTXDomains::Algo>("outer");
+            push_range<NVTXDomains::Algo>("inner");
+            pop_range<NVTXDomains::Algo>();
+            pop_range<NVTXDomains::Algo>();
+        });
+    }
 
-TEST(RangeHelpersTest, ANullNameIsIgnored) {
-    EXPECT_NO_THROW(push_range<NVTXDomains::Memory>(nullptr));
-    EXPECT_NO_THROW(pop_range<NVTXDomains::Memory>());
-}
+    TEST(RangeHelpersTest, ANullNameIsIgnored) {
+        EXPECT_NO_THROW(push_range<NVTXDomains::Memory>(nullptr));
+        EXPECT_NO_THROW(pop_range<NVTXDomains::Memory>());
+    }
 
-// Regression: the macros are the documented entry point and the disabled
-// POP_RANGE did not exist in nvtx3 at all.
-TEST(NvtxMacroTest, MacrosAreUsableAndBalanced) {
-    NOVA_NVTX_PUSH_RANGE("macro-push");
-    NOVA_NVTX_POP_RANGE();
-    SUCCEED();
-}
+    // Regression: the macros are the documented entry point and the disabled
+    // POP_RANGE did not exist in nvtx3 at all.
+    TEST(NvtxMacroTest, MacrosAreUsableAndBalanced) {
+        NOVA_NVTX_PUSH_RANGE("macro-push");
+        NOVA_NVTX_POP_RANGE();
+        SUCCEED();
+    }
 
-TEST(NvtxMacroTest, ScopedRangeMacroDeclaresANamedObject) {
-    NOVA_NVTX_SCOPED_RANGE(block);
-    (void)block;
-    SUCCEED();
-}
+    TEST(NvtxMacroTest, ScopedRangeMacroDeclaresANamedObject) {
+        NOVA_NVTX_SCOPED_RANGE(block);
+        (void)block;
+        SUCCEED();
+    }
 
-TEST(NvtxMacroTest, MacrosTolerateNesting) {
-    NOVA_NVTX_PUSH_RANGE("level-1");
-    NOVA_NVTX_PUSH_RANGE("level-2");
-    NOVA_NVTX_POP_RANGE();
-    NOVA_NVTX_POP_RANGE();
-    SUCCEED();
-}
+    TEST(NvtxMacroTest, MacrosTolerateNesting) {
+        NOVA_NVTX_PUSH_RANGE("level-1");
+        NOVA_NVTX_PUSH_RANGE("level-2");
+        NOVA_NVTX_POP_RANGE();
+        NOVA_NVTX_POP_RANGE();
+        SUCCEED();
+    }
 
 }  // namespace cuda::observability::test

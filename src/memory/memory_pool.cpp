@@ -212,8 +212,7 @@ namespace cuda::memory {
 
         if (total_block_space > 0) {
             metrics.fragmentation_bytes = total_free_space;
-            metrics.fragmentation_percent =
-                static_cast<double>(total_free_space) / static_cast<double>(total_block_space) * 100.0;
+            metrics.fragmentation_percent = static_cast<double>(total_free_space) / static_cast<double>(total_block_space) * 100.0;
         }
 
         return metrics;

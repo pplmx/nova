@@ -17,82 +17,55 @@
 #include <cstdint>
 
 namespace nova {
-namespace quantize {
-namespace cuda {
+    namespace quantize {
+        namespace cuda {
 
-/**
- * @brief Parameters for INT8 quantization
- * @struct QuantizationParams
- * @ingroup int8_kernels
- */
-struct QuantizationParams {
-    /** @brief Quantization scale */
-    float scale{1.0f};
+            /**
+             * @brief Parameters for INT8 quantization
+             * @struct QuantizationParams
+             * @ingroup int8_kernels
+             */
+            struct QuantizationParams {
+                /** @brief Quantization scale */
+                float scale{1.0f};
 
-    /** @brief Zero point for asymmetric quantization */
-    float zero_point{0.0f};
+                /** @brief Zero point for asymmetric quantization */
+                float zero_point{0.0f};
 
-    /** @brief Use symmetric quantization (no zero point) */
-    bool symmetric{true};
+                /** @brief Use symmetric quantization (no zero point) */
+                bool symmetric{true};
 
-    /** @brief Default constructor */
-    QuantizationParams() = default;
+                /** @brief Default constructor */
+                QuantizationParams() = default;
 
-    /**
-     * @brief Construct quantization params
-     * @param s Scale value
-     * @param zp Zero point
-     * @param sym Symmetric flag
-     */
-    QuantizationParams(float s, float zp = 0.0f, bool sym = true)
-        : scale(s), zero_point(zp), symmetric(sym) {}
-};
+                /**
+                 * @brief Construct quantization params
+                 * @param s Scale value
+                 * @param zp Zero point
+                 * @param sym Symmetric flag
+                 */
+                QuantizationParams(float s, float zp = 0.0f, bool sym = true)
+                    : scale(s),
+                      zero_point(zp),
+                      symmetric(sym) {}
+            };
 
-void quantize_f32_to_int8(
-    const float* src, int8_t* dst, size_t n,
-    QuantizationParams params,
-    cudaStream_t stream = 0
-);
+            void quantize_f32_to_int8(const float* src, int8_t* dst, size_t n, QuantizationParams params, cudaStream_t stream = 0);
 
-void dequantize_int8_to_f32(
-    const int8_t* src, float* dst, size_t n,
-    QuantizationParams params,
-    cudaStream_t stream = 0
-);
+            void dequantize_int8_to_f32(const int8_t* src, float* dst, size_t n, QuantizationParams params, cudaStream_t stream = 0);
 
-void quantize_f32_to_int8_async(
-    const float* src, int8_t* dst, size_t n,
-    QuantizationParams params,
-    cudaStream_t stream = 0
-);
+            void quantize_f32_to_int8_async(const float* src, int8_t* dst, size_t n, QuantizationParams params, cudaStream_t stream = 0);
 
-void dequantize_int8_to_f32_async(
-    const int8_t* src, float* dst, size_t n,
-    QuantizationParams params,
-    cudaStream_t stream = 0
-);
+            void dequantize_int8_to_f32_async(const int8_t* src, float* dst, size_t n, QuantizationParams params, cudaStream_t stream = 0);
 
-void quantize_f32_to_int8_with_calibration(
-    const float* src, int8_t* dst, size_t n,
-    float min_val, float max_val,
-    cudaStream_t stream = 0
-);
+            void quantize_f32_to_int8_with_calibration(const float* src, int8_t* dst, size_t n, float min_val, float max_val, cudaStream_t stream = 0);
 
-void build_histogram(
-    const float* data, uint32_t* histogram,
-    size_t n, float min_val, float max_val,
-    int num_bins = 256,
-    cudaStream_t stream = 0
-);
+            void build_histogram(const float* data, uint32_t* histogram, size_t n, float min_val, float max_val, int num_bins = 256, cudaStream_t stream = 0);
 
-void compute_minmax(
-    const float* data, size_t n,
-    float* min_val, float* max_val,
-    cudaStream_t stream = 0
-);
+            void compute_minmax(const float* data, size_t n, float* min_val, float* max_val, cudaStream_t stream = 0);
 
-} // namespace cuda
-} // namespace quantize
-} // namespace nova
+        }  // namespace cuda
+    }  // namespace quantize
+}  // namespace nova
 
-#endif // NOVA_CUDA_QUANTIZE_INT8_KERNELS_HPP
+#endif  // NOVA_CUDA_QUANTIZE_INT8_KERNELS_HPP

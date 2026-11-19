@@ -22,78 +22,77 @@
 
 namespace unique_ptr_ownership_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(UniquePtrOwnershipTest, ReleaseHandsOverAPointerThatIsStillValid) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(UniquePtrOwnershipTest, ReleaseHandsOverAPointerThatIsStillValid) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    cuda::memory::unique_ptr<float> owner(16);
-    ASSERT_NE(owner.get(), nullptr);
+        cuda::memory::unique_ptr<float> owner(16);
+        ASSERT_NE(owner.get(), nullptr);
 
-    float* raw = owner.release();
+        float* raw = owner.release();
 
-    // The pointer must survive release: it was handed over, not freed.
-    ASSERT_NE(raw, nullptr);
-    EXPECT_EQ(owner.get(), nullptr) << "the owner must forget what it released";
+        // The pointer must survive release: it was handed over, not freed.
+        ASSERT_NE(raw, nullptr);
+        EXPECT_EQ(owner.get(), nullptr) << "the owner must forget what it released";
 
-    // Touching it proves it was not freed. A memset is enough and does not read garbage.
-    EXPECT_EQ(cudaMemset(raw, 0, 16 * sizeof(float)), cudaSuccess);
+        // Touching it proves it was not freed. A memset is enough and does not read garbage.
+        EXPECT_EQ(cudaMemset(raw, 0, 16 * sizeof(float)), cudaSuccess);
 
-    // The caller now owns it. This is the step a forgotten release() result skips.
-    EXPECT_EQ(cudaFree(raw), cudaSuccess);
-}
-
-TEST(UniquePtrOwnershipTest, ResetFreesTheOldBufferAndTakesTheNewOne) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // The caller now owns it. This is the step a forgotten release() result skips.
+        EXPECT_EQ(cudaFree(raw), cudaSuccess);
     }
 
-    cuda::memory::unique_ptr<float> owner(8);
-    float* first = owner.get();
-    ASSERT_NE(first, nullptr);
+    TEST(UniquePtrOwnershipTest, ResetFreesTheOldBufferAndTakesTheNewOne) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    owner.reset();
-    EXPECT_EQ(owner.get(), nullptr);
+        cuda::memory::unique_ptr<float> owner(8);
+        float* first = owner.get();
+        ASSERT_NE(first, nullptr);
 
-    float* replacement = nullptr;
-    ASSERT_EQ(cudaMalloc(&replacement, 8 * sizeof(float)), cudaSuccess);
-    owner.reset(replacement);
-    EXPECT_EQ(owner.get(), replacement) << "reset must adopt the pointer it is given";
-    // The destructor frees it; nothing else to do here.
-}
+        owner.reset();
+        EXPECT_EQ(owner.get(), nullptr);
 
-TEST(UniquePtrOwnershipTest, MovingTransfersOwnershipWithoutFreeing) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        float* replacement = nullptr;
+        ASSERT_EQ(cudaMalloc(&replacement, 8 * sizeof(float)), cudaSuccess);
+        owner.reset(replacement);
+        EXPECT_EQ(owner.get(), replacement) << "reset must adopt the pointer it is given";
+        // The destructor frees it; nothing else to do here.
     }
 
-    cuda::memory::unique_ptr<float> source(8);
-    float* original = source.get();
-    ASSERT_NE(original, nullptr);
+    TEST(UniquePtrOwnershipTest, MovingTransfersOwnershipWithoutFreeing) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    cuda::memory::unique_ptr<float> destination(std::move(source));
+        cuda::memory::unique_ptr<float> source(8);
+        float* original = source.get();
+        ASSERT_NE(original, nullptr);
 
-    EXPECT_EQ(destination.get(), original) << "the pointer moves unchanged";
-    EXPECT_EQ(source.get(), nullptr) << "the source must not keep a pointer it gave away";
-}
+        cuda::memory::unique_ptr<float> destination(std::move(source));
 
-TEST(UniquePtrOwnershipTest, AZeroCountAllocationIsEmptyRatherThanFailing) {
-    cuda::memory::unique_ptr<float> owner(0);
-    EXPECT_EQ(owner.get(), nullptr)
-        << "cudaMalloc(0) would return null anyway; the constructor skips it";
-}
+        EXPECT_EQ(destination.get(), original) << "the pointer moves unchanged";
+        EXPECT_EQ(source.get(), nullptr) << "the source must not keep a pointer it gave away";
+    }
+
+    TEST(UniquePtrOwnershipTest, AZeroCountAllocationIsEmptyRatherThanFailing) {
+        cuda::memory::unique_ptr<float> owner(0);
+        EXPECT_EQ(owner.get(), nullptr) << "cudaMalloc(0) would return null anyway; the constructor skips it";
+    }
 
 }  // namespace unique_ptr_ownership_test

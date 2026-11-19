@@ -6,17 +6,15 @@
 
 namespace {
 
-void reset() {
-    cudaDeviceReset();
-}
+    void reset() {
+        cudaDeviceReset();
+    }
 
-}
+}  // namespace
 
 class ErrorInjectionTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(ErrorInjectionTest, DefaultConstruction) {
@@ -67,14 +65,7 @@ TEST_F(ErrorInjectionTest, ScopedErrorInjection) {
 
     injector.inject_always(cuda::production::ErrorTarget::Allocation, cudaErrorMemoryAllocation);
 
-    EXPECT_THROW(
-        {
-            cuda::production::ScopedErrorInjection scope(
-                injector,
-                cuda::production::ErrorTarget::Allocation,
-                cudaErrorMemoryAllocation);
-        },
-        cuda::device::CudaException);
+    EXPECT_THROW({ cuda::production::ScopedErrorInjection scope(injector, cuda::production::ErrorTarget::Allocation, cudaErrorMemoryAllocation); }, cuda::device::CudaException);
 }
 
 TEST_F(ErrorInjectionTest, CountTracking) {
@@ -90,9 +81,7 @@ TEST_F(ErrorInjectionTest, CountTracking) {
 
 class MemoryPressureTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(MemoryPressureTest, DefaultConstruction) {
@@ -146,9 +135,7 @@ TEST_F(MemoryPressureTest, SetLimit) {
 
 class StressTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(StressTest, MemoryPressureTest) {

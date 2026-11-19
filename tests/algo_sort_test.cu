@@ -10,37 +10,45 @@
 #include <vector>
 
 using cuda::memory::Buffer;
+using cuda::sort::binary_search;
+using cuda::sort::BinarySearchResult;
 using cuda::sort::Order;
 using cuda::sort::radix_sort_keys;
 using cuda::sort::radix_sort_pair;
-using cuda::sort::select_top_k;
-using cuda::sort::binary_search;
-using cuda::sort::BinarySearchResult;
 using cuda::sort::SearchResult;
+using cuda::sort::select_top_k;
 
 namespace {
 
-bool isSorted(const std::vector<int>& arr, Order order) {
-    for (size_t i = 1; i < arr.size(); ++i) {
-        if (order == Order::Ascending) {
-            if (arr[i - 1] > arr[i]) return false;
-        } else {
-            if (arr[i - 1] < arr[i]) return false;
+    bool isSorted(const std::vector<int>& arr, Order order) {
+        for (size_t i = 1; i < arr.size(); ++i) {
+            if (order == Order::Ascending) {
+                if (arr[i - 1] > arr[i]) {
+                    return false;
+                }
+            } else {
+                if (arr[i - 1] < arr[i]) {
+                    return false;
+                }
+            }
         }
+        return true;
     }
-    return true;
-}
 
-bool isSorted(const std::vector<float>& arr, Order order) {
-    for (size_t i = 1; i < arr.size(); ++i) {
-        if (order == Order::Ascending) {
-            if (arr[i - 1] > arr[i]) return false;
-        } else {
-            if (arr[i - 1] < arr[i]) return false;
+    bool isSorted(const std::vector<float>& arr, Order order) {
+        for (size_t i = 1; i < arr.size(); ++i) {
+            if (order == Order::Ascending) {
+                if (arr[i - 1] > arr[i]) {
+                    return false;
+                }
+            } else {
+                if (arr[i - 1] < arr[i]) {
+                    return false;
+                }
+            }
         }
+        return true;
     }
-    return true;
-}
 
 }  // namespace
 
@@ -196,9 +204,7 @@ TEST_F(KeyValueSortTest, SortPairsAscending) {
 
 class TopKTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaSetDevice(0);
-    }
+    void SetUp() override { cudaSetDevice(0); }
     std::vector<float> h_keys_;
     std::vector<float> h_values_;
     cuda::memory::Buffer<float> d_keys_;
@@ -264,9 +270,7 @@ TEST_F(TopKTest, KGreaterThanSize) {
 
 class BinarySearchTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaSetDevice(0);
-    }
+    void SetUp() override { cudaSetDevice(0); }
     std::vector<int> h_sorted_;
     cuda::memory::Buffer<int> d_sorted_;
 

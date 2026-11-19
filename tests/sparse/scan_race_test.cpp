@@ -40,176 +40,177 @@
 
 namespace scan_race_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
+
+        /// Owns a device int array.
+        class DeviceArray {
+        public:
+            explicit DeviceArray(const std::vector<int>& host)
+                : count_(host.size()) {
+                cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(int));
+                if (count_ > 0) {
+                    cudaMemcpy(ptr_, host.data(), count_ * sizeof(int), cudaMemcpyHostToDevice);
+                }
+            }
+
+            explicit DeviceArray(size_t count)
+                : count_(count) {
+                cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(int));
+                cudaMemset(ptr_, 0, (count_ > 0 ? count_ : 1) * sizeof(int));
+            }
+
+            ~DeviceArray() {
+                if (ptr_ != nullptr) {
+                    cudaFree(ptr_);
+                }
+            }
+
+            DeviceArray(const DeviceArray&) = delete;
+            DeviceArray& operator=(const DeviceArray&) = delete;
+
+            int* data() { return ptr_; }
+
+            std::vector<int> read() const {
+                std::vector<int> host(count_, 0);
+                if (count_ > 0) {
+                    cudaMemcpy(host.data(), ptr_, count_ * sizeof(int), cudaMemcpyDeviceToHost);
+                }
+                return host;
+            }
+
+        private:
+            int* ptr_ = nullptr;
+            size_t count_ = 0;
+        };
+
+        /// Runs the optimised scan through the Buffer-based API and returns the result.
+        std::vector<int> run_optimized(const std::vector<int>& input) {
+            cuda::memory::Buffer<int> d_input(input.size());
+            cuda::memory::Buffer<int> d_output(input.size());
+            d_input.copy_from(input.data(), input.size());
+            cuda::algo::exclusiveScanOptimized(d_input, d_output, input.size());
+            cudaDeviceSynchronize();
+            std::vector<int> result(input.size(), 0);
+            d_output.copy_to(result.data(), input.size());
+            return result;
+        }
+
+        /// Runs the simple scan through the same API, for the consistency case.
+        std::vector<int> run_simple(const std::vector<int>& input) {
+            cuda::memory::Buffer<int> d_input(input.size());
+            cuda::memory::Buffer<int> d_output(input.size());
+            d_input.copy_from(input.data(), input.size());
+            cuda::algo::exclusiveScan(d_input, d_output, input.size());
+            cudaDeviceSynchronize();
+            std::vector<int> result(input.size(), 0);
+            d_output.copy_to(result.data(), input.size());
+            return result;
+        }
+
+        /// The exclusive prefix sum the kernel is supposed to compute.
+        std::vector<int> expected_exclusive_scan(const std::vector<int>& input) {
+            std::vector<int> result(input.size(), 0);
+            int running = 0;
+            for (size_t i = 0; i < input.size(); ++i) {
+                result[i] = running;
+                running += input[i];
+            }
+            return result;
+        }
+
+    }  // namespace
+
+    TEST(ScanRaceTest, OptimisedScanMatchesTheDefinitionOverAPowerOfTwo) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::vector<int> input = {3, 1, 4, 1, 5, 9, 2, 6};
+        EXPECT_EQ(run_optimized(input), expected_exclusive_scan(input));
     }
-    return count > 0;
-}
 
-/// Owns a device int array.
-class DeviceArray {
-public:
-    explicit DeviceArray(const std::vector<int>& host) : count_(host.size()) {
-        cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(int));
-        if (count_ > 0) {
-            cudaMemcpy(ptr_, host.data(), count_ * sizeof(int), cudaMemcpyHostToDevice);
+    TEST(ScanRaceTest, OptimisedScanMatchesTheDefinitionOverANonPowerOfTwo) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // A size the doubling loop cannot divide evenly: the last step is partial, which
+        // is exactly where an off-by-one in the offset guard shows up.
+        for (const size_t size : {size_t{5}, size_t{7}, size_t{13}, size_t{31}}) {
+            std::vector<int> input(size);
+            for (size_t i = 0; i < size; ++i) {
+                input[i] = static_cast<int>((i * 3) % 7) + 1;
+            }
+
+            EXPECT_EQ(run_optimized(input), expected_exclusive_scan(input)) << "size " << size;
         }
     }
 
-    explicit DeviceArray(size_t count) : count_(count) {
-        cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(int));
-        cudaMemset(ptr_, 0, (count_ > 0 ? count_ : 1) * sizeof(int));
-    }
+    TEST(ScanRaceTest, OptimisedAndSimpleScansAgree) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    ~DeviceArray() {
-        if (ptr_ != nullptr) {
-            cudaFree(ptr_);
+        // The two implementations use different loops; they must produce the same answer
+        // for every size sampled.
+        for (const size_t size : {size_t{1}, size_t{2}, size_t{8}, size_t{64}, size_t{255}}) {
+            std::vector<int> input(size);
+            for (size_t i = 0; i < size; ++i) {
+                input[i] = static_cast<int>(i % 5) + 1;
+            }
+
+            EXPECT_EQ(run_optimized(input), run_simple(input)) << "size " << size;
         }
     }
 
-    DeviceArray(const DeviceArray&) = delete;
-    DeviceArray& operator=(const DeviceArray&) = delete;
-
-    int* data() { return ptr_; }
-
-    std::vector<int> read() const {
-        std::vector<int> host(count_, 0);
-        if (count_ > 0) {
-            cudaMemcpy(host.data(), ptr_, count_ * sizeof(int), cudaMemcpyDeviceToHost);
+    TEST(ScanRaceTest, ASingleElementScansToZero) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
         }
-        return host;
+
+        // The smallest input: nothing precedes the only element, so its exclusive prefix
+        // sum is zero. A guard that assumed at least one doubling step would break here.
+        const std::vector<int> input = {42};
+        const auto result = run_optimized(input);
+        ASSERT_EQ(result.size(), 1u);
+        EXPECT_EQ(result[0], 0);
     }
 
-private:
-    int* ptr_ = nullptr;
-    size_t count_ = 0;
-};
+    TEST(ScanRaceTest, AllOnesProducesTheIndexSequence) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-/// Runs the optimised scan through the Buffer-based API and returns the result.
-std::vector<int> run_optimized(const std::vector<int>& input) {
-    cuda::memory::Buffer<int> d_input(input.size());
-    cuda::memory::Buffer<int> d_output(input.size());
-    d_input.copy_from(input.data(), input.size());
-    cuda::algo::exclusiveScanOptimized(d_input, d_output, input.size());
-    cudaDeviceSynchronize();
-    std::vector<int> result(input.size(), 0);
-    d_output.copy_to(result.data(), input.size());
-    return result;
-}
-
-/// Runs the simple scan through the same API, for the consistency case.
-std::vector<int> run_simple(const std::vector<int>& input) {
-    cuda::memory::Buffer<int> d_input(input.size());
-    cuda::memory::Buffer<int> d_output(input.size());
-    d_input.copy_from(input.data(), input.size());
-    cuda::algo::exclusiveScan(d_input, d_output, input.size());
-    cudaDeviceSynchronize();
-    std::vector<int> result(input.size(), 0);
-    d_output.copy_to(result.data(), input.size());
-    return result;
-}
-
-/// The exclusive prefix sum the kernel is supposed to compute.
-std::vector<int> expected_exclusive_scan(const std::vector<int>& input) {
-    std::vector<int> result(input.size(), 0);
-    int running = 0;
-    for (size_t i = 0; i < input.size(); ++i) {
-        result[i] = running;
-        running += input[i];
-    }
-    return result;
-}
-
-}  // namespace
-
-TEST(ScanRaceTest, OptimisedScanMatchesTheDefinitionOverAPowerOfTwo) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    const std::vector<int> input = {3, 1, 4, 1, 5, 9, 2, 6};
-    EXPECT_EQ(run_optimized(input), expected_exclusive_scan(input));
-}
-
-TEST(ScanRaceTest, OptimisedScanMatchesTheDefinitionOverANonPowerOfTwo) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // A size the doubling loop cannot divide evenly: the last step is partial, which
-    // is exactly where an off-by-one in the offset guard shows up.
-    for (const size_t size : {size_t{5}, size_t{7}, size_t{13}, size_t{31}}) {
-        std::vector<int> input(size);
+        // With every input equal to 1 the exclusive scan is 0,1,2,3,...: any element
+        // duplicated or dropped by the tree shows immediately.
+        constexpr size_t size = 100;
+        const std::vector<int> input(size, 1);
+        const auto result = run_optimized(input);
+        ASSERT_EQ(result.size(), size);
         for (size_t i = 0; i < size; ++i) {
-            input[i] = static_cast<int>((i * 3) % 7) + 1;
+            EXPECT_EQ(result[i], static_cast<int>(i)) << "element " << i;
+        }
+    }
+
+    TEST(ScanRaceTest, LargeValuesDoNotWrap) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
         }
 
-        EXPECT_EQ(run_optimized(input), expected_exclusive_scan(input))
-            << "size " << size;
+        // Every element is large but the total stays inside int, so a correct scan never
+        // wraps. Values this size make a misplaced accumulation obvious.
+        constexpr size_t size = 32;
+        const std::vector<int> input(size, 1000000);
+        EXPECT_EQ(run_optimized(input), expected_exclusive_scan(input));
     }
-}
-
-TEST(ScanRaceTest, OptimisedAndSimpleScansAgree) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // The two implementations use different loops; they must produce the same answer
-    // for every size sampled.
-    for (const size_t size : {size_t{1}, size_t{2}, size_t{8}, size_t{64}, size_t{255}}) {
-        std::vector<int> input(size);
-        for (size_t i = 0; i < size; ++i) {
-            input[i] = static_cast<int>(i % 5) + 1;
-        }
-
-        EXPECT_EQ(run_optimized(input), run_simple(input)) << "size " << size;
-    }
-}
-
-TEST(ScanRaceTest, ASingleElementScansToZero) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // The smallest input: nothing precedes the only element, so its exclusive prefix
-    // sum is zero. A guard that assumed at least one doubling step would break here.
-    const std::vector<int> input = {42};
-    const auto result = run_optimized(input);
-    ASSERT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0], 0);
-}
-
-TEST(ScanRaceTest, AllOnesProducesTheIndexSequence) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // With every input equal to 1 the exclusive scan is 0,1,2,3,...: any element
-    // duplicated or dropped by the tree shows immediately.
-    constexpr size_t size = 100;
-    const std::vector<int> input(size, 1);
-    const auto result = run_optimized(input);
-    ASSERT_EQ(result.size(), size);
-    for (size_t i = 0; i < size; ++i) {
-        EXPECT_EQ(result[i], static_cast<int>(i)) << "element " << i;
-    }
-}
-
-TEST(ScanRaceTest, LargeValuesDoNotWrap) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // Every element is large but the total stays inside int, so a correct scan never
-    // wraps. Values this size make a misplaced accumulation obvious.
-    constexpr size_t size = 32;
-    const std::vector<int> input(size, 1000000);
-    EXPECT_EQ(run_optimized(input), expected_exclusive_scan(input));
-}
 
 }  // namespace scan_race_test

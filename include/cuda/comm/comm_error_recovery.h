@@ -20,209 +20,188 @@
 
 namespace nova::comm {
 
-enum class ErrorSeverity {
-    Recoverable,
-    Transient,
-    Permanent
-};
+    enum class ErrorSeverity { Recoverable, Transient, Permanent };
 
-enum class ErrorCategory {
-    Timeout,
-    NetworkError,
-    HardwareError,
-    InvalidArgument,
-    InternalError,
-    Unknown
-};
+    enum class ErrorCategory { Timeout, NetworkError, HardwareError, InvalidArgument, InternalError, Unknown };
 
-struct CommError {
-    ErrorCategory category;
-    ErrorSeverity severity;
-    std::string message;
-    int device_id;
-    cudaStream_t stream;
-    std::chrono::steady_clock::time_point timestamp;
+    struct CommError {
+        ErrorCategory category;
+        ErrorSeverity severity;
+        std::string message;
+        int device_id;
+        cudaStream_t stream;
+        std::chrono::steady_clock::time_point timestamp;
 
-    bool is_recoverable() const {
-        return severity == ErrorSeverity::Recoverable ||
-               severity == ErrorSeverity::Transient;
-    }
-};
-
-class HealthMonitor {
-public:
-    static HealthMonitor& instance();
-
-    void start();
-    void stop();
-    bool is_running() const;
-
-    void register_comm(void* comm_id, cudaStream_t stream);
-    void unregister_comm(void* comm_id);
-
-    void set_timeout_threshold(std::chrono::seconds timeout);
-    void set_check_interval(std::chrono::milliseconds interval);
-    void set_stall_confirmations(int count);
-
-    using ErrorCallback = std::function<void(const CommError&)>;
-    void set_error_callback(ErrorCallback callback);
-
-    struct HealthStatus {
-        void* comm_id;
-        bool is_healthy;
-        bool is_stalled;
-        std::chrono::milliseconds last_progress;
+        bool is_recoverable() const { return severity == ErrorSeverity::Recoverable || severity == ErrorSeverity::Transient; }
     };
 
-    std::optional<HealthStatus> get_status(void* comm_id) const;
+    class HealthMonitor {
+    public:
+        static HealthMonitor& instance();
 
-private:
-    HealthMonitor() = default;
-    ~HealthMonitor();
-    HealthMonitor(const HealthMonitor&) = delete;
-    HealthMonitor& operator=(const HealthMonitor&) = delete;
+        void start();
+        void stop();
+        bool is_running() const;
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
+        void register_comm(void* comm_id, cudaStream_t stream);
+        void unregister_comm(void* comm_id);
 
-class RetryHandler {
-public:
-    static RetryHandler& instance();
+        void set_timeout_threshold(std::chrono::seconds timeout);
+        void set_check_interval(std::chrono::milliseconds interval);
+        void set_stall_confirmations(int count);
 
-    struct RetryConfig {
-        int max_attempts = 3;
-        std::chrono::milliseconds initial_delay{100};
-        std::chrono::milliseconds max_delay{10000};
-        double backoff_multiplier = 2.0;
-        bool use_jitter = true;
+        using ErrorCallback = std::function<void(const CommError&)>;
+        void set_error_callback(ErrorCallback callback);
+
+        struct HealthStatus {
+            void* comm_id;
+            bool is_healthy;
+            bool is_stalled;
+            std::chrono::milliseconds last_progress;
+        };
+
+        std::optional<HealthStatus> get_status(void* comm_id) const;
+
+    private:
+        HealthMonitor() = default;
+        ~HealthMonitor();
+        HealthMonitor(const HealthMonitor&) = delete;
+        HealthMonitor& operator=(const HealthMonitor&) = delete;
+
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
-    void set_config(const RetryConfig& config);
-    RetryConfig get_config() const;
+    class RetryHandler {
+    public:
+        static RetryHandler& instance();
 
-    template<typename Func>
-    auto execute_with_retry(Func&& func, const std::string& operation_name)
-        -> std::invoke_result_t<Func> {
-        // A template's definition must be reachable from every call site, so it
-        // lives here rather than in the .cpp (where it could never be
-        // instantiated: "declared using local type ... used but never defined").
-        if (is_circuit_open()) {
-            throw std::runtime_error("Circuit breaker is open for: " + operation_name);
-        }
+        struct RetryConfig {
+            int max_attempts = 3;
+            std::chrono::milliseconds initial_delay{100};
+            std::chrono::milliseconds max_delay{10000};
+            double backoff_multiplier = 2.0;
+            bool use_jitter = true;
+        };
 
-        int attempt = 0;
-        while (true) {
-            try {
-                auto result = func();
-                impl_->record_success();
-                return result;
-            } catch (const std::exception&) {
-                ++attempt;
-                if (attempt >= impl_->config.max_attempts) {
-                    impl_->record_failure();
-                    throw;
+        void set_config(const RetryConfig& config);
+        RetryConfig get_config() const;
+
+        template <typename Func>
+        auto execute_with_retry(Func&& func, const std::string& operation_name) -> std::invoke_result_t<Func> {
+            // A template's definition must be reachable from every call site, so it
+            // lives here rather than in the .cpp (where it could never be
+            // instantiated: "declared using local type ... used but never defined").
+            if (is_circuit_open()) {
+                throw std::runtime_error("Circuit breaker is open for: " + operation_name);
+            }
+
+            int attempt = 0;
+            while (true) {
+                try {
+                    auto result = func();
+                    impl_->record_success();
+                    return result;
+                } catch (const std::exception&) {
+                    ++attempt;
+                    if (attempt >= impl_->config.max_attempts) {
+                        impl_->record_failure();
+                        throw;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(impl_->get_retry_delay_ms(attempt)));
                 }
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(impl_->get_retry_delay_ms(attempt)));
             }
         }
-    }
 
-    void reset_circuit_breaker();
-    bool is_circuit_open() const;
+        void reset_circuit_breaker();
+        bool is_circuit_open() const;
 
-private:
-    // Defined after the class because it needs RetryConfig, which is nested.
-    struct State;
-    RetryHandler() = default;
+    private:
+        // Defined after the class because it needs RetryConfig, which is nested.
+        struct State;
+        RetryHandler() = default;
 
-    std::unique_ptr<State> impl_;
-};
+        std::unique_ptr<State> impl_;
+    };
 
-struct RetryHandler::State {
-    RetryHandler::RetryConfig config;
-    std::atomic<int> consecutive_failures{0};
-    std::atomic<bool> circuit_open{false};
-    std::chrono::steady_clock::time_point circuit_opened_at;
-    std::chrono::seconds circuit_breaker_window{60};
-    std::default_random_engine rng{std::random_device{}()};
+    struct RetryHandler::State {
+        RetryHandler::RetryConfig config;
+        std::atomic<int> consecutive_failures{0};
+        std::atomic<bool> circuit_open{false};
+        std::chrono::steady_clock::time_point circuit_opened_at;
+        std::chrono::seconds circuit_breaker_window{60};
+        std::default_random_engine rng{std::random_device{}()};
 
-    void record_success() { consecutive_failures.store(0); }
+        void record_success() { consecutive_failures.store(0); }
 
-    void record_failure() {
-        consecutive_failures.fetch_add(1);
-        if (consecutive_failures.load() >= 5) {
-            circuit_open.store(true);
-            circuit_opened_at = std::chrono::steady_clock::now();
-        }
-    }
-
-    int get_retry_delay_ms(int attempt) {
-        auto base_delay = static_cast<int>(config.initial_delay.count());
-        auto delay = static_cast<int>(base_delay * std::pow(config.backoff_multiplier, attempt - 1));
-        delay = std::min(delay, static_cast<int>(config.max_delay.count()));
-
-        if (config.use_jitter) {
-            std::uniform_int_distribution<int> dist(0, delay / 2);
-            delay += dist(rng);
+        void record_failure() {
+            consecutive_failures.fetch_add(1);
+            if (consecutive_failures.load() >= 5) {
+                circuit_open.store(true);
+                circuit_opened_at = std::chrono::steady_clock::now();
+            }
         }
 
-        return delay;
-    }
-};
+        int get_retry_delay_ms(int attempt) {
+            auto base_delay = static_cast<int>(config.initial_delay.count());
+            auto delay = static_cast<int>(base_delay * std::pow(config.backoff_multiplier, attempt - 1));
+            delay = std::min(delay, static_cast<int>(config.max_delay.count()));
 
-class ErrorClassifier {
-public:
-    static ErrorClassifier& instance();
+            if (config.use_jitter) {
+                std::uniform_int_distribution<int> dist(0, delay / 2);
+                delay += dist(rng);
+            }
 
-    ErrorCategory classify_from_nccl(int nccl_result);
-    ErrorSeverity classify_severity(ErrorCategory category, const std::string& details);
+            return delay;
+        }
+    };
 
-    bool is_transient_error(ErrorCategory category) const;
-    bool is_permanent_error(ErrorCategory category) const;
+    class ErrorClassifier {
+    public:
+        static ErrorClassifier& instance();
 
-    std::string get_error_message(ErrorCategory category) const;
+        ErrorCategory classify_from_nccl(int nccl_result);
+        ErrorSeverity classify_severity(ErrorCategory category, const std::string& details);
 
-private:
-    ErrorClassifier() = default;
+        bool is_transient_error(ErrorCategory category) const;
+        bool is_permanent_error(ErrorCategory category) const;
 
-    bool is_timeout_indicative(ErrorCategory category) const;
-    bool is_network_indicative(ErrorCategory category) const;
-};
+        std::string get_error_message(ErrorCategory category) const;
 
-class CommErrorRecovery {
-public:
-    static CommErrorRecovery& instance();
+    private:
+        ErrorClassifier() = default;
 
-    void initialize(HealthMonitor::ErrorCallback error_callback);
-    void shutdown();
+        bool is_timeout_indicative(ErrorCategory category) const;
+        bool is_network_indicative(ErrorCategory category) const;
+    };
 
-    void on_comm_error(const CommError& error);
-    bool should_retry(const CommError& error);
+    class CommErrorRecovery {
+    public:
+        static CommErrorRecovery& instance();
 
-    void recreate_communicator(int device_id);
+        void initialize(HealthMonitor::ErrorCallback error_callback);
+        void shutdown();
 
-    template<typename CollectiveFunc>
-    auto wrap_collective(CollectiveFunc&& func,
-                         int device_id,
-                         cudaStream_t stream,
-                         const std::string& operation_name)
-        -> std::invoke_result_t<CollectiveFunc> {
-        // Same reason as execute_with_retry: the definition has to be visible.
-        (void)device_id;
-        (void)stream;
-        return RetryHandler::instance().execute_with_retry(
-            [&func]() { return func(); }, operation_name);
-    }
+        void on_comm_error(const CommError& error);
+        bool should_retry(const CommError& error);
 
-    void set_timeout_threshold(std::chrono::seconds timeout);
+        void recreate_communicator(int device_id);
 
-private:
-    CommErrorRecovery() = default;
+        template <typename CollectiveFunc>
+        auto wrap_collective(CollectiveFunc&& func, int device_id, cudaStream_t stream, const std::string& operation_name) -> std::invoke_result_t<CollectiveFunc> {
+            // Same reason as execute_with_retry: the definition has to be visible.
+            (void)device_id;
+            (void)stream;
+            return RetryHandler::instance().execute_with_retry([&func]() { return func(); }, operation_name);
+        }
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
+        void set_timeout_threshold(std::chrono::seconds timeout);
 
-} // namespace nova::comm
+    private:
+        CommErrorRecovery() = default;
+
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+
+}  // namespace nova::comm

@@ -12,9 +12,7 @@ using namespace cuda::neural;
 
 class MatmulTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(MatmulTest, MatmulBatchMatchesPerSliceMatmul) {
@@ -30,9 +28,15 @@ TEST_F(MatmulTest, MatmulBatchMatchesPerSliceMatmul) {
     std::vector<float> h_a(a_count), h_b(b_count), h_c(c_count);
     std::mt19937 rng(1234);
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (float& v : h_a) v = dist(rng);
-    for (float& v : h_b) v = dist(rng);
-    for (float& v : h_c) v = dist(rng);
+    for (float& v : h_a) {
+        v = dist(rng);
+    }
+    for (float& v : h_b) {
+        v = dist(rng);
+    }
+    for (float& v : h_c) {
+        v = dist(rng);
+    }
 
     float* d_a = nullptr;
     float* d_b = nullptr;

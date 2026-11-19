@@ -3,9 +3,7 @@
 
 class MemoryPoolStreamTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(MemoryPoolStreamTest, StreamIdTrackingInAllocations) {
@@ -79,9 +77,7 @@ TEST_F(MemoryPoolStreamTest, SetThrowOnFailureTrueThrowsException) {
 
     pool.set_throw_on_failure(true);
 
-    EXPECT_THROW({
-        pool.allocate(1000);
-    }, std::exception);
+    EXPECT_THROW({ pool.allocate(1000); }, std::exception);
 }
 
 TEST_F(MemoryPoolStreamTest, PeakAllocatedBytesTracked) {

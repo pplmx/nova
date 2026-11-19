@@ -42,19 +42,20 @@
 #endif
 
 namespace nova::detail::cpp_level {
-/** Never true: the marker below names the real problem in its message. */
-inline constexpr bool device_may_not_include_cpp23 = false;
+    /** Never true: the marker below names the real problem in its message. */
+    inline constexpr bool device_may_not_include_cpp23 = false;
 }  // namespace nova::detail::cpp_level
 
 // NOVA_REQUIRE_CPP23_HOST(name) expands to a static_assert whose condition is
 // always false when device code reaches it. The condition is written in terms
 // of a macro, so it fires at definition time rather than on instantiation.
 #if defined(NOVA_DEVICE_REACHABLE) && !NOVA_CPP23_HOST
-#define NOVA_REQUIRE_CPP23_HOST(header_name)                                    \
-    static_assert(::nova::detail::cpp_level::device_may_not_include_cpp23,      \
-                  header_name " requires host C++23 but was included from "     \
-                              "device code. nvcc stops at C++20; keep this "    \
-                              "header out of the .cu include graph.");
+#define NOVA_REQUIRE_CPP23_HOST(header_name)                               \
+    static_assert(::nova::detail::cpp_level::device_may_not_include_cpp23, \
+                  header_name                                              \
+                  " requires host C++23 but was included from "            \
+                  "device code. nvcc stops at C++20; keep this "           \
+                  "header out of the .cu include graph.");
 #else
 #define NOVA_REQUIRE_CPP23_HOST(header_name)
 #endif

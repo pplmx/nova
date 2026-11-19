@@ -8,25 +8,21 @@
 #include "cuda/memory/distributed_pool.h"
 #include "cuda/mesh/device_mesh.h"
 
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
+#define CUDA_CHECK(call)                            \
+    do {                                            \
+        cudaError_t err = call;                     \
+        if (err != cudaSuccess) {                   \
             throw std::runtime_error("CUDA error"); \
-        } \
+        }                                           \
     } while (0)
 
 using cuda::memory::DistributedMemoryPool;
 
 class DistributedMemoryPoolTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        pool_ = std::make_unique<DistributedMemoryPool>();
-    }
+    void SetUp() override { pool_ = std::make_unique<DistributedMemoryPool>(); }
 
-    void TearDown() override {
-        pool_.reset();
-    }
+    void TearDown() override { pool_.reset(); }
 
     std::unique_ptr<DistributedMemoryPool> pool_;
 };
@@ -65,9 +61,7 @@ TEST_F(DistributedMemoryPoolTest, AllocateOnSpecificDevice) {
 TEST_F(DistributedMemoryPoolTest, PerDeviceAllocationTracking) {
     // Allocate from multiple devices
     void* ptr0 = pool_->allocate(1024, 0);
-    void* ptr1 = pool_->device_count() > 1
-                 ? pool_->allocate(2048, 1)
-                 : nullptr;
+    void* ptr1 = pool_->device_count() > 1 ? pool_->allocate(2048, 1) : nullptr;
 
     // Verify metrics for each device
     auto metrics0 = pool_->get_device_metrics(0);
@@ -80,7 +74,9 @@ TEST_F(DistributedMemoryPoolTest, PerDeviceAllocationTracking) {
 
     // Cleanup
     pool_->deallocate(ptr0);
-    if (ptr1) pool_->deallocate(ptr1);
+    if (ptr1) {
+        pool_->deallocate(ptr1);
+    }
 }
 
 // ============================================================================

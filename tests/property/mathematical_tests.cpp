@@ -7,7 +7,7 @@
 
 using namespace nova::property;
 
-template<typename T>
+template <typename T>
 bool MatmulIdentity(RandomGenerator& gen) {
     // Generate random square matrix
     auto n = gen.Uniform<size_t>(2, 32);
@@ -37,13 +37,15 @@ bool MatmulIdentity(RandomGenerator& gen) {
     T max_diff = T{0};
     for (size_t i = 0; i < n * n; ++i) {
         T diff = std::abs(result[i] - A[i]);
-        if (diff > max_diff) max_diff = diff;
+        if (diff > max_diff) {
+            max_diff = diff;
+        }
     }
 
     return max_diff < T{1e-5};
 }
 
-template<typename T>
+template <typename T>
 bool TransposeInvolution(RandomGenerator& gen) {
     auto rows = gen.Uniform<size_t>(2, 32);
     auto cols = gen.Uniform<size_t>(2, 32);
@@ -73,7 +75,9 @@ bool TransposeInvolution(RandomGenerator& gen) {
     T max_diff = T{0};
     for (size_t i = 0; i < rows * cols; ++i) {
         T diff = std::abs(ATT[i] - A[i]);
-        if (diff > max_diff) max_diff = diff;
+        if (diff > max_diff) {
+            max_diff = diff;
+        }
     }
 
     return max_diff < T{1e-5};
@@ -96,17 +100,17 @@ int main(int argc, char** argv) {
         total_tests++;
         auto result = CheckProperty(name, test_fn, 100, seed);
 
-        std::cout << "[" << (result.passed ? "PASS" : "FAIL") << "] "
-                  << name << "\n";
-        std::cout << "  Seed: " << result.seed
-                  << " | Iterations: " << result.iterations << "\n";
+        std::cout << "[" << (result.passed ? "PASS" : "FAIL") << "] " << name << "\n";
+        std::cout << "  Seed: " << result.seed << " | Iterations: " << result.iterations << "\n";
 
         if (!result.passed) {
             std::cout << "  Reason: " << result.failure_reason << "\n";
         }
         std::cout << "\n";
 
-        if (result.passed) passed_tests++;
+        if (result.passed) {
+            passed_tests++;
+        }
     };
 
     // Matmul identity: A @ I = A

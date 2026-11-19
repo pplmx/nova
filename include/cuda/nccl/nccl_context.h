@@ -51,299 +51,298 @@ namespace cuda::nccl {
  * Throws NcclException on failure with file, line, and error details.
  */
 #if NOVA_NCCL_ENABLED
-#define NCCL_CHECK(call)                                                          \
-    do {                                                                          \
-        ncclResult_t err = call;                                                  \
-        if (err != ncclSuccess) {                                                 \
-            throw cuda::nccl::NcclException(                                      \
-                ncclGetErrorString(err), err, #call, __FILE__, __LINE__);         \
-        }                                                                         \
+#define NCCL_CHECK(call)                                                                              \
+    do {                                                                                              \
+        ncclResult_t err = call;                                                                      \
+        if (err != ncclSuccess) {                                                                     \
+            throw cuda::nccl::NcclException(ncclGetErrorString(err), err, #call, __FILE__, __LINE__); \
+        }                                                                                             \
     } while (0)
 #else
 #define NCCL_CHECK(call) ((void)0)
 #endif
 
-/**
- * @class NcclException
- * @brief Exception thrown on NCCL errors
- *
- * Provides detailed error information including:
- * - Error code (ncclResult_t)
- * - Error message (from ncclGetErrorString)
- * - Failed expression
- * - Source location (file and line)
- */
-class NcclException : public std::runtime_error {
-public:
     /**
-     * @brief Construct NcclException with full error details
-     * @param msg Error message from NCCL
-     * @param code NCCL error code
-     * @param expr The expression that failed
-     * @param file Source file
-     * @param line Line number
-     */
-    NcclException(const char* msg, ncclResult_t code,
-                  const char* expr, const char* file, int line)
-        : std::runtime_error(format_message(msg, expr, file, line)),
-          error_code_(code), expression_(expr), file_(file), line_(line) {}
-
-    /**
-     * @brief Get the NCCL error code
-     * @return ncclResult_t error code
-     */
-    [[nodiscard]] ncclResult_t error_code() const noexcept { return error_code_; }
-
-    /**
-     * @brief Get the failed expression string
-     * @return Expression as string
-     */
-    [[nodiscard]] const char* expression() const noexcept { return expression_; }
-
-    /**
-     * @brief Get the source file name
-     * @return File name
-     */
-    [[nodiscard]] const char* file() const noexcept { return file_; }
-
-    /**
-     * @brief Get the source line number
-     * @return Line number
-     */
-    [[nodiscard]] int line() const noexcept { return line_; }
-
-private:
-    ncclResult_t error_code_;
-    const char* expression_;
-    const char* file_;
-    int line_;
-
-    static std::string format_message(const char* msg, const char* expr,
-                                      const char* file, int line);
-};
-
-/**
- * @struct NcclContextConfig
- * @brief Configuration options for NcclContext initialization
- */
-struct NcclContextConfig {
-    /** Specific device IDs to include (empty = all available) */
-    std::vector<int> device_ids;
-
-    /** Enable NCCL debug output */
-    bool debug = false;
-
-    /** Timeout for NCCL operations in milliseconds */
-    int timeout_ms = 30000;
-};
-
-/**
- * @class NcclContext
- * @brief NCCL communicator pool with lazy initialization
- *
- * Manages per-device NCCL communicators and provides thread-safe access.
- * Uses dependency injection pattern for testability with singleton fallback
- * for simple cases (per D-01).
- *
- * Thread-safety: All public methods are thread-safe for concurrent access
- * from multiple threads, except during initialization/destruction.
- *
- * @example Dependency injection:
- * @code
- * NcclContext ctx;
- * ctx.initialize();
- * NcclContext::NcclResult result = ctx.get_comm(0);
- * @endcode
- *
- * @example Singleton (simple cases):
- * @code
- * auto& ctx = NcclContext::instance();
- * ctx.initialize();
- * ncclComm_t comm = ctx.get_comm(0);
- * @endcode
- */
-class NcclContext {
-public:
-    /**
-     * @brief Get singleton instance for simple cases (per D-01)
-     * @return Reference to global NcclContext
-     */
-    static NcclContext& instance();
-
-    /**
-     * @brief Default constructor (creates uninitialized context)
-     */
-    NcclContext() = default;
-
-    /**
-     * @brief Construct with configuration
-     * @param config Configuration options
-     */
-    explicit NcclContext(const NcclContextConfig& config);
-
-    // Non-copyable, movable
-    NcclContext(const NcclContext&) = delete;
-    NcclContext& operator=(const NcclContext&) = delete;
-
-    /**
-     * @brief Move constructor
-     */
-    NcclContext(NcclContext&& other) noexcept;
-
-    /**
-     * @brief Move assignment
-     */
-    NcclContext& operator=(NcclContext&& other) noexcept;
-
-    /**
-     * @brief Destructor cleans up all communicators and streams
-     */
-    ~NcclContext();
-
-    /**
-     * @brief Initialize with default configuration (all devices)
+     * @class NcclException
+     * @brief Exception thrown on NCCL errors
      *
-     * Uses DeviceMesh::instance() to discover available devices.
+     * Provides detailed error information including:
+     * - Error code (ncclResult_t)
+     * - Error message (from ncclGetErrorString)
+     * - Failed expression
+     * - Source location (file and line)
      */
-    void initialize();
+    class NcclException : public std::runtime_error {
+    public:
+        /**
+         * @brief Construct NcclException with full error details
+         * @param msg Error message from NCCL
+         * @param code NCCL error code
+         * @param expr The expression that failed
+         * @param file Source file
+         * @param line Line number
+         */
+        NcclException(const char* msg, ncclResult_t code, const char* expr, const char* file, int line)
+            : std::runtime_error(format_message(msg, expr, file, line)),
+              error_code_(code),
+              expression_(expr),
+              file_(file),
+              line_(line) {}
+
+        /**
+         * @brief Get the NCCL error code
+         * @return ncclResult_t error code
+         */
+        [[nodiscard]] ncclResult_t error_code() const noexcept { return error_code_; }
+
+        /**
+         * @brief Get the failed expression string
+         * @return Expression as string
+         */
+        [[nodiscard]] const char* expression() const noexcept { return expression_; }
+
+        /**
+         * @brief Get the source file name
+         * @return File name
+         */
+        [[nodiscard]] const char* file() const noexcept { return file_; }
+
+        /**
+         * @brief Get the source line number
+         * @return Line number
+         */
+        [[nodiscard]] int line() const noexcept { return line_; }
+
+    private:
+        ncclResult_t error_code_;
+        const char* expression_;
+        const char* file_;
+        int line_;
+
+        static std::string format_message(const char* msg, const char* expr, const char* file, int line);
+    };
 
     /**
-     * @brief Initialize with custom configuration
-     * @param config Configuration options including specific device IDs
+     * @struct NcclContextConfig
+     * @brief Configuration options for NcclContext initialization
      */
-    void initialize(const NcclContextConfig& config);
+    struct NcclContextConfig {
+        /** Specific device IDs to include (empty = all available) */
+        std::vector<int> device_ids;
+
+        /** Enable NCCL debug output */
+        bool debug = false;
+
+        /** Timeout for NCCL operations in milliseconds */
+        int timeout_ms = 30000;
+    };
 
     /**
-     * @brief Get NCCL communicator for a specific device
-     * @param device Device index
-     * @return NCCL communicator handle
-     * @throws NcclException if context not initialized or device not in group
-     */
-    ncclComm_t get_comm(int device) const;
-
-    /**
-     * @brief Get the NCCL communicator for the currently-active device
+     * @class NcclContext
+     * @brief NCCL communicator pool with lazy initialization
      *
-     * NCCL collectives must be issued with the communicator whose rank owns
-     * the send/recv buffers and stream (the device set with cudaSetDevice on
-     * the calling thread). Hard-coding rank 0's communicator is only correct
-     * when the caller's data happens to live on device 0, so collectives
-     * resolve the communicator through this instead.
+     * Manages per-device NCCL communicators and provides thread-safe access.
+     * Uses dependency injection pattern for testability with singleton fallback
+     * for simple cases (per D-01).
      *
-     * @return NCCL communicator for the current device
-     * @throws NcclException if context not initialized or device not in group
-     */
-    [[nodiscard]] ncclComm_t current_comm() const;
-
-    /**
-     * @brief Get CUDA stream for a specific device
-     * @param device Device index
-     * @return CUDA stream for NCCL operations on this device
-     * @throws NcclException if device not in group
-     */
-    cudaStream_t get_stream(int device) const;
-
-    /**
-     * @brief Resolve a device's rank within this NCCL group
+     * Thread-safety: All public methods are thread-safe for concurrent access
+     * from multiple threads, except during initialization/destruction.
      *
-     * The NCCL rank is the position of @p device in this context's configured
-     * device list, NOT the raw CUDA device index. They coincide only for the
-     * default mesh-init group {0..n-1}; with a custom/subset
-     * NcclContextConfig they diverge, so any code that derives a rank from the
-     * raw index is wrong for non-default groups. Use this to map correctly in
-     * both cases.
+     * @example Dependency injection:
+     * @code
+     * NcclContext ctx;
+     * ctx.initialize();
+     * NcclContext::NcclResult result = ctx.get_comm(0);
+     * @endcode
      *
-     * @param device CUDA device index
-     * @return NCCL rank (0-based position in the group)
-     * @throws NcclException if context not initialized or device not in group
+     * @example Singleton (simple cases):
+     * @code
+     * auto& ctx = NcclContext::instance();
+     * ctx.initialize();
+     * ncclComm_t comm = ctx.get_comm(0);
+     * @endcode
      */
-    [[nodiscard]] int rank_of_device(int device) const;
+    class NcclContext {
+    public:
+        /**
+         * @brief Get singleton instance for simple cases (per D-01)
+         * @return Reference to global NcclContext
+         */
+        static NcclContext& instance();
 
-    /**
-     * @brief Check if NCCL context is initialized
-     * @return true if initialized
-     */
-    /// Whether initialize() has completed.
-    ///
-    /// initialized_ is written inside initialize() under init_mutex_, and this accessor
-    /// read it without one. A lock on the writer side does not protect the reader: the
-    /// pair is a data race, and broken_ next to it is atomic precisely because that was
-    /// understood for the other member.
-    [[nodiscard]] bool initialized() const {
-        std::lock_guard<std::mutex> lock(init_mutex_);
-        return initialized_;
-    }
+        /**
+         * @brief Default constructor (creates uninitialized context)
+         */
+        NcclContext() = default;
 
-    /**
-     * @brief Get device count
-     * @return Number of devices in NCCL group
-     */
-    [[nodiscard]] int device_count() const { return device_count_; }
+        /**
+         * @brief Construct with configuration
+         * @param config Configuration options
+         */
+        explicit NcclContext(const NcclContextConfig& config);
 
-    /**
-     * @brief Check if NCCL is available and functional
-     * @return true if context has valid communicators
-     */
-    /// Whether NCCL is usable: initialised, not broken, and has at least one communicator.
-    [[nodiscard]] bool has_nccl() const {
-        std::lock_guard<std::mutex> lock(init_mutex_);
-        return initialized_ && !broken_.load(std::memory_order_acquire) &&
-               !communicators_.empty();
-    }
+        // Non-copyable, movable
+        NcclContext(const NcclContext&) = delete;
+        NcclContext& operator=(const NcclContext&) = delete;
 
-    /**
-     * @brief Record that a communicator was aborted by the error layer
-     *
-     * Called by the communication-error layer (safe_nccl_call /
-     * safe_stream_wait) when it aborts a communicator after a timeout or
-     * async error. The communicator is nulled out so destroy() does not
-     * double-free it (ncclCommDestroy on an already-aborted comm is UB), and
-     * the context is marked broken — has_nccl() returns false so subsequent
-     * collectives fail fast instead of silently trusting dead communicators
-     * (the R16 review HIGH-B poisoning). Recovery requires destroy() + a
-     * fresh initialize().
-     *
-     * @param comm The aborted communicator (must belong to this context)
-     * @return true if @p comm was found and forgotten
-     */
-    bool mark_comm_aborted(ncclComm_t comm) noexcept;
+        /**
+         * @brief Move constructor
+         */
+        NcclContext(NcclContext&& other) noexcept;
 
-    /**
-     * @brief Check if a communicator was aborted by the error layer
-     *
-     * When true the context is broken: has_nccl() is false (collectives fail
-     * fast) and the aborted communicator cannot be reused.
-     *
-     * @return true if any communicator was aborted
-     */
-    [[nodiscard]] bool broken() const { return broken_.load(std::memory_order_acquire); }
+        /**
+         * @brief Move assignment
+         */
+        NcclContext& operator=(NcclContext&& other) noexcept;
 
-    /**
-     * @brief Destroy all communicators and release resources
-     *
-     * Safe to call multiple times (idempotent after first call). Also clears
-     * any broken state so a subsequent initialize() starts on a clean slate.
-     */
-    void destroy();
+        /**
+         * @brief Destructor cleans up all communicators and streams
+         */
+        ~NcclContext();
 
-    /**
-     * @brief Get device IDs in the NCCL group
-     * @return Vector of device IDs
-     */
-    [[nodiscard]] const std::vector<int>& device_ids() const { return device_ids_; }
+        /**
+         * @brief Initialize with default configuration (all devices)
+         *
+         * Uses DeviceMesh::instance() to discover available devices.
+         */
+        void initialize();
 
-private:
-    void initialize_from_mesh();
-    void create_streams_and_comms();
-    void cleanup();
+        /**
+         * @brief Initialize with custom configuration
+         * @param config Configuration options including specific device IDs
+         */
+        void initialize(const NcclContextConfig& config);
 
-    int device_count_ = 0;
-    std::vector<ncclComm_t> communicators_;
-    std::vector<cudaStream_t> streams_;
-    std::vector<int> device_ids_;
-    bool initialized_ = false;
-    std::atomic<bool> broken_{false};
-    mutable std::mutex init_mutex_;
-};
+        /**
+         * @brief Get NCCL communicator for a specific device
+         * @param device Device index
+         * @return NCCL communicator handle
+         * @throws NcclException if context not initialized or device not in group
+         */
+        ncclComm_t get_comm(int device) const;
+
+        /**
+         * @brief Get the NCCL communicator for the currently-active device
+         *
+         * NCCL collectives must be issued with the communicator whose rank owns
+         * the send/recv buffers and stream (the device set with cudaSetDevice on
+         * the calling thread). Hard-coding rank 0's communicator is only correct
+         * when the caller's data happens to live on device 0, so collectives
+         * resolve the communicator through this instead.
+         *
+         * @return NCCL communicator for the current device
+         * @throws NcclException if context not initialized or device not in group
+         */
+        [[nodiscard]] ncclComm_t current_comm() const;
+
+        /**
+         * @brief Get CUDA stream for a specific device
+         * @param device Device index
+         * @return CUDA stream for NCCL operations on this device
+         * @throws NcclException if device not in group
+         */
+        cudaStream_t get_stream(int device) const;
+
+        /**
+         * @brief Resolve a device's rank within this NCCL group
+         *
+         * The NCCL rank is the position of @p device in this context's configured
+         * device list, NOT the raw CUDA device index. They coincide only for the
+         * default mesh-init group {0..n-1}; with a custom/subset
+         * NcclContextConfig they diverge, so any code that derives a rank from the
+         * raw index is wrong for non-default groups. Use this to map correctly in
+         * both cases.
+         *
+         * @param device CUDA device index
+         * @return NCCL rank (0-based position in the group)
+         * @throws NcclException if context not initialized or device not in group
+         */
+        [[nodiscard]] int rank_of_device(int device) const;
+
+        /**
+         * @brief Check if NCCL context is initialized
+         * @return true if initialized
+         */
+        /// Whether initialize() has completed.
+        ///
+        /// initialized_ is written inside initialize() under init_mutex_, and this accessor
+        /// read it without one. A lock on the writer side does not protect the reader: the
+        /// pair is a data race, and broken_ next to it is atomic precisely because that was
+        /// understood for the other member.
+        [[nodiscard]] bool initialized() const {
+            std::lock_guard<std::mutex> lock(init_mutex_);
+            return initialized_;
+        }
+
+        /**
+         * @brief Get device count
+         * @return Number of devices in NCCL group
+         */
+        [[nodiscard]] int device_count() const { return device_count_; }
+
+        /**
+         * @brief Check if NCCL is available and functional
+         * @return true if context has valid communicators
+         */
+        /// Whether NCCL is usable: initialised, not broken, and has at least one communicator.
+        [[nodiscard]] bool has_nccl() const {
+            std::lock_guard<std::mutex> lock(init_mutex_);
+            return initialized_ && !broken_.load(std::memory_order_acquire) && !communicators_.empty();
+        }
+
+        /**
+         * @brief Record that a communicator was aborted by the error layer
+         *
+         * Called by the communication-error layer (safe_nccl_call /
+         * safe_stream_wait) when it aborts a communicator after a timeout or
+         * async error. The communicator is nulled out so destroy() does not
+         * double-free it (ncclCommDestroy on an already-aborted comm is UB), and
+         * the context is marked broken — has_nccl() returns false so subsequent
+         * collectives fail fast instead of silently trusting dead communicators
+         * (the R16 review HIGH-B poisoning). Recovery requires destroy() + a
+         * fresh initialize().
+         *
+         * @param comm The aborted communicator (must belong to this context)
+         * @return true if @p comm was found and forgotten
+         */
+        bool mark_comm_aborted(ncclComm_t comm) noexcept;
+
+        /**
+         * @brief Check if a communicator was aborted by the error layer
+         *
+         * When true the context is broken: has_nccl() is false (collectives fail
+         * fast) and the aborted communicator cannot be reused.
+         *
+         * @return true if any communicator was aborted
+         */
+        [[nodiscard]] bool broken() const { return broken_.load(std::memory_order_acquire); }
+
+        /**
+         * @brief Destroy all communicators and release resources
+         *
+         * Safe to call multiple times (idempotent after first call). Also clears
+         * any broken state so a subsequent initialize() starts on a clean slate.
+         */
+        void destroy();
+
+        /**
+         * @brief Get device IDs in the NCCL group
+         * @return Vector of device IDs
+         */
+        [[nodiscard]] const std::vector<int>& device_ids() const { return device_ids_; }
+
+    private:
+        void initialize_from_mesh();
+        void create_streams_and_comms();
+        void cleanup();
+
+        int device_count_ = 0;
+        std::vector<ncclComm_t> communicators_;
+        std::vector<cudaStream_t> streams_;
+        std::vector<int> device_ids_;
+        bool initialized_ = false;
+        std::atomic<bool> broken_{false};
+        mutable std::mutex init_mutex_;
+    };
 
 }  // namespace cuda::nccl

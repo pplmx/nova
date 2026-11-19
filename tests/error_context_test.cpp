@@ -3,9 +3,7 @@
 
 class ErrorContextTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(ErrorContextTest, OperationContextStoresAllFields) {
@@ -33,14 +31,9 @@ TEST_F(ErrorContextTest, OperationContextWithPairDimensions) {
 }
 
 TEST_F(ErrorContextTest, CudaExceptionWithContextDerivesFromCudaException) {
-    auto ctx = cuda::device::OperationContext{
-        .operation_name = "test_op",
-        .dimensions = size_t{100},
-        .device_id = 0
-    };
+    auto ctx = cuda::device::OperationContext{.operation_name = "test_op", .dimensions = size_t{100}, .device_id = 0};
 
-    cuda::device::CudaExceptionWithContext ex(
-        cudaErrorInvalidValue, "test_file.cpp", 42, ctx);
+    cuda::device::CudaExceptionWithContext ex(cudaErrorInvalidValue, "test_file.cpp", 42, ctx);
 
     EXPECT_EQ(ex.error(), cudaErrorInvalidValue);
     EXPECT_EQ(ex.context().operation_name, ctx.operation_name);
@@ -56,15 +49,11 @@ TEST_F(ErrorContextTest, CUDA_CONTEXTMacroCreatesCorrectContext) {
 }
 
 TEST_F(ErrorContextTest, CUDA_VALIDATE_SIZEThrowsOnInvalidSize) {
-    EXPECT_THROW({
-        CUDA_VALIDATE_SIZE(1000, 500, test_operation);
-    }, cuda::device::CudaExceptionWithContext);
+    EXPECT_THROW({ CUDA_VALIDATE_SIZE(1000, 500, test_operation); }, cuda::device::CudaExceptionWithContext);
 }
 
 TEST_F(ErrorContextTest, CUDA_VALIDATE_SIZEPassesOnValidSize) {
-    EXPECT_NO_THROW({
-        CUDA_VALIDATE_SIZE(100, 500, test_operation);
-    });
+    EXPECT_NO_THROW({ CUDA_VALIDATE_SIZE(100, 500, test_operation); });
 }
 
 TEST_F(ErrorContextTest, CudaExceptionWithContextIsCatchableAsRuntimeError) {
@@ -73,7 +62,6 @@ TEST_F(ErrorContextTest, CudaExceptionWithContextIsCatchableAsRuntimeError) {
         FAIL() << "Expected exception";
     } catch (const std::runtime_error& e) {
         std::string msg = e.what();
-        EXPECT_TRUE(msg.find("CUDA") != std::string::npos ||
-                    msg.find("test_operation") != std::string::npos);
+        EXPECT_TRUE(msg.find("CUDA") != std::string::npos || msg.find("test_operation") != std::string::npos);
     }
 }

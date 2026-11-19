@@ -109,9 +109,7 @@ TEST_F(DegradationTest, DegradationEventContainsAllFields) {
     auto& manager = degradation_manager::instance();
 
     degradation_event captured_event;
-    manager.set_callback([&](const degradation_event& event) {
-        captured_event = event;
-    });
+    manager.set_callback([&](const degradation_event& event) { captured_event = event; });
 
     manager.trigger_degradation("matmul", precision_level::medium, "low_memory");
 

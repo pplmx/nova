@@ -44,9 +44,7 @@ TEST_F(TimeoutPropagationTest, CallbackInvokedOnTimeout) {
     bool callback_invoked = false;
 
     auto& manager = timeout_manager::instance();
-    manager.set_callback([&](operation_id, std::error_code) {
-        callback_invoked = true;
-    });
+    manager.set_callback([&](operation_id, std::error_code) { callback_invoked = true; });
 
     // Callbacks are only delivered by the watchdog loop, so enable it.
     auto config = timeout_config{};
@@ -101,8 +99,7 @@ TEST_F(TimeoutPropagationTest, SetDeadlineCallbackInvokesOnTimeout) {
     // guarded both checks with `if (callback_invoked)`, so a callback that never fired produced
     // no assertion at all and the case still passed. The neighbour above asserts on its
     // callback directly — the same file, two different standards.
-    EXPECT_TRUE(callback_invoked)
-        << "the deadline callback should have fired for a 10 ms deadline after a 30 ms wait";
+    EXPECT_TRUE(callback_invoked) << "the deadline callback should have fired for a 10 ms deadline after a 30 ms wait";
     EXPECT_GT(callback_id, 0u);
 }
 

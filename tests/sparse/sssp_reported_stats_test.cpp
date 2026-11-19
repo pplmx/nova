@@ -35,177 +35,166 @@
 
 namespace cuda::algo::sssp::test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-/// Builds a graph from edge lists.
-std::unique_ptr<cuda::graph::CSRGraph> make_graph(const std::vector<int>& sources,
-                                                  const std::vector<int>& targets,
-                                                  const std::vector<float>& weights,
-                                                  int num_vertices) {
-    return cuda::graph::create_csr_from_edges(sources.data(), targets.data(),
-                                              weights.data(), num_vertices,
-                                              static_cast<int>(sources.size()));
-}
+        /// Builds a graph from edge lists.
+        std::unique_ptr<cuda::graph::CSRGraph> make_graph(const std::vector<int>& sources, const std::vector<int>& targets, const std::vector<float>& weights, int num_vertices) {
+            return cuda::graph::create_csr_from_edges(sources.data(), targets.data(), weights.data(), num_vertices, static_cast<int>(sources.size()));
+        }
 
-std::vector<float> read_distances(const SSSPResult& result) {
-    std::vector<float> host(static_cast<size_t>(result.num_vertices), 0.0f);
-    result.distances.copy_to(host.data(), host.size());
-    return host;
-}
+        std::vector<float> read_distances(const SSSPResult& result) {
+            std::vector<float> host(static_cast<size_t>(result.num_vertices), 0.0f);
+            result.distances.copy_to(host.data(), host.size());
+            return host;
+        }
 
-}  // namespace
+    }  // namespace
 
-// Regression: converged was hard-coded true and iterations hard-coded 0.
-TEST(SsspReportedStatsTest, AHealthyRunReportsRealProgress) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    // Regression: converged was hard-coded true and iterations hard-coded 0.
+    TEST(SsspReportedStatsTest, AHealthyRunReportsRealProgress) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // The chain 0 -> 1 -> 2 needs two relaxation rounds to settle.
-    auto graph = make_graph({0, 1}, {1, 2}, {1.0f, 2.0f}, 3);
-    ASSERT_NE(graph, nullptr);
+        // The chain 0 -> 1 -> 2 needs two relaxation rounds to settle.
+        auto graph = make_graph({0, 1}, {1, 2}, {1.0f, 2.0f}, 3);
+        ASSERT_NE(graph, nullptr);
 
-    const auto result = run(*graph, 0);
+        const auto result = run(*graph, 0);
 
-    EXPECT_TRUE(result.converged);
-    EXPECT_FALSE(result.negative_cycle);
-    EXPECT_GT(result.iterations, 0)
-        << "a run that relaxed edges must report the rounds it used";
-}
-
-TEST(SsspReportedStatsTest, DistanceValuesAreShortestPaths) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_TRUE(result.converged);
+        EXPECT_FALSE(result.negative_cycle);
+        EXPECT_GT(result.iterations, 0) << "a run that relaxed edges must report the rounds it used";
     }
 
-    // 0 -> 1 (1), 0 -> 2 (10), 1 -> 2 (2): the cheap route to 2 is via 1.
-    auto graph = make_graph({0, 0, 1}, {1, 2, 2}, {1.0f, 10.0f, 2.0f}, 3);
-    ASSERT_NE(graph, nullptr);
+    TEST(SsspReportedStatsTest, DistanceValuesAreShortestPaths) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto result = run(*graph, 0);
-    const auto distances = read_distances(result);
+        // 0 -> 1 (1), 0 -> 2 (10), 1 -> 2 (2): the cheap route to 2 is via 1.
+        auto graph = make_graph({0, 0, 1}, {1, 2, 2}, {1.0f, 10.0f, 2.0f}, 3);
+        ASSERT_NE(graph, nullptr);
 
-    ASSERT_EQ(distances.size(), 3u);
-    EXPECT_FLOAT_EQ(distances[0], 0.0f);
-    EXPECT_FLOAT_EQ(distances[1], 1.0f);
-    EXPECT_FLOAT_EQ(distances[2], 3.0f) << "1 + 2 beats the direct edge of 10";
-}
+        const auto result = run(*graph, 0);
+        const auto distances = read_distances(result);
 
-TEST(SsspReportedStatsTest, UnreachableVerticesStayAtInfinity) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        ASSERT_EQ(distances.size(), 3u);
+        EXPECT_FLOAT_EQ(distances[0], 0.0f);
+        EXPECT_FLOAT_EQ(distances[1], 1.0f);
+        EXPECT_FLOAT_EQ(distances[2], 3.0f) << "1 + 2 beats the direct edge of 10";
     }
 
-    // Vertex 3 has no incoming edge, so it is unreachable from 0.
-    auto graph = make_graph({0, 1}, {1, 2}, {1.0f, 1.0f}, 4);
-    ASSERT_NE(graph, nullptr);
+    TEST(SsspReportedStatsTest, UnreachableVerticesStayAtInfinity) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto result = run(*graph, 0);
-    const auto distances = read_distances(result);
+        // Vertex 3 has no incoming edge, so it is unreachable from 0.
+        auto graph = make_graph({0, 1}, {1, 2}, {1.0f, 1.0f}, 4);
+        ASSERT_NE(graph, nullptr);
 
-    ASSERT_EQ(distances.size(), 4u);
-    EXPECT_TRUE(std::isinf(distances[3]))
-        << "an unreachable vertex has no finite distance, got " << distances[3];
-}
+        const auto result = run(*graph, 0);
+        const auto distances = read_distances(result);
 
-// Regression: this reported converged=true and meaningless distances.
-TEST(SsspReportedStatsTest, NegativeCycleIsDetectedRatherThanReportedAsSuccess) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        ASSERT_EQ(distances.size(), 4u);
+        EXPECT_TRUE(std::isinf(distances[3])) << "an unreachable vertex has no finite distance, got " << distances[3];
     }
 
-    // 1 -> 2 (weight -3) and 2 -> 1 (weight 1) form a cycle of total -2.
-    auto graph = make_graph({0, 1, 2}, {1, 2, 1}, {1.0f, -3.0f, 1.0f}, 3);
-    ASSERT_NE(graph, nullptr);
+    // Regression: this reported converged=true and meaningless distances.
+    TEST(SsspReportedStatsTest, NegativeCycleIsDetectedRatherThanReportedAsSuccess) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto result = run(*graph, 0);
+        // 1 -> 2 (weight -3) and 2 -> 1 (weight 1) form a cycle of total -2.
+        auto graph = make_graph({0, 1, 2}, {1, 2, 1}, {1.0f, -3.0f, 1.0f}, 3);
+        ASSERT_NE(graph, nullptr);
 
-    EXPECT_TRUE(result.negative_cycle)
-        << "relaxing a negative cycle forever must be reported";
-    EXPECT_FALSE(result.converged)
-        << "a run whose distances are unbounded below did not converge";
-}
+        const auto result = run(*graph, 0);
 
-TEST(SsspReportedStatsTest, NegativeEdgeWithoutACycleStillConverges) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_TRUE(result.negative_cycle) << "relaxing a negative cycle forever must be reported";
+        EXPECT_FALSE(result.converged) << "a run whose distances are unbounded below did not converge";
     }
 
-    // A single negative edge 1 -> 2 of -5, but no cycle: the shortest paths exist.
-    auto graph = make_graph({0, 1}, {1, 2}, {1.0f, -5.0f}, 3);
-    ASSERT_NE(graph, nullptr);
+    TEST(SsspReportedStatsTest, NegativeEdgeWithoutACycleStillConverges) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto result = run(*graph, 0);
-    const auto distances = read_distances(result);
+        // A single negative edge 1 -> 2 of -5, but no cycle: the shortest paths exist.
+        auto graph = make_graph({0, 1}, {1, 2}, {1.0f, -5.0f}, 3);
+        ASSERT_NE(graph, nullptr);
 
-    EXPECT_TRUE(result.converged)
-        << "a negative edge alone is legitimate; only a cycle is not";
-    EXPECT_FALSE(result.negative_cycle);
-    EXPECT_FLOAT_EQ(distances[1], 1.0f);
-    EXPECT_FLOAT_EQ(distances[2], -4.0f) << "1 + (-5)";
-}
+        const auto result = run(*graph, 0);
+        const auto distances = read_distances(result);
 
-TEST(SsspReportedStatsTest, SingleVertexGraphConvergesImmediately) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_TRUE(result.converged) << "a negative edge alone is legitimate; only a cycle is not";
+        EXPECT_FALSE(result.negative_cycle);
+        EXPECT_FLOAT_EQ(distances[1], 1.0f);
+        EXPECT_FLOAT_EQ(distances[2], -4.0f) << "1 + (-5)";
     }
 
-    // No edges: the source is already settled.
-    auto graph = make_graph({}, {}, {}, 1);
-    ASSERT_NE(graph, nullptr);
+    TEST(SsspReportedStatsTest, SingleVertexGraphConvergesImmediately) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto result = run(*graph, 0);
-    const auto distances = read_distances(result);
+        // No edges: the source is already settled.
+        auto graph = make_graph({}, {}, {}, 1);
+        ASSERT_NE(graph, nullptr);
 
-    ASSERT_EQ(distances.size(), 1u);
-    EXPECT_FLOAT_EQ(distances[0], 0.0f);
-    EXPECT_TRUE(result.converged);
-    EXPECT_FALSE(result.negative_cycle);
-}
+        const auto result = run(*graph, 0);
+        const auto distances = read_distances(result);
 
-TEST(SsspReportedStatsTest, TheCompatibleOverloadStillReturnsDistances) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        ASSERT_EQ(distances.size(), 1u);
+        EXPECT_FLOAT_EQ(distances[0], 0.0f);
+        EXPECT_TRUE(result.converged);
+        EXPECT_FALSE(result.negative_cycle);
     }
 
-    // The older entry point returns the buffer directly for callers that do not
-    // need the statistics; it must produce the same values.
-    auto graph = make_graph({0, 1}, {1, 2}, {1.0f, 2.0f}, 3);
-    ASSERT_NE(graph, nullptr);
+    TEST(SsspReportedStatsTest, TheCompatibleOverloadStillReturnsDistances) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    auto buffer = compute_distances<float>(*graph, 0, 1.0f);
-    std::vector<float> distances(3);
-    buffer.copy_to(distances.data(), distances.size());
+        // The older entry point returns the buffer directly for callers that do not
+        // need the statistics; it must produce the same values.
+        auto graph = make_graph({0, 1}, {1, 2}, {1.0f, 2.0f}, 3);
+        ASSERT_NE(graph, nullptr);
 
-    EXPECT_FLOAT_EQ(distances[0], 0.0f);
-    EXPECT_FLOAT_EQ(distances[1], 1.0f);
-    EXPECT_FLOAT_EQ(distances[2], 3.0f);
-}
+        auto buffer = compute_distances<float>(*graph, 0, 1.0f);
+        std::vector<float> distances(3);
+        buffer.copy_to(distances.data(), distances.size());
 
-TEST(SsspReportedStatsTest, IterationCountIsBoundedByTheVertexCount) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_FLOAT_EQ(distances[0], 0.0f);
+        EXPECT_FLOAT_EQ(distances[1], 1.0f);
+        EXPECT_FLOAT_EQ(distances[2], 3.0f);
     }
 
-    // Bellman-Ford needs at most n-1 rounds; a larger count would mean the loop
-    // is not converging as designed.
-    auto graph = make_graph({0, 1, 2}, {1, 2, 3}, {1.0f, 1.0f, 1.0f}, 4);
-    ASSERT_NE(graph, nullptr);
+    TEST(SsspReportedStatsTest, IterationCountIsBoundedByTheVertexCount) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto result = run(*graph, 0);
+        // Bellman-Ford needs at most n-1 rounds; a larger count would mean the loop
+        // is not converging as designed.
+        auto graph = make_graph({0, 1, 2}, {1, 2, 3}, {1.0f, 1.0f, 1.0f}, 4);
+        ASSERT_NE(graph, nullptr);
 
-    EXPECT_GT(result.iterations, 0);
-    EXPECT_LE(result.iterations, result.num_vertices)
-        << "a settled run cannot use more rounds than there are vertices";
-}
+        const auto result = run(*graph, 0);
+
+        EXPECT_GT(result.iterations, 0);
+        EXPECT_LE(result.iterations, result.num_vertices) << "a settled run cannot use more rounds than there are vertices";
+    }
 
 }  // namespace cuda::algo::sssp::test

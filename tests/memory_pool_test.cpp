@@ -9,17 +9,15 @@
 
 namespace {
 
-void reset() {
-    cudaDeviceReset();
-}
+    void reset() {
+        cudaDeviceReset();
+    }
 
-}
+}  // namespace
 
 class BufferTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(BufferTest, DefaultConstruction) {
@@ -129,14 +127,12 @@ TEST_F(BufferTest, DestructorFrees) {
         cuda::memory::Buffer<int> buffer(100);
         size_t free_in_use = 0;
         ASSERT_EQ(cudaMemGetInfo(&free_in_use, &total), cudaSuccess);
-        EXPECT_LT(free_in_use, free_before)
-            << "Allocating the buffer must consume device memory";
+        EXPECT_LT(free_in_use, free_before) << "Allocating the buffer must consume device memory";
     }
 
     size_t free_after = 0;
     ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
-    EXPECT_GE(free_after, free_before)
-        << "Destructor must release the buffer's device memory";
+    EXPECT_GE(free_after, free_before) << "Destructor must release the buffer's device memory";
 }
 
 TEST_F(BufferTest, VoidBufferConstruction) {
@@ -173,9 +169,7 @@ TEST_F(BufferTest, VoidBufferRelease) {
 
 class MemoryPoolTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(MemoryPoolTest, DefaultConstruction) {
@@ -396,9 +390,7 @@ TEST_F(MemoryPoolTest, MultipleAllocationsSameBlock) {
 
 class UniquePtrTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(UniquePtrTest, DefaultConstruction) {
@@ -481,49 +473,39 @@ TEST_F(UniquePtrTest, DestructorFrees) {
         cuda::memory::unique_ptr<int> ptr(100);
         size_t free_in_use = 0;
         ASSERT_EQ(cudaMemGetInfo(&free_in_use, &total), cudaSuccess);
-        EXPECT_LT(free_in_use, free_before)
-            << "Allocating the unique_ptr must consume device memory";
+        EXPECT_LT(free_in_use, free_before) << "Allocating the unique_ptr must consume device memory";
     }
 
     size_t free_after = 0;
     ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
-    EXPECT_GE(free_after, free_before)
-        << "Destructor must release the unique_ptr's device memory";
+    EXPECT_GE(free_after, free_before) << "Destructor must release the unique_ptr's device memory";
 }
 
 class ErrorHandlingTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(ErrorHandlingTest, InvalidSizeTrows) {
-    EXPECT_THROW({
-        cuda::memory::Buffer<void> buffer(SIZE_MAX);
-    }, cuda::device::CudaException);
+    EXPECT_THROW({ cuda::memory::Buffer<void> buffer(SIZE_MAX); }, cuda::device::CudaException);
     // A failed giant allocation can leave a sticky CUDA error that later tests
     // observe; drain the device error state so this negative test cannot poison
     // subsequent thrust/cub dispatch in the same process.
-    (void) cudaGetLastError();
-    (void) cudaDeviceSynchronize();
+    (void)cudaGetLastError();
+    (void)cudaDeviceSynchronize();
     EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 TEST_F(ErrorHandlingTest, BufferVoidInvalidSizeTrows) {
-    EXPECT_THROW({
-        cuda::memory::Buffer<void> buffer(static_cast<size_t>(-1));
-    }, cuda::device::CudaException);
-    (void) cudaGetLastError();
-    (void) cudaDeviceSynchronize();
+    EXPECT_THROW({ cuda::memory::Buffer<void> buffer(static_cast<size_t>(-1)); }, cuda::device::CudaException);
+    (void)cudaGetLastError();
+    (void)cudaDeviceSynchronize();
     EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
 
 class ScopedMemoryPoolTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(ScopedMemoryPoolTest, DefaultConstruction) {
@@ -627,9 +609,7 @@ TEST_F(ScopedMemoryPoolTest, MoveAssignment) {
 
 class BufferIntegrationTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(BufferIntegrationTest, CopyFromPartialData) {
@@ -672,14 +652,12 @@ TEST_F(BufferIntegrationTest, LargeBufferTransfer) {
 
     EXPECT_EQ(output, input);
     EXPECT_EQ(output[0], 1);
-    EXPECT_EQ(output[N-1], N);
+    EXPECT_EQ(output[N - 1], N);
 }
 
 class MemoryPoolStressTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(MemoryPoolStressTest, ManySmallAllocations) {
@@ -763,9 +741,7 @@ TEST_F(MemoryPoolStressTest, MixedSizeAllocations) {
 
 class UniquePtrIntegrationTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(UniquePtrIntegrationTest, WriteAndReadData) {

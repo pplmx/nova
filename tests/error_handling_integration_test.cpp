@@ -11,18 +11,14 @@ using namespace nova::error;
 
 class ErrorHandlingIntegrationTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {
     auto& degrade_mgr = degradation_manager::instance();
 
     bool degraded = false;
-    degrade_mgr.set_callback([&](const degradation_event& event) {
-        degraded = true;
-    });
+    degrade_mgr.set_callback([&](const degradation_event& event) { degraded = true; });
 
     retry_config retry_cfg;
     retry_cfg.base_delay = std::chrono::milliseconds{5};
@@ -83,8 +79,7 @@ TEST_F(ErrorHandlingIntegrationTest, CircuitBreakerUnderConcurrentLoad) {
 }
 
 TEST_F(ErrorHandlingIntegrationTest, TimeoutGuardWithRetry) {
-    auto id = timeout_manager::instance().start_operation("critical_op",
-                                                           std::chrono::milliseconds{100});
+    auto id = timeout_manager::instance().start_operation("critical_op", std::chrono::milliseconds{100});
 
     retry_config retry_cfg;
     retry_cfg.max_attempts = 3;
@@ -112,8 +107,7 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutGuardWithRetry) {
                               "more than three runs would ignore the configuration";
 
     timeout_manager::instance().end_operation(id);
-    EXPECT_EQ(timeout_manager::instance().active_count(), 0u)
-        << "end_operation must release the tracked operation";
+    EXPECT_EQ(timeout_manager::instance().active_count(), 0u) << "end_operation must release the tracked operation";
 }
 
 TEST_F(ErrorHandlingIntegrationTest, BackwardCompatibility) {

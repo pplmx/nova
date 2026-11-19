@@ -24,122 +24,120 @@
 
 namespace matrix_elementwise_edge_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
+
+    }  // namespace
+
+    // Regression: all three threw "invalid configuration argument".
+    TEST(MatrixElementwiseEdgeTest, EmptyExtentsAreNoOps) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        float scratch[1] = {1.0f};
         (void)cudaGetLastError();
-        return false;
+
+        EXPECT_NO_THROW(matrixElementwiseAdd<float>(scratch, scratch, scratch, 0, 4));
+        EXPECT_NO_THROW(matrixElementwiseAdd<float>(scratch, scratch, scratch, -2, 4));
+        EXPECT_NO_THROW(matrixElementwiseAdd<float>(scratch, scratch, scratch, 4, 0));
+        EXPECT_NO_THROW(matrixElementwiseMultiply<float>(scratch, scratch, scratch, 0, 4));
+        EXPECT_NO_THROW(matrixElementwiseMultiply<float>(scratch, scratch, scratch, -1, -1));
+        EXPECT_NO_THROW(matrixScale<float>(scratch, 2.0f, 0));
+        EXPECT_NO_THROW(matrixScale<float>(scratch, 2.0f, -5));
+
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "an empty elementwise call must not leave a launch error behind";
     }
-    return count > 0;
-}
 
-}  // namespace
+    namespace {
 
-// Regression: all three threw "invalid configuration argument".
-TEST(MatrixElementwiseEdgeTest, EmptyExtentsAreNoOps) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+        /// Owns a device float array and copies to and from it.
+        class DeviceArray {
+        public:
+            explicit DeviceArray(const std::vector<float>& host)
+                : count_(host.size()) {
+                cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(float));
+                if (count_ > 0) {
+                    cudaMemcpy(ptr_, host.data(), count_ * sizeof(float), cudaMemcpyHostToDevice);
+                }
+            }
 
-    float scratch[1] = {1.0f};
-    (void)cudaGetLastError();
+            ~DeviceArray() {
+                if (ptr_ != nullptr) {
+                    cudaFree(ptr_);
+                }
+            }
 
-    EXPECT_NO_THROW(matrixElementwiseAdd<float>(scratch, scratch, scratch, 0, 4));
-    EXPECT_NO_THROW(matrixElementwiseAdd<float>(scratch, scratch, scratch, -2, 4));
-    EXPECT_NO_THROW(matrixElementwiseAdd<float>(scratch, scratch, scratch, 4, 0));
-    EXPECT_NO_THROW(matrixElementwiseMultiply<float>(scratch, scratch, scratch, 0, 4));
-    EXPECT_NO_THROW(matrixElementwiseMultiply<float>(scratch, scratch, scratch, -1, -1));
-    EXPECT_NO_THROW(matrixScale<float>(scratch, 2.0f, 0));
-    EXPECT_NO_THROW(matrixScale<float>(scratch, 2.0f, -5));
+            DeviceArray(const DeviceArray&) = delete;
+            DeviceArray& operator=(const DeviceArray&) = delete;
 
-    EXPECT_EQ(cudaGetLastError(), cudaSuccess)
-        << "an empty elementwise call must not leave a launch error behind";
-}
+            float* data() { return ptr_; }
 
-namespace {
+            std::vector<float> read() const {
+                std::vector<float> host(count_, 0.0f);
+                cudaMemcpy(host.data(), ptr_, count_ * sizeof(float), cudaMemcpyDeviceToHost);
+                return host;
+            }
 
-/// Owns a device float array and copies to and from it.
-class DeviceArray {
-public:
-    explicit DeviceArray(const std::vector<float>& host) : count_(host.size()) {
-        cudaMalloc(&ptr_, (count_ > 0 ? count_ : 1) * sizeof(float));
-        if (count_ > 0) {
-            cudaMemcpy(ptr_, host.data(), count_ * sizeof(float),
-                       cudaMemcpyHostToDevice);
+        private:
+            float* ptr_ = nullptr;
+            size_t count_ = 0;
+        };
+
+    }  // namespace
+
+    TEST(MatrixElementwiseEdgeTest, AddAndMultiplyFollowTheDefinition) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // These entry points take DEVICE pointers (the parameters are named d_a, d_b, d_c);
+        // passing std::vector data() fails with an illegal memory access. My first version
+        // of this case did exactly that.
+        const std::vector<float> a_host = {1.0f, 2.0f, 3.0f, 4.0f};
+        const std::vector<float> b_host = {10.0f, 20.0f, 30.0f, 40.0f};
+
+        DeviceArray a(a_host);
+        DeviceArray b(b_host);
+        DeviceArray sum(std::vector<float>(4, 0.0f));
+        DeviceArray product(std::vector<float>(4, 0.0f));
+
+        matrixElementwiseAdd<float>(a.data(), b.data(), sum.data(), 2, 2);
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        matrixElementwiseMultiply<float>(a.data(), b.data(), product.data(), 2, 2);
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+        const auto sum_host = sum.read();
+        const auto product_host = product.read();
+        for (size_t i = 0; i < a_host.size(); ++i) {
+            EXPECT_NEAR(sum_host[i], a_host[i] + b_host[i], 1e-5f) << "sum element " << i;
+            EXPECT_NEAR(product_host[i], a_host[i] * b_host[i], 1e-5f) << "product element " << i;
         }
     }
 
-    ~DeviceArray() {
-        if (ptr_ != nullptr) {
-            cudaFree(ptr_);
+    TEST(MatrixElementwiseEdgeTest, ScaleMultipliesEveryElement) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::vector<float> original = {1.0f, -2.0f, 3.0f, -4.0f};
+        DeviceArray matrix(original);
+
+        matrixScale<float>(matrix.data(), 2.5f, 4);
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+        const auto scaled = matrix.read();
+        for (size_t i = 0; i < original.size(); ++i) {
+            EXPECT_NEAR(scaled[i], original[i] * 2.5f, 1e-5f) << "element " << i;
         }
     }
-
-    DeviceArray(const DeviceArray&) = delete;
-    DeviceArray& operator=(const DeviceArray&) = delete;
-
-    float* data() { return ptr_; }
-
-    std::vector<float> read() const {
-        std::vector<float> host(count_, 0.0f);
-        cudaMemcpy(host.data(), ptr_, count_ * sizeof(float), cudaMemcpyDeviceToHost);
-        return host;
-    }
-
-private:
-    float* ptr_ = nullptr;
-    size_t count_ = 0;
-};
-
-}  // namespace
-
-TEST(MatrixElementwiseEdgeTest, AddAndMultiplyFollowTheDefinition) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // These entry points take DEVICE pointers (the parameters are named d_a, d_b, d_c);
-    // passing std::vector data() fails with an illegal memory access. My first version
-    // of this case did exactly that.
-    const std::vector<float> a_host = {1.0f, 2.0f, 3.0f, 4.0f};
-    const std::vector<float> b_host = {10.0f, 20.0f, 30.0f, 40.0f};
-
-    DeviceArray a(a_host);
-    DeviceArray b(b_host);
-    DeviceArray sum(std::vector<float>(4, 0.0f));
-    DeviceArray product(std::vector<float>(4, 0.0f));
-
-    matrixElementwiseAdd<float>(a.data(), b.data(), sum.data(), 2, 2);
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    matrixElementwiseMultiply<float>(a.data(), b.data(), product.data(), 2, 2);
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-
-    const auto sum_host = sum.read();
-    const auto product_host = product.read();
-    for (size_t i = 0; i < a_host.size(); ++i) {
-        EXPECT_NEAR(sum_host[i], a_host[i] + b_host[i], 1e-5f) << "sum element " << i;
-        EXPECT_NEAR(product_host[i], a_host[i] * b_host[i], 1e-5f)
-            << "product element " << i;
-    }
-}
-
-TEST(MatrixElementwiseEdgeTest, ScaleMultipliesEveryElement) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    const std::vector<float> original = {1.0f, -2.0f, 3.0f, -4.0f};
-    DeviceArray matrix(original);
-
-    matrixScale<float>(matrix.data(), 2.5f, 4);
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-
-    const auto scaled = matrix.read();
-    for (size_t i = 0; i < original.size(); ++i) {
-        EXPECT_NEAR(scaled[i], original[i] * 2.5f, 1e-5f) << "element " << i;
-    }
-}
 
 }  // namespace matrix_elementwise_edge_test

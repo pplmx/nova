@@ -24,138 +24,133 @@
 
 namespace cuda::pipeline::test {
 
-namespace {
+    namespace {
 
-int current_device() {
-    int device = -1;
-    cudaGetDevice(&device);
-    return device;
-}
+        int current_device() {
+            int device = -1;
+            cudaGetDevice(&device);
+            return device;
+        }
 
-size_t free_device_memory() {
-    size_t free_mem = 0, total = 0;
-    cudaMemGetInfo(&free_mem, &total);
-    return free_mem;
-}
+        size_t free_device_memory() {
+            size_t free_mem = 0, total = 0;
+            cudaMemGetInfo(&free_mem, &total);
+            return free_mem;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(ActivationBufferTest, AllocatesTwoDistinctBuffers) {
-    ActivationBuffer buffer(0, 1024);
+    TEST(ActivationBufferTest, AllocatesTwoDistinctBuffers) {
+        ActivationBuffer buffer(0, 1024);
 
-    EXPECT_EQ(buffer.device(), 0);
-    EXPECT_EQ(buffer.capacity(), 1024u);
-    EXPECT_NE(buffer.active_buffer(), nullptr);
-    EXPECT_NE(buffer.inactive_buffer(), nullptr);
-    EXPECT_NE(buffer.active_buffer(), buffer.inactive_buffer())
-        << "ping and pong must be separate allocations";
-}
+        EXPECT_EQ(buffer.device(), 0);
+        EXPECT_EQ(buffer.capacity(), 1024u);
+        EXPECT_NE(buffer.active_buffer(), nullptr);
+        EXPECT_NE(buffer.inactive_buffer(), nullptr);
+        EXPECT_NE(buffer.active_buffer(), buffer.inactive_buffer()) << "ping and pong must be separate allocations";
+    }
 
-TEST(ActivationBufferTest, SwapExchangesTheRoles) {
-    ActivationBuffer buffer(0, 256);
+    TEST(ActivationBufferTest, SwapExchangesTheRoles) {
+        ActivationBuffer buffer(0, 256);
 
-    const void* active_before = buffer.active_buffer();
-    const void* inactive_before = buffer.inactive_buffer();
-    EXPECT_TRUE(buffer.is_ping_active());
+        const void* active_before = buffer.active_buffer();
+        const void* inactive_before = buffer.inactive_buffer();
+        EXPECT_TRUE(buffer.is_ping_active());
 
-    buffer.swap();
-    EXPECT_FALSE(buffer.is_ping_active());
-    EXPECT_EQ(buffer.active_buffer(), inactive_before);
-    EXPECT_EQ(buffer.inactive_buffer(), active_before);
-
-    buffer.swap();
-    EXPECT_TRUE(buffer.is_ping_active());
-    EXPECT_EQ(buffer.active_buffer(), active_before);
-}
-
-TEST(ActivationBufferTest, ZeroCapacityIsAllowed) {
-    // cudaMalloc(0) is legal and yields null; the object must still be usable so
-    // a degenerate pipeline configuration does not throw at construction.
-    EXPECT_NO_THROW({
-        ActivationBuffer buffer(0, 0);
-        EXPECT_EQ(buffer.capacity(), 0u);
         buffer.swap();
         EXPECT_FALSE(buffer.is_ping_active());
-    });
-}
+        EXPECT_EQ(buffer.active_buffer(), inactive_before);
+        EXPECT_EQ(buffer.inactive_buffer(), active_before);
 
-// Regression: the caller's selected device must survive construction and
-// destruction. A buffer for device 0 used to leave device 0 selected even when
-// the caller was somewhere else.
-TEST(ActivationBufferTest, ConstructingDoesNotChangeTheCallersDevice) {
-    int device_count = 0;
-    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
-        GTEST_SKIP() << "needs at least two devices to observe a device switch";
+        buffer.swap();
+        EXPECT_TRUE(buffer.is_ping_active());
+        EXPECT_EQ(buffer.active_buffer(), active_before);
     }
 
-    const int original = current_device();
-    const int other = (original == 0) ? 1 : 0;
-    ASSERT_EQ(cudaSetDevice(original), cudaSuccess);
-
-    {
-        ActivationBuffer buffer(other, 256);
-        EXPECT_EQ(buffer.device(), other);
-        EXPECT_EQ(current_device(), original)
-            << "constructing a buffer must not migrate the calling thread";
+    TEST(ActivationBufferTest, ZeroCapacityIsAllowed) {
+        // cudaMalloc(0) is legal and yields null; the object must still be usable so
+        // a degenerate pipeline configuration does not throw at construction.
+        EXPECT_NO_THROW({
+            ActivationBuffer buffer(0, 0);
+            EXPECT_EQ(buffer.capacity(), 0u);
+            buffer.swap();
+            EXPECT_FALSE(buffer.is_ping_active());
+        });
     }
 
-    EXPECT_EQ(current_device(), original)
-        << "destroying a buffer must not migrate the calling thread";
-    EXPECT_EQ(cudaSetDevice(original), cudaSuccess);
-}
+    // Regression: the caller's selected device must survive construction and
+    // destruction. A buffer for device 0 used to leave device 0 selected even when
+    // the caller was somewhere else.
+    TEST(ActivationBufferTest, ConstructingDoesNotChangeTheCallersDevice) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
+            GTEST_SKIP() << "needs at least two devices to observe a device switch";
+        }
 
-// The constructor allocates two buffers with two separate cudaMalloc calls. If
-// the second fails it must free the first, because a throwing constructor never
-// runs the destructor.
-//
-// NOTE ON DETECTION: this behaviour cannot be observed through cudaMemGetInfo on
-// this host — CUDA's allocator caches freed blocks, so a leak and a clean
-// failure look identical from outside (verified: the pre-fix implementation
-// passes a free-memory delta assertion even after four failed constructions).
-// What IS observable is the documented contract: constructing a buffer whose
-// two allocations cannot both fit throws, and the object does not come into
-// existence half-allocated. The free-the-first-buffer path is covered by code
-// inspection rather than a runtime assertion, and this test pins the rest.
-TEST(ActivationBufferTest, ConstructionThatCannotFitBothBuffersThrows) {
-    const size_t free_before = free_device_memory();
-    ASSERT_GT(free_before, 0u);
+        const int original = current_device();
+        const int other = (original == 0) ? 1 : 0;
+        ASSERT_EQ(cudaSetDevice(original), cudaSuccess);
 
-    // 70% of free per buffer: one fits, two do not.
-    const size_t capacity = static_cast<size_t>(free_before * 0.70);
-    if (capacity == 0) {
-        GTEST_SKIP() << "no free device memory to work with";
+        {
+            ActivationBuffer buffer(other, 256);
+            EXPECT_EQ(buffer.device(), other);
+            EXPECT_EQ(current_device(), original) << "constructing a buffer must not migrate the calling thread";
+        }
+
+        EXPECT_EQ(current_device(), original) << "destroying a buffer must not migrate the calling thread";
+        EXPECT_EQ(cudaSetDevice(original), cudaSuccess);
     }
 
-    bool threw = false;
-    try {
-        ActivationBuffer buffer(0, capacity);
-    } catch (const std::exception&) {
-        threw = true;
+    // The constructor allocates two buffers with two separate cudaMalloc calls. If
+    // the second fails it must free the first, because a throwing constructor never
+    // runs the destructor.
+    //
+    // NOTE ON DETECTION: this behaviour cannot be observed through cudaMemGetInfo on
+    // this host — CUDA's allocator caches freed blocks, so a leak and a clean
+    // failure look identical from outside (verified: the pre-fix implementation
+    // passes a free-memory delta assertion even after four failed constructions).
+    // What IS observable is the documented contract: constructing a buffer whose
+    // two allocations cannot both fit throws, and the object does not come into
+    // existence half-allocated. The free-the-first-buffer path is covered by code
+    // inspection rather than a runtime assertion, and this test pins the rest.
+    TEST(ActivationBufferTest, ConstructionThatCannotFitBothBuffersThrows) {
+        const size_t free_before = free_device_memory();
+        ASSERT_GT(free_before, 0u);
+
+        // 70% of free per buffer: one fits, two do not.
+        const size_t capacity = static_cast<size_t>(free_before * 0.70);
+        if (capacity == 0) {
+            GTEST_SKIP() << "no free device memory to work with";
+        }
+
+        bool threw = false;
+        try {
+            ActivationBuffer buffer(0, capacity);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        if (!threw) {
+            GTEST_SKIP() << "both allocations fit on this host; failure path not exercised";
+        }
+
+        // After the failure the allocator must still be able to satisfy a normal
+        // request — i.e. the object did not leave the device in a broken state.
+        void* probe = nullptr;
+        ASSERT_EQ(cudaMalloc(&probe, 1024), cudaSuccess) << "the device must still be usable after a failed construction";
+        ASSERT_NE(probe, nullptr);
+        cudaFree(probe);
     }
-    if (!threw) {
-        GTEST_SKIP() << "both allocations fit on this host; failure path not exercised";
+
+    TEST(ActivationBufferTest, InvalidDeviceThrowsAndLeavesTheDeviceAlone) {
+        const int original = current_device();
+        ASSERT_EQ(cudaSetDevice(original), cudaSuccess);
+
+        EXPECT_THROW(ActivationBuffer(-1, 256), std::exception);
+
+        // The guard drains the sticky error state the failed call left behind.
+        (void)cudaGetLastError();
+
+        EXPECT_EQ(current_device(), original) << "a failed construction must not leave the caller on another device";
     }
-
-    // After the failure the allocator must still be able to satisfy a normal
-    // request — i.e. the object did not leave the device in a broken state.
-    void* probe = nullptr;
-    ASSERT_EQ(cudaMalloc(&probe, 1024), cudaSuccess)
-        << "the device must still be usable after a failed construction";
-    ASSERT_NE(probe, nullptr);
-    cudaFree(probe);
-}
-
-TEST(ActivationBufferTest, InvalidDeviceThrowsAndLeavesTheDeviceAlone) {
-    const int original = current_device();
-    ASSERT_EQ(cudaSetDevice(original), cudaSuccess);
-
-    EXPECT_THROW(ActivationBuffer(-1, 256), std::exception);
-
-    // The guard drains the sticky error state the failed call left behind.
-    (void)cudaGetLastError();
-
-    EXPECT_EQ(current_device(), original)
-        << "a failed construction must not leave the caller on another device";
-}
 
 }  // namespace cuda::pipeline::test

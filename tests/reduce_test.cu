@@ -30,7 +30,9 @@ protected:
 };
 
 TEST_F(ReduceTest, SumBasic) {
-    for (int i = 1; i <= static_cast<int>(size_); ++i) h_input_[i-1] = i;
+    for (int i = 1; i <= static_cast<int>(size_); ++i) {
+        h_input_[i - 1] = i;
+    }
     d_input_.copy_from(h_input_.data(), size_);
 
     int result = cuda::algo::reduce_sum(d_input_.data(), size_);
@@ -40,7 +42,9 @@ TEST_F(ReduceTest, SumBasic) {
 }
 
 TEST_F(ReduceTest, SumOptimized) {
-    for (int i = 1; i <= static_cast<int>(size_); ++i) h_input_[i-1] = i;
+    for (int i = 1; i <= static_cast<int>(size_); ++i) {
+        h_input_[i - 1] = i;
+    }
     d_input_.copy_from(h_input_.data(), size_);
 
     int result = cuda::algo::reduce_sum_optimized(d_input_.data(), size_);
@@ -50,7 +54,9 @@ TEST_F(ReduceTest, SumOptimized) {
 }
 
 TEST_F(ReduceTest, SumConsistency) {
-    for (int i = 1; i <= static_cast<int>(size_); ++i) h_input_[i-1] = i;
+    for (int i = 1; i <= static_cast<int>(size_); ++i) {
+        h_input_[i - 1] = i;
+    }
     d_input_.copy_from(h_input_.data(), size_);
 
     int basic = cuda::algo::reduce_sum(d_input_.data(), size_);
@@ -69,7 +75,9 @@ TEST_F(ReduceTest, MaxTest) {
 }
 
 TEST_F(ReduceTest, MinTest) {
-    for (int i = 0; i < static_cast<int>(size_); ++i) h_input_[i] = i + 100;
+    for (int i = 0; i < static_cast<int>(size_); ++i) {
+        h_input_[i] = i + 100;
+    }
     d_input_.copy_from(h_input_.data(), size_);
 
     int result = cuda::algo::reduce_min(d_input_.data(), size_);
@@ -90,7 +98,9 @@ TEST_F(ReduceTest, SingleElement) {
 
 TEST_F(ReduceTest, NonPowerOfTwo) {
     h_input_.resize(1000);
-    for (int i = 0; i < 1000; ++i) h_input_[i] = i + 1;
+    for (int i = 0; i < 1000; ++i) {
+        h_input_[i] = i + 1;
+    }
     d_input_ = cuda::memory::Buffer<int>(1000);
     d_input_.copy_from(h_input_.data(), 1000);
     int result = cuda::algo::reduce_sum(d_input_.data(), 1000);
@@ -103,7 +113,9 @@ TEST_F(ReduceTest, LargeArray) {
 
     d_input_ = cuda::memory::Buffer<int>(size_);
 
-    for (size_t i = 0; i < size_; ++i) h_input_[i] = static_cast<int>(i + 1);
+    for (size_t i = 0; i < size_; ++i) {
+        h_input_[i] = static_cast<int>(i + 1);
+    }
 
     d_input_.copy_from(h_input_.data(), size_);
 
@@ -115,7 +127,9 @@ TEST_F(ReduceTest, LargeArray) {
 
 TEST_F(ReduceTest, NegativeNumbers) {
     h_input_.resize(100);
-    for (int i = 0; i < 100; ++i) h_input_[i] = i - 50;
+    for (int i = 0; i < 100; ++i) {
+        h_input_[i] = i - 50;
+    }
     d_input_ = cuda::memory::Buffer<int>(100);
     d_input_.copy_from(h_input_.data(), 100);
 

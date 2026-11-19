@@ -32,352 +32,339 @@
 
 namespace nova::sparse {
 
-NOVA_REQUIRE_CPP23_HOST("reordering.hpp")
-
-
-/**
- * @brief Error for reordering operations
- * @class ReorderingError
- * @ingroup reordering
- */
-class ReorderingError : public std::runtime_error {
-public:
-    /** @brief Construct with error message */
-    explicit ReorderingError(const std::string& msg) : std::runtime_error(msg) {}
-};
-
-/**
- * @brief Result of matrix reordering
- * @struct ReorderingResult
- * @ingroup reordering
- */
-struct ReorderingResult {
-    /** @brief Permutation vector P such that P*A*P^T is reordered */
-    std::vector<int> permutation;
-
-    /** @brief Inverse permutation P^-1 */
-    std::vector<int> inverse_permutation;
-
-    /** @brief Original matrix bandwidth */
-    int original_bandwidth = 0;
-
-    /** @brief Reordered matrix bandwidth */
-    int reordered_bandwidth = 0;
-
-    /** @brief Ratio of original to reordered bandwidth */
-    double bandwidth_reduction_ratio = 0.0;
-};
-
-/**
- * @brief Reverse Cuthill-McKee bandwidth reduction
- * @class RCMReorderer
- * @tparam T Element type
- * @ingroup reordering
- *
- * Reduces matrix bandwidth for better numerical stability and cache utilization.
- */
-template<SparseScalar T>
-class RCMReorderer {
-public:
-    /** @brief Default constructor */
-    RCMReorderer() = default;
+    NOVA_REQUIRE_CPP23_HOST("reordering.hpp")
 
     /**
-     * @brief Reorder sparse matrix
-     * @param A Input sparse matrix
-     * @param in_place Whether to reorder in-place (not supported, ignored)
-     * @return Reordering result with permutation
+     * @brief Error for reordering operations
+     * @class ReorderingError
+     * @ingroup reordering
      */
-    ReorderingResult reorder(const SparseMatrix<T>& A, bool in_place = false);
+    class ReorderingError : public std::runtime_error {
+    public:
+        /** @brief Construct with error message */
+        explicit ReorderingError(const std::string& msg)
+            : std::runtime_error(msg) {}
+    };
 
-    SparseMatrix<T> apply_reordering(const SparseMatrix<T>& A, const ReorderingResult& result);
+    /**
+     * @brief Result of matrix reordering
+     * @struct ReorderingResult
+     * @ingroup reordering
+     */
+    struct ReorderingResult {
+        /** @brief Permutation vector P such that P*A*P^T is reordered */
+        std::vector<int> permutation;
 
-    static int compute_bandwidth(const SparseMatrix<T>& A);
+        /** @brief Inverse permutation P^-1 */
+        std::vector<int> inverse_permutation;
 
-private:
-    int find_starting_node(const SparseMatrix<T>& A);
+        /** @brief Original matrix bandwidth */
+        int original_bandwidth = 0;
 
-    std::vector<int> bfs_level_order(const SparseMatrix<T>& A, int start_node);
+        /** @brief Reordered matrix bandwidth */
+        int reordered_bandwidth = 0;
 
-    static int compute_matrix_bandwidth(const SparseMatrix<T>& A);
+        /** @brief Ratio of original to reordered bandwidth */
+        double bandwidth_reduction_ratio = 0.0;
+    };
 
-    void apply_permutation(std::vector<T>& values,
-                          std::vector<int>& row_offsets,
-                          std::vector<int>& col_indices,
-                          const std::vector<int>& perm);
-};
+    /**
+     * @brief Reverse Cuthill-McKee bandwidth reduction
+     * @class RCMReorderer
+     * @tparam T Element type
+     * @ingroup reordering
+     *
+     * Reduces matrix bandwidth for better numerical stability and cache utilization.
+     */
+    template <SparseScalar T>
+    class RCMReorderer {
+    public:
+        /** @brief Default constructor */
+        RCMReorderer() = default;
 
-template<SparseScalar T>
-ReorderingResult RCMReorderer<T>::reorder(const SparseMatrix<T>& A, bool in_place) {
-    ReorderingResult result;
-    const int n = A.rows();
+        /**
+         * @brief Reorder sparse matrix
+         * @param A Input sparse matrix
+         * @param in_place Whether to reorder in-place (not supported, ignored)
+         * @return Reordering result with permutation
+         */
+        ReorderingResult reorder(const SparseMatrix<T>& A, bool in_place = false);
 
-    (void)in_place;
+        SparseMatrix<T> apply_reordering(const SparseMatrix<T>& A, const ReorderingResult& result);
 
-    // RCM relabels rows and columns with one permutation, which only makes
-    // sense for a square matrix. A rectangular one used to be accepted and then
-    // rewrote every column index through a permutation sized by rows() only —
-    // an out-of-bounds read that produced a silently corrupted matrix.
-    if (A.rows() != A.cols()) {
-        throw ReorderingError(
-            "RCMReorderer::reorder: matrix must be square, got " +
-            std::to_string(A.rows()) + "x" + std::to_string(A.cols()));
-    }
+        static int compute_bandwidth(const SparseMatrix<T>& A);
 
-    // An empty matrix reorders to itself. Bail out before staging a host copy:
-    // there is nothing to read and the copy would fail on the zero-length
-    // buffers.
-    if (n == 0) {
+    private:
+        int find_starting_node(const SparseMatrix<T>& A);
+
+        std::vector<int> bfs_level_order(const SparseMatrix<T>& A, int start_node);
+
+        static int compute_matrix_bandwidth(const SparseMatrix<T>& A);
+
+        void apply_permutation(std::vector<T>& values, std::vector<int>& row_offsets, std::vector<int>& col_indices, const std::vector<int>& perm);
+    };
+
+    template <SparseScalar T>
+    ReorderingResult RCMReorderer<T>::reorder(const SparseMatrix<T>& A, bool in_place) {
+        ReorderingResult result;
+        const int n = A.rows();
+
+        (void)in_place;
+
+        // RCM relabels rows and columns with one permutation, which only makes
+        // sense for a square matrix. A rectangular one used to be accepted and then
+        // rewrote every column index through a permutation sized by rows() only —
+        // an out-of-bounds read that produced a silently corrupted matrix.
+        if (A.rows() != A.cols()) {
+            throw ReorderingError("RCMReorderer::reorder: matrix must be square, got " + std::to_string(A.rows()) + "x" + std::to_string(A.cols()));
+        }
+
+        // An empty matrix reorders to itself. Bail out before staging a host copy:
+        // there is nothing to read and the copy would fail on the zero-length
+        // buffers.
+        if (n == 0) {
+            return result;
+        }
+
+        result.original_bandwidth = compute_matrix_bandwidth(A);
+
+        int start = find_starting_node(A);
+        std::vector<int> level_order = bfs_level_order(A, start);
+
+        // A single BFS only reaches the start node's connected component. For
+        // disconnected graphs the remaining nodes were previously read out of
+        // bounds (level_order[i] for i >= size), yielding a garbage permutation.
+        // Continue BFS from each unvisited node so the permutation covers 0..n-1.
+        std::vector<char> visited(n, 0);
+        for (int v : level_order) {
+            visited[v] = 1;
+        }
+        for (int i = 0; i < n; ++i) {
+            if (!visited[i]) {
+                for (int v : bfs_level_order(A, i)) {
+                    if (!visited[v]) {
+                        level_order.push_back(v);
+                        visited[v] = 1;
+                    }
+                }
+            }
+        }
+
+        result.permutation.resize(n);
+        result.inverse_permutation.resize(n);
+        // `permutation` maps OLD vertex -> NEW position (what apply_permutation
+        // consumes: new_row = permutation[old_i], new_col = permutation[old_col]).
+        // The previous code set permutation[i] = level_order[i], which is the
+        // inverse mapping and scrambled the reordered matrix (bandwidth never
+        // reduced). level_order[i] IS the old vertex at new position i, and its new
+        // position i is the inverse.
+        for (int i = 0; i < n; ++i) {
+            result.inverse_permutation[i] = level_order[i];
+            result.permutation[level_order[i]] = i;
+        }
+
+        auto reordered_matrix = apply_reordering(A, result);
+
+        result.reordered_bandwidth = compute_matrix_bandwidth(reordered_matrix);
+
+        if (result.original_bandwidth > 0) {
+            result.bandwidth_reduction_ratio = 1.0 - static_cast<double>(result.reordered_bandwidth) / result.original_bandwidth;
+        }
+
         return result;
     }
 
-    result.original_bandwidth = compute_matrix_bandwidth(A);
+    template <SparseScalar T>
+    SparseMatrix<T> RCMReorderer<T>::apply_reordering(const SparseMatrix<T>& A, const ReorderingResult& result) {
+        const int n = A.rows();
 
-    int start = find_starting_node(A);
-    std::vector<int> level_order = bfs_level_order(A, start);
+        if (A.rows() != A.cols()) {
+            throw ReorderingError("RCMReorderer::apply_reordering: matrix must be square, got " + std::to_string(A.rows()) + "x" + std::to_string(A.cols()));
+        }
+        if (static_cast<int>(result.permutation.size()) != n) {
+            throw ReorderingError("RCMReorderer::apply_reordering: permutation has " + std::to_string(result.permutation.size()) + " entries for a " + std::to_string(n)
+                                  + "-row matrix");
+        }
+        if (n == 0) {
+            // SparseMatrix is move-only and a 0x0 matrix owns no buffers, so build
+            // the empty result in place rather than returning A by value.
+            return SparseMatrix<T>();
+        }
 
-    // A single BFS only reaches the start node's connected component. For
-    // disconnected graphs the remaining nodes were previously read out of
-    // bounds (level_order[i] for i >= size), yielding a garbage permutation.
-    // Continue BFS from each unvisited node so the permutation covers 0..n-1.
-    std::vector<char> visited(n, 0);
-    for (int v : level_order) {
-        visited[v] = 1;
+        // A permutation that is not a bijection on [0, n) would make
+        // apply_permutation index its own tables out of bounds.
+        std::vector<char> seen(static_cast<size_t>(n), 0);
+        for (int p : result.permutation) {
+            if (p < 0 || p >= n || seen[static_cast<size_t>(p)]) {
+                throw ReorderingError(
+                    "RCMReorderer::apply_reordering: permutation is not a bijection "
+                    "on [0, "
+                    + std::to_string(n) + ")");
+            }
+            seen[static_cast<size_t>(p)] = 1;
+        }
+
+        const int nnz = A.nnz();
+
+        std::vector<T> h_values(nnz);
+        std::vector<int> h_row_offsets(n + 1);
+        std::vector<int> h_col_indices(nnz);
+        A.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
+        apply_permutation(h_values, h_row_offsets, h_col_indices, result.permutation);
+
+        return SparseMatrix<T>::FromHostData(h_values, h_row_offsets, h_col_indices, n, n);
     }
-    for (int i = 0; i < n; ++i) {
-        if (!visited[i]) {
-            for (int v : bfs_level_order(A, i)) {
-                if (!visited[v]) {
-                    level_order.push_back(v);
-                    visited[v] = 1;
-                }
+
+    template <SparseScalar T>
+    int RCMReorderer<T>::find_starting_node(const SparseMatrix<T>& A) {
+        const int n = A.rows();
+
+        // SparseMatrix stores arrays on the device; stage a host copy before the
+        // host-side degree scan (A.row_offsets() returns a device pointer).
+        std::vector<T> h_values;
+        std::vector<int> h_row_offsets;
+        std::vector<int> h_col_indices;
+        A.copy_to_host(h_values, h_row_offsets, h_col_indices);
+
+        int min_degree = std::numeric_limits<int>::max();
+        int start_node = 0;
+
+        for (int i = 0; i < n; ++i) {
+            int degree = h_row_offsets[i + 1] - h_row_offsets[i];
+            if (degree > 0 && degree < min_degree) {
+                min_degree = degree;
+                start_node = i;
             }
         }
+
+        return start_node;
     }
 
-    result.permutation.resize(n);
-    result.inverse_permutation.resize(n);
-    // `permutation` maps OLD vertex -> NEW position (what apply_permutation
-    // consumes: new_row = permutation[old_i], new_col = permutation[old_col]).
-    // The previous code set permutation[i] = level_order[i], which is the
-    // inverse mapping and scrambled the reordered matrix (bandwidth never
-    // reduced). level_order[i] IS the old vertex at new position i, and its new
-    // position i is the inverse.
-    for (int i = 0; i < n; ++i) {
-        result.inverse_permutation[i] = level_order[i];
-        result.permutation[level_order[i]] = i;
-    }
+    template <SparseScalar T>
+    std::vector<int> RCMReorderer<T>::bfs_level_order(const SparseMatrix<T>& A, int start_node) {
+        const int n = A.rows();
 
-    auto reordered_matrix = apply_reordering(A, result);
+        // Stage a host copy of the CSR arrays (device pointers cannot be read on
+        // the CPU).
+        std::vector<T> h_values;
+        std::vector<int> h_row_offsets;
+        std::vector<int> h_col_indices;
+        A.copy_to_host(h_values, h_row_offsets, h_col_indices);
 
-    result.reordered_bandwidth = compute_matrix_bandwidth(reordered_matrix);
+        std::vector<int> visited(n, 0);
+        std::vector<int> level_order;
+        level_order.reserve(n);
 
-    if (result.original_bandwidth > 0) {
-        result.bandwidth_reduction_ratio =
-            1.0 - static_cast<double>(result.reordered_bandwidth) / result.original_bandwidth;
-    }
-
-    return result;
-}
-
-template<SparseScalar T>
-SparseMatrix<T> RCMReorderer<T>::apply_reordering(const SparseMatrix<T>& A,
-                                                  const ReorderingResult& result) {
-    const int n = A.rows();
-
-    if (A.rows() != A.cols()) {
-        throw ReorderingError(
-            "RCMReorderer::apply_reordering: matrix must be square, got " +
-            std::to_string(A.rows()) + "x" + std::to_string(A.cols()));
-    }
-    if (static_cast<int>(result.permutation.size()) != n) {
-        throw ReorderingError(
-            "RCMReorderer::apply_reordering: permutation has " +
-            std::to_string(result.permutation.size()) + " entries for a " +
-            std::to_string(n) + "-row matrix");
-    }
-    if (n == 0) {
-        // SparseMatrix is move-only and a 0x0 matrix owns no buffers, so build
-        // the empty result in place rather than returning A by value.
-        return SparseMatrix<T>();
-    }
-
-    // A permutation that is not a bijection on [0, n) would make
-    // apply_permutation index its own tables out of bounds.
-    std::vector<char> seen(static_cast<size_t>(n), 0);
-    for (int p : result.permutation) {
-        if (p < 0 || p >= n || seen[static_cast<size_t>(p)]) {
-            throw ReorderingError(
-                "RCMReorderer::apply_reordering: permutation is not a bijection "
-                "on [0, " + std::to_string(n) + ")");
-        }
-        seen[static_cast<size_t>(p)] = 1;
-    }
-
-    const int nnz = A.nnz();
-
-    std::vector<T> h_values(nnz);
-    std::vector<int> h_row_offsets(n + 1);
-    std::vector<int> h_col_indices(nnz);
-    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
-
-    apply_permutation(h_values, h_row_offsets, h_col_indices, result.permutation);
-
-    return SparseMatrix<T>::FromHostData(h_values, h_row_offsets, h_col_indices, n, n);
-}
-
-template<SparseScalar T>
-int RCMReorderer<T>::find_starting_node(const SparseMatrix<T>& A) {
-    const int n = A.rows();
-
-    // SparseMatrix stores arrays on the device; stage a host copy before the
-    // host-side degree scan (A.row_offsets() returns a device pointer).
-    std::vector<T> h_values;
-    std::vector<int> h_row_offsets;
-    std::vector<int> h_col_indices;
-    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
-
-    int min_degree = std::numeric_limits<int>::max();
-    int start_node = 0;
-
-    for (int i = 0; i < n; ++i) {
-        int degree = h_row_offsets[i + 1] - h_row_offsets[i];
-        if (degree > 0 && degree < min_degree) {
-            min_degree = degree;
-            start_node = i;
-        }
-    }
-
-    return start_node;
-}
-
-template<SparseScalar T>
-std::vector<int> RCMReorderer<T>::bfs_level_order(const SparseMatrix<T>& A, int start_node) {
-    const int n = A.rows();
-
-    // Stage a host copy of the CSR arrays (device pointers cannot be read on
-    // the CPU).
-    std::vector<T> h_values;
-    std::vector<int> h_row_offsets;
-    std::vector<int> h_col_indices;
-    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
-
-    std::vector<int> visited(n, 0);
-    std::vector<int> level_order;
-    level_order.reserve(n);
-
-    std::queue<int> queue;
-    queue.push(start_node);
-    visited[start_node] = 1;
-
-    while (!queue.empty()) {
-        std::vector<int> current_level;
+        std::queue<int> queue;
+        queue.push(start_node);
+        visited[start_node] = 1;
 
         while (!queue.empty()) {
-            int node = queue.front();
-            queue.pop();
-            level_order.push_back(node);
+            std::vector<int> current_level;
 
-            const int row_start = h_row_offsets[node];
-            const int row_end = h_row_offsets[node + 1];
+            while (!queue.empty()) {
+                int node = queue.front();
+                queue.pop();
+                level_order.push_back(node);
 
-            for (int idx = row_start; idx < row_end; ++idx) {
-                int neighbor = h_col_indices[idx];
-                if (!visited[neighbor]) {
-                    visited[neighbor] = 1;
-                    current_level.push_back(neighbor);
+                const int row_start = h_row_offsets[node];
+                const int row_end = h_row_offsets[node + 1];
+
+                for (int idx = row_start; idx < row_end; ++idx) {
+                    int neighbor = h_col_indices[idx];
+                    if (!visited[neighbor]) {
+                        visited[neighbor] = 1;
+                        current_level.push_back(neighbor);
+                    }
                 }
+            }
+
+            std::reverse(current_level.begin(), current_level.end());
+
+            for (int neighbor : current_level) {
+                queue.push(neighbor);
             }
         }
 
-        std::reverse(current_level.begin(), current_level.end());
+        return level_order;
+    }
 
-        for (int neighbor : current_level) {
-            queue.push(neighbor);
+    template <SparseScalar T>
+    int RCMReorderer<T>::compute_bandwidth(const SparseMatrix<T>& A) {
+        return compute_matrix_bandwidth(A);
+    }
+
+    template <SparseScalar T>
+    int RCMReorderer<T>::compute_matrix_bandwidth(const SparseMatrix<T>& A) {
+        const int n = A.rows();
+
+        // Nothing to measure, and staging a host copy of empty buffers would fail.
+        if (n == 0) {
+            return 0;
         }
-    }
 
-    return level_order;
-}
+        // Stage a host copy of the CSR arrays (device pointers cannot be read on
+        // the CPU).
+        std::vector<T> h_values;
+        std::vector<int> h_row_offsets;
+        std::vector<int> h_col_indices;
+        A.copy_to_host(h_values, h_row_offsets, h_col_indices);
 
-template<SparseScalar T>
-int RCMReorderer<T>::compute_bandwidth(const SparseMatrix<T>& A) {
-    return compute_matrix_bandwidth(A);
-}
+        int max_bandwidth = 0;
 
-template<SparseScalar T>
-int RCMReorderer<T>::compute_matrix_bandwidth(const SparseMatrix<T>& A) {
-    const int n = A.rows();
+        for (int i = 0; i < n; ++i) {
+            const int row_start = h_row_offsets[i];
+            const int row_end = h_row_offsets[i + 1];
 
-    // Nothing to measure, and staging a host copy of empty buffers would fail.
-    if (n == 0) {
-        return 0;
-    }
-
-    // Stage a host copy of the CSR arrays (device pointers cannot be read on
-    // the CPU).
-    std::vector<T> h_values;
-    std::vector<int> h_row_offsets;
-    std::vector<int> h_col_indices;
-    A.copy_to_host(h_values, h_row_offsets, h_col_indices);
-
-    int max_bandwidth = 0;
-
-    for (int i = 0; i < n; ++i) {
-        const int row_start = h_row_offsets[i];
-        const int row_end = h_row_offsets[i + 1];
-
-        for (int idx = row_start; idx < row_end; ++idx) {
-            int j = h_col_indices[idx];
-            int bandwidth = std::abs(i - j);
-            max_bandwidth = std::max(max_bandwidth, bandwidth);
+            for (int idx = row_start; idx < row_end; ++idx) {
+                int j = h_col_indices[idx];
+                int bandwidth = std::abs(i - j);
+                max_bandwidth = std::max(max_bandwidth, bandwidth);
+            }
         }
+
+        return max_bandwidth;
     }
 
-    return max_bandwidth;
-}
+    template <SparseScalar T>
+    void RCMReorderer<T>::apply_permutation(std::vector<T>& values, std::vector<int>& row_offsets, std::vector<int>& col_indices, const std::vector<int>& perm) {
+        const int n = static_cast<int>(row_offsets.size()) - 1;
+        int nnz = static_cast<int>(values.size());
 
-template<SparseScalar T>
-void RCMReorderer<T>::apply_permutation(std::vector<T>& values,
-                                        std::vector<int>& row_offsets,
-                                        std::vector<int>& col_indices,
-                                        const std::vector<int>& perm) {
-    const int n = static_cast<int>(row_offsets.size()) - 1;
-    int nnz = static_cast<int>(values.size());
-
-    // Compute the new row-offset table with a prefix sum over the permuted row
-    // lengths BEFORE writing values. The previous implementation read
-    // new_row_offsets[] inside the fill loop while it was still all zeros, so
-    // every row wrote at offset 0 and overwrote the previous row - the
-    // "reordered" CSR was garbage and never actually reduced bandwidth.
-    std::vector<int> new_row_lengths(n, 0);
-    for (int i = 0; i < n; ++i) {
-        new_row_lengths[perm[i]] = row_offsets[i + 1] - row_offsets[i];
-    }
-
-    std::vector<int> new_row_offsets(n + 1, 0);
-    for (int i = 0; i < n; ++i) {
-        new_row_offsets[i + 1] = new_row_offsets[i] + new_row_lengths[i];
-    }
-
-    std::vector<T> new_values(nnz);
-    std::vector<int> new_col_indices(nnz);
-
-    for (int i = 0; i < n; ++i) {
-        int new_row = perm[i];
-        int old_row_start = row_offsets[i];
-        int old_row_end = row_offsets[i + 1];
-        int new_row_start = new_row_offsets[new_row];
-
-        for (int k = old_row_start; k < old_row_end; ++k) {
-            new_values[new_row_start + (k - old_row_start)] = values[k];
-            new_col_indices[new_row_start + (k - old_row_start)] = perm[col_indices[k]];
+        // Compute the new row-offset table with a prefix sum over the permuted row
+        // lengths BEFORE writing values. The previous implementation read
+        // new_row_offsets[] inside the fill loop while it was still all zeros, so
+        // every row wrote at offset 0 and overwrote the previous row - the
+        // "reordered" CSR was garbage and never actually reduced bandwidth.
+        std::vector<int> new_row_lengths(n, 0);
+        for (int i = 0; i < n; ++i) {
+            new_row_lengths[perm[i]] = row_offsets[i + 1] - row_offsets[i];
         }
+
+        std::vector<int> new_row_offsets(n + 1, 0);
+        for (int i = 0; i < n; ++i) {
+            new_row_offsets[i + 1] = new_row_offsets[i] + new_row_lengths[i];
+        }
+
+        std::vector<T> new_values(nnz);
+        std::vector<int> new_col_indices(nnz);
+
+        for (int i = 0; i < n; ++i) {
+            int new_row = perm[i];
+            int old_row_start = row_offsets[i];
+            int old_row_end = row_offsets[i + 1];
+            int new_row_start = new_row_offsets[new_row];
+
+            for (int k = old_row_start; k < old_row_end; ++k) {
+                new_values[new_row_start + (k - old_row_start)] = values[k];
+                new_col_indices[new_row_start + (k - old_row_start)] = perm[col_indices[k]];
+            }
+        }
+
+        values = std::move(new_values);
+        row_offsets = std::move(new_row_offsets);
+        col_indices = std::move(new_col_indices);
     }
 
-    values = std::move(new_values);
-    row_offsets = std::move(new_row_offsets);
-    col_indices = std::move(new_col_indices);
-}
-
-}
+}  // namespace nova::sparse

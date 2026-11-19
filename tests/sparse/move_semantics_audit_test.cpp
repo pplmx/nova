@@ -34,31 +34,29 @@
 
 namespace move_semantics_audit_test {
 
-// Each of these owns something its destructor releases. None may be moved or copied by
-// default, because a defaulted move would leave two owners of one handle.
-static_assert(!std::is_move_constructible_v<cuda::neural::SyncBatchNorm>,
-              "SyncBatchNorm frees nine buffers in its destructor");
-static_assert(!std::is_move_assignable_v<cuda::neural::SyncBatchNorm>);
+    // Each of these owns something its destructor releases. None may be moved or copied by
+    // default, because a defaulted move would leave two owners of one handle.
+    static_assert(!std::is_move_constructible_v<cuda::neural::SyncBatchNorm>, "SyncBatchNorm frees nine buffers in its destructor");
+    static_assert(!std::is_move_assignable_v<cuda::neural::SyncBatchNorm>);
 
-// BlockManager holds a std::shared_mutex, which makes its defaulted move implicitly deleted.
-// The assertion documents the conclusion rather than the declaration.
-static_assert(!std::is_move_constructible_v<cuda::inference::BlockManager>,
-              "BlockManager's shared_mutex member deletes the defaulted move");
-static_assert(!std::is_move_assignable_v<cuda::inference::BlockManager>);
+    // BlockManager holds a std::shared_mutex, which makes its defaulted move implicitly deleted.
+    // The assertion documents the conclusion rather than the declaration.
+    static_assert(!std::is_move_constructible_v<cuda::inference::BlockManager>, "BlockManager's shared_mutex member deletes the defaulted move");
+    static_assert(!std::is_move_assignable_v<cuda::inference::BlockManager>);
 
-// These two are move-only by design: their moves null the source, so exactly one owner
-// survives. The contrast with the deleted cases above is the point.
-static_assert(std::is_move_constructible_v<cuda::memory::unique_ptr<float>>);
-static_assert(!std::is_copy_constructible_v<cuda::memory::unique_ptr<float>>);
-static_assert(std::is_move_constructible_v<cuda::stream::Stream>);
-static_assert(!std::is_copy_constructible_v<cuda::stream::Stream>);
-static_assert(std::is_move_constructible_v<cuda::stream::Event>);
-static_assert(!std::is_copy_constructible_v<cuda::stream::Event>);
+    // These two are move-only by design: their moves null the source, so exactly one owner
+    // survives. The contrast with the deleted cases above is the point.
+    static_assert(std::is_move_constructible_v<cuda::memory::unique_ptr<float>>);
+    static_assert(!std::is_copy_constructible_v<cuda::memory::unique_ptr<float>>);
+    static_assert(std::is_move_constructible_v<cuda::stream::Stream>);
+    static_assert(!std::is_copy_constructible_v<cuda::stream::Stream>);
+    static_assert(std::is_move_constructible_v<cuda::stream::Event>);
+    static_assert(!std::is_copy_constructible_v<cuda::stream::Event>);
 
-TEST(MoveSemanticsAuditTest, TheAuditHolds) {
-    // The file's content is the static_asserts above; this case exists so the audit appears
-    // in a test run and not only in a compile.
-    SUCCEED();
-}
+    TEST(MoveSemanticsAuditTest, TheAuditHolds) {
+        // The file's content is the static_asserts above; this case exists so the audit appears
+        // in a test run and not only in a compile.
+        SUCCEED();
+    }
 
 }  // namespace move_semantics_audit_test

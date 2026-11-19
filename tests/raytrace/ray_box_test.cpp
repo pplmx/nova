@@ -5,13 +5,9 @@ using namespace cuda::raytrace;
 
 class RayBoxTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 
-    AABB create_unit_box() {
-        return AABB(Vec3(0, 0, 0), Vec3(1, 1, 1));
-    }
+    AABB create_unit_box() { return AABB(Vec3(0, 0, 0), Vec3(1, 1, 1)); }
 };
 
 TEST_F(RayBoxTest, RayParallelToAxisHitsBox) {

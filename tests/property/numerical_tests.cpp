@@ -11,7 +11,9 @@ bool FloatPrecisionConsistency(RandomGenerator& gen) {
     auto b = gen.UniformFloat<double>(-1000.0, 1000.0);
 
     // Avoid division by zero
-    if (std::abs(b) < 1e-10) b = 1.0;
+    if (std::abs(b) < 1e-10) {
+        b = 1.0;
+    }
 
     // Simple operations
     double sum = a + b;
@@ -20,8 +22,7 @@ bool FloatPrecisionConsistency(RandomGenerator& gen) {
     double quot = a / b;
 
     // Results should be finite
-    if (!std::isfinite(sum) || !std::isfinite(diff) ||
-        !std::isfinite(prod) || !std::isfinite(quot)) {
+    if (!std::isfinite(sum) || !std::isfinite(diff) || !std::isfinite(prod) || !std::isfinite(quot)) {
         return false;
     }
 
@@ -55,8 +56,7 @@ bool NoNaNWithoutCause(RandomGenerator& gen) {
     double positive = std::abs(a) + 1.0;
     double sqrt_val = std::sqrt(positive);
 
-    return std::isfinite(sum) && std::isfinite(diff) &&
-           std::isfinite(prod) && std::isfinite(sqrt_val);
+    return std::isfinite(sum) && std::isfinite(diff) && std::isfinite(prod) && std::isfinite(sqrt_val);
 }
 
 bool NumericalStabilityAcrossModes(RandomGenerator& gen) {
@@ -96,17 +96,17 @@ int main(int argc, char** argv) {
         total_tests++;
         auto result = CheckProperty(name, test_fn, 100, seed);
 
-        std::cout << "[" << (result.passed ? "PASS" : "FAIL") << "] "
-                  << name << "\n";
-        std::cout << "  Seed: " << result.seed
-                  << " | Iterations: " << result.iterations << "\n";
+        std::cout << "[" << (result.passed ? "PASS" : "FAIL") << "] " << name << "\n";
+        std::cout << "  Seed: " << result.seed << " | Iterations: " << result.iterations << "\n";
 
         if (!result.passed) {
             std::cout << "  Reason: " << result.failure_reason << "\n";
         }
         std::cout << "\n";
 
-        if (result.passed) passed_tests++;
+        if (result.passed) {
+            passed_tests++;
+        }
     };
 
     run_test("Float Precision Consistency", FloatPrecisionConsistency);

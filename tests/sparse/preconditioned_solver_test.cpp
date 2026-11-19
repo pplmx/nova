@@ -6,318 +6,318 @@
 #include <cmath>
 
 namespace nova {
-namespace sparse {
-namespace test {
+    namespace sparse {
+        namespace test {
 
-class PreconditionedSolverTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        cudaSetDevice(0);
-        cudaDeviceSynchronize();
-    }
-    static SparseMatrix<double> create_tridiagonal_matrix(int n) {
-        std::vector<double> values;
-        std::vector<int> row_offsets(n + 1, 0);
-        std::vector<int> col_indices;
+            class PreconditionedSolverTest : public ::testing::Test {
+            protected:
+                void SetUp() override {
+                    cudaSetDevice(0);
+                    cudaDeviceSynchronize();
+                }
+                static SparseMatrix<double> create_tridiagonal_matrix(int n) {
+                    std::vector<double> values;
+                    std::vector<int> row_offsets(n + 1, 0);
+                    std::vector<int> col_indices;
 
-        for (int i = 0; i < n; ++i) {
-            row_offsets[i] = static_cast<int>(col_indices.size());
+                    for (int i = 0; i < n; ++i) {
+                        row_offsets[i] = static_cast<int>(col_indices.size());
 
-            if (i > 0) {
-                values.push_back(-1.0);
-                col_indices.push_back(i - 1);
+                        if (i > 0) {
+                            values.push_back(-1.0);
+                            col_indices.push_back(i - 1);
+                        }
+
+                        values.push_back(2.0);
+                        col_indices.push_back(i);
+
+                        if (i < n - 1) {
+                            values.push_back(-1.0);
+                            col_indices.push_back(i + 1);
+                        }
+                    }
+                    row_offsets[n] = static_cast<int>(col_indices.size());
+
+                    return SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, n, n);
+                }
+
+                static std::vector<double> create_rhs(int n) {
+                    std::vector<double> b(n, 1.0);
+                    return b;
+                }
+
+                static double compute_relative_error(const std::vector<double>& x, const std::vector<double>& x_exact) {
+                    double max_error = 0.0;
+                    for (int i = 0; i < static_cast<int>(x.size()); ++i) {
+                        max_error = std::max(max_error, std::abs(x[i] - x_exact[i]));
+                    }
+                    return max_error;
+                }
+            };
+
+            TEST_F(PreconditionedSolverTest, CGWithNullPreconditioner) {
+                auto A = create_tridiagonal_matrix(10);
+                auto b = create_rhs(10);
+
+                ConjugateGradient<double> cg;
+                EXPECT_FALSE(cg.has_preconditioner());
+
+                std::vector<double> x(A.cols(), 0.0);
+                auto result = cg.solve(A, b.data(), x.data());
+
+                EXPECT_TRUE(result.converged);
+                EXPECT_LT(result.relative_residual, 1e-6);
             }
 
-            values.push_back(2.0);
-            col_indices.push_back(i);
+            TEST_F(PreconditionedSolverTest, CGWithJacobiPreconditioner) {
+                auto A = create_tridiagonal_matrix(10);
+                auto b = create_rhs(10);
 
-            if (i < n - 1) {
-                values.push_back(-1.0);
-                col_indices.push_back(i + 1);
+                ConjugateGradient<double> cg;
+                auto prec = std::make_unique<JacobiPreconditioner<double>>();
+                prec->setup(A);
+                cg.set_preconditioner(std::move(prec));
+
+                EXPECT_TRUE(cg.has_preconditioner());
+
+                std::vector<double> x(A.cols(), 0.0);
+                auto result = cg.solve(A, b.data(), x.data());
+
+                EXPECT_TRUE(result.converged);
+                EXPECT_LT(result.relative_residual, 1e-6);
             }
-        }
-        row_offsets[n] = static_cast<int>(col_indices.size());
 
-        return SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, n, n);
-    }
+            TEST_F(PreconditionedSolverTest, CGWithoutPreconditionerIterations) {
+                auto A = create_tridiagonal_matrix(20);
+                auto b = create_rhs(20);
 
-    static std::vector<double> create_rhs(int n) {
-        std::vector<double> b(n, 1.0);
-        return b;
-    }
+                ConjugateGradient<double> cg_no_prec;
+                std::vector<double> x_no_prec(A.cols(), 0.0);
+                auto result_no_prec = cg_no_prec.solve(A, b.data(), x_no_prec.data());
 
-    static double compute_relative_error(const std::vector<double>& x, const std::vector<double>& x_exact) {
-        double max_error = 0.0;
-        for (int i = 0; i < static_cast<int>(x.size()); ++i) {
-            max_error = std::max(max_error, std::abs(x[i] - x_exact[i]));
-        }
-        return max_error;
-    }
-};
+                EXPECT_TRUE(result_no_prec.converged);
 
-TEST_F(PreconditionedSolverTest, CGWithNullPreconditioner) {
-    auto A = create_tridiagonal_matrix(10);
-    auto b = create_rhs(10);
+                ConjugateGradient<double> cg_with_prec;
+                auto prec = std::make_unique<JacobiPreconditioner<double>>();
+                prec->setup(A);
+                cg_with_prec.set_preconditioner(std::move(prec));
 
-    ConjugateGradient<double> cg;
-    EXPECT_FALSE(cg.has_preconditioner());
+                std::vector<double> x_with_prec(A.cols(), 0.0);
+                auto result_with_prec = cg_with_prec.solve(A, b.data(), x_with_prec.data());
 
-    std::vector<double> x(A.cols(), 0.0);
-    auto result = cg.solve(A, b.data(), x.data());
+                EXPECT_TRUE(result_with_prec.converged);
 
-    EXPECT_TRUE(result.converged);
-    EXPECT_LT(result.relative_residual, 1e-6);
-}
+                EXPECT_LE(result_with_prec.iterations, result_no_prec.iterations);
+            }
 
-TEST_F(PreconditionedSolverTest, CGWithJacobiPreconditioner) {
-    auto A = create_tridiagonal_matrix(10);
-    auto b = create_rhs(10);
-
-    ConjugateGradient<double> cg;
-    auto prec = std::make_unique<JacobiPreconditioner<double>>();
-    prec->setup(A);
-    cg.set_preconditioner(std::move(prec));
-
-    EXPECT_TRUE(cg.has_preconditioner());
-
-    std::vector<double> x(A.cols(), 0.0);
-    auto result = cg.solve(A, b.data(), x.data());
-
-    EXPECT_TRUE(result.converged);
-    EXPECT_LT(result.relative_residual, 1e-6);
-}
-
-TEST_F(PreconditionedSolverTest, CGWithoutPreconditionerIterations) {
-    auto A = create_tridiagonal_matrix(20);
-    auto b = create_rhs(20);
-
-    ConjugateGradient<double> cg_no_prec;
-    std::vector<double> x_no_prec(A.cols(), 0.0);
-    auto result_no_prec = cg_no_prec.solve(A, b.data(), x_no_prec.data());
+            TEST_F(PreconditionedSolverTest, CGPreconditionerSolutionQuality) {
+                auto A = create_tridiagonal_matrix(10);
+                std::vector<double> x_exact(A.cols(), 1.0);
 
-    EXPECT_TRUE(result_no_prec.converged);
-
-    ConjugateGradient<double> cg_with_prec;
-    auto prec = std::make_unique<JacobiPreconditioner<double>>();
-    prec->setup(A);
-    cg_with_prec.set_preconditioner(std::move(prec));
-
-    std::vector<double> x_with_prec(A.cols(), 0.0);
-    auto result_with_prec = cg_with_prec.solve(A, b.data(), x_with_prec.data());
-
-    EXPECT_TRUE(result_with_prec.converged);
+                memory::Buffer<double> d_x(A.cols());
+                memory::Buffer<double> d_b(A.cols());
+                std::vector<double> h_b(A.cols());
 
-    EXPECT_LE(result_with_prec.iterations, result_no_prec.iterations);
-}
+                // Use the host-vector spmv overload: the pointer overload is the device
+                // variant, and passing host .data() pointers to it faults in cusparse.
+                spmv(A, x_exact, h_b);
+                d_b.copy_from(h_b.data(), A.cols());
 
-TEST_F(PreconditionedSolverTest, CGPreconditionerSolutionQuality) {
-    auto A = create_tridiagonal_matrix(10);
-    std::vector<double> x_exact(A.cols(), 1.0);
+                ConjugateGradient<double> cg;
+                auto prec = std::make_unique<JacobiPreconditioner<double>>();
+                prec->setup(A);
+                cg.set_preconditioner(std::move(prec));
 
-    memory::Buffer<double> d_x(A.cols());
-    memory::Buffer<double> d_b(A.cols());
-    std::vector<double> h_b(A.cols());
+                std::vector<double> x(A.cols(), 0.0);
+                auto result = cg.solve(A, h_b.data(), x.data());
 
-    // Use the host-vector spmv overload: the pointer overload is the device
-    // variant, and passing host .data() pointers to it faults in cusparse.
-    spmv(A, x_exact, h_b);
-    d_b.copy_from(h_b.data(), A.cols());
+                EXPECT_TRUE(result.converged);
 
-    ConjugateGradient<double> cg;
-    auto prec = std::make_unique<JacobiPreconditioner<double>>();
-    prec->setup(A);
-    cg.set_preconditioner(std::move(prec));
+                double rel_error = compute_relative_error(x, x_exact);
+                EXPECT_LT(rel_error, 1e-6);
+            }
 
-    std::vector<double> x(A.cols(), 0.0);
-    auto result = cg.solve(A, h_b.data(), x.data());
+            TEST_F(PreconditionedSolverTest, SolverConfigPreserved) {
+                auto A = create_tridiagonal_matrix(5);
 
-    EXPECT_TRUE(result.converged);
+                SolverConfig<double> config;
+                config.relative_tolerance = 1e-8;
+                config.max_iterations = 100;
 
-    double rel_error = compute_relative_error(x, x_exact);
-    EXPECT_LT(rel_error, 1e-6);
-}
+                ConjugateGradient<double> cg(config);
+                auto prec = std::make_unique<JacobiPreconditioner<double>>(0.5);
+                prec->setup(A);
+                cg.set_preconditioner(std::move(prec));
 
-TEST_F(PreconditionedSolverTest, SolverConfigPreserved) {
-    auto A = create_tridiagonal_matrix(5);
+                std::vector<double> b(A.cols(), 1.0);
+                std::vector<double> x(A.cols(), 0.0);
 
-    SolverConfig<double> config;
-    config.relative_tolerance = 1e-8;
-    config.max_iterations = 100;
+                auto result = cg.solve(A, b.data(), x.data());
 
-    ConjugateGradient<double> cg(config);
-    auto prec = std::make_unique<JacobiPreconditioner<double>>(0.5);
-    prec->setup(A);
-    cg.set_preconditioner(std::move(prec));
+                EXPECT_TRUE(result.converged);
+            }
 
-    std::vector<double> b(A.cols(), 1.0);
-    std::vector<double> x(A.cols(), 0.0);
+            TEST_F(PreconditionedSolverTest, SolverErrorEnumValues) {
+                EXPECT_EQ(static_cast<int>(SolverError::SUCCESS), 0);
+                EXPECT_EQ(static_cast<int>(SolverError::MAX_ITERATIONS), 1);
+                EXPECT_EQ(static_cast<int>(SolverError::BREAKDOWN), 2);
+                EXPECT_EQ(static_cast<int>(SolverError::INVALID_MATRIX), 3);
+                EXPECT_EQ(static_cast<int>(SolverError::CONVERGENCE_FAILURE), 4);
+                EXPECT_EQ(static_cast<int>(SolverError::PRECONDITIONER_ERROR), 5);
+            }
 
-    auto result = cg.solve(A, b.data(), x.data());
+            TEST_F(PreconditionedSolverTest, SolverConfigDefaults) {
+                SolverConfig<double> config;
+                EXPECT_DOUBLE_EQ(config.relative_tolerance, 1e-6);
+                EXPECT_DOUBLE_EQ(config.absolute_tolerance, 1e-10);
+                EXPECT_EQ(config.max_iterations, 1000);
+                EXPECT_FALSE(config.verbose);
+            }
 
-    EXPECT_TRUE(result.converged);
-}
+            TEST_F(PreconditionedSolverTest, SolverConfigCustom) {
+                SolverConfig<double> config;
+                config.relative_tolerance = 1e-10;
+                config.max_iterations = 500;
+                config.verbose = true;
 
-TEST_F(PreconditionedSolverTest, SolverErrorEnumValues) {
-    EXPECT_EQ(static_cast<int>(SolverError::SUCCESS), 0);
-    EXPECT_EQ(static_cast<int>(SolverError::MAX_ITERATIONS), 1);
-    EXPECT_EQ(static_cast<int>(SolverError::BREAKDOWN), 2);
-    EXPECT_EQ(static_cast<int>(SolverError::INVALID_MATRIX), 3);
-    EXPECT_EQ(static_cast<int>(SolverError::CONVERGENCE_FAILURE), 4);
-    EXPECT_EQ(static_cast<int>(SolverError::PRECONDITIONER_ERROR), 5);
-}
+                EXPECT_DOUBLE_EQ(config.relative_tolerance, 1e-10);
+                EXPECT_EQ(config.max_iterations, 500);
+                EXPECT_TRUE(config.verbose);
+            }
 
-TEST_F(PreconditionedSolverTest, SolverConfigDefaults) {
-    SolverConfig<double> config;
-    EXPECT_DOUBLE_EQ(config.relative_tolerance, 1e-6);
-    EXPECT_DOUBLE_EQ(config.absolute_tolerance, 1e-10);
-    EXPECT_EQ(config.max_iterations, 1000);
-    EXPECT_FALSE(config.verbose);
-}
+            TEST_F(PreconditionedSolverTest, GMRESConvergesOnTridiagonal) {
+                auto A = create_tridiagonal_matrix(10);
+                auto b = create_rhs(10);
 
-TEST_F(PreconditionedSolverTest, SolverConfigCustom) {
-    SolverConfig<double> config;
-    config.relative_tolerance = 1e-10;
-    config.max_iterations = 500;
-    config.verbose = true;
+                GMRES<double> gmres;
+                std::vector<double> x(A.cols(), 0.0);
 
-    EXPECT_DOUBLE_EQ(config.relative_tolerance, 1e-10);
-    EXPECT_EQ(config.max_iterations, 500);
-    EXPECT_TRUE(config.verbose);
-}
+                auto result = gmres.solve(A, b.data(), x.data());
 
-TEST_F(PreconditionedSolverTest, GMRESConvergesOnTridiagonal) {
-    auto A = create_tridiagonal_matrix(10);
-    auto b = create_rhs(10);
+                EXPECT_TRUE(result.converged);
+                EXPECT_LT(result.relative_residual, 1e-6);
+            }
 
-    GMRES<double> gmres;
-    std::vector<double> x(A.cols(), 0.0);
+            TEST_F(PreconditionedSolverTest, GMRESIterations) {
+                auto A = create_tridiagonal_matrix(20);
+                auto b = create_rhs(20);
 
-    auto result = gmres.solve(A, b.data(), x.data());
+                SolverConfig<double> config;
+                GMRES<double> gmres(config);
+                std::vector<double> x(A.cols(), 0.0);
 
-    EXPECT_TRUE(result.converged);
-    EXPECT_LT(result.relative_residual, 1e-6);
-}
-
-TEST_F(PreconditionedSolverTest, GMRESIterations) {
-    auto A = create_tridiagonal_matrix(20);
-    auto b = create_rhs(20);
-
-    SolverConfig<double> config;
-    GMRES<double> gmres(config);
-    std::vector<double> x(A.cols(), 0.0);
-
-    auto result = gmres.solve(A, b.data(), x.data());
-
-    EXPECT_TRUE(result.converged);
-    EXPECT_GT(result.iterations, 0);
-    EXPECT_LE(result.iterations, config.max_iterations);
-}
-
-TEST_F(PreconditionedSolverTest, GMRESGPUConvergesOnTridiagonal) {
-    auto A = create_tridiagonal_matrix(10);
-    auto b = create_rhs(10);
-
-    GMRESGPU<double> gmres;
-    std::vector<double> x(A.cols(), 0.0);
-
-    auto result = gmres.solve(A, b.data(), x.data());
-
-    EXPECT_TRUE(result.converged);
-    EXPECT_LT(result.relative_residual, 1e-6);
-}
-
-TEST_F(PreconditionedSolverTest, BiCGSTABConvergesOnTridiagonal) {
-    auto A = create_tridiagonal_matrix(10);
-    auto b = create_rhs(10);
-
-    BiCGSTAB<double> bicgstab;
-    std::vector<double> x(A.cols(), 0.0);
-
-    auto result = bicgstab.solve(A, b.data(), x.data());
-
-    EXPECT_GT(result.iterations, 0);
-}
-
-TEST_F(PreconditionedSolverTest, BiCGSTABIterations) {
-    auto A = create_tridiagonal_matrix(20);
-    auto b = create_rhs(20);
-
-    BiCGSTAB<double> bicgstab;
-    std::vector<double> x(A.cols(), 0.0);
-
-    auto result = bicgstab.solve(A, b.data(), x.data());
-
-    EXPECT_TRUE(result.converged || result.iterations > 0);
-    EXPECT_GT(result.iterations, 0);
-}
-
-TEST_F(PreconditionedSolverTest, BiCGSTABZeroRHS) {
-    auto A = create_tridiagonal_matrix(5);
-    std::vector<double> b(A.cols(), 0.0);
-
-    BiCGSTAB<double> bicgstab;
-    std::vector<double> x(A.cols(), 0.0);
-
-    auto result = bicgstab.solve(A, b.data(), x.data());
-
-    EXPECT_TRUE(result.converged);
-    EXPECT_EQ(result.iterations, 0);
-}
-
-TEST_F(PreconditionedSolverTest, CGSquareMatrixValidation) {
-    std::vector<double> values = {1.0, 2.0};
-    std::vector<int> row_offsets = {0, 1, 2};
-    std::vector<int> col_indices = {0, 1};
-    auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 2, 2);
-    std::vector<double> b = {1.0, 1.0};
-
-    ConjugateGradient<double> cg;
-    std::vector<double> x(A.cols(), 0.0);
-    auto result = cg.solve(A, b.data(), x.data());
-
-    // A = diag(1,2) is a valid SPD matrix; the solver must accept it.
-    EXPECT_EQ(result.error_code, SolverError::SUCCESS);
-    EXPECT_NEAR(x[0], 1.0, 1e-6);
-    EXPECT_NEAR(x[1], 0.5, 1e-6);
-}
-
-TEST_F(PreconditionedSolverTest, GMRESSquareMatrixValidation) {
-    std::vector<double> values = {1.0, 2.0};
-    std::vector<int> row_offsets = {0, 1, 2};
-    std::vector<int> col_indices = {0, 1};
-    auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 2, 2);
-    std::vector<double> b = {1.0, 1.0};
-
-    GMRES<double> gmres;
-    std::vector<double> x(A.cols(), 0.0);
-    auto result = gmres.solve(A, b.data(), x.data());
-
-    // A = diag(1,2) is a valid square matrix; the solver must accept it.
-    EXPECT_EQ(result.error_code, SolverError::SUCCESS);
-    EXPECT_NEAR(x[0], 1.0, 1e-6);
-    EXPECT_NEAR(x[1], 0.5, 1e-6);
-}
-
-TEST_F(PreconditionedSolverTest, BiCGSTABSquareMatrixValidation) {
-    // A genuine 3x2 matrix: three values, three offsets, and every column
-    // index inside [0, 2). (The previous fixture listed column index 2 for a
-    // two-column matrix, i.e. a structurally invalid CSR; FromHostData rejects
-    // that now, so the case has to describe a real non-square matrix for the
-    // solver's own shape check to be what gets exercised.)
-    std::vector<double> values = {1.0, 2.0, 3.0};
-    std::vector<int> row_offsets = {0, 1, 2, 3};
-    std::vector<int> col_indices = {0, 1, 0};
-    auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 3, 2);
-    std::vector<double> b = {1.0, 1.0};
-
-    BiCGSTAB<double> bicgstab;
-    std::vector<double> x(2, 0.0);
-    auto result = bicgstab.solve(A, b.data(), x.data());
-
-    // A is 3x2 (non-square): the solver must reject it with INVALID_MATRIX.
-    EXPECT_EQ(result.error_code, SolverError::INVALID_MATRIX);
-}
-
-}
-}
-}
+                auto result = gmres.solve(A, b.data(), x.data());
+
+                EXPECT_TRUE(result.converged);
+                EXPECT_GT(result.iterations, 0);
+                EXPECT_LE(result.iterations, config.max_iterations);
+            }
+
+            TEST_F(PreconditionedSolverTest, GMRESGPUConvergesOnTridiagonal) {
+                auto A = create_tridiagonal_matrix(10);
+                auto b = create_rhs(10);
+
+                GMRESGPU<double> gmres;
+                std::vector<double> x(A.cols(), 0.0);
+
+                auto result = gmres.solve(A, b.data(), x.data());
+
+                EXPECT_TRUE(result.converged);
+                EXPECT_LT(result.relative_residual, 1e-6);
+            }
+
+            TEST_F(PreconditionedSolverTest, BiCGSTABConvergesOnTridiagonal) {
+                auto A = create_tridiagonal_matrix(10);
+                auto b = create_rhs(10);
+
+                BiCGSTAB<double> bicgstab;
+                std::vector<double> x(A.cols(), 0.0);
+
+                auto result = bicgstab.solve(A, b.data(), x.data());
+
+                EXPECT_GT(result.iterations, 0);
+            }
+
+            TEST_F(PreconditionedSolverTest, BiCGSTABIterations) {
+                auto A = create_tridiagonal_matrix(20);
+                auto b = create_rhs(20);
+
+                BiCGSTAB<double> bicgstab;
+                std::vector<double> x(A.cols(), 0.0);
+
+                auto result = bicgstab.solve(A, b.data(), x.data());
+
+                EXPECT_TRUE(result.converged || result.iterations > 0);
+                EXPECT_GT(result.iterations, 0);
+            }
+
+            TEST_F(PreconditionedSolverTest, BiCGSTABZeroRHS) {
+                auto A = create_tridiagonal_matrix(5);
+                std::vector<double> b(A.cols(), 0.0);
+
+                BiCGSTAB<double> bicgstab;
+                std::vector<double> x(A.cols(), 0.0);
+
+                auto result = bicgstab.solve(A, b.data(), x.data());
+
+                EXPECT_TRUE(result.converged);
+                EXPECT_EQ(result.iterations, 0);
+            }
+
+            TEST_F(PreconditionedSolverTest, CGSquareMatrixValidation) {
+                std::vector<double> values = {1.0, 2.0};
+                std::vector<int> row_offsets = {0, 1, 2};
+                std::vector<int> col_indices = {0, 1};
+                auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 2, 2);
+                std::vector<double> b = {1.0, 1.0};
+
+                ConjugateGradient<double> cg;
+                std::vector<double> x(A.cols(), 0.0);
+                auto result = cg.solve(A, b.data(), x.data());
+
+                // A = diag(1,2) is a valid SPD matrix; the solver must accept it.
+                EXPECT_EQ(result.error_code, SolverError::SUCCESS);
+                EXPECT_NEAR(x[0], 1.0, 1e-6);
+                EXPECT_NEAR(x[1], 0.5, 1e-6);
+            }
+
+            TEST_F(PreconditionedSolverTest, GMRESSquareMatrixValidation) {
+                std::vector<double> values = {1.0, 2.0};
+                std::vector<int> row_offsets = {0, 1, 2};
+                std::vector<int> col_indices = {0, 1};
+                auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 2, 2);
+                std::vector<double> b = {1.0, 1.0};
+
+                GMRES<double> gmres;
+                std::vector<double> x(A.cols(), 0.0);
+                auto result = gmres.solve(A, b.data(), x.data());
+
+                // A = diag(1,2) is a valid square matrix; the solver must accept it.
+                EXPECT_EQ(result.error_code, SolverError::SUCCESS);
+                EXPECT_NEAR(x[0], 1.0, 1e-6);
+                EXPECT_NEAR(x[1], 0.5, 1e-6);
+            }
+
+            TEST_F(PreconditionedSolverTest, BiCGSTABSquareMatrixValidation) {
+                // A genuine 3x2 matrix: three values, three offsets, and every column
+                // index inside [0, 2). (The previous fixture listed column index 2 for a
+                // two-column matrix, i.e. a structurally invalid CSR; FromHostData rejects
+                // that now, so the case has to describe a real non-square matrix for the
+                // solver's own shape check to be what gets exercised.)
+                std::vector<double> values = {1.0, 2.0, 3.0};
+                std::vector<int> row_offsets = {0, 1, 2, 3};
+                std::vector<int> col_indices = {0, 1, 0};
+                auto A = SparseMatrix<double>::FromHostData(values, row_offsets, col_indices, 3, 2);
+                std::vector<double> b = {1.0, 1.0};
+
+                BiCGSTAB<double> bicgstab;
+                std::vector<double> x(2, 0.0);
+                auto result = bicgstab.solve(A, b.data(), x.data());
+
+                // A is 3x2 (non-square): the solver must reject it with INVALID_MATRIX.
+                EXPECT_EQ(result.error_code, SolverError::INVALID_MATRIX);
+            }
+
+        }  // namespace test
+    }  // namespace sparse
+}  // namespace nova

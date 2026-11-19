@@ -11,68 +11,49 @@
 
 namespace cuda::graph {
 
-BFSResult::BFSResult()
-    : num_vertices(0),
-      distances(nullptr),
-      d_distances(nullptr),
-      visited(nullptr),
-      d_visited(nullptr),
-      visited_count(0),
-      max_distance(0) {}
+    BFSResult::BFSResult()
+        : num_vertices(0),
+          distances(nullptr),
+          d_distances(nullptr),
+          visited(nullptr),
+          d_visited(nullptr),
+          visited_count(0),
+          max_distance(0) {}
 
-BFSResult::BFSResult(int num_vertices)
-    : num_vertices(num_vertices),
-      distances(nullptr),
-      d_distances(nullptr),
-      visited(nullptr),
-      d_visited(nullptr),
-      visited_count(0),
-      max_distance(0) {
-    // A throwing constructor does not run its own destructor, so anything acquired before the
-    // throw is lost. Both CUDA_CHECKs can fail — a large graph exhausting device memory is the
-    // ordinary way — and they sat after both host allocations.
-    distances = new int[num_vertices];
-    try {
-        visited = new bool[num_vertices];
-        CUDA_CHECK(cudaMalloc(&d_distances, num_vertices * sizeof(int)));
-        CUDA_CHECK(cudaMalloc(&d_visited, num_vertices * sizeof(bool)));
-    } catch (...) {
-        clear();
-        throw;
+    BFSResult::BFSResult(int num_vertices)
+        : num_vertices(num_vertices),
+          distances(nullptr),
+          d_distances(nullptr),
+          visited(nullptr),
+          d_visited(nullptr),
+          visited_count(0),
+          max_distance(0) {
+        // A throwing constructor does not run its own destructor, so anything acquired before the
+        // throw is lost. Both CUDA_CHECKs can fail — a large graph exhausting device memory is the
+        // ordinary way — and they sat after both host allocations.
+        distances = new int[num_vertices];
+        try {
+            visited = new bool[num_vertices];
+            CUDA_CHECK(cudaMalloc(&d_distances, num_vertices * sizeof(int)));
+            CUDA_CHECK(cudaMalloc(&d_visited, num_vertices * sizeof(bool)));
+        } catch (...) {
+            clear();
+            throw;
+        }
     }
-}
 
-BFSResult::~BFSResult() {
-    clear();
-}
-
-BFSResult::BFSResult(BFSResult&& other) noexcept
-    : num_vertices(other.num_vertices),
-      distances(other.distances),
-      d_distances(other.d_distances),
-      visited(other.visited),
-      d_visited(other.d_visited),
-      visited_count(other.visited_count),
-      max_distance(other.max_distance) {
-    other.num_vertices = 0;
-    other.distances = nullptr;
-    other.d_distances = nullptr;
-    other.visited = nullptr;
-    other.d_visited = nullptr;
-    other.visited_count = 0;
-    other.max_distance = 0;
-}
-
-BFSResult& BFSResult::operator=(BFSResult&& other) noexcept {
-    if (this != &other) {
+    BFSResult::~BFSResult() {
         clear();
-        num_vertices = other.num_vertices;
-        distances = other.distances;
-        d_distances = other.d_distances;
-        visited = other.visited;
-        d_visited = other.d_visited;
-        visited_count = other.visited_count;
-        max_distance = other.max_distance;
+    }
+
+    BFSResult::BFSResult(BFSResult&& other) noexcept
+        : num_vertices(other.num_vertices),
+          distances(other.distances),
+          d_distances(other.d_distances),
+          visited(other.visited),
+          d_visited(other.d_visited),
+          visited_count(other.visited_count),
+          max_distance(other.max_distance) {
         other.num_vertices = 0;
         other.distances = nullptr;
         other.d_distances = nullptr;
@@ -81,247 +62,222 @@ BFSResult& BFSResult::operator=(BFSResult&& other) noexcept {
         other.visited_count = 0;
         other.max_distance = 0;
     }
-    return *this;
-}
 
-void BFSResult::init_source(int source) {
-    // A moved-from, cleared or empty result owns no buffers: the fills below
-    // would be no-ops over zero elements, but distances[source] and
-    // visited[source] then write through null — measured "dumped core".
-    if (num_vertices <= 0 || distances == nullptr || visited == nullptr) {
-        throw std::invalid_argument(
-            "BFSResult::init_source: the result holds no vertices");
+    BFSResult& BFSResult::operator=(BFSResult&& other) noexcept {
+        if (this != &other) {
+            clear();
+            num_vertices = other.num_vertices;
+            distances = other.distances;
+            d_distances = other.d_distances;
+            visited = other.visited;
+            d_visited = other.d_visited;
+            visited_count = other.visited_count;
+            max_distance = other.max_distance;
+            other.num_vertices = 0;
+            other.distances = nullptr;
+            other.d_distances = nullptr;
+            other.visited = nullptr;
+            other.d_visited = nullptr;
+            other.visited_count = 0;
+            other.max_distance = 0;
+        }
+        return *this;
     }
-    // source indexes both arrays directly, so an out-of-range vertex would write
-    // past them.
-    if (source < 0 || source >= num_vertices) {
-        throw std::invalid_argument(
-            "BFSResult::init_source: source " + std::to_string(source) +
-            " is outside [0, " + std::to_string(num_vertices) + ")");
+
+    void BFSResult::init_source(int source) {
+        // A moved-from, cleared or empty result owns no buffers: the fills below
+        // would be no-ops over zero elements, but distances[source] and
+        // visited[source] then write through null — measured "dumped core".
+        if (num_vertices <= 0 || distances == nullptr || visited == nullptr) {
+            throw std::invalid_argument("BFSResult::init_source: the result holds no vertices");
+        }
+        // source indexes both arrays directly, so an out-of-range vertex would write
+        // past them.
+        if (source < 0 || source >= num_vertices) {
+            throw std::invalid_argument("BFSResult::init_source: source " + std::to_string(source) + " is outside [0, " + std::to_string(num_vertices) + ")");
+        }
+
+        std::fill(distances, distances + num_vertices, -1);
+        std::fill(visited, visited + num_vertices, false);
+        distances[source] = 0;
+        visited[source] = true;
     }
 
-    std::fill(distances, distances + num_vertices, -1);
-    std::fill(visited, visited + num_vertices, false);
-    distances[source] = 0;
-    visited[source] = true;
-}
-
-void BFSResult::upload() {
-    CUDA_CHECK(cudaMemcpy(d_distances, distances, num_vertices * sizeof(int), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_visited, visited, num_vertices * sizeof(bool), cudaMemcpyHostToDevice));
-}
-
-void BFSResult::download() {
-    CUDA_CHECK(cudaMemcpy(distances, d_distances, num_vertices * sizeof(int), cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(visited, d_visited, num_vertices * sizeof(bool), cudaMemcpyDeviceToHost));
-}
-
-void BFSResult::clear() {
-    delete[] distances;
-    delete[] visited;
-    if (d_distances) {
-        cudaFree(d_distances);
-        d_distances = nullptr;
+    void BFSResult::upload() {
+        CUDA_CHECK(cudaMemcpy(d_distances, distances, num_vertices * sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_visited, visited, num_vertices * sizeof(bool), cudaMemcpyHostToDevice));
     }
-    if (d_visited) {
-        cudaFree(d_visited);
-        d_visited = nullptr;
+
+    void BFSResult::download() {
+        CUDA_CHECK(cudaMemcpy(distances, d_distances, num_vertices * sizeof(int), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(visited, d_visited, num_vertices * sizeof(bool), cudaMemcpyDeviceToHost));
     }
-    distances = nullptr;
-    visited = nullptr;
-    // The counts describe the buffers. Leaving them set after the buffers are
-    // released made a later upload()/download() copy num_vertices elements
-    // through null pointers, and memory_usage() report memory that is gone.
-    num_vertices = 0;
-    visited_count = 0;
-}
 
-size_t BFSResult::memory_usage() const {
-    size_t host_mem = num_vertices * (sizeof(int) + sizeof(bool));
-    size_t device_mem = num_vertices * (sizeof(int) + sizeof(bool));
-    return host_mem + device_mem;
-}
+    void BFSResult::clear() {
+        delete[] distances;
+        delete[] visited;
+        if (d_distances) {
+            cudaFree(d_distances);
+            d_distances = nullptr;
+        }
+        if (d_visited) {
+            cudaFree(d_visited);
+            d_visited = nullptr;
+        }
+        distances = nullptr;
+        visited = nullptr;
+        // The counts describe the buffers. Leaving them set after the buffers are
+        // released made a later upload()/download() copy num_vertices elements
+        // through null pointers, and memory_usage() report memory that is gone.
+        num_vertices = 0;
+        visited_count = 0;
+    }
 
-namespace {
+    size_t BFSResult::memory_usage() const {
+        size_t host_mem = num_vertices * (sizeof(int) + sizeof(bool));
+        size_t device_mem = num_vertices * (sizeof(int) + sizeof(bool));
+        return host_mem + device_mem;
+    }
 
-__global__ void bfs_frontier_kernel(
-    const int* row_offsets,
-    const int* columns,
-    const int* distances,
-    const bool* visited,
-    int* next_distances,
-    bool* next_visited,
-    int current_level,
-    int num_vertices
-) {
-    int v = blockIdx.x * blockDim.x + threadIdx.x;
-    if (v >= num_vertices) return;
+    namespace {
 
-    if (distances[v] == current_level) {
-        int start = row_offsets[v];
-        int end = row_offsets[v + 1];
-        for (int i = start; i < end; ++i) {
-            int neighbor = columns[i];
-            if (!visited[neighbor]) {
-                next_visited[neighbor] = true;
-                next_distances[neighbor] = current_level + 1;
+        __global__ void bfs_frontier_kernel(
+            const int* row_offsets, const int* columns, const int* distances, const bool* visited, int* next_distances, bool* next_visited, int current_level, int num_vertices) {
+            int v = blockIdx.x * blockDim.x + threadIdx.x;
+            if (v >= num_vertices) {
+                return;
+            }
+
+            if (distances[v] == current_level) {
+                int start = row_offsets[v];
+                int end = row_offsets[v + 1];
+                for (int i = start; i < end; ++i) {
+                    int neighbor = columns[i];
+                    if (!visited[neighbor]) {
+                        next_visited[neighbor] = true;
+                        next_distances[neighbor] = current_level + 1;
+                    }
+                }
             }
         }
-    }
-}
 
-__global__ void bfs_merge_kernel(
-    const int* next_distances,
-    const bool* next_visited,
-    int* distances,
-    bool* visited,
-    int* changed,
-    int num_vertices
-) {
-    int v = blockIdx.x * blockDim.x + threadIdx.x;
-    if (v >= num_vertices) return;
+        __global__ void bfs_merge_kernel(const int* next_distances, const bool* next_visited, int* distances, bool* visited, int* changed, int num_vertices) {
+            int v = blockIdx.x * blockDim.x + threadIdx.x;
+            if (v >= num_vertices) {
+                return;
+            }
 
-    if (next_visited[v] && !visited[v]) {
-        visited[v] = true;
-        distances[v] = next_distances[v];
-        *changed = 1;
-    }
-}
+            if (next_visited[v] && !visited[v]) {
+                visited[v] = true;
+                distances[v] = next_distances[v];
+                *changed = 1;
+            }
+        }
 
-}  // anonymous namespace
+    }  // anonymous namespace
 
-BFSResult bfs(
-    const CSRGraph& graph,
-    int source,
-    cudaStream_t stream
-) {
-    BFSResult result(graph.num_vertices);
-    result.init_source(source);
-    result.upload();
+    BFSResult bfs(const CSRGraph& graph, int source, cudaStream_t stream) {
+        BFSResult result(graph.num_vertices);
+        result.init_source(source);
+        result.upload();
 
-    CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
-    non_const_graph.upload();
+        CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
+        non_const_graph.upload();
 
-    const int n = graph.num_vertices;
+        const int n = graph.num_vertices;
 
-    // Working state: d_dist/d_vis accumulate the explored set across levels,
-    // while d_next_dist/d_next_vis receive the freshly discovered frontier.
-    // Merging (bfs_merge_kernel) folds the frontier into the accumulated state
-    // and reports whether anything new was reached, which drives the loop.
-    // Owned by unique_ptr: the loop below issues a dozen CUDA_CHECKs between these
-    // allocations and the frees that used to sit at the end of the function, so any failure
-    // left five device buffers with no owner.
-    ::cuda::memory::unique_ptr<int> d_dist_owned(n);
-    ::cuda::memory::unique_ptr<bool> d_vis_owned(n);
-    ::cuda::memory::unique_ptr<int> d_next_dist_owned(n);
-    ::cuda::memory::unique_ptr<bool> d_next_vis_owned(n);
-    ::cuda::memory::unique_ptr<int> d_changed_owned(1);
-    int* d_dist = d_dist_owned.get();
-    bool* d_vis = d_vis_owned.get();
-    int* d_next_dist = d_next_dist_owned.get();
-    bool* d_next_vis = d_next_vis_owned.get();
-    int* d_changed = d_changed_owned.get();
+        // Working state: d_dist/d_vis accumulate the explored set across levels,
+        // while d_next_dist/d_next_vis receive the freshly discovered frontier.
+        // Merging (bfs_merge_kernel) folds the frontier into the accumulated state
+        // and reports whether anything new was reached, which drives the loop.
+        // Owned by unique_ptr: the loop below issues a dozen CUDA_CHECKs between these
+        // allocations and the frees that used to sit at the end of the function, so any failure
+        // left five device buffers with no owner.
+        ::cuda::memory::unique_ptr<int> d_dist_owned(n);
+        ::cuda::memory::unique_ptr<bool> d_vis_owned(n);
+        ::cuda::memory::unique_ptr<int> d_next_dist_owned(n);
+        ::cuda::memory::unique_ptr<bool> d_next_vis_owned(n);
+        ::cuda::memory::unique_ptr<int> d_changed_owned(1);
+        int* d_dist = d_dist_owned.get();
+        bool* d_vis = d_vis_owned.get();
+        int* d_next_dist = d_next_dist_owned.get();
+        bool* d_next_vis = d_next_vis_owned.get();
+        int* d_changed = d_changed_owned.get();
 
-    CUDA_CHECK(cudaMemcpyAsync(d_dist, result.d_distances,
-                               n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_vis, result.d_visited,
-                               n * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_dist, result.d_distances, n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_vis, result.d_visited, n * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
 
-    // The frontier kernel only writes entries for this level's newly reached
-    // neighbors; slots it never touches must read as false in the merge, so
-    // zero both scratch buffers once up front (cudaMalloc does not guarantee
-    // zeroed memory).
-    CUDA_CHECK(cudaMemsetAsync(d_next_dist, 0, n * sizeof(int), stream));
-    CUDA_CHECK(cudaMemsetAsync(d_next_vis, 0, n * sizeof(bool), stream));
+        // The frontier kernel only writes entries for this level's newly reached
+        // neighbors; slots it never touches must read as false in the merge, so
+        // zero both scratch buffers once up front (cudaMalloc does not guarantee
+        // zeroed memory).
+        CUDA_CHECK(cudaMemsetAsync(d_next_dist, 0, n * sizeof(int), stream));
+        CUDA_CHECK(cudaMemsetAsync(d_next_vis, 0, n * sizeof(bool), stream));
 
-    const int block_size = 256;
-    const int grid_size = (n + block_size - 1) / block_size;
+        const int block_size = 256;
+        const int grid_size = (n + block_size - 1) / block_size;
 
-    int current_level = 0;
-    bool changed = true;
-    while (changed && current_level < n) {
-        CUDA_CHECK(cudaMemsetAsync(d_changed, 0, sizeof(int), stream));
+        int current_level = 0;
+        bool changed = true;
+        while (changed && current_level < n) {
+            CUDA_CHECK(cudaMemsetAsync(d_changed, 0, sizeof(int), stream));
 
-        bfs_frontier_kernel<<<grid_size, block_size, 0, stream>>>(
-            graph.d_row_offsets,
-            graph.d_columns,
-            d_dist,
-            d_vis,
-            d_next_dist,
-            d_next_vis,
-            current_level,
-            n
-        );
-        CUDA_CHECK(cudaGetLastError());
+            bfs_frontier_kernel<<<grid_size, block_size, 0, stream>>>(graph.d_row_offsets, graph.d_columns, d_dist, d_vis, d_next_dist, d_next_vis, current_level, n);
+            CUDA_CHECK(cudaGetLastError());
 
-        bfs_merge_kernel<<<grid_size, block_size, 0, stream>>>(
-            d_next_dist,
-            d_next_vis,
-            d_dist,
-            d_vis,
-            d_changed,
-            n
-        );
-        CUDA_CHECK(cudaGetLastError());
+            bfs_merge_kernel<<<grid_size, block_size, 0, stream>>>(d_next_dist, d_next_vis, d_dist, d_vis, d_changed, n);
+            CUDA_CHECK(cudaGetLastError());
 
+            if (stream) {
+                CUDA_CHECK(cudaStreamSynchronize(stream));
+            } else {
+                CUDA_CHECK(cudaDeviceSynchronize());
+            }
+
+            int host_changed = 0;
+            CUDA_CHECK(cudaMemcpy(&host_changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost));
+            changed = host_changed != 0;
+
+            current_level++;
+        }
+
+        CUDA_CHECK(cudaMemcpyAsync(result.d_distances, d_dist, n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(result.d_visited, d_vis, n * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
         if (stream) {
             CUDA_CHECK(cudaStreamSynchronize(stream));
-        } else {
-            CUDA_CHECK(cudaDeviceSynchronize());
         }
 
-        int host_changed = 0;
-        CUDA_CHECK(cudaMemcpy(&host_changed, d_changed, sizeof(int),
-                              cudaMemcpyDeviceToHost));
-        changed = host_changed != 0;
+        result.download();
 
-        current_level++;
-    }
-
-    CUDA_CHECK(cudaMemcpyAsync(result.d_distances, d_dist,
-                               n * sizeof(int), cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(result.d_visited, d_vis,
-                               n * sizeof(bool), cudaMemcpyDeviceToDevice, stream));
-    if (stream) {
-        CUDA_CHECK(cudaStreamSynchronize(stream));
-    }
-
-    result.download();
-
-    result.visited_count = 0;
-    result.max_distance = 0;
-    for (int v = 0; v < n; ++v) {
-        if (result.distances[v] >= 0) {
-            result.visited_count++;
-            result.max_distance = std::max(result.max_distance, result.distances[v]);
+        result.visited_count = 0;
+        result.max_distance = 0;
+        for (int v = 0; v < n; ++v) {
+            if (result.distances[v] >= 0) {
+                result.visited_count++;
+                result.max_distance = std::max(result.max_distance, result.distances[v]);
+            }
         }
+
+        // The working buffers are released by their destructors.
+        return result;
     }
 
-    // The working buffers are released by their destructors.
-    return result;
-}
+    void bfs_async(const CSRGraph& graph, BFSResult& result, int source, cudaStream_t stream) {
+        CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
+        non_const_graph.upload();
+        result = bfs(non_const_graph, source, stream);
+    }
 
-void bfs_async(
-    const CSRGraph& graph,
-    BFSResult& result,
-    int source,
-    cudaStream_t stream
-) {
-    CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
-    non_const_graph.upload();
-    result = bfs(non_const_graph, source, stream);
-}
-
-// See the declaration in bfs.h: this counts distance-zero vertices, which for a completed
-// single-source BFS is just the source. It does not and cannot count connected components.
-int count_reachable_components(const BFSResult& result) {
-    int components = 0;
-    for (int v = 0; v < result.num_vertices; ++v) {
-        if (result.distances[v] == 0) {
-            components++;
+    // See the declaration in bfs.h: this counts distance-zero vertices, which for a completed
+    // single-source BFS is just the source. It does not and cannot count connected components.
+    int count_reachable_components(const BFSResult& result) {
+        int components = 0;
+        for (int v = 0; v < result.num_vertices; ++v) {
+            if (result.distances[v] == 0) {
+                components++;
+            }
         }
+        return components;
     }
-    return components;
-}
 
 }  // namespace cuda::graph

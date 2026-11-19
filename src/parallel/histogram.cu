@@ -31,7 +31,8 @@ __global__ __launch_bounds__(HIST_BLOCK_SIZE, 2) void histogramKernel(const uint
     }
 }
 
-__global__ __launch_bounds__(HIST_BLOCK_SIZE, 2) void histogramPerChannelKernel(const uint8_t* input, uint32_t* histogram_r, uint32_t* histogram_g, uint32_t* histogram_b, size_t width, size_t height) {
+__global__ __launch_bounds__(HIST_BLOCK_SIZE, 2) void histogramPerChannelKernel(
+    const uint8_t* input, uint32_t* histogram_r, uint32_t* histogram_g, uint32_t* histogram_b, size_t width, size_t height) {
     __shared__ uint32_t temp_r[HIST_BINS];
     __shared__ uint32_t temp_g[HIST_BINS];
     __shared__ uint32_t temp_b[HIST_BINS];
@@ -72,11 +73,8 @@ void computeHistogram(const uint8_t* d_input, uint32_t* d_histogram, size_t widt
     // still wrote every index. Clearing HIST_BINS is the only correct size; a
     // different bin count needs a value-remapping kernel, which does not exist.
     if (bins != HIST_BINS) {
-        throw std::invalid_argument(
-            "computeHistogram: the kernel produces exactly " +
-            std::to_string(HIST_BINS) +
-            " buckets (one per uint8_t value); requested " +
-            std::to_string(bins));
+        throw std::invalid_argument("computeHistogram: the kernel produces exactly " + std::to_string(HIST_BINS) + " buckets (one per uint8_t value); requested "
+                                    + std::to_string(bins));
     }
     CUDA_CHECK(cudaMemset(d_histogram, 0, HIST_BINS * sizeof(uint32_t)));
 

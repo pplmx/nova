@@ -11,144 +11,139 @@
 
 namespace cuda::pipeline {
 
-PipelineScheduler::PipelineScheduler(
-    ::cuda::nccl::NcclContext& ctx,
-    int num_stages,
-    int num_microbatches,
-    int microbatch_size)
-    : ctx_(ctx),
-      num_stages_(num_stages),
-      num_microbatches_(num_microbatches),
-      microbatch_size_(microbatch_size),
-      schedule_type_(ScheduleType::OneForwardOneBackward) {
-
-    CUDA_CHECK(cudaEventCreate(&completion_event_));
-}
-
-PipelineScheduler::~PipelineScheduler() {
-    // Not using CUDA_CHECK here: throwing in a destructor is undefined behavior
-    cudaEventDestroy(completion_event_);
-}
-
-void PipelineScheduler::set_forward_fn(ForwardFn fn) {
-    forward_fn_ = std::move(fn);
-}
-
-void PipelineScheduler::set_backward_fn(BackwardFn fn) {
-    backward_fn_ = std::move(fn);
-}
-
-void PipelineScheduler::set_schedule_type(ScheduleType type) {
-    schedule_type_ = type;
-}
-
-void PipelineScheduler::run() {
-    if (schedule_type_ == ScheduleType::OneForwardOneBackward) {
-        schedule_1f1b();
-    } else {
-        schedule_interleaved();
-    }
-    CUDA_CHECK(cudaEventRecord(completion_event_, 0));
-    completed_ = true;
-}
-
-void PipelineScheduler::wait() {
-    if (completed_) {
-        CUDA_CHECK(cudaEventSynchronize(completion_event_));
-    }
-}
-
-void PipelineScheduler::schedule_1f1b() {
-    if (!forward_fn_ || !backward_fn_) {
-        return;
+    PipelineScheduler::PipelineScheduler(::cuda::nccl::NcclContext& ctx, int num_stages, int num_microbatches, int microbatch_size)
+        : ctx_(ctx),
+          num_stages_(num_stages),
+          num_microbatches_(num_microbatches),
+          microbatch_size_(microbatch_size),
+          schedule_type_(ScheduleType::OneForwardOneBackward) {
+        CUDA_CHECK(cudaEventCreate(&completion_event_));
     }
 
-    int K = num_stages_;
-    int M = num_microbatches_;
+    PipelineScheduler::~PipelineScheduler() {
+        // Not using CUDA_CHECK here: throwing in a destructor is undefined behavior
+        cudaEventDestroy(completion_event_);
+    }
 
-    // The old loop dropped almost all work: the steady-state forward called
-    // run_forward(step, ...) with stage = step >= K — silently ignored by
-    // run_forward's bounds check — and the warmup phase only ever issued stage
-    // 0, so most (stage, microbatch) pairs never ran. This scheduler has no
-    // per-rank event model, so the dependency-safe contract is coverage:
-    // every (stage, microbatch) must run forward exactly once and backward
-    // exactly once, forwards in pipeline order (a stage consumes each
-    // microbatch before the next stage does) and backwards draining in reverse.
-    for (int stage = 0; stage < K; ++stage) {
-        for (int mb = 0; mb < M; ++mb) {
-            run_forward(stage, mb);
+    void PipelineScheduler::set_forward_fn(ForwardFn fn) {
+        forward_fn_ = std::move(fn);
+    }
+
+    void PipelineScheduler::set_backward_fn(BackwardFn fn) {
+        backward_fn_ = std::move(fn);
+    }
+
+    void PipelineScheduler::set_schedule_type(ScheduleType type) {
+        schedule_type_ = type;
+    }
+
+    void PipelineScheduler::run() {
+        if (schedule_type_ == ScheduleType::OneForwardOneBackward) {
+            schedule_1f1b();
+        } else {
+            schedule_interleaved();
+        }
+        CUDA_CHECK(cudaEventRecord(completion_event_, 0));
+        completed_ = true;
+    }
+
+    void PipelineScheduler::wait() {
+        if (completed_) {
+            CUDA_CHECK(cudaEventSynchronize(completion_event_));
         }
     }
-    for (int stage = K - 1; stage >= 0; --stage) {
-        for (int mb = M - 1; mb >= 0; --mb) {
-            run_backward(stage, mb);
+
+    void PipelineScheduler::schedule_1f1b() {
+        if (!forward_fn_ || !backward_fn_) {
+            return;
         }
-    }
-}
 
-void PipelineScheduler::schedule_interleaved() {
-    if (!forward_fn_ || !backward_fn_) {
-        return;
-    }
+        int K = num_stages_;
+        int M = num_microbatches_;
 
-    int K = num_stages_;
-    int M = num_microbatches_;
-    int num_chunks = K;
-
-    for (int chunk = 0; chunk < num_chunks; ++chunk) {
-        for (int mb = chunk; mb < M; mb += num_chunks) {
-            for (int stage = 0; stage < K; ++stage) {
+        // The old loop dropped almost all work: the steady-state forward called
+        // run_forward(step, ...) with stage = step >= K — silently ignored by
+        // run_forward's bounds check — and the warmup phase only ever issued stage
+        // 0, so most (stage, microbatch) pairs never ran. This scheduler has no
+        // per-rank event model, so the dependency-safe contract is coverage:
+        // every (stage, microbatch) must run forward exactly once and backward
+        // exactly once, forwards in pipeline order (a stage consumes each
+        // microbatch before the next stage does) and backwards draining in reverse.
+        for (int stage = 0; stage < K; ++stage) {
+            for (int mb = 0; mb < M; ++mb) {
                 run_forward(stage, mb);
             }
         }
-
-        for (int mb = chunk; mb < M; mb += num_chunks) {
-            for (int stage = K - 1; stage >= 0; --stage) {
+        for (int stage = K - 1; stage >= 0; --stage) {
+            for (int mb = M - 1; mb >= 0; --mb) {
                 run_backward(stage, mb);
             }
         }
     }
-}
 
-void PipelineScheduler::run_forward(int stage, int microbatch) {
-    if (forward_fn_ && stage >= 0 && stage < num_stages_ && microbatch >= 0 && microbatch < num_microbatches_) {
-        forward_fn_(stage, microbatch);
-    }
-}
+    void PipelineScheduler::schedule_interleaved() {
+        if (!forward_fn_ || !backward_fn_) {
+            return;
+        }
 
-void PipelineScheduler::run_backward(int stage, int microbatch) {
-    if (backward_fn_ && stage >= 0 && stage < num_stages_ && microbatch >= 0 && microbatch < num_microbatches_) {
-        backward_fn_(stage, microbatch);
-    }
-}
+        int K = num_stages_;
+        int M = num_microbatches_;
+        int num_chunks = K;
 
-int PipelineScheduler::num_stages() const {
-    return num_stages_;
-}
+        for (int chunk = 0; chunk < num_chunks; ++chunk) {
+            for (int mb = chunk; mb < M; mb += num_chunks) {
+                for (int stage = 0; stage < K; ++stage) {
+                    run_forward(stage, mb);
+                }
+            }
 
-int PipelineScheduler::num_microbatches() const {
-    return num_microbatches_;
-}
-
-float PipelineScheduler::bubble_overhead_percent() const {
-    if (num_stages_ <= 1) {
-        return 0.0f;
+            for (int mb = chunk; mb < M; mb += num_chunks) {
+                for (int stage = K - 1; stage >= 0; --stage) {
+                    run_backward(stage, mb);
+                }
+            }
+        }
     }
 
-    int K = num_stages_;
-    int M = num_microbatches_;
+    void PipelineScheduler::run_forward(int stage, int microbatch) {
+        if (forward_fn_ && stage >= 0 && stage < num_stages_ && microbatch >= 0 && microbatch < num_microbatches_) {
+            forward_fn_(stage, microbatch);
+        }
+    }
 
-    float total_slots = static_cast<float>(M + K - 1);
-    float bubble_slots = static_cast<float>(K - 1);
-    float bubble_percent = (bubble_slots / total_slots) * 100.0f;
+    void PipelineScheduler::run_backward(int stage, int microbatch) {
+        if (backward_fn_ && stage >= 0 && stage < num_stages_ && microbatch >= 0 && microbatch < num_microbatches_) {
+            backward_fn_(stage, microbatch);
+        }
+    }
 
-    return bubble_percent;
-}
+    int PipelineScheduler::num_stages() const {
+        return num_stages_;
+    }
 
-int recommend_microbatches(int num_stages) {
-    constexpr int MIN_MICROBATCHES = 4;
-    int recommended = num_stages * MIN_MICROBATCHES;
-    return std::max(recommended, 16);
-}
+    int PipelineScheduler::num_microbatches() const {
+        return num_microbatches_;
+    }
+
+    float PipelineScheduler::bubble_overhead_percent() const {
+        if (num_stages_ <= 1) {
+            return 0.0f;
+        }
+
+        int K = num_stages_;
+        int M = num_microbatches_;
+
+        float total_slots = static_cast<float>(M + K - 1);
+        float bubble_slots = static_cast<float>(K - 1);
+        float bubble_percent = (bubble_slots / total_slots) * 100.0f;
+
+        return bubble_percent;
+    }
+
+    int recommend_microbatches(int num_stages) {
+        constexpr int MIN_MICROBATCHES = 4;
+        int recommended = num_stages * MIN_MICROBATCHES;
+        return std::max(recommended, 16);
+    }
 
 }  // namespace cuda::pipeline

@@ -8,168 +8,145 @@
 
 namespace cuda::observability {
 
-void KernelStatsCollector::record_kernel(const char* name,
-                                         cudaEvent_t start,
-                                         cudaEvent_t end,
-                                         size_t blocks,
-                                         size_t threads_per_block) {
-    float elapsed_us = 0;
-    CUDA_CHECK(cudaEventElapsedTime(&elapsed_us, start, end));
-    elapsed_us *= 1000.0;
+    void KernelStatsCollector::record_kernel(const char* name, cudaEvent_t start, cudaEvent_t end, size_t blocks, size_t threads_per_block) {
+        float elapsed_us = 0;
+        CUDA_CHECK(cudaEventElapsedTime(&elapsed_us, start, end));
+        elapsed_us *= 1000.0;
 
-    bool found = false;
-    for (auto& stat : stats_) {
-        if (stat.kernel_name == name) {
-            found = true;
-            stat.invocations++;
-            stat.total_time_us += elapsed_us;
-            // A launcher-created entry starts at 0 (see record_launch). The first
-            // timed invocation must seed the minimum rather than be clamped by it.
-            if (stat.invocations == 1) {
-                stat.min_time_us = elapsed_us;
-                stat.max_time_us = elapsed_us;
-            } else {
-                stat.min_time_us =
-                    std::min(stat.min_time_us, static_cast<double>(elapsed_us));
+        bool found = false;
+        for (auto& stat : stats_) {
+            if (stat.kernel_name == name) {
+                found = true;
+                stat.invocations++;
+                stat.total_time_us += elapsed_us;
+                // A launcher-created entry starts at 0 (see record_launch). The first
+                // timed invocation must seed the minimum rather than be clamped by it.
+                if (stat.invocations == 1) {
+                    stat.min_time_us = elapsed_us;
+                    stat.max_time_us = elapsed_us;
+                } else {
+                    stat.min_time_us = std::min(stat.min_time_us, static_cast<double>(elapsed_us));
+                }
+                stat.max_time_us = std::max(stat.max_time_us, static_cast<double>(elapsed_us));
+                stat.avg_time_us = stat.total_time_us / stat.invocations;
+                stat.blocks_launched += blocks;
+                stat.threads_per_block = threads_per_block;
+                break;
             }
-            stat.max_time_us = std::max(stat.max_time_us, static_cast<double>(elapsed_us));
-            stat.avg_time_us = stat.total_time_us / stat.invocations;
-            stat.blocks_launched += blocks;
+        }
+
+        if (!found) {
+            KernelStats stat;
+            stat.kernel_name = name;
+            stat.invocations = 1;
+            stat.total_time_us = elapsed_us;
+            stat.min_time_us = elapsed_us;
+            stat.max_time_us = elapsed_us;
+            stat.avg_time_us = elapsed_us;
+            stat.blocks_launched = blocks;
             stat.threads_per_block = threads_per_block;
-            break;
+            stats_.push_back(stat);
         }
     }
 
-    if (!found) {
-        KernelStats stat;
-        stat.kernel_name = name;
-        stat.invocations = 1;
-        stat.total_time_us = elapsed_us;
-        stat.min_time_us = elapsed_us;
-        stat.max_time_us = elapsed_us;
-        stat.avg_time_us = elapsed_us;
-        stat.blocks_launched = blocks;
-        stat.threads_per_block = threads_per_block;
-        stats_.push_back(stat);
-    }
-}
+    void KernelStatsCollector::record_launch(const char* name, size_t blocks, size_t threads_per_block) {
+        bool found = false;
+        for (auto& stat : stats_) {
+            if (stat.kernel_name == name) {
+                found = true;
+                stat.blocks_launched += blocks;
+                stat.threads_per_block = threads_per_block;
+                break;
+            }
+        }
 
-void KernelStatsCollector::record_launch(const char* name,
-                                         size_t blocks,
-                                         size_t threads_per_block) {
-    bool found = false;
-    for (auto& stat : stats_) {
-        if (stat.kernel_name == name) {
-            found = true;
-            stat.blocks_launched += blocks;
+        if (!found) {
+            KernelStats stat;
+            stat.kernel_name = name;
+            stat.invocations = 0;
+            stat.blocks_launched = blocks;
             stat.threads_per_block = threads_per_block;
-            break;
+            // min_time_us defaults to DBL_MAX so the first recorded timing replaces
+            // it. An entry created here has never been timed, so reporting DBL_MAX
+            // leaked that sentinel to callers while max_time_us and avg_time_us in the
+            // same struct reported 0. Nothing has been measured, so nothing is minimal.
+            stat.min_time_us = 0.0;
+            stats_.push_back(stat);
         }
     }
 
-    if (!found) {
-        KernelStats stat;
-        stat.kernel_name = name;
-        stat.invocations = 0;
-        stat.blocks_launched = blocks;
-        stat.threads_per_block = threads_per_block;
-        // min_time_us defaults to DBL_MAX so the first recorded timing replaces
-        // it. An entry created here has never been timed, so reporting DBL_MAX
-        // leaked that sentinel to callers while max_time_us and avg_time_us in the
-        // same struct reported 0. Nothing has been measured, so nothing is minimal.
-        stat.min_time_us = 0.0;
-        stats_.push_back(stat);
-    }
-}
-
-KernelStats KernelStatsCollector::get_stats(const char* name) const {
-    for (const auto& stat : stats_) {
-        if (stat.kernel_name == name) {
-            return stat;
+    KernelStats KernelStatsCollector::get_stats(const char* name) const {
+        for (const auto& stat : stats_) {
+            if (stat.kernel_name == name) {
+                return stat;
+            }
         }
-    }
-    return KernelStats{};
-}
-
-ScopedKernelTiming::ScopedKernelTiming(const char* name,
-                                       KernelStatsCollector& collector,
-                                       size_t blocks,
-                                       size_t threads_per_block)
-    : name_(name), collector_(collector), blocks_(blocks), threads_per_block_(threads_per_block) {
-    CUDA_CHECK(cudaEventCreate(&start_));
-    CUDA_CHECK(cudaEventCreate(&end_));
-    CUDA_CHECK(cudaEventRecord(start_, collector.stream()));
-}
-
-ScopedKernelTiming::~ScopedKernelTiming() {
-    // Not using CUDA_CHECK here: throwing in a destructor is undefined
-    // behavior (C++11 destructors default to noexcept). Event cleanup
-    // failures are non-critical during teardown.
-    cudaEventRecord(end_, collector_.stream());
-    cudaStreamSynchronize(collector_.stream());
-    collector_.record_kernel(name_, start_, end_, blocks_, threads_per_block_);
-    cudaEventDestroy(start_);
-    cudaEventDestroy(end_);
-}
-
-OccupancyMetrics measure_occupancy(const void* kernel_func,
-                                   size_t dynamic_smem_bytes,
-                                   int device) {
-    OccupancyMetrics metrics{};
-
-    if (!kernel_func) {
-        return metrics;
+        return KernelStats{};
     }
 
-    int old_device;
-    CUDA_CHECK(cudaGetDevice(&old_device));
-    if (device >= 0) {
-        CUDA_CHECK(cudaSetDevice(device));
+    ScopedKernelTiming::ScopedKernelTiming(const char* name, KernelStatsCollector& collector, size_t blocks, size_t threads_per_block)
+        : name_(name),
+          collector_(collector),
+          blocks_(blocks),
+          threads_per_block_(threads_per_block) {
+        CUDA_CHECK(cudaEventCreate(&start_));
+        CUDA_CHECK(cudaEventCreate(&end_));
+        CUDA_CHECK(cudaEventRecord(start_, collector.stream()));
     }
 
-    int num_blocks = 0;
-    int active_blocks_per_sm = 0;
-    size_t dynamic_smem = dynamic_smem_bytes;
-
-    cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &active_blocks_per_sm,
-        kernel_func,
-        256,
-        dynamic_smem);
-
-    if (err == cudaSuccess) {
-        metrics.active_blocks_per_sm = static_cast<size_t>(active_blocks_per_sm);
+    ScopedKernelTiming::~ScopedKernelTiming() {
+        // Not using CUDA_CHECK here: throwing in a destructor is undefined
+        // behavior (C++11 destructors default to noexcept). Event cleanup
+        // failures are non-critical during teardown.
+        cudaEventRecord(end_, collector_.stream());
+        cudaStreamSynchronize(collector_.stream());
+        collector_.record_kernel(name_, start_, end_, blocks_, threads_per_block_);
+        cudaEventDestroy(start_);
+        cudaEventDestroy(end_);
     }
 
-    cudaDeviceProp prop;
-    if (cudaGetDeviceProperties(&prop, device) == cudaSuccess) {
-        int block_size = 256;
-        err = cudaOccupancyMaxPotentialBlockSize(
-            &block_size,
-            &active_blocks_per_sm,
-            kernel_func,
-            dynamic_smem,
-            block_size);
+    OccupancyMetrics measure_occupancy(const void* kernel_func, size_t dynamic_smem_bytes, int device) {
+        OccupancyMetrics metrics{};
+
+        if (!kernel_func) {
+            return metrics;
+        }
+
+        int old_device;
+        CUDA_CHECK(cudaGetDevice(&old_device));
+        if (device >= 0) {
+            CUDA_CHECK(cudaSetDevice(device));
+        }
+
+        int num_blocks = 0;
+        int active_blocks_per_sm = 0;
+        size_t dynamic_smem = dynamic_smem_bytes;
+
+        cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active_blocks_per_sm, kernel_func, 256, dynamic_smem);
 
         if (err == cudaSuccess) {
-            metrics.max_blocks_per_sm = static_cast<size_t>(active_blocks_per_sm);
-            int threads_per_block = block_size;
-            int max_blocks;
-            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &max_blocks,
-                kernel_func,
-                threads_per_block,
-                dynamic_smem));
-
-            int max_threads_per_sm = prop.maxThreadsPerMultiProcessor;
-            int threads_per_block_for_occupancy = threads_per_block * max_blocks;
-            metrics.theoretical_occupancy =
-                static_cast<double>(threads_per_block_for_occupancy) / max_threads_per_sm;
+            metrics.active_blocks_per_sm = static_cast<size_t>(active_blocks_per_sm);
         }
-    }
 
-    CUDA_CHECK(cudaSetDevice(old_device));
-    return metrics;
-}
+        cudaDeviceProp prop;
+        if (cudaGetDeviceProperties(&prop, device) == cudaSuccess) {
+            int block_size = 256;
+            err = cudaOccupancyMaxPotentialBlockSize(&block_size, &active_blocks_per_sm, kernel_func, dynamic_smem, block_size);
+
+            if (err == cudaSuccess) {
+                metrics.max_blocks_per_sm = static_cast<size_t>(active_blocks_per_sm);
+                int threads_per_block = block_size;
+                int max_blocks;
+                CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks, kernel_func, threads_per_block, dynamic_smem));
+
+                int max_threads_per_sm = prop.maxThreadsPerMultiProcessor;
+                int threads_per_block_for_occupancy = threads_per_block * max_blocks;
+                metrics.theoretical_occupancy = static_cast<double>(threads_per_block_for_occupancy) / max_threads_per_sm;
+            }
+        }
+
+        CUDA_CHECK(cudaSetDevice(old_device));
+        return metrics;
+    }
 
 }  // namespace cuda::observability

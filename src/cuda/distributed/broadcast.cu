@@ -24,87 +24,78 @@
 
 namespace cuda::distributed {
 
-namespace {
+    namespace {
 
-int current_device() {
-    int device = 0;
-    CUDA_CHECK(cudaGetDevice(&device));
-    return device;
-}
+        int current_device() {
+            int device = 0;
+            CUDA_CHECK(cudaGetDevice(&device));
+            return device;
+        }
 
-void require_nccl_initialized(const char* fn) {
-    auto& ctx = cuda::nccl::NcclContext::instance();
-    if (!ctx.has_nccl()) {
-        throw cuda::nccl::NcclException(
-            "multi-GPU broadcast requires an initialized NCCL context (call "
-            "NcclContext::instance().initialize() from one thread per rank); "
-            "the single-GPU fallback applies only when device_count <= 1",
-            ncclInternalError, fn, __FILE__, __LINE__);
-    }
-}
+        void require_nccl_initialized(const char* fn) {
+            auto& ctx = cuda::nccl::NcclContext::instance();
+            if (!ctx.has_nccl()) {
+                throw cuda::nccl::NcclException(
+                    "multi-GPU broadcast requires an initialized NCCL context (call "
+                    "NcclContext::instance().initialize() from one thread per rank); "
+                    "the single-GPU fallback applies only when device_count <= 1",
+                    ncclInternalError,
+                    fn,
+                    __FILE__,
+                    __LINE__);
+            }
+        }
 
-}  // anonymous namespace
+    }  // anonymous namespace
 
-void DistributedBroadcast::broadcast(void* data, size_t count, int root, cudaDataType dtype) {
-    auto& mesh = cuda::mesh::DeviceMesh::instance();
-    mesh.initialize();
+    void DistributedBroadcast::broadcast(void* data, size_t count, int root, cudaDataType dtype) {
+        auto& mesh = cuda::mesh::DeviceMesh::instance();
+        mesh.initialize();
 
-    int n = mesh.device_count();
+        int n = mesh.device_count();
 
-    // Single-GPU broadcast: nothing to receive.
-    if (n <= 1) {
-        return;
-    }
+        // Single-GPU broadcast: nothing to receive.
+        if (n <= 1) {
+            return;
+        }
 
-    // Per-rank NCCL broadcast (blocking), in-place (data is both the root's
-    // source and every rank's destination). @p root is the broadcasting RANK
-    // within the NCCL group; for the default {0..n-1} group rank == device, but
-    // callers of a custom NcclContextConfig must pass
-    // NcclContext::rank_of_device(root_device), not the raw device index.
-    int device = current_device();
-    require_nccl_initialized("DistributedBroadcast::broadcast");
-    auto& ctx = cuda::nccl::NcclContext::instance();
+        // Per-rank NCCL broadcast (blocking), in-place (data is both the root's
+        // source and every rank's destination). @p root is the broadcasting RANK
+        // within the NCCL group; for the default {0..n-1} group rank == device, but
+        // callers of a custom NcclContextConfig must pass
+        // NcclContext::rank_of_device(root_device), not the raw device index.
+        int device = current_device();
+        require_nccl_initialized("DistributedBroadcast::broadcast");
+        auto& ctx = cuda::nccl::NcclContext::instance();
 
-    cuda::nccl::NcclBroadcast op(ctx);
-    cuda::nccl::NcclResult result = op.broadcast(
-        data, data, count,
-        cuda::nccl::NcclBroadcast::to_nccl_dtype(dtype),
-        root, ctx.get_stream(device));
-    if (!result.ok()) {
-        throw cuda::nccl::NcclException(result.error_message.c_str(), result.code,
-                                        "DistributedBroadcast::broadcast (NCCL)",
-                                        __FILE__, __LINE__);
-    }
-}
-
-void DistributedBroadcast::broadcast_async(void* data, size_t count,
-                                           int root, cudaStream_t stream,
-                                           cudaDataType dtype) {
-    auto& mesh = cuda::mesh::DeviceMesh::instance();
-    mesh.initialize();
-
-    int n = mesh.device_count();
-
-    // Single-GPU broadcast: nothing to receive.
-    if (n <= 1) {
-        return;
+        cuda::nccl::NcclBroadcast op(ctx);
+        cuda::nccl::NcclResult result = op.broadcast(data, data, count, cuda::nccl::NcclBroadcast::to_nccl_dtype(dtype), root, ctx.get_stream(device));
+        if (!result.ok()) {
+            throw cuda::nccl::NcclException(result.error_message.c_str(), result.code, "DistributedBroadcast::broadcast (NCCL)", __FILE__, __LINE__);
+        }
     }
 
-    // Per-rank NCCL broadcast on the caller's stream (the pre-v2.17 async
-    // ignored its stream).
-    require_nccl_initialized("DistributedBroadcast::broadcast_async");
-    auto& ctx = cuda::nccl::NcclContext::instance();
+    void DistributedBroadcast::broadcast_async(void* data, size_t count, int root, cudaStream_t stream, cudaDataType dtype) {
+        auto& mesh = cuda::mesh::DeviceMesh::instance();
+        mesh.initialize();
 
-    cuda::nccl::NcclBroadcast op(ctx);
-    cuda::nccl::NcclResult result = op.broadcast_async(
-        data, data, count,
-        cuda::nccl::NcclBroadcast::to_nccl_dtype(dtype),
-        root, stream);
-    if (!result.ok()) {
-        throw cuda::nccl::NcclException(result.error_message.c_str(), result.code,
-                                        "DistributedBroadcast::broadcast_async (NCCL)",
-                                        __FILE__, __LINE__);
+        int n = mesh.device_count();
+
+        // Single-GPU broadcast: nothing to receive.
+        if (n <= 1) {
+            return;
+        }
+
+        // Per-rank NCCL broadcast on the caller's stream (the pre-v2.17 async
+        // ignored its stream).
+        require_nccl_initialized("DistributedBroadcast::broadcast_async");
+        auto& ctx = cuda::nccl::NcclContext::instance();
+
+        cuda::nccl::NcclBroadcast op(ctx);
+        cuda::nccl::NcclResult result = op.broadcast_async(data, data, count, cuda::nccl::NcclBroadcast::to_nccl_dtype(dtype), root, stream);
+        if (!result.ok()) {
+            throw cuda::nccl::NcclException(result.error_message.c_str(), result.code, "DistributedBroadcast::broadcast_async (NCCL)", __FILE__, __LINE__);
+        }
     }
-}
 
 }  // namespace cuda::distributed

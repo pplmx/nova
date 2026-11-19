@@ -43,12 +43,10 @@ protected:
         int runtime_version, driver_version;
 
         cudaRuntimeGetVersion(&runtime_version);
-        std::cout << "CUDA Runtime Version: "
-                  << runtime_version / 1000 << "." << (runtime_version % 1000) / 10 << std::endl;
+        std::cout << "CUDA Runtime Version: " << runtime_version / 1000 << "." << (runtime_version % 1000) / 10 << std::endl;
 
         cudaDriverGetVersion(&driver_version);
-        std::cout << "CUDA Driver Version: "
-                  << driver_version / 1000 << "." << (driver_version % 1000) / 10 << std::endl;
+        std::cout << "CUDA Driver Version: " << driver_version / 1000 << "." << (driver_version % 1000) / 10 << std::endl;
     }
 };
 

@@ -15,8 +15,8 @@ protected:
     size_t size_;
     std::vector<uint8_t> h_input_;
     std::vector<uint8_t> h_output_;
-    uint8_t *d_input_ = nullptr;
-    uint8_t *d_output_ = nullptr;
+    uint8_t* d_input_ = nullptr;
+    uint8_t* d_output_ = nullptr;
 
     void SetUp() override {
         CUDA_CHECK(cudaSetDevice(0));
@@ -35,13 +35,9 @@ protected:
         CUDA_CHECK(cudaFree(d_output_));
     }
 
-    void uploadInput() {
-        CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), size_ * sizeof(uint8_t), cudaMemcpyHostToDevice));
-    }
+    void uploadInput() { CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), size_ * sizeof(uint8_t), cudaMemcpyHostToDevice)); }
 
-    void downloadOutput() {
-        CUDA_CHECK(cudaMemcpy(h_output_.data(), d_output_, size_ * sizeof(uint8_t), cudaMemcpyDeviceToHost));
-    }
+    void downloadOutput() { CUDA_CHECK(cudaMemcpy(h_output_.data(), d_output_, size_ * sizeof(uint8_t), cudaMemcpyDeviceToHost)); }
 };
 
 TEST_F(MorphologyTest, ThresholdAllBlack) {
@@ -105,7 +101,9 @@ TEST_F(MorphologyTest, ErodeSingleDarkPixel) {
 
     bool hasZero = false;
     for (size_t i = 0; i < size_; ++i) {
-        if (h_output_[i] == 0) hasZero = true;
+        if (h_output_[i] == 0) {
+            hasZero = true;
+        }
     }
     EXPECT_TRUE(hasZero);
 }
@@ -132,7 +130,9 @@ TEST_F(MorphologyTest, DilateSingleBrightPixel) {
 
     bool hasBright = false;
     for (size_t i = 0; i < size_; ++i) {
-        if (h_output_[i] == 255) hasBright = true;
+        if (h_output_[i] == 255) {
+            hasBright = true;
+        }
     }
     EXPECT_TRUE(hasBright);
 }
@@ -223,7 +223,9 @@ TEST_F(MorphologyTest, ErodeLargerKernel) {
 
     bool hasZero = false;
     for (size_t i = 0; i < size_; ++i) {
-        if (h_output_[i] == 0) hasZero = true;
+        if (h_output_[i] == 0) {
+            hasZero = true;
+        }
     }
     EXPECT_TRUE(hasZero);
 }
@@ -238,7 +240,9 @@ TEST_F(MorphologyTest, DilateLargerKernel) {
 
     bool hasBright = false;
     for (size_t i = 0; i < size_; ++i) {
-        if (h_output_[i] == 255) hasBright = true;
+        if (h_output_[i] == 255) {
+            hasBright = true;
+        }
     }
     EXPECT_TRUE(hasBright);
 }

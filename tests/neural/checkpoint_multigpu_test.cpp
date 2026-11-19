@@ -47,84 +47,87 @@ using cuda::distributed::test::run_per_rank;
 
 namespace {
 
-bool multigpu_nccl_ready() {
-    auto& ctx = cuda::nccl::NcclContext::instance();
-    try {
-        ctx.initialize();
-    } catch (const std::exception&) {
-        return false;
+    bool multigpu_nccl_ready() {
+        auto& ctx = cuda::nccl::NcclContext::instance();
+        try {
+            ctx.initialize();
+        } catch (const std::exception&) {
+            return false;
+        }
+        return cuda::distributed::test::heal_and_ready(ctx);
     }
-    return cuda::distributed::test::heal_and_ready(ctx);
-}
 
-void fill_random(float* data, size_t count, unsigned seed) {
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = dist(rng);
+    void fill_random(float* data, size_t count, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = dist(rng);
+        }
     }
-}
 
-// Synthetic classification task (as the MicroTrainer tests): gaussian inputs
-// + a random full-rank teacher label matrix, hidden == num_classes.
-void make_task(std::vector<float>& X, std::vector<int>& Y, int m, int h,
-               unsigned seed) {
-    std::mt19937 rng(seed);
-    std::normal_distribution<float> norm(0.0f, 1.0f);
-    X.resize(static_cast<size_t>(m) * h);
-    Y.resize(m);
-    std::vector<float> T(static_cast<size_t>(h) * h);
-    for (size_t i = 0; i < T.size(); ++i) T[i] = norm(rng);
-    for (int i = 0; i < m; ++i) {
-        for (int d = 0; d < h; ++d) X[i * h + d] = norm(rng);
-        double best = -1e30;
-        int argmax = 0;
-        for (int c = 0; c < h; ++c) {
-            double acc = 0.0;
+    // Synthetic classification task (as the MicroTrainer tests): gaussian inputs
+    // + a random full-rank teacher label matrix, hidden == num_classes.
+    void make_task(std::vector<float>& X, std::vector<int>& Y, int m, int h, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::normal_distribution<float> norm(0.0f, 1.0f);
+        X.resize(static_cast<size_t>(m) * h);
+        Y.resize(m);
+        std::vector<float> T(static_cast<size_t>(h) * h);
+        for (size_t i = 0; i < T.size(); ++i) {
+            T[i] = norm(rng);
+        }
+        for (int i = 0; i < m; ++i) {
             for (int d = 0; d < h; ++d) {
-                acc += static_cast<double>(X[i * h + d]) * T[c * h + d];
+                X[i * h + d] = norm(rng);
             }
-            if (acc > best) {
-                best = acc;
-                argmax = c;
+            double best = -1e30;
+            int argmax = 0;
+            for (int c = 0; c < h; ++c) {
+                double acc = 0.0;
+                for (int d = 0; d < h; ++d) {
+                    acc += static_cast<double>(X[i * h + d]) * T[c * h + d];
+                }
+                if (acc > best) {
+                    best = acc;
+                    argmax = c;
+                }
             }
+            Y[i] = argmax;
         }
-        Y[i] = argmax;
     }
-}
 
-void expect_eq(const float* a, const float* b, size_t n, const char* what) {
-    for (size_t i = 0; i < n; ++i) {
-        EXPECT_FLOAT_EQ(a[i], b[i]) << what << " element " << i;
-    }
-}
-
-// Cross-rank checkpoint handoff: rank 0 publishes its serialized bytes and the
-// other ranks wait for them before attempting a load (run_per_rank threads are
-// device-pinned and run concurrently, so a rank must never read bytes rank 0
-// has not yet published). wait_for guards against a rank-0 failure leaving the
-// other ranks blocked forever — the caller FAILs instead of hanging.
-struct Rank0CheckpointHandoff {
-    std::mutex m;
-    std::condition_variable cv;
-    bool published = false;
-    std::string bytes;
-
-    void publish(std::string b) {
-        std::lock_guard<std::mutex> lock(m);
-        bytes = std::move(b);
-        published = true;
-        cv.notify_all();
-    }
-    // Rank 0's bytes, or an empty string if rank 0 never published (timeout).
-    [[nodiscard]] std::string wait_for_bytes() {
-        std::unique_lock<std::mutex> lock(m);
-        if (!cv.wait_for(lock, std::chrono::seconds(30), [&] { return published; })) {
-            return {};
+    void expect_eq(const float* a, const float* b, size_t n, const char* what) {
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_FLOAT_EQ(a[i], b[i]) << what << " element " << i;
         }
-        return bytes;
     }
-};
+
+    // Cross-rank checkpoint handoff: rank 0 publishes its serialized bytes and the
+    // other ranks wait for them before attempting a load (run_per_rank threads are
+    // device-pinned and run concurrently, so a rank must never read bytes rank 0
+    // has not yet published). wait_for guards against a rank-0 failure leaving the
+    // other ranks blocked forever — the caller FAILs instead of hanging.
+    struct Rank0CheckpointHandoff {
+        std::mutex m;
+        std::condition_variable cv;
+        bool published = false;
+        std::string bytes;
+
+        void publish(std::string b) {
+            std::lock_guard<std::mutex> lock(m);
+            bytes = std::move(b);
+            published = true;
+            cv.notify_all();
+        }
+        // Rank 0's bytes, or an empty string if rank 0 never published (timeout).
+        [[nodiscard]] std::string wait_for_bytes() {
+            std::unique_lock<std::mutex> lock(m);
+            if (!cv.wait_for(lock, std::chrono::seconds(30), [&] { return published; })) {
+                return {};
+            }
+            return bytes;
+        }
+    };
 
 }  // namespace
 
@@ -206,8 +209,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_MicroTrainer_RankLocalCheckpoint) {
         }
         for (int s = K + 1; s <= K + extra; ++s) {
             const float lb = b.train_step(d_X.data(), targets.data(), m, 1, s);
-            EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-5f)
-                << "resumed loss at step " << s << " on this rank";
+            EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-5f) << "resumed loss at step " << s << " on this rank";
         }
     });
 }
@@ -246,10 +248,10 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
     make_task(X, targets, m, h, 20260825);
 
     const int tp = device_count;
-    const size_t nq = static_cast<size_t>(h) * (qkv / tp);      // wq/wk/wv
-    const size_t no = static_cast<size_t>(qkv / tp) * h;        // wo
-    const size_t ng = static_cast<size_t>(h) * (inter / tp);    // wg/wu
-    const size_t nd = static_cast<size_t>(inter / tp) * h;      // wd
+    const size_t nq = static_cast<size_t>(h) * (qkv / tp);    // wq/wk/wv
+    const size_t no = static_cast<size_t>(qkv / tp) * h;      // wo
+    const size_t ng = static_cast<size_t>(h) * (inter / tp);  // wg/wu
+    const size_t nd = static_cast<size_t>(inter / tp) * h;    // wd
 
     auto set_block = [&](TransformerTrainer& t, int b, unsigned seed) {
         std::vector<float> l1g(h), l1b(h), l2g(h), l2b(h);
@@ -271,9 +273,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
         fill_random(wg.data(), wg.size(), seed + 8);
         fill_random(wu.data(), wu.size(), seed + 9);
         fill_random(wd.data(), wd.size(), seed + 10);
-        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
-                           wv.data(), wo.data(), l2g.data(), l2b.data(),
-                           wg.data(), wu.data(), wd.data());
+        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
     };
 
     run_per_rank(device_count, [&](int /*rank*/) {
@@ -281,7 +281,9 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
         d_X.copy_from(X.data(), X.size());
 
         TransformerTrainer a(ctx, blocks, h, heads, hd, inter, opt_cfg);
-        for (int b = 0; b < blocks; ++b) set_block(a, b, 500u + static_cast<unsigned>(b));
+        for (int b = 0; b < blocks; ++b) {
+            set_block(a, b, 500u + static_cast<unsigned>(b));
+        }
         std::vector<float> fg(h), fb(h);
         fill_random(fg.data(), fg.size(), 600);
         fill_random(fb.data(), fb.size(), 601);
@@ -305,11 +307,8 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
             std::vector<float> l1g(h), l1b(h), l2g(h), l2b(h);
             std::vector<float> wq(nq), wk(nq), wv(nq), wo(no);
             std::vector<float> wg(ng), wu(ng), wd(nd);
-            t.copy_block_weights(0, l1g.data(), l1b.data(), wq.data(),
-                                 wk.data(), wv.data(), wo.data(), l2g.data(),
-                                 l2b.data(), wg.data(), wu.data(), wd.data());
-            for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b,
-                                  &wg, &wu, &wd}) {
+            t.copy_block_weights(0, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
+            for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg, &wu, &wd}) {
                 flat.insert(flat.end(), p->begin(), p->end());
             }
         };
@@ -326,8 +325,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_RankLocalCheckpoint) 
         }
         for (int s = K + 1; s <= K + extra; ++s) {
             const float lb = b.train_step(d_X.data(), targets.data(), m, 1, s);
-            EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-4f)
-                << "resumed deep loss at step " << s << " on this rank";
+            EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-4f) << "resumed deep loss at step " << s << " on this rank";
         }
     });
 }
@@ -389,8 +387,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_MicroTrainer_WrongRankRejected) {
             // Own bytes on the owning rank: same rank -> must still roundtrip.
             std::stringstream own(bytes);
             MicroTrainer b0(ctx, h, inter, opt_cfg);
-            EXPECT_NO_THROW(b0.load_state(own))
-                << "rank 0 loading its own checkpoint";
+            EXPECT_NO_THROW(b0.load_state(own)) << "rank 0 loading its own checkpoint";
             rank0.publish(bytes);
             return;
         }
@@ -399,8 +396,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_MicroTrainer_WrongRankRejected) {
         // A same-topology file written by rank 0 must not restore into rank r.
         std::stringstream in(cross);
         MicroTrainer b1(ctx, h, inter, opt_cfg);
-        EXPECT_THROW(b1.load_state(in), std::runtime_error)
-            << "rank " << rank << " must reject rank 0's checkpoint";
+        EXPECT_THROW(b1.load_state(in), std::runtime_error) << "rank " << rank << " must reject rank 0's checkpoint";
     });
 }
 
@@ -454,9 +450,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_WrongRankRejected) {
         fill_random(wg.data(), wg.size(), seed + 8);
         fill_random(wu.data(), wu.size(), seed + 9);
         fill_random(wd.data(), wd.size(), seed + 10);
-        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
-                           wv.data(), wo.data(), l2g.data(), l2b.data(),
-                           wg.data(), wu.data(), wd.data());
+        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
     };
 
     Rank0CheckpointHandoff rank0;
@@ -465,7 +459,9 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_WrongRankRejected) {
         d_X.copy_from(X.data(), X.size());
 
         TransformerTrainer a(ctx, blocks, h, heads, hd, inter, opt_cfg);
-        for (int b = 0; b < blocks; ++b) set_block(a, b, 500u + static_cast<unsigned>(b));
+        for (int b = 0; b < blocks; ++b) {
+            set_block(a, b, 500u + static_cast<unsigned>(b));
+        }
         std::vector<float> fg(h), fb(h);
         fill_random(fg.data(), fg.size(), 600);
         fill_random(fb.data(), fb.size(), 601);
@@ -481,8 +477,7 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_WrongRankRejected) {
         if (rank == 0) {
             std::stringstream own(bytes);
             TransformerTrainer b0(ctx, blocks, h, heads, hd, inter, opt_cfg);
-            EXPECT_NO_THROW(b0.load_state(own))
-                << "rank 0 loading its own checkpoint";
+            EXPECT_NO_THROW(b0.load_state(own)) << "rank 0 loading its own checkpoint";
             rank0.publish(bytes);
             return;
         }
@@ -490,7 +485,6 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_TransformerTrainer_WrongRankRejected) {
         ASSERT_FALSE(cross.empty()) << "rank 0 never published its checkpoint";
         std::stringstream in(cross);
         TransformerTrainer b1(ctx, blocks, h, heads, hd, inter, opt_cfg);
-        EXPECT_THROW(b1.load_state(in), std::runtime_error)
-            << "rank " << rank << " must reject rank 0's checkpoint";
+        EXPECT_THROW(b1.load_state(in), std::runtime_error) << "rank " << rank << " must reject rank 0's checkpoint";
     });
 }

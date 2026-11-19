@@ -23,50 +23,50 @@
 
 namespace {
 
-constexpr int BLOCK_SIZE = 256;
+    constexpr int BLOCK_SIZE = 256;
 
-__global__ void init_kernel(float* data, size_t n, float value) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        data[idx] = value;
+    __global__ void init_kernel(float* data, size_t n, float value) {
+        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < n) {
+            data[idx] = value;
+        }
     }
-}
 
-__global__ void scale_kernel(float* data, size_t n, float scale) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        data[idx] *= scale;
+    __global__ void scale_kernel(float* data, size_t n, float scale) {
+        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < n) {
+            data[idx] *= scale;
+        }
     }
-}
 
-float* allocate_device(size_t size) {
-    float* ptr = nullptr;
-    cudaMalloc(&ptr, size * sizeof(float));
-    return ptr;
-}
-
-void free_device(float* ptr) {
-    if (ptr) {
-        cudaFree(ptr);
+    float* allocate_device(size_t size) {
+        float* ptr = nullptr;
+        cudaMalloc(&ptr, size * sizeof(float));
+        return ptr;
     }
-}
 
-void host_to_device(float* dst, const float* src, size_t n) {
-    cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyHostToDevice);
-}
+    void free_device(float* ptr) {
+        if (ptr) {
+            cudaFree(ptr);
+        }
+    }
 
-void device_to_host(float* dst, const float* src, size_t n) {
-    cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToHost);
-}
+    void host_to_device(float* dst, const float* src, size_t n) {
+        cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyHostToDevice);
+    }
 
-void device_to_device(float* dst, const float* src, size_t n) {
-    cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToDevice);
-}
+    void device_to_host(float* dst, const float* src, size_t n) {
+        cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToHost);
+    }
 
-void init_device_array(float* d_data, size_t n, float value) {
-    init_kernel<<<(n + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_data, n, value);
-    cudaDeviceSynchronize();
-}
+    void device_to_device(float* dst, const float* src, size_t n) {
+        cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToDevice);
+    }
+
+    void init_device_array(float* d_data, size_t n, float value) {
+        init_kernel<<<(n + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_data, n, value);
+        cudaDeviceSynchronize();
+    }
 
 }  // namespace
 
@@ -395,19 +395,9 @@ BENCHMARK(BM_AlgoReduceOptimized)->RangeMultiplier(2)->Ranges({{1 << 16, 1 << 24
 BENCHMARK(BM_AlgoScanInclusive)->RangeMultiplier(2)->Ranges({{256, 1024}})->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_AlgoScanExclusive)->RangeMultiplier(2)->Ranges({{256, 1024}})->Unit(benchmark::kMicrosecond);
 
-BENCHMARK(BM_NeuralMatmul)
-    ->Args({64, 64, 64})
-    ->Args({128, 128, 128})
-    ->Args({256, 256, 256})
-    ->Args({512, 512, 512})
-    ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_NeuralMatmul)->Args({64, 64, 64})->Args({128, 128, 128})->Args({256, 256, 256})->Args({512, 512, 512})->Unit(benchmark::kMicrosecond);
 
-BENCHMARK(BM_NeuralMatmulBatch)
-    ->Args({1})
-    ->Args({8})
-    ->Args({32})
-    ->Args({128})
-    ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_NeuralMatmulBatch)->Args({1})->Args({8})->Args({32})->Args({128})->Unit(benchmark::kMicrosecond);
 
 BENCHMARK(BM_FFTForward)->RangeMultiplier(2)->Ranges({{1 << 10, 1 << 20}})->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_FFTInverse)->RangeMultiplier(2)->Ranges({{1 << 10, 1 << 20}})->Unit(benchmark::kMicrosecond);

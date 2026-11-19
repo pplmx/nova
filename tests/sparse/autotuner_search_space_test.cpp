@@ -35,169 +35,159 @@
 
 namespace cuda::performance::test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-/// Runs `call` and returns the exception message, or an empty string.
-template <typename Callable>
-std::string message_from(Callable&& call) {
-    try {
-        call();
-    } catch (const std::exception& error) {
-        return error.what();
-    }
-    return "";
-}
+        /// Runs `call` and returns the exception message, or an empty string.
+        template <typename Callable>
+        std::string message_from(Callable&& call) {
+            try {
+                call();
+            } catch (const std::exception& error) {
+                return error.what();
+            }
+            return "";
+        }
 
-/// A search that measures quickly: one warm-up skipped, a couple of iterations.
-///
-/// config_path points at a per-process temporary file. The default is the relative
-/// path "autotune_config.json", and Autotuner::tune() persists its cache there — so
-/// running these tests from the repository root rewrote a tracked file.
-AutotuneConfig small_config() {
-    AutotuneConfig config;
-    config.block_sizes = {256};
-    config.grid_sizes = {1};
-    config.warmup_iterations = 0;
-    config.measure_iterations = 2;
-    config.config_path = "/tmp/nova_autotune_test_" +
-                         std::to_string(::getpid()) + ".json";
-    return config;
-}
+        /// A search that measures quickly: one warm-up skipped, a couple of iterations.
+        ///
+        /// config_path points at a per-process temporary file. The default is the relative
+        /// path "autotune_config.json", and Autotuner::tune() persists its cache there — so
+        /// running these tests from the repository root rewrote a tracked file.
+        AutotuneConfig small_config() {
+            AutotuneConfig config;
+            config.block_sizes = {256};
+            config.grid_sizes = {1};
+            config.warmup_iterations = 0;
+            config.measure_iterations = 2;
+            config.config_path = "/tmp/nova_autotune_test_" + std::to_string(::getpid()) + ".json";
+            return config;
+        }
 
-}  // namespace
+    }  // namespace
 
-// Regression: this returned FLT_MAX as the best measured time.
-TEST(AutotunerSearchSpaceTest, EmptyBlockSizesIsRejected) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    // Regression: this returned FLT_MAX as the best measured time.
+    TEST(AutotunerSearchSpaceTest, EmptyBlockSizesIsRejected) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    AutotuneConfig config = small_config();
-    config.block_sizes.clear();
+        AutotuneConfig config = small_config();
+        config.block_sizes.clear();
 
-    Autotuner tuner(config);
-    const std::string message =
-        message_from([&] { (void)tuner.tune([](int, int) {}); });
+        Autotuner tuner(config);
+        const std::string message = message_from([&] { (void)tuner.tune([](int, int) {}); });
 
-    EXPECT_FALSE(message.empty())
-        << "an empty search space has no best configuration to report";
-    EXPECT_NE(message.find("block size"), std::string::npos) << message;
-}
-
-// Regression: same sentinel leak through the other empty dimension.
-TEST(AutotunerSearchSpaceTest, EmptyGridSizesIsRejected) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_FALSE(message.empty()) << "an empty search space has no best configuration to report";
+        EXPECT_NE(message.find("block size"), std::string::npos) << message;
     }
 
-    AutotuneConfig config = small_config();
-    config.grid_sizes.clear();
+    // Regression: same sentinel leak through the other empty dimension.
+    TEST(AutotunerSearchSpaceTest, EmptyGridSizesIsRejected) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    Autotuner tuner(config);
-    const std::string message =
-        message_from([&] { (void)tuner.tune([](int, int) {}); });
+        AutotuneConfig config = small_config();
+        config.grid_sizes.clear();
 
-    EXPECT_FALSE(message.empty());
-    EXPECT_NE(message.find("grid size"), std::string::npos) << message;
-}
+        Autotuner tuner(config);
+        const std::string message = message_from([&] { (void)tuner.tune([](int, int) {}); });
 
-// Regression: this produced NaN internally and also returned the sentinel.
-TEST(AutotunerSearchSpaceTest, ZeroMeasureIterationsIsRejected) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_FALSE(message.empty());
+        EXPECT_NE(message.find("grid size"), std::string::npos) << message;
     }
 
-    AutotuneConfig config = small_config();
-    config.measure_iterations = 0;
+    // Regression: this produced NaN internally and also returned the sentinel.
+    TEST(AutotunerSearchSpaceTest, ZeroMeasureIterationsIsRejected) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    Autotuner tuner(config);
-    const std::string message =
-        message_from([&] { (void)tuner.tune([](int, int) {}); });
+        AutotuneConfig config = small_config();
+        config.measure_iterations = 0;
 
-    EXPECT_FALSE(message.empty())
-        << "averaging over zero iterations divides by zero";
-    EXPECT_NE(message.find("measure_iterations"), std::string::npos) << message;
-}
+        Autotuner tuner(config);
+        const std::string message = message_from([&] { (void)tuner.tune([](int, int) {}); });
 
-TEST(AutotunerSearchSpaceTest, NegativeMeasureIterationsIsRejected) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_FALSE(message.empty()) << "averaging over zero iterations divides by zero";
+        EXPECT_NE(message.find("measure_iterations"), std::string::npos) << message;
     }
 
-    AutotuneConfig config = small_config();
-    config.measure_iterations = -5;
+    TEST(AutotunerSearchSpaceTest, NegativeMeasureIterationsIsRejected) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    Autotuner tuner(config);
-    EXPECT_THROW(tuner.tune([](int, int) {}), std::invalid_argument);
-}
+        AutotuneConfig config = small_config();
+        config.measure_iterations = -5;
 
-TEST(AutotunerSearchSpaceTest, AValidSearchReportsARealMeasurement) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        Autotuner tuner(config);
+        EXPECT_THROW(tuner.tune([](int, int) {}), std::invalid_argument);
     }
 
-    AutotuneConfig config = small_config();
+    TEST(AutotunerSearchSpaceTest, AValidSearchReportsARealMeasurement) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    Autotuner tuner(config);
-    int calls = 0;
-    const AutotuneResult result = tuner.tune([&calls](int, int) { ++calls; });
+        AutotuneConfig config = small_config();
 
-    EXPECT_EQ(calls, config.measure_iterations)
-        << "the callable runs once per measurement iteration";
-    EXPECT_TRUE(std::isfinite(result.best_time_ms)) << result.best_time_ms;
-    EXPECT_GE(result.best_time_ms, 0.0f);
-    EXPECT_LT(result.best_time_ms, std::numeric_limits<float>::max())
-        << "a real measurement must replace the sentinel";
-    EXPECT_EQ(result.optimal_block_size, 256);
-    EXPECT_EQ(result.optimal_grid_size, 1);
-}
+        Autotuner tuner(config);
+        int calls = 0;
+        const AutotuneResult result = tuner.tune([&calls](int, int) { ++calls; });
 
-TEST(AutotunerSearchSpaceTest, TheFastestCandidateWins) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(calls, config.measure_iterations) << "the callable runs once per measurement iteration";
+        EXPECT_TRUE(std::isfinite(result.best_time_ms)) << result.best_time_ms;
+        EXPECT_GE(result.best_time_ms, 0.0f);
+        EXPECT_LT(result.best_time_ms, std::numeric_limits<float>::max()) << "a real measurement must replace the sentinel";
+        EXPECT_EQ(result.optimal_block_size, 256);
+        EXPECT_EQ(result.optimal_grid_size, 1);
     }
 
-    AutotuneConfig config = small_config();
-    config.block_sizes = {64, 128, 256};
-    config.grid_sizes = {1};
+    TEST(AutotunerSearchSpaceTest, TheFastestCandidateWins) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    Autotuner tuner(config);
-    const AutotuneResult result = tuner.tune([](int, int) {});
+        AutotuneConfig config = small_config();
+        config.block_sizes = {64, 128, 256};
+        config.grid_sizes = {1};
 
-    // Every candidate measures the same no-op, so the winner is whichever recorded
-    // the smallest time. What matters is that it is one of the offered candidates,
-    // not a default left over from construction.
-    EXPECT_NE(config.block_sizes.end(),
-              std::find(config.block_sizes.begin(), config.block_sizes.end(),
-                        result.optimal_block_size))
-        << "the reported block size was never measured";
-    EXPECT_TRUE(std::isfinite(result.best_time_ms));
-}
+        Autotuner tuner(config);
+        const AutotuneResult result = tuner.tune([](int, int) {});
 
-TEST(AutotunerSearchSpaceTest, SearchOverBothDimensionsCallsEveryCombination) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // Every candidate measures the same no-op, so the winner is whichever recorded
+        // the smallest time. What matters is that it is one of the offered candidates,
+        // not a default left over from construction.
+        EXPECT_NE(config.block_sizes.end(), std::find(config.block_sizes.begin(), config.block_sizes.end(), result.optimal_block_size))
+            << "the reported block size was never measured";
+        EXPECT_TRUE(std::isfinite(result.best_time_ms));
     }
 
-    AutotuneConfig config = small_config();
-    config.block_sizes = {128, 256};
-    config.grid_sizes = {1, 2, 4};
-    config.measure_iterations = 1;
+    TEST(AutotunerSearchSpaceTest, SearchOverBothDimensionsCallsEveryCombination) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    Autotuner tuner(config);
-    int calls = 0;
-    (void)tuner.tune([&calls](int, int) { ++calls; });
+        AutotuneConfig config = small_config();
+        config.block_sizes = {128, 256};
+        config.grid_sizes = {1, 2, 4};
+        config.measure_iterations = 1;
 
-    EXPECT_EQ(calls, 2 * 3 * 1) << "block sizes times grid sizes times iterations";
-}
+        Autotuner tuner(config);
+        int calls = 0;
+        (void)tuner.tune([&calls](int, int) { ++calls; });
+
+        EXPECT_EQ(calls, 2 * 3 * 1) << "block sizes times grid sizes times iterations";
+    }
 
 }  // namespace cuda::performance::test

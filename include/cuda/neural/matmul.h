@@ -5,35 +5,18 @@
 
 namespace cuda::neural {
 
-struct MatmulOptions {
-    cublasHandle_t handle = nullptr;
-    float alpha = 1.0f;
-    float beta = 0.0f;
-    cublasOperation_t trans_a = CUBLAS_OP_N;
-    cublasOperation_t trans_b = CUBLAS_OP_N;
-};
+    struct MatmulOptions {
+        cublasHandle_t handle = nullptr;
+        float alpha = 1.0f;
+        float beta = 0.0f;
+        cublasOperation_t trans_a = CUBLAS_OP_N;
+        cublasOperation_t trans_b = CUBLAS_OP_N;
+    };
 
-void matmul(
-    const float* A,
-    const float* B,
-    float* C,
-    int m,
-    int n,
-    int k,
-    MatmulOptions options = {}
-);
+    void matmul(const float* A, const float* B, float* C, int m, int n, int k, MatmulOptions options = {});
 
-void matmul_batch(
-    const float* A,
-    const float* B,
-    float* C,
-    int batch_count,
-    int m,
-    int n,
-    int k,
-    MatmulOptions options = {}
-);
+    void matmul_batch(const float* A, const float* B, float* C, int batch_count, int m, int n, int k, MatmulOptions options = {});
 
-cublasHandle_t get_cublas_handle();
+    cublasHandle_t get_cublas_handle();
 
 }  // namespace cuda::neural

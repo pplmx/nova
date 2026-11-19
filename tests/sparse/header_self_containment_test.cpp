@@ -33,26 +33,26 @@
 
 namespace header_self_containment_test {
 
-TEST(HeaderSelfContainmentTest, TheFourHeadersCanBeIncludedTogether) {
-    // Reaching this point is the check.
-    SUCCEED();
-}
+    TEST(HeaderSelfContainmentTest, TheFourHeadersCanBeIncludedTogether) {
+        // Reaching this point is the check.
+        SUCCEED();
+    }
 
-TEST(HeaderSelfContainmentTest, NvtxStubPathDeclaresItsIntegerType) {
-    // The disabled build is the default, and its ScopedRange uses std::int64_t. Taking the
-    // address of set_payload forces the declaration to be complete rather than merely
-    // parsed.
-    using SetPayload = void (cuda::benchmark::nvtx::ScopedRange::*)(std::int64_t);
-    SetPayload fn = &cuda::benchmark::nvtx::ScopedRange::set_payload;
-    EXPECT_NE(fn, nullptr);
-}
+    TEST(HeaderSelfContainmentTest, NvtxStubPathDeclaresItsIntegerType) {
+        // The disabled build is the default, and its ScopedRange uses std::int64_t. Taking the
+        // address of set_payload forces the declaration to be complete rather than merely
+        // parsed.
+        using SetPayload = void (cuda::benchmark::nvtx::ScopedRange::*)(std::int64_t);
+        SetPayload fn = &cuda::benchmark::nvtx::ScopedRange::set_payload;
+        EXPECT_NE(fn, nullptr);
+    }
 
-TEST(HeaderSelfContainmentTest, GaussianBlurTakesAnEightBitBuffer) {
-    // The signature uses uint8_t; taking its address forces the parameter types to be
-    // complete rather than merely parsed. The exact arity is not the point here.
-    auto fn = &cuda::algo::gaussianBlur;
-    (void)fn;
-    EXPECT_TRUE((std::is_pointer_v<decltype(fn)>));
-}
+    TEST(HeaderSelfContainmentTest, GaussianBlurTakesAnEightBitBuffer) {
+        // The signature uses uint8_t; taking its address forces the parameter types to be
+        // complete rather than merely parsed. The exact arity is not the point here.
+        auto fn = &cuda::algo::gaussianBlur;
+        (void)fn;
+        EXPECT_TRUE((std::is_pointer_v<decltype(fn)>));
+    }
 
 }  // namespace header_self_containment_test

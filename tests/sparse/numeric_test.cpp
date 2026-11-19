@@ -29,168 +29,172 @@
 
 namespace cuda::numeric::test {
 
-namespace {
+    namespace {
 
-float square(float x) { return x * x; }
-float cube(float x) { return x * x * x; }
-float sine(float x) { return std::sin(x); }
-float square_minus_two(float x) { return x * x - 2.0f; }
-float square_minus_two_deriv(float x) { return 2.0f * x; }
+        float square(float x) {
+            return x * x;
+        }
+        float cube(float x) {
+            return x * x * x;
+        }
+        float sine(float x) {
+            return std::sin(x);
+        }
+        float square_minus_two(float x) {
+            return x * x - 2.0f;
+        }
+        float square_minus_two_deriv(float x) {
+            return 2.0f * x;
+        }
 
-}  // namespace
+    }  // namespace
 
-// ------------------------------------------------------------- integration --
+    // ------------------------------------------------------------- integration --
 
-TEST(TrapezoidalIntegrationTest, IntegratesAPolynomial) {
-    // integral of x^2 over [0, 1] is 1/3.
-    const auto result = trapezoidal_integration(square, 0.0f, 1.0f, 10000);
+    TEST(TrapezoidalIntegrationTest, IntegratesAPolynomial) {
+        // integral of x^2 over [0, 1] is 1/3.
+        const auto result = trapezoidal_integration(square, 0.0f, 1.0f, 10000);
 
-    EXPECT_NEAR(result.value, 1.0f / 3.0f, 1e-4f);
-    EXPECT_EQ(result.intervals, 10000u);
-}
+        EXPECT_NEAR(result.value, 1.0f / 3.0f, 1e-4f);
+        EXPECT_EQ(result.intervals, 10000u);
+    }
 
-TEST(TrapezoidalIntegrationTest, ApproachesTheExactValueAsIntervalsGrow) {
-    const float coarse = trapezoidal_integration(cube, 0.0f, 1.0f, 16).value;
-    const float fine = trapezoidal_integration(cube, 0.0f, 1.0f, 16384).value;
+    TEST(TrapezoidalIntegrationTest, ApproachesTheExactValueAsIntervalsGrow) {
+        const float coarse = trapezoidal_integration(cube, 0.0f, 1.0f, 16).value;
+        const float fine = trapezoidal_integration(cube, 0.0f, 1.0f, 16384).value;
 
-    // integral of x^3 over [0,1] is 1/4.
-    EXPECT_LT(std::fabs(fine - 0.25f), std::fabs(coarse - 0.25f))
-        << "more intervals must be more accurate: coarse=" << coarse
-        << " fine=" << fine;
-}
+        // integral of x^3 over [0,1] is 1/4.
+        EXPECT_LT(std::fabs(fine - 0.25f), std::fabs(coarse - 0.25f)) << "more intervals must be more accurate: coarse=" << coarse << " fine=" << fine;
+    }
 
-// Regression: this returned NaN.
-TEST(TrapezoidalIntegrationTest, ZeroIntervalsReturnsZeroNotNaN) {
-    const auto result = trapezoidal_integration(square, 0.0f, 1.0f, 0);
+    // Regression: this returned NaN.
+    TEST(TrapezoidalIntegrationTest, ZeroIntervalsReturnsZeroNotNaN) {
+        const auto result = trapezoidal_integration(square, 0.0f, 1.0f, 0);
 
-    EXPECT_TRUE(std::isfinite(result.value))
-        << "an empty integration produced " << result.value;
-    EXPECT_FLOAT_EQ(result.value, 0.0f);
-    EXPECT_EQ(result.intervals, 0u);
-    EXPECT_TRUE(std::isfinite(result.error_estimate));
-}
+        EXPECT_TRUE(std::isfinite(result.value)) << "an empty integration produced " << result.value;
+        EXPECT_FLOAT_EQ(result.value, 0.0f);
+        EXPECT_EQ(result.intervals, 0u);
+        EXPECT_TRUE(std::isfinite(result.error_estimate));
+    }
 
-TEST(SimpsonIntegrationTest, IntegratesAPolynomial) {
-    // Simpson on x^2 is exact up to rounding.
-    const auto result = simpson_integration(square, 0.0f, 1.0f, 500);
+    TEST(SimpsonIntegrationTest, IntegratesAPolynomial) {
+        // Simpson on x^2 is exact up to rounding.
+        const auto result = simpson_integration(square, 0.0f, 1.0f, 500);
 
-    EXPECT_NEAR(result.value, 1.0f / 3.0f, 1e-5f);
-    EXPECT_EQ(result.intervals, 500u);
-}
+        EXPECT_NEAR(result.value, 1.0f / 3.0f, 1e-5f);
+        EXPECT_EQ(result.intervals, 500u);
+    }
 
-TEST(SimpsonIntegrationTest, IsMoreAccurateThanTrapezoidForTheSameWork) {
-    const auto simpson = simpson_integration(sine, 0.0f, 3.14159265f, 100);
-    const auto trapezoid = trapezoidal_integration(sine, 0.0f, 3.14159265f, 200);
+    TEST(SimpsonIntegrationTest, IsMoreAccurateThanTrapezoidForTheSameWork) {
+        const auto simpson = simpson_integration(sine, 0.0f, 3.14159265f, 100);
+        const auto trapezoid = trapezoidal_integration(sine, 0.0f, 3.14159265f, 200);
 
-    // integral of sin over [0, pi] is 2.
-    EXPECT_NEAR(simpson.value, 2.0f, 1e-4f);
-    EXPECT_LT(std::fabs(simpson.value - 2.0f), std::fabs(trapezoid.value - 2.0f))
-        << "Simpson converges faster than the trapezoidal rule";
-}
+        // integral of sin over [0, pi] is 2.
+        EXPECT_NEAR(simpson.value, 2.0f, 1e-4f);
+        EXPECT_LT(std::fabs(simpson.value - 2.0f), std::fabs(trapezoid.value - 2.0f)) << "Simpson converges faster than the trapezoidal rule";
+    }
 
-// Regression: this returned -nan.
-TEST(SimpsonIntegrationTest, ZeroIntervalsReturnsZeroNotNaN) {
-    const auto result = simpson_integration(square, 0.0f, 1.0f, 0);
+    // Regression: this returned -nan.
+    TEST(SimpsonIntegrationTest, ZeroIntervalsReturnsZeroNotNaN) {
+        const auto result = simpson_integration(square, 0.0f, 1.0f, 0);
 
-    EXPECT_TRUE(std::isfinite(result.value))
-        << "an empty integration produced " << result.value;
-    EXPECT_FLOAT_EQ(result.value, 0.0f);
-    EXPECT_EQ(result.intervals, 0u);
-}
+        EXPECT_TRUE(std::isfinite(result.value)) << "an empty integration produced " << result.value;
+        EXPECT_FLOAT_EQ(result.value, 0.0f);
+        EXPECT_EQ(result.intervals, 0u);
+    }
 
-TEST(NumericIntegrationTest, ReversedLimitsGiveTheNegatedIntegral) {
-    // Swapping the limits flips the sign; the routines should not return NaN.
-    const float forward = trapezoidal_integration(square, 0.0f, 1.0f, 1000).value;
-    const float backward = trapezoidal_integration(square, 1.0f, 0.0f, 1000).value;
+    TEST(NumericIntegrationTest, ReversedLimitsGiveTheNegatedIntegral) {
+        // Swapping the limits flips the sign; the routines should not return NaN.
+        const float forward = trapezoidal_integration(square, 0.0f, 1.0f, 1000).value;
+        const float backward = trapezoidal_integration(square, 1.0f, 0.0f, 1000).value;
 
-    EXPECT_TRUE(std::isfinite(backward));
-    EXPECT_NEAR(backward, -forward, 1e-4f);
-}
+        EXPECT_TRUE(std::isfinite(backward));
+        EXPECT_NEAR(backward, -forward, 1e-4f);
+    }
 
-// ------------------------------------------------------------ root finding --
+    // ------------------------------------------------------------ root finding --
 
-TEST(BisectionTest, FindsTheRootOfX2MinusTwo) {
-    const auto result = bisection(square_minus_two, 0.0f, 2.0f);
+    TEST(BisectionTest, FindsTheRootOfX2MinusTwo) {
+        const auto result = bisection(square_minus_two, 0.0f, 2.0f);
 
-    ASSERT_TRUE(result.converged);
-    EXPECT_NEAR(result.root, std::sqrt(2.0f), 1e-4f);
-    EXPECT_LT(result.residual, 1e-3f);
-}
+        ASSERT_TRUE(result.converged);
+        EXPECT_NEAR(result.root, std::sqrt(2.0f), 1e-4f);
+        EXPECT_LT(result.residual, 1e-3f);
+    }
 
-TEST(BisectionTest, ReportsFailureWhenTheBracketHasNoSignChange) {
-    // x^2 - 2 is positive at both 2 and 3.
-    const auto result = bisection(square_minus_two, 2.0f, 3.0f);
+    TEST(BisectionTest, ReportsFailureWhenTheBracketHasNoSignChange) {
+        // x^2 - 2 is positive at both 2 and 3.
+        const auto result = bisection(square_minus_two, 2.0f, 3.0f);
 
-    EXPECT_FALSE(result.converged) << "there is no root in [2, 3]";
-    EXPECT_FALSE(std::isfinite(result.residual) && result.residual < 1e-3f);
-}
+        EXPECT_FALSE(result.converged) << "there is no root in [2, 3]";
+        EXPECT_FALSE(std::isfinite(result.residual) && result.residual < 1e-3f);
+    }
 
-TEST(BisectionTest, RespectsTheIterationLimit) {
-    // A tiny budget cannot converge to the default tolerance.
-    const auto result = bisection(square_minus_two, 0.0f, 2.0f, 1e-12f, 2);
+    TEST(BisectionTest, RespectsTheIterationLimit) {
+        // A tiny budget cannot converge to the default tolerance.
+        const auto result = bisection(square_minus_two, 0.0f, 2.0f, 1e-12f, 2);
 
-    EXPECT_FALSE(result.converged);
-    EXPECT_LE(result.iterations, 2u);
-}
+        EXPECT_FALSE(result.converged);
+        EXPECT_LE(result.iterations, 2u);
+    }
 
-TEST(NewtonRaphsonTest, FindsTheRootOfX2MinusTwo) {
-    const auto result = newton_raphson(square_minus_two, square_minus_two_deriv, 1.0f);
+    TEST(NewtonRaphsonTest, FindsTheRootOfX2MinusTwo) {
+        const auto result = newton_raphson(square_minus_two, square_minus_two_deriv, 1.0f);
 
-    ASSERT_TRUE(result.converged);
-    EXPECT_NEAR(result.root, std::sqrt(2.0f), 1e-4f);
-}
+        ASSERT_TRUE(result.converged);
+        EXPECT_NEAR(result.root, std::sqrt(2.0f), 1e-4f);
+    }
 
-TEST(NewtonRaphsonTest, StopsAtAZeroDerivative) {
-    // A constant function has zero derivative everywhere, so the step is
-    // undefined; the routine must report failure rather than divide by zero.
-    auto constant = [](float) { return 1.0f; };
-    auto zero_deriv = [](float) { return 0.0f; };
+    TEST(NewtonRaphsonTest, StopsAtAZeroDerivative) {
+        // A constant function has zero derivative everywhere, so the step is
+        // undefined; the routine must report failure rather than divide by zero.
+        auto constant = [](float) { return 1.0f; };
+        auto zero_deriv = [](float) { return 0.0f; };
 
-    const auto result = newton_raphson(constant, zero_deriv, 0.0f);
+        const auto result = newton_raphson(constant, zero_deriv, 0.0f);
 
-    EXPECT_FALSE(result.converged);
-    EXPECT_TRUE(std::isfinite(result.root))
-        << "a zero derivative must not produce inf or NaN";
-}
+        EXPECT_FALSE(result.converged);
+        EXPECT_TRUE(std::isfinite(result.root)) << "a zero derivative must not produce inf or NaN";
+    }
 
-// ----------------------------------------------------------- interpolation --
+    // ----------------------------------------------------------- interpolation --
 
-// Regression: n == 0 underflowed the coefficient count and threw "out of memory".
-TEST(LinearInterpolationTest, ZeroPointsDoesNotAllocateAnAbsurdBuffer) {
-    EXPECT_NO_THROW({
-        const auto result = linear_interpolation(nullptr, nullptr, 0);
-        EXPECT_EQ(result.n, 0u);
-        EXPECT_EQ(result.coeffs.size(), 0u);
-    });
-}
+    // Regression: n == 0 underflowed the coefficient count and threw "out of memory".
+    TEST(LinearInterpolationTest, ZeroPointsDoesNotAllocateAnAbsurdBuffer) {
+        EXPECT_NO_THROW({
+            const auto result = linear_interpolation(nullptr, nullptr, 0);
+            EXPECT_EQ(result.n, 0u);
+            EXPECT_EQ(result.coeffs.size(), 0u);
+        });
+    }
 
-TEST(LinearInterpolationTest, OnePointHasNoSegments) {
-    const float x[] = {2.0f};
-    const float y[] = {5.0f};
+    TEST(LinearInterpolationTest, OnePointHasNoSegments) {
+        const float x[] = {2.0f};
+        const float y[] = {5.0f};
 
-    const auto result = linear_interpolation(x, y, 1);
+        const auto result = linear_interpolation(x, y, 1);
 
-    EXPECT_EQ(result.n, 1u);
-    EXPECT_EQ(result.coeffs.size(), 0u) << "one point describes no segment";
-    EXPECT_EQ(result.x.size(), 1u) << "the sample must still be stored";
-}
+        EXPECT_EQ(result.n, 1u);
+        EXPECT_EQ(result.coeffs.size(), 0u) << "one point describes no segment";
+        EXPECT_EQ(result.x.size(), 1u) << "the sample must still be stored";
+    }
 
-TEST(LinearInterpolationTest, CoefficientsDescribeTheSegments) {
-    // Points (0,1), (1,3), (2,7): slopes 2 and 4, intercepts 1 and -1.
-    const float x[] = {0.0f, 1.0f, 2.0f};
-    const float y[] = {1.0f, 3.0f, 7.0f};
+    TEST(LinearInterpolationTest, CoefficientsDescribeTheSegments) {
+        // Points (0,1), (1,3), (2,7): slopes 2 and 4, intercepts 1 and -1.
+        const float x[] = {0.0f, 1.0f, 2.0f};
+        const float y[] = {1.0f, 3.0f, 7.0f};
 
-    const auto result = linear_interpolation(x, y, 3);
-    ASSERT_EQ(result.n, 3u);
-    ASSERT_EQ(result.coeffs.size(), 4u) << "two segments, two coefficients each";
+        const auto result = linear_interpolation(x, y, 3);
+        ASSERT_EQ(result.n, 3u);
+        ASSERT_EQ(result.coeffs.size(), 4u) << "two segments, two coefficients each";
 
-    std::vector<float> coeffs(4);
-    result.coeffs.copy_to(coeffs.data(), coeffs.size());
+        std::vector<float> coeffs(4);
+        result.coeffs.copy_to(coeffs.data(), coeffs.size());
 
-    EXPECT_NEAR(coeffs[0], 2.0f, 1e-5f) << "slope of the first segment";
-    EXPECT_NEAR(coeffs[1], 1.0f, 1e-5f) << "intercept of the first segment";
-    EXPECT_NEAR(coeffs[2], 4.0f, 1e-5f) << "slope of the second segment";
-    EXPECT_NEAR(coeffs[3], -1.0f, 1e-5f) << "intercept of the second segment";
-}
+        EXPECT_NEAR(coeffs[0], 2.0f, 1e-5f) << "slope of the first segment";
+        EXPECT_NEAR(coeffs[1], 1.0f, 1e-5f) << "intercept of the first segment";
+        EXPECT_NEAR(coeffs[2], 4.0f, 1e-5f) << "slope of the second segment";
+        EXPECT_NEAR(coeffs[3], -1.0f, 1e-5f) << "intercept of the second segment";
+    }
 
 }  // namespace cuda::numeric::test

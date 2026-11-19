@@ -30,63 +30,51 @@
 
 namespace cuda::nccl {
 
-/**
- * @class NcclBroadcast
- * @brief NCCL broadcast for weight/data distribution
- *
- * Broadcasts data from one root device to all other devices.
- * Uses ncclBroadcast internally with safe_nccl_call for error handling.
- */
-class NcclBroadcast : public NcclCollective {
-public:
     /**
-     * @brief Construct broadcast operator
-     * @param ctx Initialized NCCL context
-     */
-    explicit NcclBroadcast(NcclContext& ctx);
-
-    // Non-copyable
-    NcclBroadcast(const NcclBroadcast&) = delete;
-    NcclBroadcast& operator=(const NcclBroadcast&) = delete;
-
-    // Movable
-    NcclBroadcast(NcclBroadcast&&) = default;
-    NcclBroadcast& operator=(NcclBroadcast&&) = default;
-
-    /**
-     * @brief Async broadcast from root device to all others
+     * @class NcclBroadcast
+     * @brief NCCL broadcast for weight/data distribution
      *
-     * @param data Send buffer on root device
-     * @param recv_data Receive buffer on all devices
-     * @param count Number of elements
-     * @param dtype NCCL data type
-     * @param root_rank Root device rank (typically 0)
-     * @param stream CUDA stream for ordering
-     * @return NcclResult with status
+     * Broadcasts data from one root device to all other devices.
+     * Uses ncclBroadcast internally with safe_nccl_call for error handling.
      */
-    NcclResult broadcast_async(
-        const void* data,
-        void* recv_data,
-        size_t count,
-        ncclDataType_t dtype,
-        int root_rank,
-        cudaStream_t stream);
+    class NcclBroadcast : public NcclCollective {
+    public:
+        /**
+         * @brief Construct broadcast operator
+         * @param ctx Initialized NCCL context
+         */
+        explicit NcclBroadcast(NcclContext& ctx);
 
-    /**
-     * @brief Sync broadcast (blocking)
-     */
-    NcclResult broadcast(
-        const void* data,
-        void* recv_data,
-        size_t count,
-        ncclDataType_t dtype,
-        int root_rank,
-        cudaStream_t stream);
+        // Non-copyable
+        NcclBroadcast(const NcclBroadcast&) = delete;
+        NcclBroadcast& operator=(const NcclBroadcast&) = delete;
 
-    /**
-     * @brief Convert CUDA dtype to NCCL dtype
-     */
-    static ncclDataType_t to_nccl_dtype(cudaDataType dtype);
-};
+        // Movable
+        NcclBroadcast(NcclBroadcast&&) = default;
+        NcclBroadcast& operator=(NcclBroadcast&&) = default;
+
+        /**
+         * @brief Async broadcast from root device to all others
+         *
+         * @param data Send buffer on root device
+         * @param recv_data Receive buffer on all devices
+         * @param count Number of elements
+         * @param dtype NCCL data type
+         * @param root_rank Root device rank (typically 0)
+         * @param stream CUDA stream for ordering
+         * @return NcclResult with status
+         */
+        NcclResult broadcast_async(const void* data, void* recv_data, size_t count, ncclDataType_t dtype, int root_rank, cudaStream_t stream);
+
+        /**
+         * @brief Sync broadcast (blocking)
+         */
+        NcclResult broadcast(const void* data, void* recv_data, size_t count, ncclDataType_t dtype, int root_rank, cudaStream_t stream);
+
+        /**
+         * @brief Convert CUDA dtype to NCCL dtype
+         */
+        static ncclDataType_t to_nccl_dtype(cudaDataType dtype);
+    };
 
 }  // namespace cuda::nccl

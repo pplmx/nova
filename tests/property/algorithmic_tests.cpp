@@ -84,17 +84,17 @@ int main(int argc, char** argv) {
         total_tests++;
         auto result = CheckProperty(name, test_fn, 100, seed);
 
-        std::cout << "[" << (result.passed ? "PASS" : "FAIL") << "] "
-                  << name << "\n";
-        std::cout << "  Seed: " << result.seed
-                  << " | Iterations: " << result.iterations << "\n";
+        std::cout << "[" << (result.passed ? "PASS" : "FAIL") << "] " << name << "\n";
+        std::cout << "  Seed: " << result.seed << " | Iterations: " << result.iterations << "\n";
 
         if (!result.passed) {
             std::cout << "  Reason: " << result.failure_reason << "\n";
         }
         std::cout << "\n";
 
-        if (result.passed) passed_tests++;
+        if (result.passed) {
+            passed_tests++;
+        }
     };
 
     run_test("Sort Produces Sorted Output", SortProducesSortedOutput);

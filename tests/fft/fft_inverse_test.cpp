@@ -29,21 +29,13 @@ protected:
         return ptr;
     }
 
-    void free_device(void* ptr) {
-        cudaFree(ptr);
-    }
+    void free_device(void* ptr) { cudaFree(ptr); }
 
-    void copy_to_device(float* dst, const float* src, size_t n) {
-        cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyHostToDevice);
-    }
+    void copy_to_device(float* dst, const float* src, size_t n) { cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyHostToDevice); }
 
-    void copy_from_device(float* dst, const float* src, size_t n) {
-        cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToHost);
-    }
+    void copy_from_device(float* dst, const float* src, size_t n) { cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToHost); }
 
-    void copy_from_complex(cuComplex* dst, const cuComplex* src, size_t n) {
-        cudaMemcpy(dst, src, n * sizeof(cuComplex), cudaMemcpyDeviceToHost);
-    }
+    void copy_from_complex(cuComplex* dst, const cuComplex* src, size_t n) { cudaMemcpy(dst, src, n * sizeof(cuComplex), cudaMemcpyDeviceToHost); }
 };
 
 TEST_F(FFTInverseTest, ForwardTransformPlanCreation) {

@@ -20,14 +20,7 @@ protected:
         cudaGetLastError();
     }
 
-    std::vector<std::vector<int>> create_simple_graph() {
-        return {
-            {1, 2},
-            {0, 2},
-            {0, 1},
-            {}
-        };
-    }
+    std::vector<std::vector<int>> create_simple_graph() { return {{1, 2}, {0, 2}, {0, 1}, {}}; }
 };
 
 TEST_F(BFSTest, BFSResultConstruction) {

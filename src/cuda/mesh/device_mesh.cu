@@ -13,180 +13,176 @@
 namespace cuda::mesh {
 
 // Helper macro for CUDA error checking (without context overhead)
-#define CUDA_CHECK_MESH(call)                                                    \
-    do {                                                                          \
-        cudaError_t err = call;                                                   \
-        if (err != cudaSuccess) {                                                 \
-            throw ::cuda::device::CudaException(err, __FILE__, __LINE__);       \
-        }                                                                         \
+#define CUDA_CHECK_MESH(call)                                             \
+    do {                                                                  \
+        cudaError_t err = call;                                           \
+        if (err != cudaSuccess) {                                         \
+            throw ::cuda::device::CudaException(err, __FILE__, __LINE__); \
+        }                                                                 \
     } while (0)
 
-// ============================================================================
-// PeerCapabilityMap Implementation
-// ============================================================================
+    // ============================================================================
+    // PeerCapabilityMap Implementation
+    // ============================================================================
 
-void PeerCapabilityMap::initialize(int device_count) {
-    if (device_count < 0) {
-        throw std::invalid_argument("Device count must be non-negative");
-    }
+    void PeerCapabilityMap::initialize(int device_count) {
+        if (device_count < 0) {
+            throw std::invalid_argument("Device count must be non-negative");
+        }
 
-    matrix_.clear();
-    matrix_.resize(device_count);
+        matrix_.clear();
+        matrix_.resize(device_count);
 
-    for (int i = 0; i < device_count; ++i) {
-        matrix_[i].resize(device_count, false);
-        matrix_[i][i] = true;  // Self-access is always true
-    }
+        for (int i = 0; i < device_count; ++i) {
+            matrix_[i].resize(device_count, false);
+            matrix_[i][i] = true;  // Self-access is always true
+        }
 
-    // Query peer access capabilities for all pairs
-    for (int i = 0; i < device_count; ++i) {
-        for (int j = 0; j < device_count; ++j) {
-            if (i != j) {
-                int can_access = 0;
-                cudaError_t err = cudaDeviceCanAccessPeer(&can_access, i, j);
-                if (err == cudaSuccess) {
-                    matrix_[i][j] = (can_access != 0);
-                } else {
-                    // If query fails, assume no access
-                    matrix_[i][j] = false;
+        // Query peer access capabilities for all pairs
+        for (int i = 0; i < device_count; ++i) {
+            for (int j = 0; j < device_count; ++j) {
+                if (i != j) {
+                    int can_access = 0;
+                    cudaError_t err = cudaDeviceCanAccessPeer(&can_access, i, j);
+                    if (err == cudaSuccess) {
+                        matrix_[i][j] = (can_access != 0);
+                    } else {
+                        // If query fails, assume no access
+                        matrix_[i][j] = false;
+                    }
                 }
             }
         }
     }
-}
 
-bool PeerCapabilityMap::can_access(int src, int dst) const {
-    if (src < 0 || dst < 0 || src >= device_count() || dst >= device_count()) {
-        return false;
-    }
-    return matrix_[src][dst];
-}
-
-// ===========================================================================
-// DeviceMesh Implementation
-// ===========================================================================
-
-DeviceMesh& DeviceMesh::instance() {
-    static DeviceMesh instance;
-    return instance;
-}
-
-DeviceMesh::DeviceMesh()
-    : device_count_(0),
-      initialized_(false) {
-}
-
-void DeviceMesh::initialize() {
-    // Thread-safe check-and-set using atomic CAS to prevent race condition
-    // when multiple threads call initialize() concurrently. Without this,
-    // two threads could both see initialized_ == false and proceed to
-    // initialize, causing data races on device_count_ and peer_capabilities_.
-    bool expected = false;
-    if (!initialized_.compare_exchange_strong(expected, true,
-                                               std::memory_order_acq_rel,
-                                               std::memory_order_acquire)) {
-        return;  // Another thread already initialized
+    bool PeerCapabilityMap::can_access(int src, int dst) const {
+        if (src < 0 || dst < 0 || src >= device_count() || dst >= device_count()) {
+            return false;
+        }
+        return matrix_[src][dst];
     }
 
-    // Query device count
-    cudaError_t err = cudaGetDeviceCount(&device_count_);
-    if (err != cudaSuccess) {
-        // Single-GPU or no GPU systems may have issues
-        device_count_ = 0;
+    // ===========================================================================
+    // DeviceMesh Implementation
+    // ===========================================================================
+
+    DeviceMesh& DeviceMesh::instance() {
+        static DeviceMesh instance;
+        return instance;
     }
 
-    // Handle single-GPU case gracefully
-    //
-    // This reports 1 on a machine with no usable CUDA device, which is a deliberate choice
-    // and not an oversight: callers such as DistributedMemoryPool build one pool per
-    // reported device, and returning 0 there would make every such caller special-case an
-    // empty mesh. With 1, the calls that follow fail with a real CUDA error that names the
-    // problem, instead of the code silently doing nothing.
-    //
-    // What this cannot do is distinguish "one device" from "device enumeration failed" —
-    // the two are the same number by design. A caller that needs the distinction must call
-    // cudaGetDeviceCount itself. Stated here because nothing said it before.
-    if (device_count_ <= 0) {
-        device_count_ = 1;
-    }
+    DeviceMesh::DeviceMesh()
+        : device_count_(0),
+          initialized_(false) {}
 
-    // Initialize peer capability map
-    peer_capabilities_.initialize(device_count_);
-}
-
-std::vector<PeerInfo> DeviceMesh::get_mesh_devices() const {
-    std::vector<PeerInfo> devices;
-    devices.reserve(device_count_);
-
-    for (int i = 0; i < device_count_; ++i) {
-        PeerInfo info;
-        info.device_id = i;
-
-        cudaDeviceProp prop;
-        cudaError_t err = cudaGetDeviceProperties(&prop, i);
-        if (err == cudaSuccess) {
-            info.global_memory_bytes = prop.totalGlobalMem;
-            info.compute_capability_major = prop.major;
-            info.compute_capability_minor = prop.minor;
-            std::strncpy(info.name, prop.name, sizeof(info.name) - 1);
-            info.name[sizeof(info.name) - 1] = '\0';
-        } else {
-            // Fallback for failed queries
-            info.global_memory_bytes = 0;
-            info.compute_capability_major = 0;
-            info.compute_capability_minor = 0;
-            info.name[0] = '\0';
+    void DeviceMesh::initialize() {
+        // Thread-safe check-and-set using atomic CAS to prevent race condition
+        // when multiple threads call initialize() concurrently. Without this,
+        // two threads could both see initialized_ == false and proceed to
+        // initialize, causing data races on device_count_ and peer_capabilities_.
+        bool expected = false;
+        if (!initialized_.compare_exchange_strong(expected, true, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            return;  // Another thread already initialized
         }
 
-        devices.push_back(info);
+        // Query device count
+        cudaError_t err = cudaGetDeviceCount(&device_count_);
+        if (err != cudaSuccess) {
+            // Single-GPU or no GPU systems may have issues
+            device_count_ = 0;
+        }
+
+        // Handle single-GPU case gracefully
+        //
+        // This reports 1 on a machine with no usable CUDA device, which is a deliberate choice
+        // and not an oversight: callers such as DistributedMemoryPool build one pool per
+        // reported device, and returning 0 there would make every such caller special-case an
+        // empty mesh. With 1, the calls that follow fail with a real CUDA error that names the
+        // problem, instead of the code silently doing nothing.
+        //
+        // What this cannot do is distinguish "one device" from "device enumeration failed" —
+        // the two are the same number by design. A caller that needs the distinction must call
+        // cudaGetDeviceCount itself. Stated here because nothing said it before.
+        if (device_count_ <= 0) {
+            device_count_ = 1;
+        }
+
+        // Initialize peer capability map
+        peer_capabilities_.initialize(device_count_);
     }
 
-    return devices;
-}
+    std::vector<PeerInfo> DeviceMesh::get_mesh_devices() const {
+        std::vector<PeerInfo> devices;
+        devices.reserve(device_count_);
 
-bool DeviceMesh::can_access_peer(int src, int dst) const {
-    // Self-access is always true
-    if (src == dst) {
-        return true;
+        for (int i = 0; i < device_count_; ++i) {
+            PeerInfo info;
+            info.device_id = i;
+
+            cudaDeviceProp prop;
+            cudaError_t err = cudaGetDeviceProperties(&prop, i);
+            if (err == cudaSuccess) {
+                info.global_memory_bytes = prop.totalGlobalMem;
+                info.compute_capability_major = prop.major;
+                info.compute_capability_minor = prop.minor;
+                std::strncpy(info.name, prop.name, sizeof(info.name) - 1);
+                info.name[sizeof(info.name) - 1] = '\0';
+            } else {
+                // Fallback for failed queries
+                info.global_memory_bytes = 0;
+                info.compute_capability_major = 0;
+                info.compute_capability_minor = 0;
+                info.name[0] = '\0';
+            }
+
+            devices.push_back(info);
+        }
+
+        return devices;
     }
 
-    // Bounds check
-    if (src < 0 || dst < 0 || src >= device_count_ || dst >= device_count_) {
-        return false;
+    bool DeviceMesh::can_access_peer(int src, int dst) const {
+        // Self-access is always true
+        if (src == dst) {
+            return true;
+        }
+
+        // Bounds check
+        if (src < 0 || dst < 0 || src >= device_count_ || dst >= device_count_) {
+            return false;
+        }
+
+        // Use cached peer capability map
+        return peer_capabilities_.can_access(src, dst);
     }
 
-    // Use cached peer capability map
-    return peer_capabilities_.can_access(src, dst);
-}
+    // ============================================================================
+    // ScopedDevice Implementation
+    // ============================================================================
 
-// ============================================================================
-// ScopedDevice Implementation
-// ============================================================================
+    ScopedDevice::ScopedDevice(int device)
+        : saved_device_(-1),
+          target_device_(device),
+          valid_(false) {
+        cudaError_t err = cudaGetDevice(&saved_device_);
+        if (err != cudaSuccess) {
+            saved_device_ = 0;  // Fallback
+        }
 
-ScopedDevice::ScopedDevice(int device)
-    : saved_device_(-1),
-      target_device_(device),
-      valid_(false) {
+        err = cudaSetDevice(device);
+        if (err != cudaSuccess) {
+            // Restore and throw
+            cudaSetDevice(saved_device_);
+            throw cuda::device::CudaException(err, __FILE__, __LINE__);
+        }
 
-    cudaError_t err = cudaGetDevice(&saved_device_);
-    if (err != cudaSuccess) {
-        saved_device_ = 0;  // Fallback
+        valid_ = true;
     }
 
-    err = cudaSetDevice(device);
-    if (err != cudaSuccess) {
-        // Restore and throw
-        cudaSetDevice(saved_device_);
-        throw cuda::device::CudaException(err, __FILE__, __LINE__);
+    ScopedDevice::~ScopedDevice() {
+        if (valid_ && saved_device_ >= 0) {
+            cudaSetDevice(saved_device_);
+        }
     }
-
-    valid_ = true;
-}
-
-ScopedDevice::~ScopedDevice() {
-    if (valid_ && saved_device_ >= 0) {
-        cudaSetDevice(saved_device_);
-    }
-}
 
 }  // namespace cuda::mesh

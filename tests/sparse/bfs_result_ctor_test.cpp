@@ -26,72 +26,70 @@
 
 namespace bfs_result_ctor_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
+
+    }  // namespace
+
+    TEST(BfsResultCtorTest, ConstructingAndDestroyingLeavesCudaUsable) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        {
+            cuda::graph::BFSResult result(64);
+            EXPECT_EQ(result.num_vertices, 64);
+            EXPECT_NE(result.distances, nullptr) << "the host distance array is allocated";
+            EXPECT_NE(result.d_visited, nullptr) << "the device visited array is allocated";
+        }
+
         (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
-
-}  // namespace
-
-TEST(BfsResultCtorTest, ConstructingAndDestroyingLeavesCudaUsable) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        int* probe = nullptr;
+        ASSERT_EQ(cudaMalloc(&probe, sizeof(int)), cudaSuccess) << "a fresh allocation after destruction must succeed";
+        EXPECT_EQ(cudaFree(probe), cudaSuccess);
     }
 
-    {
-        cuda::graph::BFSResult result(64);
-        EXPECT_EQ(result.num_vertices, 64);
-        EXPECT_NE(result.distances, nullptr) << "the host distance array is allocated";
-        EXPECT_NE(result.d_visited, nullptr) << "the device visited array is allocated";
+    TEST(BfsResultCtorTest, EachResultOwnsItsOwnBuffers) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // Sharing is what the move constructor explicitly avoids by nulling the source; two
+        // independently constructed results must not share either.
+        cuda::graph::BFSResult first(32);
+        cuda::graph::BFSResult second(32);
+
+        EXPECT_NE(first.d_distances, second.d_distances);
+        EXPECT_NE(first.d_visited, second.d_visited);
+        EXPECT_NE(first.distances, second.distances);
     }
 
-    (void)cudaGetLastError();
-    int* probe = nullptr;
-    ASSERT_EQ(cudaMalloc(&probe, sizeof(int)), cudaSuccess)
-        << "a fresh allocation after destruction must succeed";
-    EXPECT_EQ(cudaFree(probe), cudaSuccess);
-}
+    TEST(BfsResultCtorTest, MovingTransfersOwnershipWithoutLeavingTheSourceOwningToo) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-TEST(BfsResultCtorTest, EachResultOwnsItsOwnBuffers) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        int* original_device = nullptr;
+        {
+            cuda::graph::BFSResult source(16);
+            original_device = source.d_distances;
+            ASSERT_NE(original_device, nullptr);
+
+            cuda::graph::BFSResult destination(std::move(source));
+
+            EXPECT_EQ(destination.d_distances, original_device);
+            EXPECT_EQ(source.d_distances, nullptr) << "the moved-from result must not still hold the pointer";
+            EXPECT_EQ(source.distances, nullptr);
+        }
+        // Both objects went out of scope; only the destination freed anything.
     }
-
-    // Sharing is what the move constructor explicitly avoids by nulling the source; two
-    // independently constructed results must not share either.
-    cuda::graph::BFSResult first(32);
-    cuda::graph::BFSResult second(32);
-
-    EXPECT_NE(first.d_distances, second.d_distances);
-    EXPECT_NE(first.d_visited, second.d_visited);
-    EXPECT_NE(first.distances, second.distances);
-}
-
-TEST(BfsResultCtorTest, MovingTransfersOwnershipWithoutLeavingTheSourceOwningToo) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    int* original_device = nullptr;
-    {
-        cuda::graph::BFSResult source(16);
-        original_device = source.d_distances;
-        ASSERT_NE(original_device, nullptr);
-
-        cuda::graph::BFSResult destination(std::move(source));
-
-        EXPECT_EQ(destination.d_distances, original_device);
-        EXPECT_EQ(source.d_distances, nullptr)
-            << "the moved-from result must not still hold the pointer";
-        EXPECT_EQ(source.distances, nullptr);
-    }
-    // Both objects went out of scope; only the destination freed anything.
-}
 
 }  // namespace bfs_result_ctor_test

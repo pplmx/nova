@@ -13,34 +13,34 @@
 #define NOVA_CUDA_SPARSE_SOLVER_ERRORS_HPP
 
 namespace nova {
-namespace sparse {
+    namespace sparse {
 
-/**
- * @brief Solver error codes
- * @enum SolverError
- * @ingroup solver_errors
- */
-enum class SolverError {
-    /** @brief Solver completed successfully */
-    SUCCESS = 0,
+        /**
+         * @brief Solver error codes
+         * @enum SolverError
+         * @ingroup solver_errors
+         */
+        enum class SolverError {
+            /** @brief Solver completed successfully */
+            SUCCESS = 0,
 
-    /** @brief Maximum iterations reached without convergence */
-    MAX_ITERATIONS,
+            /** @brief Maximum iterations reached without convergence */
+            MAX_ITERATIONS,
 
-    /** @brief Numerical breakdown occurred */
-    BREAKDOWN,
+            /** @brief Numerical breakdown occurred */
+            BREAKDOWN,
 
-    /** @brief Invalid or malformed matrix */
-    INVALID_MATRIX,
+            /** @brief Invalid or malformed matrix */
+            INVALID_MATRIX,
 
-    /** @brief Failed to meet convergence tolerance */
-    CONVERGENCE_FAILURE,
+            /** @brief Failed to meet convergence tolerance */
+            CONVERGENCE_FAILURE,
 
-    /** @brief Preconditioner failed or is invalid */
-    PRECONDITIONER_ERROR
-};
+            /** @brief Preconditioner failed or is invalid */
+            PRECONDITIONER_ERROR
+        };
 
-}
-}
+    }  // namespace sparse
+}  // namespace nova
 
 #endif

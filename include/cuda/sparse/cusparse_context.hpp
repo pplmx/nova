@@ -34,41 +34,40 @@
  * @def CUSPARSE_CHECK
  * @ingroup cusparse_context
  */
-#define CUSPARSE_CHECK(expr)                                                    \
-    do {                                                                        \
-        cusparseStatus_t status = (expr);                                       \
-        if (status != CUSPARSE_STATUS_SUCCESS) {                                \
-            throw std::runtime_error("cuSPARSE error: " +                       \
-                std::to_string(static_cast<int>(status)));                      \
-        }                                                                       \
+#define CUSPARSE_CHECK(expr)                                                                         \
+    do {                                                                                             \
+        cusparseStatus_t status = (expr);                                                            \
+        if (status != CUSPARSE_STATUS_SUCCESS) {                                                     \
+            throw std::runtime_error("cuSPARSE error: " + std::to_string(static_cast<int>(status))); \
+        }                                                                                            \
     } while (0)
 
 namespace nova::sparse::detail {
 
-/**
- * @brief RAII wrapper for cuSPARSE handle
- * @class CusparseContext
- * @ingroup cusparse_context
- */
-class CusparseContext {
-public:
-    static CusparseContext& get();
+    /**
+     * @brief RAII wrapper for cuSPARSE handle
+     * @class CusparseContext
+     * @ingroup cusparse_context
+     */
+    class CusparseContext {
+    public:
+        static CusparseContext& get();
 
-    cusparseHandle_t handle() { return handle_; }
-    cudaStream_t stream() { return stream_; }
-    void set_stream(cudaStream_t stream);
+        cusparseHandle_t handle() { return handle_; }
+        cudaStream_t stream() { return stream_; }
+        void set_stream(cudaStream_t stream);
 
-    CusparseContext(const CusparseContext&) = delete;
-    CusparseContext& operator=(const CusparseContext&) = delete;
-    CusparseContext(CusparseContext&&) = delete;
-    CusparseContext& operator=(CusparseContext&&) = delete;
+        CusparseContext(const CusparseContext&) = delete;
+        CusparseContext& operator=(const CusparseContext&) = delete;
+        CusparseContext(CusparseContext&&) = delete;
+        CusparseContext& operator=(CusparseContext&&) = delete;
 
-private:
-    CusparseContext();
-    ~CusparseContext();
+    private:
+        CusparseContext();
+        ~CusparseContext();
 
-    cusparseHandle_t handle_ = nullptr;
-    cudaStream_t stream_ = nullptr;
-};
+        cusparseHandle_t handle_ = nullptr;
+        cudaStream_t stream_ = nullptr;
+    };
 
 }  // namespace nova::sparse::detail

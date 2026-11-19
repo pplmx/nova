@@ -8,7 +8,8 @@
 
 namespace {
 
-    __global__ __launch_bounds__(256, 2) void gaussianBlurHorizontal(const uint8_t* input, float* temp, size_t width, size_t height, const float* kernel, int kernel_size, int half) {
+    __global__ __launch_bounds__(256,
+                                 2) void gaussianBlurHorizontal(const uint8_t* input, float* temp, size_t width, size_t height, const float* kernel, int kernel_size, int half) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -31,7 +32,8 @@ namespace {
         }
     }
 
-    __global__ __launch_bounds__(256, 2) void gaussianBlurVertical(const float* temp, uint8_t* output, size_t width, size_t height, const float* kernel, int kernel_size, int half) {
+    __global__ __launch_bounds__(256,
+                                 2) void gaussianBlurVertical(const float* temp, uint8_t* output, size_t width, size_t height, const float* kernel, int kernel_size, int half) {
         size_t x = blockIdx.x * blockDim.x + threadIdx.x;
         size_t y = blockIdx.y * blockDim.y + threadIdx.y;
 

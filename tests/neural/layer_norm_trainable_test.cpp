@@ -30,145 +30,145 @@ using namespace cuda::neural;
 
 namespace {
 
-// Per-element near check: abs diff <= tol, or rel diff <= tol when the ref is
-// large (mirrors the established test convention).
-bool arrays_near(const float* expected, const float* actual, size_t n,
-                 float tol = 1e-4f) {
-    for (size_t i = 0; i < n; ++i) {
-        const float ref = expected[i];
-        const float diff = std::fabs(actual[i] - ref);
-        if (diff > tol && diff > tol * std::fabs(ref)) {
-            return false;
+    // Per-element near check: abs diff <= tol, or rel diff <= tol when the ref is
+    // large (mirrors the established test convention).
+    bool arrays_near(const float* expected, const float* actual, size_t n, float tol = 1e-4f) {
+        for (size_t i = 0; i < n; ++i) {
+            const float ref = expected[i];
+            const float diff = std::fabs(actual[i] - ref);
+            if (diff > tol && diff > tol * std::fabs(ref)) {
+                return false;
+            }
         }
+        return true;
     }
-    return true;
-}
 
-void fill_random(float* data, size_t count, unsigned seed, float lo = -1.0f,
-                 float hi = 1.0f) {
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(lo, hi);
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = dist(rng);
+    void fill_random(float* data, size_t count, unsigned seed, float lo = -1.0f, float hi = 1.0f) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> dist(lo, hi);
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = dist(rng);
+        }
     }
-}
 
-// Host fp64 per-row LayerNorm forward: y = gamma * (x - mean)/sqrt(var+eps) + beta.
-void host_ln_forward(const float* x, const float* gamma, const float* beta,
-                     float* y, int m, int h, float eps) {
-    for (int i = 0; i < m; ++i) {
-        const float* xr = x + i * h;
-        double sum = 0.0;
-        for (int j = 0; j < h; ++j) sum += xr[j];
-        const double mean = sum / h;
-        double var = 0.0;
-        for (int j = 0; j < h; ++j) {
-            const double d = static_cast<double>(xr[j]) - mean;
-            var += d * d;
-        }
-        var /= h;
-        const double inv = 1.0 / std::sqrt(var + eps);
-        float* yr = y + i * h;
-        for (int j = 0; j < h; ++j) {
-            const double xhat =
-                (static_cast<double>(xr[j]) - mean) * inv;
-            yr[j] = static_cast<float>(
-                static_cast<double>(gamma[j]) * xhat + static_cast<double>(beta[j]));
-        }
-    }
-}
-
-// Host fp64 LayerNorm backward: exact analytic chain. Returns xhat, mean and
-// inv-std through scratch so the caller can cross-check (finite differences).
-void host_ln_backward(const float* x, const float* gamma, const float* dy,
-                      float* dx, float* dgamma, float* dbeta, int m, int h,
-                      float eps) {
-    std::vector<double> mean(m), inv(m), dot(m);
-    for (int i = 0; i < m; ++i) {
-        const float* xr = x + i * h;
-        double s = 0.0;
-        for (int j = 0; j < h; ++j) s += static_cast<double>(xr[j]);
-        mean[i] = s / h;
-        double v = 0.0;
-        for (int j = 0; j < h; ++j) {
-            const double d = static_cast<double>(xr[j]) - mean[i];
-            v += d * d;
-        }
-        inv[i] = 1.0 / std::sqrt(v / h + eps);
-        double acc = 0.0;
-        for (int j = 0; j < h; ++j) {
-            const double xhat =
-                (static_cast<double>(xr[j]) - mean[i]) * inv[i];
-            acc += static_cast<double>(dy[i * h + j]) * xhat;
-        }
-        dot[i] = acc;
-    }
-    // dgamma[j], dbeta[j]: reduce over batch rows.
-    for (int j = 0; j < h; ++j) {
-        dgamma[j] = 0.0f;
-        dbeta[j] = 0.0f;
+    // Host fp64 per-row LayerNorm forward: y = gamma * (x - mean)/sqrt(var+eps) + beta.
+    void host_ln_forward(const float* x, const float* gamma, const float* beta, float* y, int m, int h, float eps) {
         for (int i = 0; i < m; ++i) {
             const float* xr = x + i * h;
-            const double xhat =
-                (static_cast<double>(xr[j]) - mean[i]) * inv[i];
-            dgamma[j] += static_cast<float>(static_cast<double>(dy[i * h + j]) * xhat);
-            dbeta[j] += dy[i * h + j];
+            double sum = 0.0;
+            for (int j = 0; j < h; ++j) {
+                sum += xr[j];
+            }
+            const double mean = sum / h;
+            double var = 0.0;
+            for (int j = 0; j < h; ++j) {
+                const double d = static_cast<double>(xr[j]) - mean;
+                var += d * d;
+            }
+            var /= h;
+            const double inv = 1.0 / std::sqrt(var + eps);
+            float* yr = y + i * h;
+            for (int j = 0; j < h; ++j) {
+                const double xhat = (static_cast<double>(xr[j]) - mean) * inv;
+                yr[j] = static_cast<float>(static_cast<double>(gamma[j]) * xhat + static_cast<double>(beta[j]));
+            }
         }
     }
-    // d_input per row.
-    for (int i = 0; i < m; ++i) {
-        const float* xr = x + i * h;
-        const float* dyr = dy + i * h;
-        float* dxr = dx + i * h;
-        // Row stats in fp64.
-        double sum_dxhat = 0.0;
-        double sum_dxhat_xhat = 0.0;
-        std::vector<double> dxhat(h);
-        for (int j = 0; j < h; ++j) {
-            const double xhat =
-                (static_cast<double>(xr[j]) - mean[i]) * inv[i];
-            dxhat[j] = static_cast<double>(dyr[j]) * static_cast<double>(gamma[j]);
-            sum_dxhat += dxhat[j];
-            sum_dxhat_xhat += dxhat[j] * xhat;
-        }
-        for (int j = 0; j < h; ++j) {
-            const double xhat =
-                (static_cast<double>(xr[j]) - mean[i]) * inv[i];
-            // dL/dx = inv * ( dxhat - mean_dxhat - xhat * mean(dxhat*xhat) )
-            const double v = inv[i] * (dxhat[j] - sum_dxhat / h -
-                                       xhat * (sum_dxhat_xhat / h));
-            dxr[j] = static_cast<float>(v);
-        }
-    }
-}
 
-// Central finite-difference of a linear loss on one row: L(x) =
-// <dy_row, ln(x)[row, :]>. Only row `row` is perturbed (LayerNorm normalizes
-// each row independently, so this isolates dL/dx[row, :]); the probe is
-// computed on the full forward so the perturbed row is actually used.
-void finite_diff_dx(const std::vector<float>& x, const std::vector<float>& g,
-                    const std::vector<float>& b, int m, int h, float eps,
-                    const std::vector<float>& dy_row, int row,
-                    std::vector<float>& fd, float hstep = 1e-3f) {
-    std::vector<float> y(static_cast<size_t>(m) * h);
-    for (int j = 0; j < h; ++j) {
-        // Rebuild the perturbed row from the base each column (LayerNorm mixes
-        // the whole row, so a leftover bump would corrupt later columns).
-        std::vector<float> xp = x;
-        std::vector<float> xm = x;
-        xp[static_cast<size_t>(row) * h + j] += hstep;
-        xm[static_cast<size_t>(row) * h + j] -= hstep;
-        host_ln_forward(xp.data(), g.data(), b.data(), y.data(), m, h, eps);
-        double lp = 0.0;
-        for (int k = 0; k < h; ++k)
-            lp += static_cast<double>(dy_row[k]) * y[static_cast<size_t>(row) * h + k];
-        host_ln_forward(xm.data(), g.data(), b.data(), y.data(), m, h, eps);
-        double lm = 0.0;
-        for (int k = 0; k < h; ++k)
-            lm += static_cast<double>(dy_row[k]) * y[static_cast<size_t>(row) * h + k];
-        fd[j] = static_cast<float>((lp - lm) / (2.0 * hstep));
+    // Host fp64 LayerNorm backward: exact analytic chain. Returns xhat, mean and
+    // inv-std through scratch so the caller can cross-check (finite differences).
+    void host_ln_backward(const float* x, const float* gamma, const float* dy, float* dx, float* dgamma, float* dbeta, int m, int h, float eps) {
+        std::vector<double> mean(m), inv(m), dot(m);
+        for (int i = 0; i < m; ++i) {
+            const float* xr = x + i * h;
+            double s = 0.0;
+            for (int j = 0; j < h; ++j) {
+                s += static_cast<double>(xr[j]);
+            }
+            mean[i] = s / h;
+            double v = 0.0;
+            for (int j = 0; j < h; ++j) {
+                const double d = static_cast<double>(xr[j]) - mean[i];
+                v += d * d;
+            }
+            inv[i] = 1.0 / std::sqrt(v / h + eps);
+            double acc = 0.0;
+            for (int j = 0; j < h; ++j) {
+                const double xhat = (static_cast<double>(xr[j]) - mean[i]) * inv[i];
+                acc += static_cast<double>(dy[i * h + j]) * xhat;
+            }
+            dot[i] = acc;
+        }
+        // dgamma[j], dbeta[j]: reduce over batch rows.
+        for (int j = 0; j < h; ++j) {
+            dgamma[j] = 0.0f;
+            dbeta[j] = 0.0f;
+            for (int i = 0; i < m; ++i) {
+                const float* xr = x + i * h;
+                const double xhat = (static_cast<double>(xr[j]) - mean[i]) * inv[i];
+                dgamma[j] += static_cast<float>(static_cast<double>(dy[i * h + j]) * xhat);
+                dbeta[j] += dy[i * h + j];
+            }
+        }
+        // d_input per row.
+        for (int i = 0; i < m; ++i) {
+            const float* xr = x + i * h;
+            const float* dyr = dy + i * h;
+            float* dxr = dx + i * h;
+            // Row stats in fp64.
+            double sum_dxhat = 0.0;
+            double sum_dxhat_xhat = 0.0;
+            std::vector<double> dxhat(h);
+            for (int j = 0; j < h; ++j) {
+                const double xhat = (static_cast<double>(xr[j]) - mean[i]) * inv[i];
+                dxhat[j] = static_cast<double>(dyr[j]) * static_cast<double>(gamma[j]);
+                sum_dxhat += dxhat[j];
+                sum_dxhat_xhat += dxhat[j] * xhat;
+            }
+            for (int j = 0; j < h; ++j) {
+                const double xhat = (static_cast<double>(xr[j]) - mean[i]) * inv[i];
+                // dL/dx = inv * ( dxhat - mean_dxhat - xhat * mean(dxhat*xhat) )
+                const double v = inv[i] * (dxhat[j] - sum_dxhat / h - xhat * (sum_dxhat_xhat / h));
+                dxr[j] = static_cast<float>(v);
+            }
+        }
     }
-}
+
+    // Central finite-difference of a linear loss on one row: L(x) =
+    // <dy_row, ln(x)[row, :]>. Only row `row` is perturbed (LayerNorm normalizes
+    // each row independently, so this isolates dL/dx[row, :]); the probe is
+    // computed on the full forward so the perturbed row is actually used.
+    void finite_diff_dx(const std::vector<float>& x,
+                        const std::vector<float>& g,
+                        const std::vector<float>& b,
+                        int m,
+                        int h,
+                        float eps,
+                        const std::vector<float>& dy_row,
+                        int row,
+                        std::vector<float>& fd,
+                        float hstep = 1e-3f) {
+        std::vector<float> y(static_cast<size_t>(m) * h);
+        for (int j = 0; j < h; ++j) {
+            // Rebuild the perturbed row from the base each column (LayerNorm mixes
+            // the whole row, so a leftover bump would corrupt later columns).
+            std::vector<float> xp = x;
+            std::vector<float> xm = x;
+            xp[static_cast<size_t>(row) * h + j] += hstep;
+            xm[static_cast<size_t>(row) * h + j] -= hstep;
+            host_ln_forward(xp.data(), g.data(), b.data(), y.data(), m, h, eps);
+            double lp = 0.0;
+            for (int k = 0; k < h; ++k) {
+                lp += static_cast<double>(dy_row[k]) * y[static_cast<size_t>(row) * h + k];
+            }
+            host_ln_forward(xm.data(), g.data(), b.data(), y.data(), m, h, eps);
+            double lm = 0.0;
+            for (int k = 0; k < h; ++k) {
+                lm += static_cast<double>(dy_row[k]) * y[static_cast<size_t>(row) * h + k];
+            }
+            fd[j] = static_cast<float>((lp - lm) / (2.0 * hstep));
+        }
+    }
 
 }  // namespace
 
@@ -189,16 +189,14 @@ TEST_F(LayerNormTrainableTest, HostBackwardReferenceMatchesFiniteDifference) {
     fill_random(b.data(), b.size(), 103);
     fill_random(dy.data(), dy.size(), 104);
     std::vector<float> dx(static_cast<size_t>(m) * h), dg(h), db(h);
-    host_ln_backward(x.data(), g.data(), dy.data(), dx.data(), dg.data(),
-                     db.data(), m, h, eps);
+    host_ln_backward(x.data(), g.data(), dy.data(), dx.data(), dg.data(), db.data(), m, h, eps);
     // Single-row linear probe must reproduce dL/dx on that row.
     for (int row = 0; row < m; ++row) {
         std::vector<float> dy_row(dy.begin() + row * h, dy.begin() + (row + 1) * h);
         std::vector<float> fd(h);
         finite_diff_dx(x, g, b, m, h, eps, dy_row, row, fd);
         for (int j = 0; j < h; ++j) {
-            EXPECT_NEAR(dx[row * h + j], fd[j], 5e-2f)
-                << "row " << row << " col " << j << " analytic d_input vs finite diff";
+            EXPECT_NEAR(dx[row * h + j], fd[j], 5e-2f) << "row " << row << " col " << j << " analytic d_input vs finite diff";
         }
     }
 }
@@ -228,8 +226,7 @@ TEST_F(LayerNormTrainableTest, ForwardMatchesHostReference) {
     // whole-row parity against the host fp64 reference IS the contract (the
     // affine gamma/beta are arbitrary random here, so neither a zero-mean nor
     // a unit-variance output property holds).
-    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f))
-        << "device LayerNorm forward differs from host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f)) << "device LayerNorm forward differs from host fp64 reference";
 }
 
 // Device backward == host fp64 analytic backward (d_input, d_gamma, d_beta).
@@ -244,28 +241,22 @@ TEST_F(LayerNormTrainableTest, BackwardMatchesHostReference) {
     fill_random(dy.data(), dy.size(), 304);
 
     std::vector<float> ref_dx(static_cast<size_t>(m) * h), ref_dg(h), ref_db(h);
-    host_ln_backward(x.data(), g.data(), dy.data(), ref_dx.data(),
-                     ref_dg.data(), ref_db.data(), m, h, eps);
+    host_ln_backward(x.data(), g.data(), dy.data(), ref_dx.data(), ref_dg.data(), ref_db.data(), m, h, eps);
 
     LayerNorm ln(h, eps);
     ln.set_weight(g.data(), b.data());
-    cuda::memory::Buffer<float> d_x(m * h), d_dy(m * h), d_dx(m * h),
-        d_dg(h), d_db(h);
+    cuda::memory::Buffer<float> d_x(m * h), d_dy(m * h), d_dx(m * h), d_dg(h), d_db(h);
     d_x.copy_from(x.data(), x.size());
     d_dy.copy_from(dy.data(), dy.size());
-    ln.backward(d_x.data(), d_dy.data(), d_dx.data(), d_dg.data(),
-                d_db.data(), m);
+    ln.backward(d_x.data(), d_dy.data(), d_dx.data(), d_dg.data(), d_db.data(), m);
     std::vector<float> dx(static_cast<size_t>(m) * h), dg(h), db(h);
     d_dx.copy_to(dx.data(), dx.size());
     d_dg.copy_to(dg.data(), dg.size());
     d_db.copy_to(db.data(), db.size());
 
-    EXPECT_TRUE(arrays_near(ref_dx.data(), dx.data(), dx.size(), 2e-4f))
-        << "device d_input differs from host fp64 reference";
-    EXPECT_TRUE(arrays_near(ref_dg.data(), dg.data(), dg.size(), 2e-4f))
-        << "device d_gamma differs from host fp64 reference";
-    EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), db.size(), 2e-4f))
-        << "device d_beta differs from host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_dx.data(), dx.data(), dx.size(), 2e-4f)) << "device d_input differs from host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_dg.data(), dg.data(), dg.size(), 2e-4f)) << "device d_gamma differs from host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), db.size(), 2e-4f)) << "device d_beta differs from host fp64 reference";
 }
 
 // copy_weights must round-trip what set_weight uploaded.
@@ -306,13 +297,11 @@ TEST_F(LayerNormTrainableTest, LegacyInferenceMatchesHostReference) {
     d_x.copy_from(x.data(), x.size());
     d_g.copy_from(g.data(), g.size());
     d_b.copy_from(b.data(), b.size());
-    layer_norm_inference(d_x.data(), d_g.data(), d_b.data(), d_y.data(), m, h,
-                         eps);
+    layer_norm_inference(d_x.data(), d_g.data(), d_b.data(), d_y.data(), m, h, eps);
     std::vector<float> y(static_cast<size_t>(m) * h);
     d_y.copy_to(y.data(), y.size());
 
-    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f))
-        << "layer_norm_inference differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f)) << "layer_norm_inference differs from the host fp64 reference";
 }
 
 // One AdamW step on gamma/beta must actually move them (trainable surface).
@@ -359,13 +348,11 @@ TEST_F(LayerNormTrainableTest, ParallelForwardMatchesHostFp64LargeHidden) {
     d_x.copy_from(x.data(), x.size());
     d_g.copy_from(g.data(), g.size());
     d_b.copy_from(b.data(), b.size());
-    detail::layer_norm_forward_trainable(d_x.data(), d_g.data(), d_b.data(),
-                                         d_y.data(), m, h, eps, nullptr);
+    detail::layer_norm_forward_trainable(d_x.data(), d_g.data(), d_b.data(), d_y.data(), m, h, eps, nullptr);
     std::vector<float> y(static_cast<size_t>(m) * h);
     d_y.copy_to(y.data(), y.size());
 
-    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 3e-4f))
-        << "parallel LayerNorm forward differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 3e-4f)) << "parallel LayerNorm forward differs from the host fp64 reference";
 }
 
 // Parallelized trainable LayerNorm backward at hidden=1024 (d_input, d_gamma,
@@ -384,26 +371,20 @@ TEST_F(LayerNormTrainableTest, ParallelBackwardMatchesHostFp64LargeHidden) {
     fill_random(dy.data(), dy.size(), 804);
 
     std::vector<float> ref_dx(static_cast<size_t>(m) * h), ref_dg(h), ref_db(h);
-    host_ln_backward(x.data(), g.data(), dy.data(), ref_dx.data(),
-                     ref_dg.data(), ref_db.data(), m, h, eps);
+    host_ln_backward(x.data(), g.data(), dy.data(), ref_dx.data(), ref_dg.data(), ref_db.data(), m, h, eps);
 
     cuda::memory::Buffer<float> d_x(m * h), d_g(h), d_dy(m * h);
     cuda::memory::Buffer<float> d_dx(m * h), d_dg(h), d_db(h);
     d_x.copy_from(x.data(), x.size());
     d_g.copy_from(g.data(), g.size());
     d_dy.copy_from(dy.data(), dy.size());
-    detail::layer_norm_backward_trainable(d_x.data(), d_g.data(), d_dy.data(),
-                                          d_dx.data(), d_dg.data(),
-                                          d_db.data(), m, h, eps, nullptr);
+    detail::layer_norm_backward_trainable(d_x.data(), d_g.data(), d_dy.data(), d_dx.data(), d_dg.data(), d_db.data(), m, h, eps, nullptr);
     std::vector<float> dx(static_cast<size_t>(m) * h), dg(h), db(h);
     d_dx.copy_to(dx.data(), dx.size());
     d_dg.copy_to(dg.data(), h);
     d_db.copy_to(db.data(), h);
 
-    EXPECT_TRUE(arrays_near(ref_dx.data(), dx.data(), dx.size(), 3e-4f))
-        << "parallel LayerNorm d_input differs from the host fp64 reference";
-    EXPECT_TRUE(arrays_near(ref_dg.data(), dg.data(), h, 2e-4f))
-        << "parallel LayerNorm d_gamma differs from the host fp64 reference";
-    EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), h, 2e-4f))
-        << "parallel LayerNorm d_beta differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_dx.data(), dx.data(), dx.size(), 3e-4f)) << "parallel LayerNorm d_input differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_dg.data(), dg.data(), h, 2e-4f)) << "parallel LayerNorm d_gamma differs from the host fp64 reference";
+    EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), h, 2e-4f)) << "parallel LayerNorm d_beta differs from the host fp64 reference";
 }

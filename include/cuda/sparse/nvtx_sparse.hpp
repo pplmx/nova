@@ -18,49 +18,47 @@
 #include <nvtx3/nvtx3.hpp>
 
 namespace nova {
-namespace sparse {
-namespace nvtx {
+    namespace sparse {
+        namespace nvtx {
 
-/**
- * @brief Get NVTX domain for sparse operations
- * @return NVTX domain handle
- */
-inline nvtxDomainHandle_t get_sparse_domain() {
-    static nvtxDomainHandle_t domain = nvtxDomainCreateA("nova_sparse");
-    return domain;
-}
+            /**
+             * @brief Get NVTX domain for sparse operations
+             * @return NVTX domain handle
+             */
+            inline nvtxDomainHandle_t get_sparse_domain() {
+                static nvtxDomainHandle_t domain = nvtxDomainCreateA("nova_sparse");
+                return domain;
+            }
 
-/**
- * @brief RAII NVTX range wrapper
- * @class ScopedRange
- * @ingroup nvtx_sparse
- */
-struct ScopedRange {
-    /** @brief Start NVTX range */
-    ScopedRange(const char* name) {
-        nvtxRangePushA(name);
-    }
-    /** @brief End NVTX range */
-    ~ScopedRange() {
-        nvtxRangePop();
-    }
-};
+            /**
+             * @brief RAII NVTX range wrapper
+             * @class ScopedRange
+             * @ingroup nvtx_sparse
+             */
+            struct ScopedRange {
+                /** @brief Start NVTX range */
+                ScopedRange(const char* name) { nvtxRangePushA(name); }
+                /** @brief End NVTX range */
+                ~ScopedRange() { nvtxRangePop(); }
+            };
 
 #define NOVA_NVTX_SCOPED_RANGE(name) nova::sparse::nvtx::ScopedRange nova_nvtx_range_(name)
 #define NOVA_NVTX_MARKER(name) nvtxMarkA(name)
 
-}  // namespace nvtx
-}  // namespace sparse
+        }  // namespace nvtx
+    }  // namespace sparse
 }  // namespace nova
 
 #else
 
 namespace nova {
-namespace sparse {
-namespace nvtx {
-inline void* get_sparse_domain() { return nullptr; }
-}  // namespace nvtx
-}  // namespace sparse
+    namespace sparse {
+        namespace nvtx {
+            inline void* get_sparse_domain() {
+                return nullptr;
+            }
+        }  // namespace nvtx
+    }  // namespace sparse
 }  // namespace nova
 
 #define NOVA_NVTX_SCOPED_RANGE(name) ((void)0)

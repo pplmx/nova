@@ -30,165 +30,161 @@
 
 namespace cuda::graph::test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-// Regression: this dereferenced a null ranks pointer.
-TEST(PageRankResultTest, MovedFromObjectCanBeQueriedSafely) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    // Regression: this dereferenced a null ranks pointer.
+    TEST(PageRankResultTest, MovedFromObjectCanBeQueriedSafely) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    PageRankResult original(4);
-    PageRankResult owner(std::move(original));
+        PageRankResult original(4);
+        PageRankResult owner(std::move(original));
 
-    // The moved-from object is in a valid state for destruction and assignment.
-    EXPECT_EQ(original.num_vertices, 0);
-    EXPECT_EQ(original.ranks, nullptr);
+        // The moved-from object is in a valid state for destruction and assignment.
+        EXPECT_EQ(original.num_vertices, 0);
+        EXPECT_EQ(original.ranks, nullptr);
 
-    EXPECT_EQ(original.top_vertex(), -1)
-        << "a moved-from result has no vertices to report";
-}
-
-// Regression: this read past a zero-length allocation.
-TEST(PageRankResultTest, ZeroVerticesReportNoTopVertex) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(original.top_vertex(), -1) << "a moved-from result has no vertices to report";
     }
 
-    const PageRankResult empty(0);
+    // Regression: this read past a zero-length allocation.
+    TEST(PageRankResultTest, ZeroVerticesReportNoTopVertex) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_EQ(empty.num_vertices, 0);
-    EXPECT_EQ(empty.top_vertex(), -1)
-        << "an empty graph has no highest-ranked vertex";
-}
+        const PageRankResult empty(0);
 
-TEST(PageRankResultTest, ClearedResultCanBeQueriedSafely) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(empty.num_vertices, 0);
+        EXPECT_EQ(empty.top_vertex(), -1) << "an empty graph has no highest-ranked vertex";
     }
 
-    PageRankResult result(8);
-    result.clear();
+    TEST(PageRankResultTest, ClearedResultCanBeQueriedSafely) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_EQ(result.num_vertices, 0);
-    EXPECT_EQ(result.ranks, nullptr);
-    EXPECT_EQ(result.top_vertex(), -1);
-}
+        PageRankResult result(8);
+        result.clear();
 
-TEST(PageRankResultTest, TopVertexFindsTheMaximumRank) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(result.num_vertices, 0);
+        EXPECT_EQ(result.ranks, nullptr);
+        EXPECT_EQ(result.top_vertex(), -1);
     }
 
-    PageRankResult result(5);
-    // Distinct values so the winner is unambiguous.
-    const std::vector<float> ranks = {0.1f, 0.05f, 0.6f, 0.15f, 0.1f};
-    for (int i = 0; i < 5; ++i) {
-        result.ranks[i] = ranks[static_cast<size_t>(i)];
+    TEST(PageRankResultTest, TopVertexFindsTheMaximumRank) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        PageRankResult result(5);
+        // Distinct values so the winner is unambiguous.
+        const std::vector<float> ranks = {0.1f, 0.05f, 0.6f, 0.15f, 0.1f};
+        for (int i = 0; i < 5; ++i) {
+            result.ranks[i] = ranks[static_cast<size_t>(i)];
+        }
+
+        EXPECT_EQ(result.top_vertex(), 2) << "index 2 holds the largest rank";
     }
 
-    EXPECT_EQ(result.top_vertex(), 2) << "index 2 holds the largest rank";
-}
+    TEST(PageRankResultTest, TopVertexPicksTheFirstWhenRanksTie) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-TEST(PageRankResultTest, TopVertexPicksTheFirstWhenRanksTie) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        PageRankResult result(3);
+        // A strict greater-than comparison keeps the earliest index on a tie, which
+        // makes the result deterministic for symmetric graphs.
+        result.ranks[0] = 0.5f;
+        result.ranks[1] = 0.5f;
+        result.ranks[2] = 0.5f;
+
+        EXPECT_EQ(result.top_vertex(), 0);
     }
 
-    PageRankResult result(3);
-    // A strict greater-than comparison keeps the earliest index on a tie, which
-    // makes the result deterministic for symmetric graphs.
-    result.ranks[0] = 0.5f;
-    result.ranks[1] = 0.5f;
-    result.ranks[2] = 0.5f;
+    TEST(PageRankResultTest, MoveTransfersOwnershipExactlyOnce) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_EQ(result.top_vertex(), 0);
-}
+        PageRankResult first(4);
+        first.ranks[0] = 1.0f;
+        first.ranks[1] = 2.0f;
+        first.ranks[2] = 3.0f;
+        first.ranks[3] = 4.0f;
+        first.iterations = 7;
+        first.final_delta = 0.25f;
 
-TEST(PageRankResultTest, MoveTransfersOwnershipExactlyOnce) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        PageRankResult second(std::move(first));
+
+        EXPECT_EQ(second.num_vertices, 4);
+        EXPECT_EQ(second.top_vertex(), 3) << "index 3 holds the largest rank";
+        EXPECT_EQ(second.iterations, 7);
+        EXPECT_NEAR(second.final_delta, 0.25f, 1e-6f);
+
+        // The source must not still point at the transferred buffer.
+        EXPECT_EQ(first.ranks, nullptr);
+        EXPECT_EQ(first.num_vertices, 0);
     }
 
-    PageRankResult first(4);
-    first.ranks[0] = 1.0f;
-    first.ranks[1] = 2.0f;
-    first.ranks[2] = 3.0f;
-    first.ranks[3] = 4.0f;
-    first.iterations = 7;
-    first.final_delta = 0.25f;
+    TEST(PageRankResultTest, MoveAssignmentReleasesThePreviousBuffer) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    PageRankResult second(std::move(first));
+        PageRankResult source(2);
+        source.ranks[0] = 0.0f;
+        source.ranks[1] = 9.0f;
 
-    EXPECT_EQ(second.num_vertices, 4);
-    EXPECT_EQ(second.top_vertex(), 3) << "index 3 holds the largest rank";
-    EXPECT_EQ(second.iterations, 7);
-    EXPECT_NEAR(second.final_delta, 0.25f, 1e-6f);
+        PageRankResult target(6);
+        target = std::move(source);
 
-    // The source must not still point at the transferred buffer.
-    EXPECT_EQ(first.ranks, nullptr);
-    EXPECT_EQ(first.num_vertices, 0);
-}
-
-TEST(PageRankResultTest, MoveAssignmentReleasesThePreviousBuffer) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(target.num_vertices, 2) << "the assignment must replace the old size, not merge";
+        EXPECT_EQ(target.top_vertex(), 1);
+        EXPECT_EQ(source.ranks, nullptr);
     }
 
-    PageRankResult source(2);
-    source.ranks[0] = 0.0f;
-    source.ranks[1] = 9.0f;
+    TEST(PageRankResultTest, UploadAndDownloadRoundTrip) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    PageRankResult target(6);
-    target = std::move(source);
+        PageRankResult result(4);
+        const std::vector<float> ranks = {0.1f, 0.4f, 0.2f, 0.3f};
+        for (int i = 0; i < 4; ++i) {
+            result.ranks[i] = ranks[static_cast<size_t>(i)];
+        }
 
-    EXPECT_EQ(target.num_vertices, 2)
-        << "the assignment must replace the old size, not merge";
-    EXPECT_EQ(target.top_vertex(), 1);
-    EXPECT_EQ(source.ranks, nullptr);
-}
+        ASSERT_NO_THROW(result.upload());
+        // Scramble the host copy, then read it back from the device.
+        for (int i = 0; i < 4; ++i) {
+            result.ranks[i] = -1.0f;
+        }
+        ASSERT_NO_THROW(result.download());
 
-TEST(PageRankResultTest, UploadAndDownloadRoundTrip) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        for (int i = 0; i < 4; ++i) {
+            EXPECT_NEAR(result.ranks[i], ranks[static_cast<size_t>(i)], 1e-6f) << "element " << i;
+        }
     }
 
-    PageRankResult result(4);
-    const std::vector<float> ranks = {0.1f, 0.4f, 0.2f, 0.3f};
-    for (int i = 0; i < 4; ++i) {
-        result.ranks[i] = ranks[static_cast<size_t>(i)];
+    TEST(PageRankResultTest, DefaultConstructedIsEmpty) {
+        const PageRankResult result;
+
+        EXPECT_EQ(result.num_vertices, 0);
+        EXPECT_EQ(result.ranks, nullptr);
+        EXPECT_EQ(result.top_vertex(), -1);
     }
-
-    ASSERT_NO_THROW(result.upload());
-    // Scramble the host copy, then read it back from the device.
-    for (int i = 0; i < 4; ++i) {
-        result.ranks[i] = -1.0f;
-    }
-    ASSERT_NO_THROW(result.download());
-
-    for (int i = 0; i < 4; ++i) {
-        EXPECT_NEAR(result.ranks[i], ranks[static_cast<size_t>(i)], 1e-6f)
-            << "element " << i;
-    }
-}
-
-TEST(PageRankResultTest, DefaultConstructedIsEmpty) {
-    const PageRankResult result;
-
-    EXPECT_EQ(result.num_vertices, 0);
-    EXPECT_EQ(result.ranks, nullptr);
-    EXPECT_EQ(result.top_vertex(), -1);
-}
 
 }  // namespace cuda::graph::test

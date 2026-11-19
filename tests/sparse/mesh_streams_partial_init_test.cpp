@@ -27,51 +27,51 @@
 
 namespace mesh_streams_partial_init_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(MeshStreamsPartialInitTest, InitialisingGivesOneStreamAndEventPerDevice) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(MeshStreamsPartialInitTest, InitialisingGivesOneStreamAndEventPerDevice) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    auto& streams = cuda::distributed::MeshStreams::instance();
-    const int device_count = 1;  // one device is enough to check the per-device contract
-    streams.initialize(device_count);
+        auto& streams = cuda::distributed::MeshStreams::instance();
+        const int device_count = 1;  // one device is enough to check the per-device contract
+        streams.initialize(device_count);
 
-    for (int i = 0; i < device_count; ++i) {
-        EXPECT_NE(streams.get_stream(i), nullptr) << "stream " << i;
-        EXPECT_NE(streams.get_event(i), nullptr) << "event " << i;
-    }
-}
-
-TEST(MeshStreamsPartialInitTest, ASecondInitializeIsIgnoredRatherThanReallocating) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        for (int i = 0; i < device_count; ++i) {
+            EXPECT_NE(streams.get_stream(i), nullptr) << "stream " << i;
+            EXPECT_NE(streams.get_event(i), nullptr) << "event " << i;
+        }
     }
 
-    auto& streams = cuda::distributed::MeshStreams::instance();
-    streams.initialize(1);
+    TEST(MeshStreamsPartialInitTest, ASecondInitializeIsIgnoredRatherThanReallocating) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const cudaStream_t first = streams.get_stream(0);
+        auto& streams = cuda::distributed::MeshStreams::instance();
+        streams.initialize(1);
 
-    // initialize() returns early when already initialised, before it looks at its argument at
-    // all — so a second call neither throws nor replaces the streams it already made. My first
-    // version of this case asserted a throw and passed alone while failing after its sibling
-    // had initialised the singleton. The early return is the real contract, and it is what
-    // keeps a repeat call from leaking a second set.
-    EXPECT_NO_THROW(streams.initialize(1));
-    EXPECT_EQ(streams.get_stream(0), first) << "the existing stream must be reused";
-}
+        const cudaStream_t first = streams.get_stream(0);
+
+        // initialize() returns early when already initialised, before it looks at its argument at
+        // all — so a second call neither throws nor replaces the streams it already made. My first
+        // version of this case asserted a throw and passed alone while failing after its sibling
+        // had initialised the singleton. The early return is the real contract, and it is what
+        // keeps a repeat call from leaking a second set.
+        EXPECT_NO_THROW(streams.initialize(1));
+        EXPECT_EQ(streams.get_stream(0), first) << "the existing stream must be reused";
+    }
 
 }  // namespace mesh_streams_partial_init_test

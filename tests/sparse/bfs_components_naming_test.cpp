@@ -31,35 +31,33 @@ namespace bfs_components_naming_test {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-TEST(BfsComponentsNamingTest, ASingleSourceCountsAsOneNoMatterHowManyAreUnreached) {
-    // One source, three unreached: a graph with one component, and also one with four.
-    cuda::graph::BFSResult result(4);
-    result.distances[0] = 0;   // the source
-    result.distances[1] = 1;
-    result.distances[2] = -1;  // unreached
-    result.distances[3] = -1;  // unreached
+    TEST(BfsComponentsNamingTest, ASingleSourceCountsAsOneNoMatterHowManyAreUnreached) {
+        // One source, three unreached: a graph with one component, and also one with four.
+        cuda::graph::BFSResult result(4);
+        result.distances[0] = 0;  // the source
+        result.distances[1] = 1;
+        result.distances[2] = -1;  // unreached
+        result.distances[3] = -1;  // unreached
 
-    EXPECT_EQ(cuda::graph::count_reachable_components(result), 1)
-        << "one distance-zero vertex, regardless of how many are unreached";
-}
+        EXPECT_EQ(cuda::graph::count_reachable_components(result), 1) << "one distance-zero vertex, regardless of how many are unreached";
+    }
 
-TEST(BfsComponentsNamingTest, TheAnswerFollowsTheDistanceArrayNotTheGraphShape) {
-    // Two entries at distance zero. A real BFS never produces this — there is one source — so
-    // seeing 2 here is proof that the count reads the array rather than reasoning about
-    // connectivity.
-    cuda::graph::BFSResult result(3);
-    result.distances[0] = 0;
-    result.distances[1] = 0;
-    result.distances[2] = 5;
+    TEST(BfsComponentsNamingTest, TheAnswerFollowsTheDistanceArrayNotTheGraphShape) {
+        // Two entries at distance zero. A real BFS never produces this — there is one source — so
+        // seeing 2 here is proof that the count reads the array rather than reasoning about
+        // connectivity.
+        cuda::graph::BFSResult result(3);
+        result.distances[0] = 0;
+        result.distances[1] = 0;
+        result.distances[2] = 5;
 
-    EXPECT_EQ(cuda::graph::count_reachable_components(result), 2)
-        << "the function counts zero entries; it does not verify there is one source";
-}
+        EXPECT_EQ(cuda::graph::count_reachable_components(result), 2) << "the function counts zero entries; it does not verify there is one source";
+    }
 
-TEST(BfsComponentsNamingTest, AnEmptyResultCountsNothing) {
-    cuda::graph::BFSResult result(0);
-    EXPECT_EQ(cuda::graph::count_reachable_components(result), 0);
-}
+    TEST(BfsComponentsNamingTest, AnEmptyResultCountsNothing) {
+        cuda::graph::BFSResult result(0);
+        EXPECT_EQ(cuda::graph::count_reachable_components(result), 0);
+    }
 
 #pragma GCC diagnostic pop
 

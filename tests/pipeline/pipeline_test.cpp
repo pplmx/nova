@@ -10,9 +10,7 @@ using namespace cuda::pipeline;
 
 class PipelineTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(PipelineTest, BubbleOverheadSingleStage) {
@@ -71,10 +69,8 @@ TEST_F(PipelineTest, Schedule1F1BCoversEveryStageMicrobatchOnce) {
 
     for (int s = 0; s < K; ++s) {
         for (int mb = 0; mb < M; ++mb) {
-            EXPECT_EQ(std::count(forwards.begin(), forwards.end(), std::make_pair(s, mb)), 1)
-                << "forward (stage " << s << ", mb " << mb << ")";
-            EXPECT_EQ(std::count(backwards.begin(), backwards.end(), std::make_pair(s, mb)), 1)
-                << "backward (stage " << s << ", mb " << mb << ")";
+            EXPECT_EQ(std::count(forwards.begin(), forwards.end(), std::make_pair(s, mb)), 1) << "forward (stage " << s << ", mb " << mb << ")";
+            EXPECT_EQ(std::count(backwards.begin(), backwards.end(), std::make_pair(s, mb)), 1) << "backward (stage " << s << ", mb " << mb << ")";
         }
     }
 }

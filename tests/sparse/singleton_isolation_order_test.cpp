@@ -26,84 +26,79 @@
 
 namespace singleton_isolation_order_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(SingletonIsolationOrderTest, ResettingRestoresTheProcessIdAnOverrideChanged) {
-    // Reproduces the exact sequence that broke a test in another file: override the pid,
-    // reset through the registry, and require the real one back on the next event.
-    //
-    // My first version of this case issued three redundant set/clear pairs of its own on
-    // top of the reset — leftovers from an earlier edit — and the pair of cases then
-    // crashed with SIGBUS when run together. The redundant calls are gone; what remains is
-    // the sequence the property is actually about.
-    cuda::observability::TimelineExporter& exporter =
-        cuda::observability::TimelineExporter::instance();
+    TEST(SingletonIsolationOrderTest, ResettingRestoresTheProcessIdAnOverrideChanged) {
+        // Reproduces the exact sequence that broke a test in another file: override the pid,
+        // reset through the registry, and require the real one back on the next event.
+        //
+        // My first version of this case issued three redundant set/clear pairs of its own on
+        // top of the reset — leftovers from an earlier edit — and the pair of cases then
+        // crashed with SIGBUS when run together. The redundant calls are gone; what remains is
+        // the sequence the property is actually about.
+        cuda::observability::TimelineExporter& exporter = cuda::observability::TimelineExporter::instance();
 
-    exporter.clear();
-    exporter.set_process_id(1);
+        exporter.clear();
+        exporter.set_process_id(1);
 
-    cuda::testing::reset_all_singletons();
+        cuda::testing::reset_all_singletons();
 
-    exporter.record_event("order-probe", "cat", 1);
-    const std::string path = "/tmp/nova_order_probe_" +
-                             std::to_string(::getpid()) + ".json";
-    ASSERT_TRUE(exporter.export_to_file(path));
+        exporter.record_event("order-probe", "cat", 1);
+        const std::string path = "/tmp/nova_order_probe_" + std::to_string(::getpid()) + ".json";
+        ASSERT_TRUE(exporter.export_to_file(path));
 
-    std::ifstream file(path);
-    const std::string json((std::istreambuf_iterator<char>(file)),
-                           std::istreambuf_iterator<char>());
-    file.close();
-    std::remove(path.c_str());
+        std::ifstream file(path);
+        const std::string json((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+        std::remove(path.c_str());
 
-    EXPECT_NE(json.find("\"pid\": " + std::to_string(::getpid()) + ","), std::string::npos)
-        << "the reset should have restored the real pid:\n" << json;
-}
-
-TEST(SingletonIsolationOrderTest, EveryRegisteredSingletonIsDistinctlyNamed) {
-    // Duplicate names would silently collapse two resetters into one, since the registry is
-    // keyed by name — a reset would then leave one singleton untouched with nothing to show
-    // for it. Registering a known name and seeing the count stay put is what detects a
-    // collapse; a distinct one must grow the registry.
-    const size_t before = cuda::testing::registered_singleton_count();
-    cuda::testing::register_singleton_resetter("order-probe-unique", [] {});
-    EXPECT_EQ(cuda::testing::registered_singleton_count(), before + 1);
-
-    cuda::testing::register_singleton_resetter("order-probe-unique", [] {});
-    EXPECT_EQ(cuda::testing::registered_singleton_count(), before + 1)
-        << "the same name twice must not add a second entry";
-
-    // The registry outlives this test, so the entry has to go with it. These particular
-    // callbacks capture nothing, but leaving the registration behind would still change what
-    // every later reset_all_singletons() runs.
-    cuda::testing::unregister_singleton_resetter("order-probe-unique");
-    EXPECT_EQ(cuda::testing::registered_singleton_count(), before);
-}
-
-TEST(SingletonIsolationOrderTest, TheProfilerIsRestoredEvenAfterRepeatedUse) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_NE(json.find("\"pid\": " + std::to_string(::getpid()) + ","), std::string::npos) << "the reset should have restored the real pid:\n" << json;
     }
 
-    cuda::performance::Profiler& profiler = cuda::performance::Profiler::instance();
-    profiler.enable();
-    for (int i = 0; i < 10; ++i) {
-        profiler.record_kernel("order-repeat", static_cast<float>(i));
-    }
-    ASSERT_FALSE(profiler.get_kernel_metrics().empty());
+    TEST(SingletonIsolationOrderTest, EveryRegisteredSingletonIsDistinctlyNamed) {
+        // Duplicate names would silently collapse two resetters into one, since the registry is
+        // keyed by name — a reset would then leave one singleton untouched with nothing to show
+        // for it. Registering a known name and seeing the count stay put is what detects a
+        // collapse; a distinct one must grow the registry.
+        const size_t before = cuda::testing::registered_singleton_count();
+        cuda::testing::register_singleton_resetter("order-probe-unique", [] {});
+        EXPECT_EQ(cuda::testing::registered_singleton_count(), before + 1);
 
-    cuda::testing::reset_all_singletons();
-    EXPECT_TRUE(profiler.get_kernel_metrics().empty());
-}
+        cuda::testing::register_singleton_resetter("order-probe-unique", [] {});
+        EXPECT_EQ(cuda::testing::registered_singleton_count(), before + 1) << "the same name twice must not add a second entry";
+
+        // The registry outlives this test, so the entry has to go with it. These particular
+        // callbacks capture nothing, but leaving the registration behind would still change what
+        // every later reset_all_singletons() runs.
+        cuda::testing::unregister_singleton_resetter("order-probe-unique");
+        EXPECT_EQ(cuda::testing::registered_singleton_count(), before);
+    }
+
+    TEST(SingletonIsolationOrderTest, TheProfilerIsRestoredEvenAfterRepeatedUse) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cuda::performance::Profiler& profiler = cuda::performance::Profiler::instance();
+        profiler.enable();
+        for (int i = 0; i < 10; ++i) {
+            profiler.record_kernel("order-repeat", static_cast<float>(i));
+        }
+        ASSERT_FALSE(profiler.get_kernel_metrics().empty());
+
+        cuda::testing::reset_all_singletons();
+        EXPECT_TRUE(profiler.get_kernel_metrics().empty());
+    }
 
 }  // namespace singleton_isolation_order_test

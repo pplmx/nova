@@ -36,155 +36,149 @@
 
 namespace cuda::neural::training {
 
-/**
- * @class MicroTrainer
- * @brief Reusable training loop over a TensorParallelMLP (v2.25)
- *
- * Owns the MLP (with its three weight shards), one AdamW per weight tensor,
- * and the device scratch (logits / dlogits / grad buffers). train_step() runs
- * one full gradient step — forward, device cross-entropy-logits backward
- * (dlogits = (softmax - onehot)/B), MLP backward into the full grad buffers,
- * then per-shard AdamW — and returns the mean CE loss as a host scalar.
- *
- * The concrete learnable task (a fixed synthetic classification problem) lives
- * in the tests; the driver itself is task-agnostic given device activations +
- * host labels.
- */
-class MicroTrainer {
-public:
     /**
-     * @brief Construct the trainer over a tensor-parallel MLP classifier
-     * @param ctx NCCL context (rank membership for shards; tp == 1 when it
-     *        reports <= 1 device)
-     * @param hidden_dim Hidden (input/output) dim == number of classes
-     * @param intermediate_size FFN intermediate dim
-     * @param opt_cfg AdamW config (one optimizer per weight tensor)
-     * @throws std::invalid_argument on non-positive dims (layer ctors reject
-     *        non-divisible feature dims when tp > 1)
-     */
-    MicroTrainer(
-        ::cuda::nccl::NcclContext& ctx,
-        int hidden_dim,
-        int intermediate_size,
-        const optimizers::OptimizerConfig& opt_cfg = optimizers::OptimizerConfig{});
-
-    // Non-copyable/non-movable (owns device buffers + the layer stack).
-    MicroTrainer(const MicroTrainer&) = delete;
-    MicroTrainer& operator=(const MicroTrainer&) = delete;
-    MicroTrainer(MicroTrainer&&) = delete;
-    MicroTrainer& operator=(MicroTrainer&&) = delete;
-
-    ~MicroTrainer();
-
-    /**
-     * @brief Upload the full gate/up/down weights
-     */
-    void set_weight(const float* gate, const float* up, const float* down);
-
-    /**
-     * @brief Run one gradient training step over a batch
+     * @class MicroTrainer
+     * @brief Reusable training loop over a TensorParallelMLP (v2.25)
      *
-     * forward -> device cross_entropy_logits_backward (dlogits) -> MLP
-     * backward (full grad-weight buffers) -> per-shard AdamW step.
+     * Owns the MLP (with its three weight shards), one AdamW per weight tensor,
+     * and the device scratch (logits / dlogits / grad buffers). train_step() runs
+     * one full gradient step — forward, device cross-entropy-logits backward
+     * (dlogits = (softmax - onehot)/B), MLP backward into the full grad buffers,
+     * then per-shard AdamW — and returns the mean CE loss as a host scalar.
      *
-     * @param input Device activations [batch*seq x hidden_dim] (replicated)
-     * @param targets Host labels [batch*seq] in [0, hidden_dim)
-     * @param batch Batch size
-     * @param seq Sequence length
-     * @param step_no Optimizer step counter (AdamW bias correction)
-     * @return Mean cross-entropy loss over the batch (host scalar)
+     * The concrete learnable task (a fixed synthetic classification problem) lives
+     * in the tests; the driver itself is task-agnostic given device activations +
+     * host labels.
      */
-    float train_step(const float* input, const int* targets, int batch, int seq,
-                     int step_no);
+    class MicroTrainer {
+    public:
+        /**
+         * @brief Construct the trainer over a tensor-parallel MLP classifier
+         * @param ctx NCCL context (rank membership for shards; tp == 1 when it
+         *        reports <= 1 device)
+         * @param hidden_dim Hidden (input/output) dim == number of classes
+         * @param intermediate_size FFN intermediate dim
+         * @param opt_cfg AdamW config (one optimizer per weight tensor)
+         * @throws std::invalid_argument on non-positive dims (layer ctors reject
+         *        non-divisible feature dims when tp > 1)
+         */
+        MicroTrainer(::cuda::nccl::NcclContext& ctx, int hidden_dim, int intermediate_size, const optimizers::OptimizerConfig& opt_cfg = optimizers::OptimizerConfig{});
 
-    /**
-     * @brief Forward + loss (optionally top-1 accuracy), no weight update
-     * @param input Device activations [batch*seq x hidden_dim]
-     * @param targets Host labels [batch*seq]
-     * @param batch Batch size
-     * @param seq Sequence length
-     * @param accuracy Optional output for top-1 accuracy in [0,1]
-     * @return Mean cross-entropy loss (host scalar)
-     */
-    float evaluate(const float* input, const int* targets, int batch, int seq,
-                   float* accuracy = nullptr);
+        // Non-copyable/non-movable (owns device buffers + the layer stack).
+        MicroTrainer(const MicroTrainer&) = delete;
+        MicroTrainer& operator=(const MicroTrainer&) = delete;
+        MicroTrainer(MicroTrainer&&) = delete;
+        MicroTrainer& operator=(MicroTrainer&&) = delete;
 
-    /**
-     * @brief Copy this rank's gate/up/down weight shards to host memory
-     *        (parity verification)
-     */
-    void copy_weights(float* gate, float* up, float* down) const;
+        ~MicroTrainer();
 
-    /**
-     * @brief Serialize the full trainer state to a binary stream (v2.32)
-     *
-     * Deterministic NSCK-v1 format: kind, dims, the three weight tensors, and
-     * each optimizer's m/v moment pair. The optimizer step counter is NOT part
-     * of the checkpoint — train_step() takes step_no from the caller — so a
-     * restored trainer resumes exactly only if stepping continues at the
-     * interrupted count (K+1 after a K-step run).
-     */
-    void save_state(std::ostream& out) const;
+        /**
+         * @brief Upload the full gate/up/down weights
+         */
+        void set_weight(const float* gate, const float* up, const float* down);
 
-    /**
-     * @brief Restore trainer state from a save_state() stream (v2.32)
-     *
-     * Read + validate every record (kind, TP degree, dims, per-tensor sizes,
-     * moment sizes) before applying anything: a geometry (incl. TP-degree)
-     * mismatch, corrupt magic or truncated stream throws std::runtime_error
-     * and leaves this trainer untouched (no partial restore). Only then are
-     * weights and moments set (via the shard setters / copy_moments_from), so
-     * a successfully restored trainer resumes with byte-identical weights and
-     * m/v — the caller continues step_no at the interrupted count. Records are
-     * this rank's shards (full at tp == 1); the format stores the TP degree
-     * (mismatch rejected) AND the writer's rank id (v3, mismatch rejected), so
-     * only the same topology roundtrips and a same-topology file written by
-     * another rank is rejected instead of silently restoring its shard. Load
-     * this rank's OWN file back.
-     */
-    void load_state(std::istream& in);
+        /**
+         * @brief Run one gradient training step over a batch
+         *
+         * forward -> device cross_entropy_logits_backward (dlogits) -> MLP
+         * backward (full grad-weight buffers) -> per-shard AdamW step.
+         *
+         * @param input Device activations [batch*seq x hidden_dim] (replicated)
+         * @param targets Host labels [batch*seq] in [0, hidden_dim)
+         * @param batch Batch size
+         * @param seq Sequence length
+         * @param step_no Optimizer step counter (AdamW bias correction)
+         * @return Mean cross-entropy loss over the batch (host scalar)
+         */
+        float train_step(const float* input, const int* targets, int batch, int seq, int step_no);
 
-    /**
-     * @brief Hidden (input/output) dim == number of classes
-     */
-    [[nodiscard]] int hidden_dim() const;
+        /**
+         * @brief Forward + loss (optionally top-1 accuracy), no weight update
+         * @param input Device activations [batch*seq x hidden_dim]
+         * @param targets Host labels [batch*seq]
+         * @param batch Batch size
+         * @param seq Sequence length
+         * @param accuracy Optional output for top-1 accuracy in [0,1]
+         * @return Mean cross-entropy loss (host scalar)
+         */
+        float evaluate(const float* input, const int* targets, int batch, int seq, float* accuracy = nullptr);
 
-    /**
-     * @brief FFN intermediate dim
-     */
-    [[nodiscard]] int intermediate_size() const;
+        /**
+         * @brief Copy this rank's gate/up/down weight shards to host memory
+         *        (parity verification)
+         */
+        void copy_weights(float* gate, float* up, float* down) const;
 
-    /**
-     * @brief TP degree (max(1, NCCL context device count))
-     */
-    [[nodiscard]] int tp_degree() const;
+        /**
+         * @brief Serialize the full trainer state to a binary stream (v2.32)
+         *
+         * Deterministic NSCK-v1 format: kind, dims, the three weight tensors, and
+         * each optimizer's m/v moment pair. The optimizer step counter is NOT part
+         * of the checkpoint — train_step() takes step_no from the caller — so a
+         * restored trainer resumes exactly only if stepping continues at the
+         * interrupted count (K+1 after a K-step run).
+         */
+        void save_state(std::ostream& out) const;
 
-private:
-    void ensure_scratch(int m);
+        /**
+         * @brief Restore trainer state from a save_state() stream (v2.32)
+         *
+         * Read + validate every record (kind, TP degree, dims, per-tensor sizes,
+         * moment sizes) before applying anything: a geometry (incl. TP-degree)
+         * mismatch, corrupt magic or truncated stream throws std::runtime_error
+         * and leaves this trainer untouched (no partial restore). Only then are
+         * weights and moments set (via the shard setters / copy_moments_from), so
+         * a successfully restored trainer resumes with byte-identical weights and
+         * m/v — the caller continues step_no at the interrupted count. Records are
+         * this rank's shards (full at tp == 1); the format stores the TP degree
+         * (mismatch rejected) AND the writer's rank id (v3, mismatch rejected), so
+         * only the same topology roundtrips and a same-topology file written by
+         * another rank is rejected instead of silently restoring its shard. Load
+         * this rank's OWN file back.
+         */
+        void load_state(std::istream& in);
 
-    // The NCCL context the layer stack was built over (kept so save_state /
-    // load_state can resolve this trainer's shard rank via the v2.20
-    // active_rank convention — same non-owning reference the layers hold).
-    ::cuda::nccl::NcclContext& ctx_;
-    int hidden_dim_ = 0;
-    int intermediate_size_ = 0;
-    std::unique_ptr<TensorParallelMLP> mlp_;
-    std::unique_ptr<optimizers::AdamWOptimizer> opt_gate_;
-    std::unique_ptr<optimizers::AdamWOptimizer> opt_up_;
-    std::unique_ptr<optimizers::AdamWOptimizer> opt_down_;
-    loss::CrossEntropyConfig ce_cfg_;
-    // Scratch grows to the current batch.
-    std::unique_ptr<cuda::memory::Buffer<float>> logits_;
-    std::unique_ptr<cuda::memory::Buffer<float>> dlogits_;
-    std::unique_ptr<cuda::memory::Buffer<float>> dX_;
-    std::unique_ptr<cuda::memory::Buffer<float>> dWg_;
-    std::unique_ptr<cuda::memory::Buffer<float>> dWu_;
-    std::unique_ptr<cuda::memory::Buffer<float>> dWd_;
-    std::unique_ptr<cuda::memory::Buffer<int>> d_targets_;
-    // Device scalar for the reported loss (v2.30: read ONE float back instead
-    // of the whole logits buffer; also reused for the accuracy count).
-    std::unique_ptr<cuda::memory::Buffer<float>> d_loss_;
-    int scratch_m_ = 0;
-};
+        /**
+         * @brief Hidden (input/output) dim == number of classes
+         */
+        [[nodiscard]] int hidden_dim() const;
+
+        /**
+         * @brief FFN intermediate dim
+         */
+        [[nodiscard]] int intermediate_size() const;
+
+        /**
+         * @brief TP degree (max(1, NCCL context device count))
+         */
+        [[nodiscard]] int tp_degree() const;
+
+    private:
+        void ensure_scratch(int m);
+
+        // The NCCL context the layer stack was built over (kept so save_state /
+        // load_state can resolve this trainer's shard rank via the v2.20
+        // active_rank convention — same non-owning reference the layers hold).
+        ::cuda::nccl::NcclContext& ctx_;
+        int hidden_dim_ = 0;
+        int intermediate_size_ = 0;
+        std::unique_ptr<TensorParallelMLP> mlp_;
+        std::unique_ptr<optimizers::AdamWOptimizer> opt_gate_;
+        std::unique_ptr<optimizers::AdamWOptimizer> opt_up_;
+        std::unique_ptr<optimizers::AdamWOptimizer> opt_down_;
+        loss::CrossEntropyConfig ce_cfg_;
+        // Scratch grows to the current batch.
+        std::unique_ptr<cuda::memory::Buffer<float>> logits_;
+        std::unique_ptr<cuda::memory::Buffer<float>> dlogits_;
+        std::unique_ptr<cuda::memory::Buffer<float>> dX_;
+        std::unique_ptr<cuda::memory::Buffer<float>> dWg_;
+        std::unique_ptr<cuda::memory::Buffer<float>> dWu_;
+        std::unique_ptr<cuda::memory::Buffer<float>> dWd_;
+        std::unique_ptr<cuda::memory::Buffer<int>> d_targets_;
+        // Device scalar for the reported loss (v2.30: read ONE float back instead
+        // of the whole logits buffer; also reused for the accuracy count).
+        std::unique_ptr<cuda::memory::Buffer<float>> d_loss_;
+        int scratch_m_ = 0;
+    };
 
 }  // namespace cuda::neural::training

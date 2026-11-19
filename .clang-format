@@ -51,4 +51,11 @@ SpacesInSquareBrackets: false              # No extra spaces in square brackets
 AlignTrailingComments:
     Kind: Always                           # Strictly align trailing comments
 ReflowComments: true                       # Reflow comments to fit column limit
-SortIncludes: CaseSensitive                # Sort includes in case-sensitive manner
+# Include sorting is off on purpose. The headers in this tree are not
+# order-independent: include/cuda/memory/buffer-inl.h holds the out-of-line
+# definitions of the Buffer<T> class template and must be included after
+# buffer.h, but "buffer-inl.h" sorts before "buffer.h". Formatting the whole
+# tree with sorting on reordered the two and broke every translation unit
+# that used Buffer<T>. Sorting alphabetically is not a safe transformation
+# when a header's valid position depends on what it defines.
+SortIncludes: Never

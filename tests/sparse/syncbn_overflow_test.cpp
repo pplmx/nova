@@ -31,59 +31,68 @@
 
 namespace syncbn_overflow_test {
 
-namespace {
+    namespace {
 
-bool named_as_overflow(const std::exception& e) {
-    return std::string(e.what()).find("overflows int") != std::string::npos;
-}
+        bool named_as_overflow(const std::exception& e) {
+            return std::string(e.what()).find("overflows int") != std::string::npos;
+        }
 
-}  // namespace
+    }  // namespace
 
-class SyncBnOverflowTest : public ::testing::Test {
-protected:
-    // Anything that touches the driver in a case is cleared here so it cannot leak into the
-    // next one. The cases are written not to fault, and this is the belt to that braces.
-    void TearDown() override { (void)cudaGetLastError(); }
-};
-
-TEST_F(SyncBnOverflowTest, ACountPastIntIsNamedAsAnOverflow) {
-    // num_features is fixed by the constructor and kept small so the allocations are trivial;
-    // the size comes from the call arguments: 2 * 2 * 2^30 = 2^32, past INT_MAX.
-    cuda::neural::SyncBatchNorm norm(/*num_features=*/2);
-
-    auto call = [&] {
-        norm.backward(nullptr, nullptr, nullptr, nullptr, nullptr,
-                      /*batch_size=*/2, /*spatial_size=*/1073741824);
+    class SyncBnOverflowTest : public ::testing::Test {
+    protected:
+        // Anything that touches the driver in a case is cleared here so it cannot leak into the
+        // next one. The cases are written not to fault, and this is the belt to that braces.
+        void TearDown() override { (void)cudaGetLastError(); }
     };
 
-    bool reported_overflow = false;
-    try {
-        call();
-    } catch (const std::exception& e) {
-        reported_overflow = named_as_overflow(e);
+    TEST_F(SyncBnOverflowTest, ACountPastIntIsNamedAsAnOverflow) {
+        // num_features is fixed by the constructor and kept small so the allocations are trivial;
+        // the size comes from the call arguments: 2 * 2 * 2^30 = 2^32, past INT_MAX.
+        cuda::neural::SyncBatchNorm norm(/*num_features=*/2);
+
+        auto call = [&] {
+            norm.backward(nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          /*batch_size=*/2,
+                          /*spatial_size=*/1073741824);
+        };
+
+        bool reported_overflow = false;
+        try {
+            call();
+        } catch (const std::exception& e) {
+            reported_overflow = named_as_overflow(e);
+        }
+        EXPECT_TRUE(reported_overflow) << "the count must be rejected by name before any launch is attempted";
     }
-    EXPECT_TRUE(reported_overflow)
-        << "the count must be rejected by name before any launch is attempted";
-}
 
-TEST_F(SyncBnOverflowTest, ACountInsideIntIsNotReportedAsAnOverflow) {
-    // 2 * 2 * 4 = 16. The guard must not fire here; whatever happens next is the null-buffer
-    // fault this file deliberately does not provoke, so only the message is inspected.
-    cuda::neural::SyncBatchNorm norm(/*num_features=*/2);
+    TEST_F(SyncBnOverflowTest, ACountInsideIntIsNotReportedAsAnOverflow) {
+        // 2 * 2 * 4 = 16. The guard must not fire here; whatever happens next is the null-buffer
+        // fault this file deliberately does not provoke, so only the message is inspected.
+        cuda::neural::SyncBatchNorm norm(/*num_features=*/2);
 
-    auto call = [&] {
-        norm.backward(nullptr, nullptr, nullptr, nullptr, nullptr,
-                      /*batch_size=*/2, /*spatial_size=*/4);
-    };
+        auto call = [&] {
+            norm.backward(nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          /*batch_size=*/2,
+                          /*spatial_size=*/4);
+        };
 
-    bool reported_overflow = false;
-    try {
-        call();
-    } catch (const std::exception& e) {
-        reported_overflow = named_as_overflow(e);
+        bool reported_overflow = false;
+        try {
+            call();
+        } catch (const std::exception& e) {
+            reported_overflow = named_as_overflow(e);
+        }
+        EXPECT_FALSE(reported_overflow) << "16 elements do not overflow int";
+        (void)cudaGetLastError();
     }
-    EXPECT_FALSE(reported_overflow) << "16 elements do not overflow int";
-    (void)cudaGetLastError();
-}
 
 }  // namespace syncbn_overflow_test

@@ -52,112 +52,102 @@
 
 namespace nova::sparse::test {
 
-namespace {
+    namespace {
 
-// The nvtx macros expand to no-ops unless NVTX is enabled; calling them pins
-// both expansions and, in an enabled build, the closed namespace and the
-// ScopedRange type.
-void emit_nvtx_markers() {
-    NOVA_NVTX_MARKER("sparse_probe");
-    NOVA_NVTX_SCOPED_RANGE("sparse_probe_range");
-}
+        // The nvtx macros expand to no-ops unless NVTX is enabled; calling them pins
+        // both expansions and, in an enabled build, the closed namespace and the
+        // ScopedRange type.
+        void emit_nvtx_markers() {
+            NOVA_NVTX_MARKER("sparse_probe");
+            NOVA_NVTX_SCOPED_RANGE("sparse_probe_range");
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(SparseHeaderCompileTest, NvtxMacrosExpandInEitherBuild) {
-    EXPECT_NO_THROW(emit_nvtx_markers());
-}
+    TEST(SparseHeaderCompileTest, NvtxMacrosExpandInEitherBuild) {
+        EXPECT_NO_THROW(emit_nvtx_markers());
+    }
 
-// The sparse templates used to accept any T and then fail deep inside the
-// implementation: SparseMatrix<std::string> produced six unrelated errors about
-// narrowing and missing operators. The concepts make the requirement part of
-// the interface. These pin which types are accepted, since a concept that is
-// too narrow would silently reject a legitimate instantiation.
-TEST(SparseHeaderCompileTest, SparseScalarAdmitsTheSupportedScalars) {
-    static_assert(SparseScalar<float>);
-    static_assert(SparseScalar<double>);
-    static_assert(SparseScalar<long double>);
+    // The sparse templates used to accept any T and then fail deep inside the
+    // implementation: SparseMatrix<std::string> produced six unrelated errors about
+    // narrowing and missing operators. The concepts make the requirement part of
+    // the interface. These pin which types are accepted, since a concept that is
+    // too narrow would silently reject a legitimate instantiation.
+    TEST(SparseHeaderCompileTest, SparseScalarAdmitsTheSupportedScalars) {
+        static_assert(SparseScalar<float>);
+        static_assert(SparseScalar<double>);
+        static_assert(SparseScalar<long double>);
 
-    static_assert(!SparseScalar<int>);
-    static_assert(!SparseScalar<unsigned>);
-    static_assert(!SparseScalar<bool>);
-    static_assert(!SparseScalar<char>);
-}
+        static_assert(!SparseScalar<int>);
+        static_assert(!SparseScalar<unsigned>);
+        static_assert(!SparseScalar<bool>);
+        static_assert(!SparseScalar<char>);
+    }
 
-TEST(SparseHeaderCompileTest, ConstrainedTemplatesStillInstantiate) {
-    // One instantiation per constrained template family, so a constraint that
-    // rejects the types the tree actually uses breaks here rather than in a
-    // downstream module.
-    JacobiPreconditioner<double> jacobi;
-    JacobiPreconditioner<float> jacobi_f;
-    EXPECT_DOUBLE_EQ(jacobi.omega(), 1.0);
-    EXPECT_FLOAT_EQ(jacobi_f.omega(), 1.0f);
+    TEST(SparseHeaderCompileTest, ConstrainedTemplatesStillInstantiate) {
+        // One instantiation per constrained template family, so a constraint that
+        // rejects the types the tree actually uses breaks here rather than in a
+        // downstream module.
+        JacobiPreconditioner<double> jacobi;
+        JacobiPreconditioner<float> jacobi_f;
+        EXPECT_DOUBLE_EQ(jacobi.omega(), 1.0);
+        EXPECT_FLOAT_EQ(jacobi_f.omega(), 1.0f);
 
-    ILUPreconditioner<double> ilu;
-    (void)ilu;
+        ILUPreconditioner<double> ilu;
+        (void)ilu;
 
-    RCMReorderer<double> rcm;
-    (void)rcm;
+        RCMReorderer<double> rcm;
+        (void)rcm;
 
-    ConjugateGradient<double> cg;
-    GMRES<double> gmres;
-    BiCGSTAB<double> bicgstab;
-    (void)cg;
-    (void)gmres;
-    (void)bicgstab;
-}
+        ConjugateGradient<double> cg;
+        GMRES<double> gmres;
+        BiCGSTAB<double> bicgstab;
+        (void)cg;
+        (void)gmres;
+        (void)bicgstab;
+    }
 
-TEST(SparseHeaderCompileTest, CppLevelDetectsHostCpp23) {
-    // The project builds host code as C++23 and device code as C++20; this
-    // macro is the single place that distinction is recorded.
-    static_assert(NOVA_CPP23_HOST == 1,
-                  "the host build is expected to provide C++23 library features");
-}
+    TEST(SparseHeaderCompileTest, CppLevelDetectsHostCpp23) {
+        // The project builds host code as C++23 and device code as C++20; this
+        // macro is the single place that distinction is recorded.
+        static_assert(NOVA_CPP23_HOST == 1, "the host build is expected to provide C++23 library features");
+    }
 
-TEST(SparseHeaderCompileTest, RooflineArithmeticIntensity) {
-    RooflineAnalyzer analyzer;
+    TEST(SparseHeaderCompileTest, RooflineArithmeticIntensity) {
+        RooflineAnalyzer analyzer;
 
-    const int nnz = 100;
-    const int n = 50;
-    const double intensity = analyzer.compute_arithmetic_intensity(
-        2LL * nnz,
-        static_cast<size_t>(nnz) * sizeof(float) +
-        static_cast<size_t>(nnz) * sizeof(int) +
-        static_cast<size_t>(n) * sizeof(float) * 2);
-    EXPECT_GT(intensity, 0.0);
+        const int nnz = 100;
+        const int n = 50;
+        const double intensity = analyzer.compute_arithmetic_intensity(
+            2LL * nnz, static_cast<size_t>(nnz) * sizeof(float) + static_cast<size_t>(nnz) * sizeof(int) + static_cast<size_t>(n) * sizeof(float) * 2);
+        EXPECT_GT(intensity, 0.0);
 
-    // Zero bytes must not divide by zero.
-    EXPECT_DOUBLE_EQ(analyzer.compute_arithmetic_intensity(10, 0), 0.0);
-}
+        // Zero bytes must not divide by zero.
+        EXPECT_DOUBLE_EQ(analyzer.compute_arithmetic_intensity(10, 0), 0.0);
+    }
 
-TEST(SparseHeaderCompileTest, SpmvArithmeticIntensityMatchesItsHelper) {
-    RooflineAnalyzer analyzer;
+    TEST(SparseHeaderCompileTest, SpmvArithmeticIntensityMatchesItsHelper) {
+        RooflineAnalyzer analyzer;
 
-    // A 2x2 CSR with two entries: the member function is what used to be
-    // uncallable (SparseMatrixCSR was undeclared at that point in the header).
-    SparseMatrixCSR<float> csr(std::vector<float>{1.0f, 2.0f},
-                              std::vector<int>{0, 1, 2},
-                              std::vector<int>{0, 1},
-                              2, 2);
+        // A 2x2 CSR with two entries: the member function is what used to be
+        // uncallable (SparseMatrixCSR was undeclared at that point in the header).
+        SparseMatrixCSR<float> csr(std::vector<float>{1.0f, 2.0f}, std::vector<int>{0, 1, 2}, std::vector<int>{0, 1}, 2, 2);
 
-    EXPECT_DOUBLE_EQ(analyzer.compute_arithmetic_intensity_spmv<float>(csr),
-                     spmv_arithmetic_intensity<float>(csr.nnz(), csr.num_rows()));
-    EXPECT_GT(analyzer.compute_arithmetic_intensity_spmv<float>(csr), 0.0);
-}
+        EXPECT_DOUBLE_EQ(analyzer.compute_arithmetic_intensity_spmv<float>(csr), spmv_arithmetic_intensity<float>(csr.nnz(), csr.num_rows()));
+        EXPECT_GT(analyzer.compute_arithmetic_intensity_spmv<float>(csr), 0.0);
+    }
 
-TEST(SparseHeaderCompileTest, ClassificationSplitsOnTheBandwidthCeiling) {
-    RooflineAnalyzer analyzer;
-    const DevicePeaks peaks = get_device_peaks();
+    TEST(SparseHeaderCompileTest, ClassificationSplitsOnTheBandwidthCeiling) {
+        RooflineAnalyzer analyzer;
+        const DevicePeaks peaks = get_device_peaks();
 
-    ASSERT_GT(peaks.memory_bandwidth_gbps, 0.0);
-    ASSERT_GT(peaks.fp32_peak_gflops, 0.0);
+        ASSERT_GT(peaks.memory_bandwidth_gbps, 0.0);
+        ASSERT_GT(peaks.fp32_peak_gflops, 0.0);
 
-    // Far below the ridge point: memory bound. Far above: compute bound.
-    const double ridge = peaks.fp32_peak_gflops / peaks.memory_bandwidth_gbps;
-    EXPECT_EQ(analyzer.classify(ridge * 0.01, peaks.fp32_peak_gflops),
-              PerformanceBound::MEMORY_BOUND);
-    EXPECT_EQ(analyzer.classify(ridge * 100.0, peaks.fp32_peak_gflops),
-              PerformanceBound::COMPUTE_BOUND);
-}
+        // Far below the ridge point: memory bound. Far above: compute bound.
+        const double ridge = peaks.fp32_peak_gflops / peaks.memory_bandwidth_gbps;
+        EXPECT_EQ(analyzer.classify(ridge * 0.01, peaks.fp32_peak_gflops), PerformanceBound::MEMORY_BOUND);
+        EXPECT_EQ(analyzer.classify(ridge * 100.0, peaks.fp32_peak_gflops), PerformanceBound::COMPUTE_BOUND);
+    }
 
 }  // namespace nova::sparse::test

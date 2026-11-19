@@ -12,15 +12,17 @@ using cuda::memory::Buffer;
 
 namespace {
 
-bool isPermutation(const std::vector<int>& a, const std::vector<int>& b) {
-    if (a.size() != b.size()) return false;
-    std::vector<int> sorted_a = a, sorted_b = b;
-    std::sort(sorted_a.begin(), sorted_a.end());
-    std::sort(sorted_b.begin(), sorted_b.end());
-    return sorted_a == sorted_b;
-}
+    bool isPermutation(const std::vector<int>& a, const std::vector<int>& b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        std::vector<int> sorted_a = a, sorted_b = b;
+        std::sort(sorted_a.begin(), sorted_a.end());
+        std::sort(sorted_b.begin(), sorted_b.end());
+        return sorted_a == sorted_b;
+    }
 
-}
+}  // namespace
 
 class SortTest : public ::testing::Test {
 protected:
@@ -91,7 +93,7 @@ TEST_F(SortTest, Duplicates) {
     runSort(h_input_.size());
 
     for (size_t i = 1; i < h_output_.size(); ++i) {
-        EXPECT_LE(h_output_[i-1], h_output_[i]);
+        EXPECT_LE(h_output_[i - 1], h_output_[i]);
     }
     EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }
@@ -110,7 +112,7 @@ TEST_F(SortTest, LargeArray) {
     runSort(size);
 
     for (size_t i = 1; i < size; ++i) {
-        EXPECT_LE(h_output_[i-1], h_output_[i]);
+        EXPECT_LE(h_output_[i - 1], h_output_[i]);
     }
     EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }
@@ -172,7 +174,7 @@ TEST_F(OddEvenSortTest, LargeArray) {
     runAndDownload(size);
 
     for (size_t i = 1; i < size; ++i) {
-        EXPECT_LE(h_output_[i-1], h_output_[i]);
+        EXPECT_LE(h_output_[i - 1], h_output_[i]);
     }
     EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }

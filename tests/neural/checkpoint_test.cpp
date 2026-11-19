@@ -38,58 +38,62 @@ using namespace cuda::neural::optimizers;
 
 namespace {
 
-cuda::nccl::NcclContext& uninitialized_ctx() {
-    static cuda::nccl::NcclContext* ctx = new cuda::nccl::NcclContext();
-    return *ctx;
-}
+    cuda::nccl::NcclContext& uninitialized_ctx() {
+        static cuda::nccl::NcclContext* ctx = new cuda::nccl::NcclContext();
+        return *ctx;
+    }
 
-void fill_random(float* data, size_t count, unsigned seed) {
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (size_t i = 0; i < count; ++i) data[i] = dist(rng);
-}
-
-// Synthetic classification task (same generative model as the MicroTrainer
-// tests): gaussian inputs + a random full-rank teacher label matrix, with
-// hidden == num_classes.
-void make_task(std::vector<float>& X, std::vector<int>& Y, int m, int h,
-               unsigned seed) {
-    std::mt19937 rng(seed);
-    std::normal_distribution<float> norm(0.0f, 1.0f);
-    X.resize(static_cast<size_t>(m) * h);
-    Y.resize(m);
-    std::vector<float> T(static_cast<size_t>(h) * h);
-    for (size_t i = 0; i < T.size(); ++i) T[i] = norm(rng);
-    for (int i = 0; i < m; ++i) {
-        for (int d = 0; d < h; ++d) X[i * h + d] = norm(rng);
-        double best = -1e30;
-        int argmax = 0;
-        for (int c = 0; c < h; ++c) {
-            double acc = 0.0;
-            for (int d = 0; d < h; ++d) {
-                acc += static_cast<double>(X[i * h + d]) * T[c * h + d];
-            }
-            if (acc > best) {
-                best = acc;
-                argmax = c;
-            }
+    void fill_random(float* data, size_t count, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = dist(rng);
         }
-        Y[i] = argmax;
     }
-}
 
-void expect_eq(const float* a, const float* b, size_t n, const char* what) {
-    for (size_t i = 0; i < n; ++i) {
-        EXPECT_FLOAT_EQ(a[i], b[i]) << what << " element " << i;
+    // Synthetic classification task (same generative model as the MicroTrainer
+    // tests): gaussian inputs + a random full-rank teacher label matrix, with
+    // hidden == num_classes.
+    void make_task(std::vector<float>& X, std::vector<int>& Y, int m, int h, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::normal_distribution<float> norm(0.0f, 1.0f);
+        X.resize(static_cast<size_t>(m) * h);
+        Y.resize(m);
+        std::vector<float> T(static_cast<size_t>(h) * h);
+        for (size_t i = 0; i < T.size(); ++i) {
+            T[i] = norm(rng);
+        }
+        for (int i = 0; i < m; ++i) {
+            for (int d = 0; d < h; ++d) {
+                X[i * h + d] = norm(rng);
+            }
+            double best = -1e30;
+            int argmax = 0;
+            for (int c = 0; c < h; ++c) {
+                double acc = 0.0;
+                for (int d = 0; d < h; ++d) {
+                    acc += static_cast<double>(X[i * h + d]) * T[c * h + d];
+                }
+                if (acc > best) {
+                    best = acc;
+                    argmax = c;
+                }
+            }
+            Y[i] = argmax;
+        }
     }
-}
 
-void expect_near(const float* a, const float* b, size_t n, float tol,
-                 const char* what) {
-    for (size_t i = 0; i < n; ++i) {
-        EXPECT_NEAR(a[i], b[i], tol) << what << " element " << i;
+    void expect_eq(const float* a, const float* b, size_t n, const char* what) {
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_FLOAT_EQ(a[i], b[i]) << what << " element " << i;
+        }
     }
-}
+
+    void expect_near(const float* a, const float* b, size_t n, float tol, const char* what) {
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_NEAR(a[i], b[i], tol) << what << " element " << i;
+        }
+    }
 
 }  // namespace
 
@@ -223,8 +227,7 @@ TEST_F(CheckpointTest, MicroTrainerResumeAfterLoadMatchesUninterrupted) {
     b.load_state(in);
     for (int s = K + 1; s <= K + extra; ++s) {
         const float lb = b.train_step(d_X.data(), Y.data(), m, 1, s);
-        EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-5f)
-            << "resumed loss at step " << s << " must match the uninterrupted run";
+        EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-5f) << "resumed loss at step " << s << " must match the uninterrupted run";
     }
 
     std::vector<float> ag(Wg.size()), au(Wu.size()), ad(Wd.size());
@@ -273,8 +276,7 @@ TEST_F(CheckpointTest, MicroTrainerFreshStateRoundTrip) {
     d_X.copy_from(X.data(), X.size());
     const float la = a.train_step(d_X.data(), Y.data(), m, 1, 1);
     const float lb = b.train_step(d_X.data(), Y.data(), m, 1, 1);
-    EXPECT_NEAR(la, lb, 1e-6f)
-        << "fresh restored trainer must take the same first step";
+    EXPECT_NEAR(la, lb, 1e-6f) << "fresh restored trainer must take the same first step";
 }
 
 // The deep (TransformerTrainer) surface: all 11N+2 weight tensors + moments
@@ -305,16 +307,20 @@ TEST_F(CheckpointTest, TransformerTrainerSaveLoadRoundTripAndResume) {
         fill_random(wg.data(), wg.size(), seed + 8);
         fill_random(wu.data(), wu.size(), seed + 9);
         fill_random(wd.data(), wd.size(), seed + 10);
-        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
-                           wv.data(), wo.data(), l2g.data(), l2b.data(),
-                           wg.data(), wu.data(), wd.data());
+        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
     };
-    auto copy_block = [&](TransformerTrainer& t, int b,
-                          std::vector<float>& l1g, std::vector<float>& l1b,
-                          std::vector<float>& wq, std::vector<float>& wk,
-                          std::vector<float>& wv, std::vector<float>& wo,
-                          std::vector<float>& l2g, std::vector<float>& l2b,
-                          std::vector<float>& wg, std::vector<float>& wu,
+    auto copy_block = [&](TransformerTrainer& t,
+                          int b,
+                          std::vector<float>& l1g,
+                          std::vector<float>& l1b,
+                          std::vector<float>& wq,
+                          std::vector<float>& wk,
+                          std::vector<float>& wv,
+                          std::vector<float>& wo,
+                          std::vector<float>& l2g,
+                          std::vector<float>& l2b,
+                          std::vector<float>& wg,
+                          std::vector<float>& wu,
                           std::vector<float>& wd) {
         l1g.resize(h);
         l1b.resize(h);
@@ -327,14 +333,13 @@ TEST_F(CheckpointTest, TransformerTrainerSaveLoadRoundTripAndResume) {
         wg.resize(static_cast<size_t>(h) * inter);
         wu.resize(static_cast<size_t>(h) * inter);
         wd.resize(static_cast<size_t>(inter) * h);
-        t.copy_block_weights(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
-                             wv.data(), wo.data(), l2g.data(), l2b.data(),
-                             wg.data(), wu.data(), wd.data());
+        t.copy_block_weights(b, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
     };
 
-    TransformerTrainer a(uninitialized_ctx(), blocks, h, heads, head_dim, inter,
-                         cfg);
-    for (int b = 0; b < blocks; ++b) set_block(a, b, 500u + b);
+    TransformerTrainer a(uninitialized_ctx(), blocks, h, heads, head_dim, inter, cfg);
+    for (int b = 0; b < blocks; ++b) {
+        set_block(a, b, 500u + b);
+    }
     std::vector<float> fg(h), fb(h);
     fill_random(fg.data(), fg.size(), 600);
     fill_random(fb.data(), fb.size(), 601);
@@ -360,8 +365,7 @@ TEST_F(CheckpointTest, TransformerTrainerSaveLoadRoundTripAndResume) {
         std::vector<float> l1g, l1b, wq, wk, wv, wo, l2g, l2b, wg, wu, wd;
         copy_block(a, b, l1g, l1b, wq, wk, wv, wo, l2g, l2b, wg, wu, wd);
         std::vector<float> flat;
-        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg,
-                              &wu, &wd}) {
+        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg, &wu, &wd}) {
             flat.insert(flat.end(), p->begin(), p->end());
         }
         aw.push_back(std::move(flat));
@@ -369,21 +373,18 @@ TEST_F(CheckpointTest, TransformerTrainerSaveLoadRoundTripAndResume) {
     std::vector<float> afg(h), afb(h);
     a.copy_final_ln(afg.data(), afb.data());
 
-    TransformerTrainer b(uninitialized_ctx(), blocks, h, heads, head_dim, inter,
-                         cfg);
+    TransformerTrainer b(uninitialized_ctx(), blocks, h, heads, head_dim, inter, cfg);
     std::stringstream in(data);
     b.load_state(in);
     for (int blk = 0; blk < blocks; ++blk) {
         std::vector<float> l1g, l1b, wq, wk, wv, wo, l2g, l2b, wg, wu, wd;
         copy_block(b, blk, l1g, l1b, wq, wk, wv, wo, l2g, l2b, wg, wu, wd);
         std::vector<float> flat;
-        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg,
-                              &wu, &wd}) {
+        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg, &wu, &wd}) {
             flat.insert(flat.end(), p->begin(), p->end());
         }
         ASSERT_EQ(aw[static_cast<size_t>(blk)].size(), flat.size());
-        expect_eq(aw[static_cast<size_t>(blk)].data(), flat.data(),
-                  flat.size(), "block weight");
+        expect_eq(aw[static_cast<size_t>(blk)].data(), flat.data(), flat.size(), "block weight");
     }
     std::vector<float> bfg(h), bfb(h);
     b.copy_final_ln(bfg.data(), bfb.data());
@@ -399,8 +400,7 @@ TEST_F(CheckpointTest, TransformerTrainerSaveLoadRoundTripAndResume) {
     }
     for (int s = K + 1; s <= K + extra; ++s) {
         const float lb = b.train_step(d_X.data(), Y.data(), m, 1, s);
-        EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-4f)
-            << "resumed deep loss at step " << s;
+        EXPECT_NEAR(holdout[static_cast<size_t>(s - K - 1)], lb, 1e-4f) << "resumed deep loss at step " << s;
     }
 }
 
@@ -457,8 +457,7 @@ TEST_F(CheckpointTest, RejectedLoadLeavesTrainerUntouched) {
     const int qkv = heads * head_dim;
     OptimizerConfig cfg;
     cfg.learning_rate = 0.01f;
-    TransformerTrainer a(uninitialized_ctx(), blocks, h, heads, head_dim, inter,
-                         cfg);
+    TransformerTrainer a(uninitialized_ctx(), blocks, h, heads, head_dim, inter, cfg);
     auto set_block = [&](TransformerTrainer& t, int b, unsigned seed) {
         std::vector<float> l1g(h), l1b(h), l2g(h), l2b(h);
         std::vector<float> wq(static_cast<size_t>(h) * qkv);
@@ -479,11 +478,11 @@ TEST_F(CheckpointTest, RejectedLoadLeavesTrainerUntouched) {
         fill_random(wg.data(), wg.size(), seed + 8);
         fill_random(wu.data(), wu.size(), seed + 9);
         fill_random(wd.data(), wd.size(), seed + 10);
-        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(),
-                           wv.data(), wo.data(), l2g.data(), l2b.data(),
-                           wg.data(), wu.data(), wd.data());
+        t.set_block_weight(b, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
     };
-    for (int b = 0; b < blocks; ++b) set_block(a, b, 900u + b);
+    for (int b = 0; b < blocks; ++b) {
+        set_block(a, b, 900u + b);
+    }
     std::vector<float> fg(h), fb(h);
     fill_random(fg.data(), fg.size(), 910);
     fill_random(fb.data(), fb.size(), 911);
@@ -493,8 +492,7 @@ TEST_F(CheckpointTest, RejectedLoadLeavesTrainerUntouched) {
     const std::string data = ss.str();
 
     // Target B with its own known state; capture block 0 + final LN before.
-    TransformerTrainer b(uninitialized_ctx(), blocks, h, heads, head_dim, inter,
-                         cfg);
+    TransformerTrainer b(uninitialized_ctx(), blocks, h, heads, head_dim, inter, cfg);
     set_block(b, 0, 920u);
     set_block(b, 1, 921u);
     std::vector<float> bfg(h), bfb(h);
@@ -511,11 +509,8 @@ TEST_F(CheckpointTest, RejectedLoadLeavesTrainerUntouched) {
         std::vector<float> wg(static_cast<size_t>(h) * inter);
         std::vector<float> wu(static_cast<size_t>(h) * inter);
         std::vector<float> wd(static_cast<size_t>(inter) * h);
-        b.copy_block_weights(0, l1g.data(), l1b.data(), wq.data(), wk.data(),
-                             wv.data(), wo.data(), l2g.data(), l2b.data(),
-                             wg.data(), wu.data(), wd.data());
-        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg,
-                              &wu, &wd}) {
+        b.copy_block_weights(0, l1g.data(), l1b.data(), wq.data(), wk.data(), wv.data(), wo.data(), l2g.data(), l2b.data(), wg.data(), wu.data(), wd.data());
+        for (const auto* p : {&l1g, &l1b, &wq, &wk, &wv, &wo, &l2g, &l2b, &wg, &wu, &wd}) {
             out.insert(out.end(), p->begin(), p->end());
         }
         std::vector<float> cg(h), cb(h);
@@ -528,17 +523,13 @@ TEST_F(CheckpointTest, RejectedLoadLeavesTrainerUntouched) {
 
     // Truncation at several points (mid-header, mid-block-0, mid-block-1,
     // near-end) must throw and leave B's state byte-identical.
-    for (size_t cut : {data.size() / 4, data.size() / 2,
-                       3 * data.size() / 4, data.size() - 1}) {
+    for (size_t cut : {data.size() / 4, data.size() / 2, 3 * data.size() / 4, data.size() - 1}) {
         std::stringstream in(data.substr(0, cut));
-        EXPECT_THROW(b.load_state(in), std::runtime_error)
-            << "truncation at " << cut << "/" << data.size()
-            << " must be rejected";
+        EXPECT_THROW(b.load_state(in), std::runtime_error) << "truncation at " << cut << "/" << data.size() << " must be rejected";
         std::vector<float> after;
         capture(after);
         ASSERT_EQ(before.size(), after.size());
-        expect_eq(before.data(), after.data(), before.size(),
-                  "state after rejected load");
+        expect_eq(before.data(), after.data(), before.size(), "state after rejected load");
     }
 }
 
@@ -555,20 +546,19 @@ TEST_F(CheckpointTest, AdamWMomentCapacityMismatchRejected) {
     d_w.copy_from(p0.data(), n);
     d_g.copy_from(grads.data(), n);
     AdamWOptimizer a(cfg);
-    for (int s = 1; s <= 2; ++s) a.step(d_w.data(), d_g.data(), n, s);
+    for (int s = 1; s <= 2; ++s) {
+        a.step(d_w.data(), d_g.data(), n, s);
+    }
     ASSERT_EQ(a.momentum_capacity(), n);
 
     std::vector<float> m(n), v(n);
-    EXPECT_THROW(
-        a.copy_moments_to(m.data(), v.data(), n / 2, nullptr),
-        std::invalid_argument) << "export with n != capacity must throw";
+    EXPECT_THROW(a.copy_moments_to(m.data(), v.data(), n / 2, nullptr), std::invalid_argument) << "export with n != capacity must throw";
 
     AdamWOptimizer worse(cfg);
-    for (int s = 1; s <= 2; ++s) worse.step(d_w.data(), d_g.data(), n, s);
-    EXPECT_THROW(
-        worse.copy_moments_from(m.data(), v.data(), n / 2, nullptr),
-        std::invalid_argument)
-        << "importing fewer than the existing capacity must throw (stale tail)";
+    for (int s = 1; s <= 2; ++s) {
+        worse.step(d_w.data(), d_g.data(), n, s);
+    }
+    EXPECT_THROW(worse.copy_moments_from(m.data(), v.data(), n / 2, nullptr), std::invalid_argument) << "importing fewer than the existing capacity must throw (stale tail)";
 
     // Exact-size export/import still works.
     a.copy_moments_to(m.data(), v.data(), n, nullptr);

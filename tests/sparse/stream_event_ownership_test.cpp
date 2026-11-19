@@ -21,99 +21,98 @@
 
 namespace stream_event_ownership_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(StreamEventOwnershipTest, AMovedFromStreamReportsNoHandle) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(StreamEventOwnershipTest, AMovedFromStreamReportsNoHandle) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    cuda::stream::Stream source;
-    cudaStream_t original = source.get();
-    ASSERT_NE(original, nullptr);
+        cuda::stream::Stream source;
+        cudaStream_t original = source.get();
+        ASSERT_NE(original, nullptr);
 
-    cuda::stream::Stream destination(std::move(source));
+        cuda::stream::Stream destination(std::move(source));
 
-    EXPECT_EQ(destination.get(), original) << "the handle moves unchanged";
-    EXPECT_EQ(source.get(), nullptr)
-        << "the moved-from stream must be null, or both destructors destroy one handle";
-}
-
-TEST(StreamEventOwnershipTest, MoveAssignmentReleasesTheTargetsOldHandle) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(destination.get(), original) << "the handle moves unchanged";
+        EXPECT_EQ(source.get(), nullptr) << "the moved-from stream must be null, or both destructors destroy one handle";
     }
 
-    cuda::stream::Stream target;
-    cuda::stream::Stream source;
-    cudaStream_t source_handle = source.get();
-    ASSERT_NE(target.get(), nullptr);
-    ASSERT_NE(source_handle, nullptr);
-    ASSERT_NE(target.get(), source_handle);
+    TEST(StreamEventOwnershipTest, MoveAssignmentReleasesTheTargetsOldHandle) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    target = std::move(source);
+        cuda::stream::Stream target;
+        cuda::stream::Stream source;
+        cudaStream_t source_handle = source.get();
+        ASSERT_NE(target.get(), nullptr);
+        ASSERT_NE(source_handle, nullptr);
+        ASSERT_NE(target.get(), source_handle);
 
-    // The target's original handle was destroyed by the move assignment; the only thing
-    // observable here is that it now holds the source's handle and the source is empty.
-    EXPECT_EQ(target.get(), source_handle);
-    EXPECT_EQ(source.get(), nullptr);
-}
+        target = std::move(source);
 
-TEST(StreamEventOwnershipTest, StreamsAreNotCopyable) {
-    // A compile-time property; asserting it here documents the intent next to the run-time
-    // cases. If either were made copyable, this would stop compiling.
-    static_assert(!std::is_copy_constructible_v<cuda::stream::Stream>);
-    static_assert(!std::is_copy_assignable_v<cuda::stream::Stream>);
-    static_assert(!std::is_copy_constructible_v<cuda::stream::Event>);
-    static_assert(!std::is_copy_assignable_v<cuda::stream::Event>);
-    SUCCEED();
-}
-
-TEST(StreamEventOwnershipTest, AMovedFromEventReportsNoHandle) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // The target's original handle was destroyed by the move assignment; the only thing
+        // observable here is that it now holds the source's handle and the source is empty.
+        EXPECT_EQ(target.get(), source_handle);
+        EXPECT_EQ(source.get(), nullptr);
     }
 
-    cuda::stream::Event source;
-    cudaEvent_t original = source.get();
-    ASSERT_NE(original, nullptr);
-
-    cuda::stream::Event destination(std::move(source));
-
-    EXPECT_EQ(destination.get(), original);
-    EXPECT_EQ(source.get(), nullptr);
-}
-
-TEST(StreamEventOwnershipTest, AnEventRecordedOnAStreamCanBeJoinedByTheHost) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+    TEST(StreamEventOwnershipTest, StreamsAreNotCopyable) {
+        // A compile-time property; asserting it here documents the intent next to the run-time
+        // cases. If either were made copyable, this would stop compiling.
+        static_assert(!std::is_copy_constructible_v<cuda::stream::Stream>);
+        static_assert(!std::is_copy_assignable_v<cuda::stream::Stream>);
+        static_assert(!std::is_copy_constructible_v<cuda::stream::Event>);
+        static_assert(!std::is_copy_assignable_v<cuda::stream::Event>);
+        SUCCEED();
     }
 
-    cuda::stream::Stream stream;
-    cuda::stream::Event event;
+    TEST(StreamEventOwnershipTest, AMovedFromEventReportsNoHandle) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // A tiny async operation, then the event after it.
-    int* device = nullptr;
-    ASSERT_EQ(cudaMalloc(&device, sizeof(int)), cudaSuccess);
-    ASSERT_EQ(cudaMemsetAsync(device, 0, sizeof(int), stream.get()), cudaSuccess);
-    EXPECT_NO_THROW(event.record(stream));
+        cuda::stream::Event source;
+        cudaEvent_t original = source.get();
+        ASSERT_NE(original, nullptr);
 
-    // Waiting on the event is what makes the recorded position meaningful; reaching the
-    // assertion below means the event was joinable.
-    EXPECT_EQ(cudaEventSynchronize(event.get()), cudaSuccess);
+        cuda::stream::Event destination(std::move(source));
 
-    (void)cudaFree(device);
-}
+        EXPECT_EQ(destination.get(), original);
+        EXPECT_EQ(source.get(), nullptr);
+    }
+
+    TEST(StreamEventOwnershipTest, AnEventRecordedOnAStreamCanBeJoinedByTheHost) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cuda::stream::Stream stream;
+        cuda::stream::Event event;
+
+        // A tiny async operation, then the event after it.
+        int* device = nullptr;
+        ASSERT_EQ(cudaMalloc(&device, sizeof(int)), cudaSuccess);
+        ASSERT_EQ(cudaMemsetAsync(device, 0, sizeof(int), stream.get()), cudaSuccess);
+        EXPECT_NO_THROW(event.record(stream));
+
+        // Waiting on the event is what makes the recorded position meaningful; reaching the
+        // assertion below means the event was joinable.
+        EXPECT_EQ(cudaEventSynchronize(event.get()), cudaSuccess);
+
+        (void)cudaFree(device);
+    }
 
 }  // namespace stream_event_ownership_test

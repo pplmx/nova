@@ -12,89 +12,66 @@
 
 namespace cuda::nccl {
 
-NcclBroadcast::NcclBroadcast(NcclContext& ctx)
-    : NcclCollective(ctx) {}
+    NcclBroadcast::NcclBroadcast(NcclContext& ctx)
+        : NcclCollective(ctx) {}
 
-NcclResult NcclBroadcast::broadcast_async(
-    const void* data,
-    void* recv_data,
-    size_t count,
-    ncclDataType_t dtype,
-    int root_rank,
-    cudaStream_t stream) {
-
+    NcclResult NcclBroadcast::broadcast_async(const void* data, void* recv_data, size_t count, ncclDataType_t dtype, int root_rank, cudaStream_t stream) {
 #ifndef NOVA_NCCL_ENABLED
-    return NcclResult{.code = ncclInternalError,
-                      .error_message = "NCCL not enabled"};
+        return NcclResult{.code = ncclInternalError, .error_message = "NCCL not enabled"};
 #else
-    if (!has_nccl()) {
-        return NcclResult{.code = ncclInternalError,
-                          .error_message = "NCCL context not initialized"};
-    }
+        if (!has_nccl()) {
+            return NcclResult{.code = ncclInternalError, .error_message = "NCCL context not initialized"};
+        }
 
-    // Broadcast is posted per-rank with the rank's own communicator; `root_rank`
-    // is the root's rank within the comm, not the device. Resolve it up front
-    // and keep the "returns NcclResult, never throws" contract.
-    ncclComm_t comm;
-    try {
-        comm = current_comm();
-    } catch (const std::exception& e) {
-        return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
-    }
+        // Broadcast is posted per-rank with the rank's own communicator; `root_rank`
+        // is the root's rank within the comm, not the device. Resolve it up front
+        // and keep the "returns NcclResult, never throws" contract.
+        ncclComm_t comm;
+        try {
+            comm = current_comm();
+        } catch (const std::exception& e) {
+            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+        }
 
-    return safe_nccl_call(
-        [&]() {
-            return ncclBroadcast(
-                data, recv_data, count,
-                dtype, root_rank, comm, stream);
-        },
-        comm,
-        30000,
-        &ctx_);
+        return safe_nccl_call([&]() { return ncclBroadcast(data, recv_data, count, dtype, root_rank, comm, stream); }, comm, 30000, &ctx_);
 #endif
-}
+    }
 
-NcclResult NcclBroadcast::broadcast(
-    const void* data,
-    void* recv_data,
-    size_t count,
-    ncclDataType_t dtype,
-    int root_rank,
-    cudaStream_t stream) {
-    auto result = broadcast_async(data, recv_data, count, dtype, root_rank, stream);
-    if (result.ok()) {
-        cudaError_t sync_err = cudaStreamSynchronize(stream);
-        if (sync_err != cudaSuccess) {
-            result.code = ncclSystemError;
-            result.error_message = cudaGetErrorString(sync_err);
+    NcclResult NcclBroadcast::broadcast(const void* data, void* recv_data, size_t count, ncclDataType_t dtype, int root_rank, cudaStream_t stream) {
+        auto result = broadcast_async(data, recv_data, count, dtype, root_rank, stream);
+        if (result.ok()) {
+            cudaError_t sync_err = cudaStreamSynchronize(stream);
+            if (sync_err != cudaSuccess) {
+                result.code = ncclSystemError;
+                result.error_message = cudaGetErrorString(sync_err);
+            }
+        }
+        return result;
+    }
+
+    ncclDataType_t NcclBroadcast::to_nccl_dtype(cudaDataType dtype) {
+        switch (dtype) {
+            case CUDA_R_32F:
+                return ncclFloat32;
+            case CUDA_R_64F:
+                return ncclFloat64;
+            case CUDA_R_16F:
+                return ncclFloat16;
+            case CUDA_R_8I:
+                return ncclInt8;
+            case CUDA_R_8U:
+                return ncclUint8;
+            case CUDA_R_32I:
+                return ncclInt32;
+            case CUDA_R_32U:
+                return ncclUint32;
+            case CUDA_R_64I:
+                return ncclInt64;
+            case CUDA_R_64U:
+                return ncclUint64;
+            default:
+                return ncclFloat32;
         }
     }
-    return result;
-}
-
-ncclDataType_t NcclBroadcast::to_nccl_dtype(cudaDataType dtype) {
-    switch (dtype) {
-        case CUDA_R_32F:
-            return ncclFloat32;
-        case CUDA_R_64F:
-            return ncclFloat64;
-        case CUDA_R_16F:
-            return ncclFloat16;
-        case CUDA_R_8I:
-            return ncclInt8;
-        case CUDA_R_8U:
-            return ncclUint8;
-        case CUDA_R_32I:
-            return ncclInt32;
-        case CUDA_R_32U:
-            return ncclUint32;
-        case CUDA_R_64I:
-            return ncclInt64;
-        case CUDA_R_64U:
-            return ncclUint64;
-        default:
-            return ncclFloat32;
-    }
-}
 
 }  // namespace cuda::nccl

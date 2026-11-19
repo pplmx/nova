@@ -45,22 +45,21 @@
  *
  * The timeout is in SECONDS, matching nvbench::benchmark_base::set_timeout.
  */
-#define NOVA_BENCHMARK_MEMORY_BANDWIDTH(name, timeout_seconds) \
-    NVBENCH_BENCH(name).set_timeout(timeout_seconds)
+#define NOVA_BENCHMARK_MEMORY_BANDWIDTH(name, timeout_seconds) NVBENCH_BENCH(name).set_timeout(timeout_seconds)
 
 namespace cuda::benchmark {
 
-/**
- * @brief Report the bytes moved by one kernel launch
- *
- * NVBench derives bandwidth from this; there is no collector named
- * "collect_keeps_bandwidth_throughput" and no add_float64_metric, so callers
- * add the axis themselves with add_float64_axis.
- */
-template <typename T>
-constexpr double bytes_processed(std::size_t element_count) {
-    return static_cast<double>(element_count) * static_cast<double>(sizeof(T));
-}
+    /**
+     * @brief Report the bytes moved by one kernel launch
+     *
+     * NVBench derives bandwidth from this; there is no collector named
+     * "collect_keeps_bandwidth_throughput" and no add_float64_metric, so callers
+     * add the axis themselves with add_float64_axis.
+     */
+    template <typename T>
+    constexpr double bytes_processed(std::size_t element_count) {
+        return static_cast<double>(element_count) * static_cast<double>(sizeof(T));
+    }
 
 }  // namespace cuda::benchmark
 
@@ -74,16 +73,16 @@ constexpr double bytes_processed(std::size_t element_count) {
 
 namespace cuda::benchmark {
 
-/**
- * @brief Bytes moved by one kernel launch
- *
- * Kept available in both configurations so callers can compute and print a
- * throughput figure without NVBench.
- */
-template <typename T>
-constexpr double bytes_processed(std::size_t element_count) {
-    return static_cast<double>(element_count) * static_cast<double>(sizeof(T));
-}
+    /**
+     * @brief Bytes moved by one kernel launch
+     *
+     * Kept available in both configurations so callers can compute and print a
+     * throughput figure without NVBench.
+     */
+    template <typename T>
+    constexpr double bytes_processed(std::size_t element_count) {
+        return static_cast<double>(element_count) * static_cast<double>(sizeof(T));
+    }
 
 }  // namespace cuda::benchmark
 

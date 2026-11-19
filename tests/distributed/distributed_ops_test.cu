@@ -49,49 +49,49 @@ using namespace cuda::mesh;
 // harness-robustness fix: a rank thread that dies before reaching
 // the barrier fails the suite with RankBarrierTimeout instead of hanging the
 // other ranks forever.
-using cuda::distributed::test::run_per_rank;
 using cuda::distributed::test::RankBarrierTimeout;
+using cuda::distributed::test::run_per_rank;
 
 namespace {
 
-void fill_linear(float* data, size_t count, float base) {
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = base + static_cast<float>(i);
-    }
-}
-
-bool arrays_near(const float* a, const float* b, size_t count, float tol = 1e-3f) {
-    for (size_t i = 0; i < count; ++i) {
-        if (std::abs(a[i] - b[i]) > tol) {
-            return false;
+    void fill_linear(float* data, size_t count, float base) {
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = base + static_cast<float>(i);
         }
     }
-    return true;
-}
 
-// Gate + NCCL bootstrap shared by the real multi-GPU tests: returns true when
-// a genuine run is possible (>= 2 GPUs, NCCL-enabled build, shared NcclContext
-// initialized). Initialization is idempotent across tests (R15 design);
-// failures (e.g. no NCCL in this build) report false. If the shared singleton
-// is broken (a prior genuine abort), it is self-healed first — a one-off flake
-// must not turn the rest of the suite into silent skips. GTEST_SKIP
-// is a void-return macro, so the callers — not this predicate — issue the skip.
-bool multigpu_nccl_ready() {
-    if (DeviceMesh::instance().device_count() < 2) {
-        return false;
+    bool arrays_near(const float* a, const float* b, size_t count, float tol = 1e-3f) {
+        for (size_t i = 0; i < count; ++i) {
+            if (std::abs(a[i] - b[i]) > tol) {
+                return false;
+            }
+        }
+        return true;
     }
-    const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
-    if (nccl_env == nullptr || std::string(nccl_env) != "1") {
-        return false;
+
+    // Gate + NCCL bootstrap shared by the real multi-GPU tests: returns true when
+    // a genuine run is possible (>= 2 GPUs, NCCL-enabled build, shared NcclContext
+    // initialized). Initialization is idempotent across tests (R15 design);
+    // failures (e.g. no NCCL in this build) report false. If the shared singleton
+    // is broken (a prior genuine abort), it is self-healed first — a one-off flake
+    // must not turn the rest of the suite into silent skips. GTEST_SKIP
+    // is a void-return macro, so the callers — not this predicate — issue the skip.
+    bool multigpu_nccl_ready() {
+        if (DeviceMesh::instance().device_count() < 2) {
+            return false;
+        }
+        const char* nccl_env = std::getenv("NCCL_TESTS_AVAILABLE");
+        if (nccl_env == nullptr || std::string(nccl_env) != "1") {
+            return false;
+        }
+        auto& ctx = cuda::nccl::NcclContext::instance();
+        try {
+            ctx.initialize();
+        } catch (const std::exception&) {
+            return false;
+        }
+        return cuda::distributed::test::heal_and_ready(ctx);
     }
-    auto& ctx = cuda::nccl::NcclContext::instance();
-    try {
-        ctx.initialize();
-    } catch (const std::exception&) {
-        return false;
-    }
-    return cuda::distributed::test::heal_and_ready(ctx);
-}
 
 }  // namespace
 
@@ -101,30 +101,22 @@ bool multigpu_nccl_ready() {
 
 class DistributedReduceTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        DeviceMesh::instance().initialize();
-    }
+    void SetUp() override { DeviceMesh::instance().initialize(); }
 };
 
 class DistributedBroadcastTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        DeviceMesh::instance().initialize();
-    }
+    void SetUp() override { DeviceMesh::instance().initialize(); }
 };
 
 class DistributedAllGatherTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        DeviceMesh::instance().initialize();
-    }
+    void SetUp() override { DeviceMesh::instance().initialize(); }
 };
 
 class MeshBarrierTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        DeviceMesh::instance().initialize();
-    }
+    void SetUp() override { DeviceMesh::instance().initialize(); }
 };
 
 // ============================================================================
@@ -496,8 +488,7 @@ TEST_F(MeshBarrierTest, MultiGpu_BarrierRendezvous) {
 
         // Rendezvous assertion: every rank must have reached the barrier.
         for (int r = 0; r < n; ++r) {
-            EXPECT_TRUE(reached[r].load(std::memory_order_acquire))
-                << "rank " << d << " released before rank " << r << " reached the barrier";
+            EXPECT_TRUE(reached[r].load(std::memory_order_acquire)) << "rank " << d << " released before rank " << r << " reached the barrier";
         }
         released[d].store(true, std::memory_order_release);
     });
@@ -539,9 +530,7 @@ TEST_F(MeshBarrierTest, MultiGpu_SynchronizeAsyncRendezvous) {
         CUDA_CHECK(cudaStreamDestroy(stream));
 
         for (int r = 0; r < n; ++r) {
-            EXPECT_TRUE(reached[r].load(std::memory_order_acquire))
-                << "rank " << d << " (synchronize_async) released before rank "
-                << r << " reached";
+            EXPECT_TRUE(reached[r].load(std::memory_order_acquire)) << "rank " << d << " (synchronize_async) released before rank " << r << " reached";
         }
         released[d].store(true, std::memory_order_release);
     });
@@ -596,9 +585,7 @@ TEST_F(MeshBarrierTest, MultiGpu_SynchronizeDevicesRendezvous) {
         EXPECT_NO_THROW(barrier.synchronize_devices(devices));
 
         for (int r = 0; r < n; ++r) {
-            EXPECT_TRUE(reached[r].load(std::memory_order_acquire))
-                << "rank " << d << " (synchronize_devices) released before rank "
-                << r << " reached";
+            EXPECT_TRUE(reached[r].load(std::memory_order_acquire)) << "rank " << d << " (synchronize_devices) released before rank " << r << " reached";
         }
         released[d].store(true, std::memory_order_release);
     });
@@ -632,13 +619,11 @@ TEST_F(DistributedReduceTest, MultiGpu_AllReduceDistinctData) {
     // Expected group sum for element i: sum_{r=0..n-1}((r+1)+i) = n(n+1)/2 + n*i.
     std::vector<float> h_expected(count);
     for (size_t i = 0; i < count; ++i) {
-        h_expected[i] = static_cast<float>(device_count * (device_count + 1) / 2) +
-                        static_cast<float>(device_count) * static_cast<float>(i);
+        h_expected[i] = static_cast<float>(device_count * (device_count + 1) / 2) + static_cast<float>(device_count) * static_cast<float>(i);
     }
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(h_results[rank].data(), h_expected.data(), count))
-            << "all-reduce result on rank " << rank << " != group sum";
+        EXPECT_TRUE(arrays_near(h_results[rank].data(), h_expected.data(), count)) << "all-reduce result on rank " << rank << " != group sum";
     }
 }
 
@@ -662,13 +647,11 @@ TEST_F(DistributedReduceTest, MultiGpu_AllReduceInPlace) {
 
     std::vector<float> h_expected(count);
     for (size_t i = 0; i < count; ++i) {
-        h_expected[i] = static_cast<float>(device_count * (device_count + 1) / 2) +
-                        static_cast<float>(device_count) * static_cast<float>(i);
+        h_expected[i] = static_cast<float>(device_count * (device_count + 1) / 2) + static_cast<float>(device_count) * static_cast<float>(i);
     }
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("in-place rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(h_results[rank].data(), h_expected.data(), count))
-            << "in-place all-reduce result on rank " << rank << " != group sum";
+        EXPECT_TRUE(arrays_near(h_results[rank].data(), h_expected.data(), count)) << "in-place all-reduce result on rank " << rank << " != group sum";
     }
 }
 
@@ -680,8 +663,7 @@ TEST_F(DistributedAllGatherTest, MultiGpu_AllGatherDistinctData) {
     }
     const int device_count = DeviceMesh::instance().device_count();
     const size_t count = 64;
-    std::vector<std::vector<float>> h_results(device_count,
-                                              std::vector<float>(count * device_count));
+    std::vector<std::vector<float>> h_results(device_count, std::vector<float>(count * device_count));
     run_per_rank(device_count, [&](int d) {
         std::vector<float> h_send(count);
         fill_linear(h_send.data(), count, static_cast<float>(d + 1));
@@ -701,9 +683,7 @@ TEST_F(DistributedAllGatherTest, MultiGpu_AllGatherDistinctData) {
             for (size_t i = 0; i < count; ++i) {
                 const float expect = static_cast<float>(r + 1) + static_cast<float>(i);
                 if (std::abs(h_results[rank][r * count + i] - expect) > 1e-3f) {
-                    FAIL() << "all-gather on rank " << rank << ": block " << r
-                           << " elem " << i << " = " << h_results[rank][r * count + i]
-                           << " expected " << expect;
+                    FAIL() << "all-gather on rank " << rank << ": block " << r << " elem " << i << " = " << h_results[rank][r * count + i] << " expected " << expect;
                 }
             }
         }
@@ -737,8 +717,7 @@ TEST_F(DistributedBroadcastTest, MultiGpu_BroadcastDistinctData) {
         SCOPED_TRACE("rank " + std::to_string(rank));
         for (size_t i = 0; i < count; ++i) {
             if (std::abs(h_results[rank][i] - root_value) > 1e-3f) {
-                FAIL() << "broadcast on rank " << rank << ": elem " << i << " = "
-                       << h_results[rank][i] << " expected " << root_value;
+                FAIL() << "broadcast on rank " << rank << ": elem " << i << " = " << h_results[rank][i] << " expected " << root_value;
             }
         }
     }

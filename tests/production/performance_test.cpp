@@ -5,17 +5,15 @@
 
 namespace {
 
-void reset() {
-    cudaDeviceReset();
-}
+    void reset() {
+        cudaDeviceReset();
+    }
 
-}
+}  // namespace
 
 class L2PersistenceTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(L2PersistenceTest, DefaultConstruction) {
@@ -49,9 +47,7 @@ TEST_F(L2PersistenceTest, RestoreDefaults) {
 }
 
 TEST_F(L2PersistenceTest, RAIIBehavior) {
-    {
-        cuda::production::ScopedL2Persistence persist(1024 * 1024);
-    }
+    { cuda::production::ScopedL2Persistence persist(1024 * 1024); }
 
     cuda::production::L2PersistenceManager after_scope;
     EXPECT_FALSE(after_scope.is_active());
@@ -70,9 +66,7 @@ TEST_F(L2PersistenceTest, MoveSemantics) {
 
 class PriorityStreamTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(PriorityStreamTest, DefaultConstruction) {

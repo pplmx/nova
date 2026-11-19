@@ -32,55 +32,54 @@
 
 namespace fuzz_target_compiles_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-// FuzzedDataProvider consumes the op selector from the front of the buffer, so a leading byte
-// with a known value steers the branch. The rest is pseudo-random but deterministic.
-std::vector<unsigned char> input_for(unsigned char op) {
-    std::vector<unsigned char> buffer(256);
-    for (size_t i = 0; i < buffer.size(); ++i) {
-        buffer[i] = static_cast<unsigned char>((i * 37 + 11) & 0xFF);
-    }
-    buffer[0] = op;
-    return buffer;
-}
+        // FuzzedDataProvider consumes the op selector from the front of the buffer, so a leading byte
+        // with a known value steers the branch. The rest is pseudo-random but deterministic.
+        std::vector<unsigned char> input_for(unsigned char op) {
+            std::vector<unsigned char> buffer(256);
+            for (size_t i = 0; i < buffer.size(); ++i) {
+                buffer[i] = static_cast<unsigned char>((i * 37 + 11) & 0xFF);
+            }
+            buffer[0] = op;
+            return buffer;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(FuzzTargetCompilesTest, AllThreeBranchesRunWithoutCrashing) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(FuzzTargetCompilesTest, AllThreeBranchesRunWithoutCrashing) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // 0 = reduce, 1 = scan, 2 = sort; each stages data onto the device and calls the library.
-    for (unsigned char op = 0; op < 3; ++op) {
-        const auto buffer = input_for(op);
-        EXPECT_EQ(nova::fuzz::LLVMFuzzerTestOneInput(buffer.data(), buffer.size()), 0)
-            << "branch " << static_cast<int>(op) << " reported a failure";
-    }
+        // 0 = reduce, 1 = scan, 2 = sort; each stages data onto the device and calls the library.
+        for (unsigned char op = 0; op < 3; ++op) {
+            const auto buffer = input_for(op);
+            EXPECT_EQ(nova::fuzz::LLVMFuzzerTestOneInput(buffer.data(), buffer.size()), 0) << "branch " << static_cast<int>(op) << " reported a failure";
+        }
 
-    EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "the context must survive all three";
-}
-
-TEST(FuzzTargetCompilesTest, AnEmptyInputIsHandled) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "the context must survive all three";
     }
 
-    // FuzzedDataProvider gets nothing to consume; the entry point must still return cleanly
-    // rather than reading past the buffer.
-    const unsigned char byte = 0;
-    EXPECT_EQ(nova::fuzz::LLVMFuzzerTestOneInput(&byte, 0), 0);
-    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
-}
+    TEST(FuzzTargetCompilesTest, AnEmptyInputIsHandled) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // FuzzedDataProvider gets nothing to consume; the entry point must still return cleanly
+        // rather than reading past the buffer.
+        const unsigned char byte = 0;
+        EXPECT_EQ(nova::fuzz::LLVMFuzzerTestOneInput(&byte, 0), 0);
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess);
+    }
 
 }  // namespace fuzz_target_compiles_test

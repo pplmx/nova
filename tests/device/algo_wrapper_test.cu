@@ -38,214 +38,204 @@
 
 namespace cuda::production::test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(GraphReduceWrapperTest, HoldsTheReducerItWasGiven) {
-    bool called = false;
-    GraphReduceWrapper<float> wrapper(
-        [&called](const float*, size_t, float init) {
+    TEST(GraphReduceWrapperTest, HoldsTheReducerItWasGiven) {
+        bool called = false;
+        GraphReduceWrapper<float> wrapper([&called](const float*, size_t, float init) {
             called = true;
             return init;
         });
 
-    // A freshly built wrapper reports the zero identity.
-    EXPECT_FLOAT_EQ(wrapper.result(), 0.0f);
+        // A freshly built wrapper reports the zero identity.
+        EXPECT_FLOAT_EQ(wrapper.result(), 0.0f);
 
-    // set_reducer replaces the function without touching anything else.
-    wrapper.set_reducer([](const float*, size_t, float) { return 42.0f; });
-    (void)called;
-}
-
-// Regression: this aborted the process inside a capturing stream.
-TEST(GraphReduceWrapperTest, CaptureDoesNotAllocateInsideTheCapture) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // set_reducer replaces the function without touching anything else.
+        wrapper.set_reducer([](const float*, size_t, float) { return 42.0f; });
+        (void)called;
     }
 
-    GraphReduceWrapper<float> wrapper(
-        [](const float*, size_t, float init) { return init; });
-    cuda::stream::Stream stream;
+    // Regression: this aborted the process inside a capturing stream.
+    TEST(GraphReduceWrapperTest, CaptureDoesNotAllocateInsideTheCapture) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_NO_THROW(wrapper.capture(stream))
-        << "cudaMalloc/cudaFree are illegal while a stream is capturing";
-    (void)cudaGetLastError();
-}
+        GraphReduceWrapper<float> wrapper([](const float*, size_t, float init) { return init; });
+        cuda::stream::Stream stream;
 
-TEST(GraphReduceWrapperTest, CaptureLeavesTheStreamUsable) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_NO_THROW(wrapper.capture(stream)) << "cudaMalloc/cudaFree are illegal while a stream is capturing";
+        (void)cudaGetLastError();
     }
 
-    GraphReduceWrapper<float> wrapper(
-        [](const float*, size_t, float init) { return init; });
-    cuda::stream::Stream stream;
-    ASSERT_NO_THROW(wrapper.capture(stream));
+    TEST(GraphReduceWrapperTest, CaptureLeavesTheStreamUsable) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // If the capture leaked, this host-side allocation fails with "operation not
-    // permitted when stream is capturing".
-    void* probe = nullptr;
-    const cudaError_t status = cudaMalloc(&probe, 256);
-    EXPECT_EQ(status, cudaSuccess)
-        << "stream still capturing after capture(): " << cudaGetErrorString(status);
-    if (probe != nullptr) {
-        cudaFree(probe);
-    }
-    (void)cudaGetLastError();
-}
+        GraphReduceWrapper<float> wrapper([](const float*, size_t, float init) { return init; });
+        cuda::stream::Stream stream;
+        ASSERT_NO_THROW(wrapper.capture(stream));
 
-TEST(GraphReduceWrapperTest, RepeatedCaptureIsStable) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // If the capture leaked, this host-side allocation fails with "operation not
+        // permitted when stream is capturing".
+        void* probe = nullptr;
+        const cudaError_t status = cudaMalloc(&probe, 256);
+        EXPECT_EQ(status, cudaSuccess) << "stream still capturing after capture(): " << cudaGetErrorString(status);
+        if (probe != nullptr) {
+            cudaFree(probe);
+        }
+        (void)cudaGetLastError();
     }
 
-    GraphReduceWrapper<float> wrapper(
-        [](const float*, size_t, float init) { return init; });
-    cuda::stream::Stream stream;
+    TEST(GraphReduceWrapperTest, RepeatedCaptureIsStable) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // The scratch buffer is allocated once and reused, so capturing repeatedly
-    // must not leak it or allocate inside a later capture.
-    for (int iteration = 0; iteration < 3; ++iteration) {
-        EXPECT_NO_THROW(wrapper.capture(stream)) << "iteration " << iteration;
-    }
-    (void)cudaGetLastError();
-}
+        GraphReduceWrapper<float> wrapper([](const float*, size_t, float init) { return init; });
+        cuda::stream::Stream stream;
 
-TEST(GraphReduceWrapperTest, SupportsTheInstantiatedTypes) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    cuda::stream::Stream stream;
-    GraphReduceWrapper<double> real([](const double*, size_t, double init) { return init; });
-    GraphReduceWrapper<int> integer([](const int*, size_t, int init) { return init; });
-    GraphReduceWrapper<unsigned int> unsigned_integer(
-        [](const unsigned int*, size_t, unsigned int init) { return init; });
-
-    EXPECT_NO_THROW(real.capture(stream));
-    EXPECT_NO_THROW(integer.capture(stream));
-    EXPECT_NO_THROW(unsigned_integer.capture(stream));
-    (void)cudaGetLastError();
-}
-
-// Regression: wrap_algo did not link at all from any other translation unit.
-TEST(GraphAlgoContextTest, WrapAlgoLinksAndRecordsEntries) {
-    GraphAlgoContext<float> context;
-    EXPECT_EQ(context.algo_count(), 0u);
-
-    std::vector<float> payload = {1.0f, 2.0f, 3.0f};
-    context.wrap_algo("first", payload);
-    context.wrap_algo("second", payload);
-
-    EXPECT_EQ(context.algo_count(), 2u)
-        << "each wrap_algo call should register one entry";
-}
-
-// Regression: this left the stream capturing forever.
-TEST(GraphAlgoContextTest, CaptureAllLeavesTheStreamUsable) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // The scratch buffer is allocated once and reused, so capturing repeatedly
+        // must not leak it or allocate inside a later capture.
+        for (int iteration = 0; iteration < 3; ++iteration) {
+            EXPECT_NO_THROW(wrapper.capture(stream)) << "iteration " << iteration;
+        }
+        (void)cudaGetLastError();
     }
 
-    GraphAlgoContext<float> context;
-    std::vector<float> payload = {1.0f, 2.0f};
-    context.wrap_algo("only", payload);
+    TEST(GraphReduceWrapperTest, SupportsTheInstantiatedTypes) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    cuda::stream::Stream stream;
-    ASSERT_NO_THROW(context.capture_all(stream));
+        cuda::stream::Stream stream;
+        GraphReduceWrapper<double> real([](const double*, size_t, double init) { return init; });
+        GraphReduceWrapper<int> integer([](const int*, size_t, int init) { return init; });
+        GraphReduceWrapper<unsigned int> unsigned_integer([](const unsigned int*, size_t, unsigned int init) { return init; });
 
-    void* probe = nullptr;
-    const cudaError_t status = cudaMalloc(&probe, 256);
-    EXPECT_EQ(status, cudaSuccess)
-        << "capture_all leaked the capture: " << cudaGetErrorString(status);
-    if (probe != nullptr) {
-        cudaFree(probe);
-    }
-    (void)cudaGetLastError();
-}
-
-TEST(GraphAlgoContextTest, CaptureAllWithNoEntriesIsANoOp) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_NO_THROW(real.capture(stream));
+        EXPECT_NO_THROW(integer.capture(stream));
+        EXPECT_NO_THROW(unsigned_integer.capture(stream));
+        (void)cudaGetLastError();
     }
 
-    GraphAlgoContext<float> context;
-    cuda::stream::Stream stream;
+    // Regression: wrap_algo did not link at all from any other translation unit.
+    TEST(GraphAlgoContextTest, WrapAlgoLinksAndRecordsEntries) {
+        GraphAlgoContext<float> context;
+        EXPECT_EQ(context.algo_count(), 0u);
 
-    EXPECT_NO_THROW(context.capture_all(stream));
-    EXPECT_NO_THROW(context.launch_all(stream));
-    (void)cudaGetLastError();
-}
+        std::vector<float> payload = {1.0f, 2.0f, 3.0f};
+        context.wrap_algo("first", payload);
+        context.wrap_algo("second", payload);
 
-// These record a known limitation so it cannot be mistaken for working code:
-// wrap_algo keeps only the name, so the captured graphs contain no work.
-TEST(GraphAlgoContextTest, KnownLimitationWrappedAlgorithmsAreNotRecorded) {
-    GraphAlgoContext<float> context;
-    int invocations = 0;
-    context.wrap_algo("should-run", [&invocations] { ++invocations; });
-
-    // Registering is all that happens; the algorithm object is discarded.
-    EXPECT_EQ(context.algo_count(), 1u);
-    EXPECT_EQ(invocations, 0)
-        << "wrap_algo discards the callable, so nothing can invoke it later";
-}
-
-TEST(GraphScanWrapperTest, OutputIsDocumentedAsUnimplemented) {
-    GraphScanWrapper<float> wrapper([](float*, const float*, size_t, bool) {});
-    // No buffer is owned, so there is nothing to return. Asserting the current
-    // contract keeps the limitation visible instead of guessing.
-    EXPECT_EQ(wrapper.output(), nullptr);
-}
-
-TEST(GraphSortWrapperTest, DataIsDocumentedAsUnimplemented) {
-    GraphSortWrapper<float> wrapper([](float*, size_t, bool) {});
-    EXPECT_EQ(wrapper.data(), nullptr);
-}
-
-TEST(GraphScanWrapperTest, CaptureDoesNotLeakTheCapture) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(context.algo_count(), 2u) << "each wrap_algo call should register one entry";
     }
 
-    GraphScanWrapper<float> wrapper([](float*, const float*, size_t, bool) {});
-    cuda::stream::Stream stream;
-    ASSERT_NO_THROW(wrapper.capture(stream));
+    // Regression: this left the stream capturing forever.
+    TEST(GraphAlgoContextTest, CaptureAllLeavesTheStreamUsable) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    void* probe = nullptr;
-    const cudaError_t status = cudaMalloc(&probe, 256);
-    EXPECT_EQ(status, cudaSuccess) << cudaGetErrorString(status);
-    if (probe != nullptr) {
-        cudaFree(probe);
+        GraphAlgoContext<float> context;
+        std::vector<float> payload = {1.0f, 2.0f};
+        context.wrap_algo("only", payload);
+
+        cuda::stream::Stream stream;
+        ASSERT_NO_THROW(context.capture_all(stream));
+
+        void* probe = nullptr;
+        const cudaError_t status = cudaMalloc(&probe, 256);
+        EXPECT_EQ(status, cudaSuccess) << "capture_all leaked the capture: " << cudaGetErrorString(status);
+        if (probe != nullptr) {
+            cudaFree(probe);
+        }
+        (void)cudaGetLastError();
     }
-    (void)cudaGetLastError();
-}
 
-TEST(GraphSortWrapperTest, CaptureDoesNotLeakTheCapture) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+    TEST(GraphAlgoContextTest, CaptureAllWithNoEntriesIsANoOp) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        GraphAlgoContext<float> context;
+        cuda::stream::Stream stream;
+
+        EXPECT_NO_THROW(context.capture_all(stream));
+        EXPECT_NO_THROW(context.launch_all(stream));
+        (void)cudaGetLastError();
     }
 
-    GraphSortWrapper<float> wrapper([](float*, size_t, bool) {});
-    cuda::stream::Stream stream;
-    ASSERT_NO_THROW(wrapper.capture(stream));
+    // These record a known limitation so it cannot be mistaken for working code:
+    // wrap_algo keeps only the name, so the captured graphs contain no work.
+    TEST(GraphAlgoContextTest, KnownLimitationWrappedAlgorithmsAreNotRecorded) {
+        GraphAlgoContext<float> context;
+        int invocations = 0;
+        context.wrap_algo("should-run", [&invocations] { ++invocations; });
 
-    void* probe = nullptr;
-    const cudaError_t status = cudaMalloc(&probe, 256);
-    EXPECT_EQ(status, cudaSuccess) << cudaGetErrorString(status);
-    if (probe != nullptr) {
-        cudaFree(probe);
+        // Registering is all that happens; the algorithm object is discarded.
+        EXPECT_EQ(context.algo_count(), 1u);
+        EXPECT_EQ(invocations, 0) << "wrap_algo discards the callable, so nothing can invoke it later";
     }
-    (void)cudaGetLastError();
-}
+
+    TEST(GraphScanWrapperTest, OutputIsDocumentedAsUnimplemented) {
+        GraphScanWrapper<float> wrapper([](float*, const float*, size_t, bool) {});
+        // No buffer is owned, so there is nothing to return. Asserting the current
+        // contract keeps the limitation visible instead of guessing.
+        EXPECT_EQ(wrapper.output(), nullptr);
+    }
+
+    TEST(GraphSortWrapperTest, DataIsDocumentedAsUnimplemented) {
+        GraphSortWrapper<float> wrapper([](float*, size_t, bool) {});
+        EXPECT_EQ(wrapper.data(), nullptr);
+    }
+
+    TEST(GraphScanWrapperTest, CaptureDoesNotLeakTheCapture) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        GraphScanWrapper<float> wrapper([](float*, const float*, size_t, bool) {});
+        cuda::stream::Stream stream;
+        ASSERT_NO_THROW(wrapper.capture(stream));
+
+        void* probe = nullptr;
+        const cudaError_t status = cudaMalloc(&probe, 256);
+        EXPECT_EQ(status, cudaSuccess) << cudaGetErrorString(status);
+        if (probe != nullptr) {
+            cudaFree(probe);
+        }
+        (void)cudaGetLastError();
+    }
+
+    TEST(GraphSortWrapperTest, CaptureDoesNotLeakTheCapture) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        GraphSortWrapper<float> wrapper([](float*, size_t, bool) {});
+        cuda::stream::Stream stream;
+        ASSERT_NO_THROW(wrapper.capture(stream));
+
+        void* probe = nullptr;
+        const cudaError_t status = cudaMalloc(&probe, 256);
+        EXPECT_EQ(status, cudaSuccess) << cudaGetErrorString(status);
+        if (probe != nullptr) {
+            cudaFree(probe);
+        }
+        (void)cudaGetLastError();
+    }
 
 }  // namespace cuda::production::test

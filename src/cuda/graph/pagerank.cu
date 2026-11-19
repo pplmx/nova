@@ -9,366 +9,321 @@
 
 namespace cuda::graph {
 
-PageRankResult::PageRankResult()
-    : num_vertices(0),
-      ranks(nullptr),
-      d_ranks(nullptr),
-      iterations(0),
-      final_delta(0.0f) {}
+    PageRankResult::PageRankResult()
+        : num_vertices(0),
+          ranks(nullptr),
+          d_ranks(nullptr),
+          iterations(0),
+          final_delta(0.0f) {}
 
-PageRankResult::PageRankResult(int num_vertices)
-    : num_vertices(num_vertices),
-      iterations(0),
-      final_delta(0.0f) {
-
-    // A throwing constructor does not run its destructor, so a cudaMalloc failure here would
-    // leave the host array with no owner. Same shape as BFSResult, fixed the same way.
-    ranks = new float[num_vertices];
-    try {
-        CUDA_CHECK(cudaMalloc(&d_ranks, num_vertices * sizeof(float)));
-    } catch (...) {
-        delete[] ranks;
-        ranks = nullptr;
-        throw;
+    PageRankResult::PageRankResult(int num_vertices)
+        : num_vertices(num_vertices),
+          iterations(0),
+          final_delta(0.0f) {
+        // A throwing constructor does not run its destructor, so a cudaMalloc failure here would
+        // leave the host array with no owner. Same shape as BFSResult, fixed the same way.
+        ranks = new float[num_vertices];
+        try {
+            CUDA_CHECK(cudaMalloc(&d_ranks, num_vertices * sizeof(float)));
+        } catch (...) {
+            delete[] ranks;
+            ranks = nullptr;
+            throw;
+        }
     }
-}
 
-PageRankResult::~PageRankResult() {
-    clear();
-}
-
-PageRankResult::PageRankResult(PageRankResult&& other) noexcept
-    : num_vertices(other.num_vertices),
-      ranks(other.ranks),
-      d_ranks(other.d_ranks),
-      iterations(other.iterations),
-      final_delta(other.final_delta) {
-    other.num_vertices = 0;
-    other.ranks = nullptr;
-    other.d_ranks = nullptr;
-    other.iterations = 0;
-    other.final_delta = 0.0f;
-}
-
-PageRankResult& PageRankResult::operator=(PageRankResult&& other) noexcept {
-    if (this != &other) {
+    PageRankResult::~PageRankResult() {
         clear();
-        num_vertices = other.num_vertices;
-        ranks = other.ranks;
-        d_ranks = other.d_ranks;
-        iterations = other.iterations;
-        final_delta = other.final_delta;
+    }
+
+    PageRankResult::PageRankResult(PageRankResult&& other) noexcept
+        : num_vertices(other.num_vertices),
+          ranks(other.ranks),
+          d_ranks(other.d_ranks),
+          iterations(other.iterations),
+          final_delta(other.final_delta) {
         other.num_vertices = 0;
         other.ranks = nullptr;
         other.d_ranks = nullptr;
         other.iterations = 0;
         other.final_delta = 0.0f;
     }
-    return *this;
-}
 
-void PageRankResult::upload() {
-    CUDA_CHECK(cudaMemcpy(d_ranks, ranks, num_vertices * sizeof(float), cudaMemcpyHostToDevice));
-}
-
-void PageRankResult::download() {
-    CUDA_CHECK(cudaMemcpy(ranks, d_ranks, num_vertices * sizeof(float), cudaMemcpyDeviceToHost));
-}
-
-void PageRankResult::clear() {
-    delete[] ranks;
-    if (d_ranks) {
-        cudaFree(d_ranks);
-        d_ranks = nullptr;
-    }
-    ranks = nullptr;
-    // num_vertices describes the buffers. Leaving it at the old size after the
-    // buffers are released made the object claim memory it no longer owns: a
-    // subsequent upload()/download() would copy num_vertices elements through a
-    // null pointer.
-    num_vertices = 0;
-}
-
-int PageRankResult::top_vertex() const {
-    // A default-constructed, cleared or moved-from result has no ranks at all:
-    // ranks is nullptr after a move and reads out of bounds for num_vertices == 0.
-    // Calling top_vertex() on such an object dereferenced null and aborted the
-    // process. There is no vertex to report, so say so rather than crash.
-    if (num_vertices <= 0 || ranks == nullptr) {
-        return -1;
-    }
-
-    int best = 0;
-    float best_rank = ranks[0];
-    for (int v = 1; v < num_vertices; ++v) {
-        if (ranks[v] > best_rank) {
-            best_rank = ranks[v];
-            best = v;
+    PageRankResult& PageRankResult::operator=(PageRankResult&& other) noexcept {
+        if (this != &other) {
+            clear();
+            num_vertices = other.num_vertices;
+            ranks = other.ranks;
+            d_ranks = other.d_ranks;
+            iterations = other.iterations;
+            final_delta = other.final_delta;
+            other.num_vertices = 0;
+            other.ranks = nullptr;
+            other.d_ranks = nullptr;
+            other.iterations = 0;
+            other.final_delta = 0.0f;
         }
-    }
-    return best;
-}
-
-std::vector<int> PageRankResult::top_k(int k) const {
-    std::vector<std::pair<float, int>> scored(num_vertices);
-    for (int v = 0; v < num_vertices; ++v) {
-        scored[v] = {ranks[v], v};
+        return *this;
     }
 
-    // The result loop below already clamped with std::min(k, num_vertices); the partial_sort
-    // above it did not, so any k past the vertex count pushed the middle iterator past end().
-    // A negative k would do the same from the other side.
-    const int take = std::max(0, std::min(k, num_vertices));
-    std::partial_sort(
-        scored.begin(),
-        scored.begin() + take,
-        scored.end(),
-        [](const auto& a, const auto& b) { return a.first > b.first; }
-    );
-
-    std::vector<int> result;
-    for (int i = 0; i < take; ++i) {
-        result.push_back(scored[i].second);
+    void PageRankResult::upload() {
+        CUDA_CHECK(cudaMemcpy(d_ranks, ranks, num_vertices * sizeof(float), cudaMemcpyHostToDevice));
     }
-    return result;
-}
 
-size_t PageRankResult::memory_usage() const {
-    size_t host_mem = num_vertices * sizeof(float);
-    size_t device_mem = num_vertices * sizeof(float);
-    return host_mem + device_mem;
-}
+    void PageRankResult::download() {
+        CUDA_CHECK(cudaMemcpy(ranks, d_ranks, num_vertices * sizeof(float), cudaMemcpyDeviceToHost));
+    }
 
-namespace {
-
-// Push-based PageRank update: for each edge (u -> v) stored in the CSR, the
-// source u distributes prev_ranks[u] / out_deg(u) into next_ranks[v]. The CSR
-// rows hold a vertex's out-neighbors, so a single pass over the flat edge
-// array covers every contribution. The binary search on row_offsets recovers
-// the source u of each edge index e (the unique u with
-// row_offsets[u] <= e < row_offsets[u + 1]).
-__global__ void pagerank_scatter_kernel(
-    const int* row_offsets,
-    const int* columns,
-    const float* prev_ranks,
-    const int* out_degrees,
-    float* next_ranks,
-    int num_vertices,
-    int num_edges
-) {
-    int e = blockIdx.x * blockDim.x + threadIdx.x;
-    if (e >= num_edges) return;
-
-    int lo = 0;
-    int hi = num_vertices;  // row_offsets[hi] == num_edges
-    while (lo + 1 < hi) {
-        int mid = (lo + hi) / 2;
-        if (row_offsets[mid] <= e) {
-            lo = mid;
-        } else {
-            hi = mid;
+    void PageRankResult::clear() {
+        delete[] ranks;
+        if (d_ranks) {
+            cudaFree(d_ranks);
+            d_ranks = nullptr;
         }
+        ranks = nullptr;
+        // num_vertices describes the buffers. Leaving it at the old size after the
+        // buffers are released made the object claim memory it no longer owns: a
+        // subsequent upload()/download() would copy num_vertices elements through a
+        // null pointer.
+        num_vertices = 0;
     }
 
-    const int u = lo;
-    const int degree = out_degrees[u];
-    if (degree == 0) return;  // dangling source distributes nothing
+    int PageRankResult::top_vertex() const {
+        // A default-constructed, cleared or moved-from result has no ranks at all:
+        // ranks is nullptr after a move and reads out of bounds for num_vertices == 0.
+        // Calling top_vertex() on such an object dereferenced null and aborted the
+        // process. There is no vertex to report, so say so rather than crash.
+        if (num_vertices <= 0 || ranks == nullptr) {
+            return -1;
+        }
 
-    const int v = columns[e];
-    atomicAdd(&next_ranks[v], prev_ranks[u] / static_cast<float>(degree));
-}
-
-// After the scatter accumulation, fold in the teleport term and apply the
-// damping factor. Dangling vertices (out-degree 0) end at min_rank, matching
-// the documented option semantics.
-__global__ void pagerank_finalize_kernel(
-    const int* out_degrees,
-    float* ranks,  // in: accumulated scatter sums; out: final ranks
-    float damping,
-    float min_rank,
-    float teleport,
-    int num_vertices
-) {
-    int v = blockIdx.x * blockDim.x + threadIdx.x;
-    if (v >= num_vertices) return;
-
-    if (out_degrees[v] == 0) {
-        ranks[v] = min_rank;
-        return;
-    }
-    ranks[v] = teleport + damping * ranks[v];
-}
-
-}  // anonymous namespace
-
-void pagerank_iteration(
-    const CSRGraph& graph,
-    const float* prev_ranks,
-    float* next_ranks,
-    float damping,
-    float min_rank,
-    cudaStream_t stream
-) {
-    const int n = graph.num_vertices;
-    const int m = graph.num_edges;
-
-    // A zero-vertex graph has no ranks to iterate. Every step below assumes at least one
-    // vertex: compute_degrees launches on (n + 255) / 256 blocks — zero, which the driver
-    // rejects — vertex_grid has the same problem, and teleport divides by n. The guard has to
-    // come first; my first attempt put it after compute_degrees and the call still failed with
-    // "invalid configuration argument".
-    if (n <= 0) {
-        return;
+        int best = 0;
+        float best_rank = ranks[0];
+        for (int v = 1; v < num_vertices; ++v) {
+            if (ranks[v] > best_rank) {
+                best_rank = ranks[v];
+                best = v;
+            }
+        }
+        return best;
     }
 
-    // Out-degrees are computed on-device from the uploaded CSR (the pre-v2
-    // path rebuilt a host vector and block-copied it to the device every
-    // iteration); graph.d_row_offsets must be uploaded, which pagerank() does.
-    // Released by the destructor rather than at the end of the function: several CUDA_CHECKs
-    // below can throw and the free used to sit past all of them.
-    ::cuda::memory::unique_ptr<int> d_out_degrees_owned(n);
-    int* d_out_degrees = d_out_degrees_owned.get();
-    compute_degrees(graph, d_out_degrees, nullptr, stream);
+    std::vector<int> PageRankResult::top_k(int k) const {
+        std::vector<std::pair<float, int>> scored(num_vertices);
+        for (int v = 0; v < num_vertices; ++v) {
+            scored[v] = {ranks[v], v};
+        }
 
-    const int block_size = 256;
-    const int vertex_grid = (n + block_size - 1) / block_size;
-    // Clamp to >= 1 grid: a 0-edge graph yields a 0-block launch otherwise,
-    // which the driver rejects. The scatter kernel early-returns e >= m, so
-    // one no-op block is harmless.
-    const int edge_grid = std::max(1, (m + block_size - 1) / block_size);
+        // The result loop below already clamped with std::min(k, num_vertices); the partial_sort
+        // above it did not, so any k past the vertex count pushed the middle iterator past end().
+        // A negative k would do the same from the other side.
+        const int take = std::max(0, std::min(k, num_vertices));
+        std::partial_sort(scored.begin(), scored.begin() + take, scored.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
 
-    const float teleport = (1.0f - damping) / static_cast<float>(n);
-
-    CUDA_CHECK(cudaMemsetAsync(next_ranks, 0, n * sizeof(float), stream));
-
-    pagerank_scatter_kernel<<<edge_grid, block_size, 0, stream>>>(
-        graph.d_row_offsets,
-        graph.d_columns,
-        prev_ranks,
-        d_out_degrees,
-        next_ranks,
-        n,
-        m
-    );
-    CUDA_CHECK(cudaGetLastError());
-
-    pagerank_finalize_kernel<<<vertex_grid, block_size, 0, stream>>>(
-        d_out_degrees,
-        next_ranks,
-        damping,
-        min_rank,
-        teleport,
-        n
-    );
-    CUDA_CHECK(cudaGetLastError());
-
-    // d_out_degrees is released by its unique_ptr destructor.
-}
-
-float compute_pagerank_delta(
-    const float* prev_ranks,
-    const float* next_ranks,
-    int num_vertices
-) {
-    float delta = 0.0f;
-    for (int v = 0; v < num_vertices; ++v) {
-        delta += fabsf(next_ranks[v] - prev_ranks[v]);
-    }
-    return delta;
-}
-
-PageRankResult pagerank(
-    const CSRGraph& graph,
-    const PageRankOptions& options,
-    cudaStream_t stream
-) {
-    const int n = graph.num_vertices;
-
-    // A graph with no vertices has no ranks to compute, and the initial fill below divides by
-    // n. Returning an empty result is the meaningful answer; dividing by zero is not.
-    if (n <= 0) {
-        return PageRankResult(0);
+        std::vector<int> result;
+        for (int i = 0; i < take; ++i) {
+            result.push_back(scored[i].second);
+        }
+        return result;
     }
 
-    // PageRank's recursion only has a fixed point for damping in [0, 1). Outside it
-    // teleport = (1 - damping) / n goes to zero or negative: at exactly 1 the walk never jumps
-    // and the iteration can cycle forever, above 1 the weights it accumulates are negative.
-    // None of the three options was checked.
-    if (!(options.damping >= 0.0f && options.damping < 1.0f)) {
-        throw ::std::invalid_argument(
-            "pagerank: damping must be in [0, 1), got " + ::std::to_string(options.damping));
-    }
-    if (!(options.tolerance > 0.0f)) {
-        throw ::std::invalid_argument(
-            "pagerank: tolerance must be positive, got " +
-            ::std::to_string(options.tolerance));
-    }
-    if (options.max_iterations <= 0) {
-        throw ::std::invalid_argument(
-            "pagerank: max_iterations must be positive, got " +
-            ::std::to_string(options.max_iterations));
+    size_t PageRankResult::memory_usage() const {
+        size_t host_mem = num_vertices * sizeof(float);
+        size_t device_mem = num_vertices * sizeof(float);
+        return host_mem + device_mem;
     }
 
-    PageRankResult result(n);
+    namespace {
 
-    // The iteration loop below swaps local copies (d_prev_temp/d_next_temp), not these two, so
-    // owning them here is safe. Freed by the destructors rather than at the end of the
-    // function, past a loop full of CUDA_CHECKs.
-    ::cuda::memory::unique_ptr<float> d_prev_owned(n);
-    ::cuda::memory::unique_ptr<float> d_next_owned(n);
-    float* d_prev = d_prev_owned.get();
-    float* d_next = d_next_owned.get();
+        // Push-based PageRank update: for each edge (u -> v) stored in the CSR, the
+        // source u distributes prev_ranks[u] / out_deg(u) into next_ranks[v]. The CSR
+        // rows hold a vertex's out-neighbors, so a single pass over the flat edge
+        // array covers every contribution. The binary search on row_offsets recovers
+        // the source u of each edge index e (the unique u with
+        // row_offsets[u] <= e < row_offsets[u + 1]).
+        __global__ void pagerank_scatter_kernel(
+            const int* row_offsets, const int* columns, const float* prev_ranks, const int* out_degrees, float* next_ranks, int num_vertices, int num_edges) {
+            int e = blockIdx.x * blockDim.x + threadIdx.x;
+            if (e >= num_edges) {
+                return;
+            }
 
-    std::fill(result.ranks, result.ranks + n, 1.0f / n);
+            int lo = 0;
+            int hi = num_vertices;  // row_offsets[hi] == num_edges
+            while (lo + 1 < hi) {
+                int mid = (lo + hi) / 2;
+                if (row_offsets[mid] <= e) {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
 
-    // Host snapshot of the previous iteration's ranks, so the convergence
-    // delta compares the freshly computed ranks against what they were before
-    // this update (compare-next-vs-prev, never next-vs-next).
-    std::vector<float> prev_host(result.ranks, result.ranks + n);
+            const int u = lo;
+            const int degree = out_degrees[u];
+            if (degree == 0) {
+                return;  // dangling source distributes nothing
+            }
 
-    result.upload();
-    CUDA_CHECK(cudaMemcpy(d_prev, result.d_ranks, n * sizeof(float), cudaMemcpyDeviceToDevice));
-    if (stream) {
-        CUDA_CHECK(cudaStreamSynchronize(stream));
+            const int v = columns[e];
+            atomicAdd(&next_ranks[v], prev_ranks[u] / static_cast<float>(degree));
+        }
+
+        // After the scatter accumulation, fold in the teleport term and apply the
+        // damping factor. Dangling vertices (out-degree 0) end at min_rank, matching
+        // the documented option semantics.
+        __global__ void pagerank_finalize_kernel(const int* out_degrees,
+                                                 float* ranks,  // in: accumulated scatter sums; out: final ranks
+                                                 float damping,
+                                                 float min_rank,
+                                                 float teleport,
+                                                 int num_vertices) {
+            int v = blockIdx.x * blockDim.x + threadIdx.x;
+            if (v >= num_vertices) {
+                return;
+            }
+
+            if (out_degrees[v] == 0) {
+                ranks[v] = min_rank;
+                return;
+            }
+            ranks[v] = teleport + damping * ranks[v];
+        }
+
+    }  // anonymous namespace
+
+    void pagerank_iteration(const CSRGraph& graph, const float* prev_ranks, float* next_ranks, float damping, float min_rank, cudaStream_t stream) {
+        const int n = graph.num_vertices;
+        const int m = graph.num_edges;
+
+        // A zero-vertex graph has no ranks to iterate. Every step below assumes at least one
+        // vertex: compute_degrees launches on (n + 255) / 256 blocks — zero, which the driver
+        // rejects — vertex_grid has the same problem, and teleport divides by n. The guard has to
+        // come first; my first attempt put it after compute_degrees and the call still failed with
+        // "invalid configuration argument".
+        if (n <= 0) {
+            return;
+        }
+
+        // Out-degrees are computed on-device from the uploaded CSR (the pre-v2
+        // path rebuilt a host vector and block-copied it to the device every
+        // iteration); graph.d_row_offsets must be uploaded, which pagerank() does.
+        // Released by the destructor rather than at the end of the function: several CUDA_CHECKs
+        // below can throw and the free used to sit past all of them.
+        ::cuda::memory::unique_ptr<int> d_out_degrees_owned(n);
+        int* d_out_degrees = d_out_degrees_owned.get();
+        compute_degrees(graph, d_out_degrees, nullptr, stream);
+
+        const int block_size = 256;
+        const int vertex_grid = (n + block_size - 1) / block_size;
+        // Clamp to >= 1 grid: a 0-edge graph yields a 0-block launch otherwise,
+        // which the driver rejects. The scatter kernel early-returns e >= m, so
+        // one no-op block is harmless.
+        const int edge_grid = std::max(1, (m + block_size - 1) / block_size);
+
+        const float teleport = (1.0f - damping) / static_cast<float>(n);
+
+        CUDA_CHECK(cudaMemsetAsync(next_ranks, 0, n * sizeof(float), stream));
+
+        pagerank_scatter_kernel<<<edge_grid, block_size, 0, stream>>>(graph.d_row_offsets, graph.d_columns, prev_ranks, d_out_degrees, next_ranks, n, m);
+        CUDA_CHECK(cudaGetLastError());
+
+        pagerank_finalize_kernel<<<vertex_grid, block_size, 0, stream>>>(d_out_degrees, next_ranks, damping, min_rank, teleport, n);
+        CUDA_CHECK(cudaGetLastError());
+
+        // d_out_degrees is released by its unique_ptr destructor.
     }
 
-    CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
-    non_const_graph.upload();
+    float compute_pagerank_delta(const float* prev_ranks, const float* next_ranks, int num_vertices) {
+        float delta = 0.0f;
+        for (int v = 0; v < num_vertices; ++v) {
+            delta += fabsf(next_ranks[v] - prev_ranks[v]);
+        }
+        return delta;
+    }
 
-    float* d_prev_temp = d_prev;
-    float* d_next_temp = d_next;
+    PageRankResult pagerank(const CSRGraph& graph, const PageRankOptions& options, cudaStream_t stream) {
+        const int n = graph.num_vertices;
 
-    int iters_run = 0;
-    float delta = 0.0f;
+        // A graph with no vertices has no ranks to compute, and the initial fill below divides by
+        // n. Returning an empty result is the meaningful answer; dividing by zero is not.
+        if (n <= 0) {
+            return PageRankResult(0);
+        }
 
-    while (iters_run < options.max_iterations) {
-        pagerank_iteration(non_const_graph, d_prev_temp, d_next_temp,
-                           options.damping, options.min_rank, stream);
+        // PageRank's recursion only has a fixed point for damping in [0, 1). Outside it
+        // teleport = (1 - damping) / n goes to zero or negative: at exactly 1 the walk never jumps
+        // and the iteration can cycle forever, above 1 the weights it accumulates are negative.
+        // None of the three options was checked.
+        if (!(options.damping >= 0.0f && options.damping < 1.0f)) {
+            throw ::std::invalid_argument("pagerank: damping must be in [0, 1), got " + ::std::to_string(options.damping));
+        }
+        if (!(options.tolerance > 0.0f)) {
+            throw ::std::invalid_argument("pagerank: tolerance must be positive, got " + ::std::to_string(options.tolerance));
+        }
+        if (options.max_iterations <= 0) {
+            throw ::std::invalid_argument("pagerank: max_iterations must be positive, got " + ::std::to_string(options.max_iterations));
+        }
 
+        PageRankResult result(n);
+
+        // The iteration loop below swaps local copies (d_prev_temp/d_next_temp), not these two, so
+        // owning them here is safe. Freed by the destructors rather than at the end of the
+        // function, past a loop full of CUDA_CHECKs.
+        ::cuda::memory::unique_ptr<float> d_prev_owned(n);
+        ::cuda::memory::unique_ptr<float> d_next_owned(n);
+        float* d_prev = d_prev_owned.get();
+        float* d_next = d_next_owned.get();
+
+        std::fill(result.ranks, result.ranks + n, 1.0f / n);
+
+        // Host snapshot of the previous iteration's ranks, so the convergence
+        // delta compares the freshly computed ranks against what they were before
+        // this update (compare-next-vs-prev, never next-vs-next).
+        std::vector<float> prev_host(result.ranks, result.ranks + n);
+
+        result.upload();
+        CUDA_CHECK(cudaMemcpy(d_prev, result.d_ranks, n * sizeof(float), cudaMemcpyDeviceToDevice));
         if (stream) {
             CUDA_CHECK(cudaStreamSynchronize(stream));
         }
 
-        CUDA_CHECK(cudaMemcpy(result.d_ranks, d_next_temp, n * sizeof(float), cudaMemcpyDeviceToDevice));
-        result.download();
+        CSRGraph& non_const_graph = const_cast<CSRGraph&>(graph);
+        non_const_graph.upload();
 
-        delta = compute_pagerank_delta(result.ranks, prev_host.data(), n);
-        result.final_delta = delta;
-        iters_run++;
+        float* d_prev_temp = d_prev;
+        float* d_next_temp = d_next;
 
-        if (delta < options.tolerance) {
-            break;
+        int iters_run = 0;
+        float delta = 0.0f;
+
+        while (iters_run < options.max_iterations) {
+            pagerank_iteration(non_const_graph, d_prev_temp, d_next_temp, options.damping, options.min_rank, stream);
+
+            if (stream) {
+                CUDA_CHECK(cudaStreamSynchronize(stream));
+            }
+
+            CUDA_CHECK(cudaMemcpy(result.d_ranks, d_next_temp, n * sizeof(float), cudaMemcpyDeviceToDevice));
+            result.download();
+
+            delta = compute_pagerank_delta(result.ranks, prev_host.data(), n);
+            result.final_delta = delta;
+            iters_run++;
+
+            if (delta < options.tolerance) {
+                break;
+            }
+
+            std::copy(result.ranks, result.ranks + n, prev_host.begin());
+            std::swap(d_prev_temp, d_next_temp);
         }
 
-        std::copy(result.ranks, result.ranks + n, prev_host.begin());
-        std::swap(d_prev_temp, d_next_temp);
+        result.iterations = iters_run;
+
+        // Released by the unique_ptr destructors.
+
+        return result;
     }
-
-    result.iterations = iters_run;
-
-    // Released by the unique_ptr destructors.
-
-    return result;
-}
 
 }  // namespace cuda::graph

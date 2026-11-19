@@ -27,164 +27,125 @@
 
 namespace cuda::distributed {
 
-namespace {
+    namespace {
 
-__global__ void ring_attn_init_kernel(
-    float* out,
-    float* running_max,
-    float* running_l,
-    int local_seq,
-    int hidden
-) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= local_seq) {
-        return;
-    }
-    float* o = out + static_cast<size_t>(i) * hidden;
-    for (int c = 0; c < hidden; ++c) {
-        o[c] = 0.0f;
-    }
-    running_max[i] = -INFINITY;
-    running_l[i] = 0.0f;
-}
-
-__global__ void ring_attn_block_kernel(
-    const float* q,
-    const float* k,
-    const float* v,
-    float* out,
-    float* running_max,
-    float* running_l,
-    int local_seq,
-    int keys,
-    int hidden,
-    float inv_sqrt
-) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= local_seq) {
-        return;
-    }
-    const float* qi = q + static_cast<size_t>(i) * hidden;
-    float* o = out + static_cast<size_t>(i) * hidden;
-    float m = running_max[i];
-    float l = running_l[i];
-
-    for (int j = 0; j < keys; ++j) {
-        const float* kj = k + static_cast<size_t>(j) * hidden;
-        float s = 0.0f;
-        for (int c = 0; c < hidden; ++c) {
-            s += qi[c] * kj[c];
-        }
-        s *= inv_sqrt;
-
-        // Online softmax: rescale the running accumulation on a max update.
-        if (m < s) {
-            const float corr = __expf(m - s);
-            for (int c = 0; c < hidden; ++c) {
-                o[c] *= corr;
+        __global__ void ring_attn_init_kernel(float* out, float* running_max, float* running_l, int local_seq, int hidden) {
+            const int i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i >= local_seq) {
+                return;
             }
-            l *= corr;
-            m = s;
+            float* o = out + static_cast<size_t>(i) * hidden;
+            for (int c = 0; c < hidden; ++c) {
+                o[c] = 0.0f;
+            }
+            running_max[i] = -INFINITY;
+            running_l[i] = 0.0f;
         }
-        const float p = __expf(s - m);
-        l += p;
-        const float* vj = v + static_cast<size_t>(j) * hidden;
-        for (int c = 0; c < hidden; ++c) {
-            o[c] += p * vj[c];
+
+        __global__ void ring_attn_block_kernel(
+            const float* q, const float* k, const float* v, float* out, float* running_max, float* running_l, int local_seq, int keys, int hidden, float inv_sqrt) {
+            const int i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i >= local_seq) {
+                return;
+            }
+            const float* qi = q + static_cast<size_t>(i) * hidden;
+            float* o = out + static_cast<size_t>(i) * hidden;
+            float m = running_max[i];
+            float l = running_l[i];
+
+            for (int j = 0; j < keys; ++j) {
+                const float* kj = k + static_cast<size_t>(j) * hidden;
+                float s = 0.0f;
+                for (int c = 0; c < hidden; ++c) {
+                    s += qi[c] * kj[c];
+                }
+                s *= inv_sqrt;
+
+                // Online softmax: rescale the running accumulation on a max update.
+                if (m < s) {
+                    const float corr = __expf(m - s);
+                    for (int c = 0; c < hidden; ++c) {
+                        o[c] *= corr;
+                    }
+                    l *= corr;
+                    m = s;
+                }
+                const float p = __expf(s - m);
+                l += p;
+                const float* vj = v + static_cast<size_t>(j) * hidden;
+                for (int c = 0; c < hidden; ++c) {
+                    o[c] += p * vj[c];
+                }
+            }
+
+            running_max[i] = m;
+            running_l[i] = l;
         }
+
+        __global__ void ring_attn_finalize_kernel(float* out, const float* running_l, int local_seq, int hidden) {
+            const int i = blockIdx.x * blockDim.x + threadIdx.x;
+            if (i >= local_seq) {
+                return;
+            }
+            // running_l is the sum of exp(score - max). When no key was visited it stays
+            // zero and 1/0 would turn the whole output row into NaN. A row with no keys
+            // has no weights to apply, so leave it at whatever the caller accumulated
+            // (ring_attn_init zeroes it).
+            const float l = running_l[i];
+            if (!(l > 0.0f)) {
+                return;
+            }
+            const float inv = 1.0f / l;
+            float* o = out + static_cast<size_t>(i) * hidden;
+            for (int c = 0; c < hidden; ++c) {
+                o[c] *= inv;
+            }
+        }
+
+    }  // namespace
+
+    void ring_attn_init(float* out, float* running_max, float* running_l, int local_seq, int hidden, cudaStream_t stream) {
+        const int threads = 256;
+        const int blocks = (local_seq + threads - 1) / threads;
+        // An empty sequence produces a zero-sized grid, which CUDA rejects with
+        // "invalid configuration argument". ring_attn_block and ring_attn_finalize
+        // already guard this; ring_attn_init did not, so initialising an empty shard
+        // threw while the other two were no-ops.
+        if (blocks == 0) {
+            return;
+        }
+        ring_attn_init_kernel<<<blocks, threads, 0, stream>>>(out, running_max, running_l, local_seq, hidden);
+        CUDA_CHECK(cudaGetLastError());
     }
 
-    running_max[i] = m;
-    running_l[i] = l;
-}
+    void ring_attn_block(const float* q,
+                         const float* k,
+                         const float* v,
+                         float* out,
+                         float* running_max,
+                         float* running_l,
+                         int local_seq,
+                         int keys,
+                         int hidden,
+                         float inv_sqrt,
+                         cudaStream_t stream) {
+        const int threads = 256;
+        const int blocks = (local_seq + threads - 1) / threads;
+        if (blocks == 0) {
+            return;
+        }
+        ring_attn_block_kernel<<<blocks, threads, 0, stream>>>(q, k, v, out, running_max, running_l, local_seq, keys, hidden, inv_sqrt);
+        CUDA_CHECK(cudaGetLastError());
+    }
 
-__global__ void ring_attn_finalize_kernel(
-    float* out,
-    const float* running_l,
-    int local_seq,
-    int hidden
-) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= local_seq) {
-        return;
+    void ring_attn_finalize(float* out, const float* running_l, int local_seq, int hidden, cudaStream_t stream) {
+        const int threads = 256;
+        const int blocks = (local_seq + threads - 1) / threads;
+        if (blocks == 0) {
+            return;
+        }
+        ring_attn_finalize_kernel<<<blocks, threads, 0, stream>>>(out, running_l, local_seq, hidden);
+        CUDA_CHECK(cudaGetLastError());
     }
-    // running_l is the sum of exp(score - max). When no key was visited it stays
-    // zero and 1/0 would turn the whole output row into NaN. A row with no keys
-    // has no weights to apply, so leave it at whatever the caller accumulated
-    // (ring_attn_init zeroes it).
-    const float l = running_l[i];
-    if (!(l > 0.0f)) {
-        return;
-    }
-    const float inv = 1.0f / l;
-    float* o = out + static_cast<size_t>(i) * hidden;
-    for (int c = 0; c < hidden; ++c) {
-        o[c] *= inv;
-    }
-}
-
-}  // namespace
-
-void ring_attn_init(
-    float* out,
-    float* running_max,
-    float* running_l,
-    int local_seq,
-    int hidden,
-    cudaStream_t stream
-) {
-    const int threads = 256;
-    const int blocks = (local_seq + threads - 1) / threads;
-    // An empty sequence produces a zero-sized grid, which CUDA rejects with
-    // "invalid configuration argument". ring_attn_block and ring_attn_finalize
-    // already guard this; ring_attn_init did not, so initialising an empty shard
-    // threw while the other two were no-ops.
-    if (blocks == 0) {
-        return;
-    }
-    ring_attn_init_kernel<<<blocks, threads, 0, stream>>>(
-        out, running_max, running_l, local_seq, hidden);
-    CUDA_CHECK(cudaGetLastError());
-}
-
-void ring_attn_block(
-    const float* q,
-    const float* k,
-    const float* v,
-    float* out,
-    float* running_max,
-    float* running_l,
-    int local_seq,
-    int keys,
-    int hidden,
-    float inv_sqrt,
-    cudaStream_t stream
-) {
-    const int threads = 256;
-    const int blocks = (local_seq + threads - 1) / threads;
-    if (blocks == 0) {
-        return;
-    }
-    ring_attn_block_kernel<<<blocks, threads, 0, stream>>>(
-        q, k, v, out, running_max, running_l, local_seq, keys, hidden, inv_sqrt);
-    CUDA_CHECK(cudaGetLastError());
-}
-
-void ring_attn_finalize(
-    float* out,
-    const float* running_l,
-    int local_seq,
-    int hidden,
-    cudaStream_t stream
-) {
-    const int threads = 256;
-    const int blocks = (local_seq + threads - 1) / threads;
-    if (blocks == 0) {
-        return;
-    }
-    ring_attn_finalize_kernel<<<blocks, threads, 0, stream>>>(
-        out, running_l, local_seq, hidden);
-    CUDA_CHECK(cudaGetLastError());
-}
 
 }  // namespace cuda::distributed

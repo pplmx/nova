@@ -43,8 +43,8 @@ protected:
     size_t size_;
     std::unique_ptr<unsigned char[]> h_input_;
     std::unique_ptr<unsigned char[]> h_output_;
-    uint8_t *d_input_;
-    uint8_t *d_output_;
+    uint8_t* d_input_;
+    uint8_t* d_output_;
 };
 
 TEST_F(SobelTest, SolidImageHasNoEdges) {
@@ -150,7 +150,9 @@ TEST_F(SobelTest, EdgeAtBoundary) {
     for (size_t y = 0; y < height_; ++y) {
         for (size_t x = 0; x < width_; ++x) {
             size_t idx = (y * width_ + x) * 3;
-            if (h_output_[idx] > 0) edgeCount++;
+            if (h_output_[idx] > 0) {
+                edgeCount++;
+            }
         }
     }
     EXPECT_GT(edgeCount, 0);
@@ -165,13 +167,17 @@ TEST_F(SobelTest, HighThreshold) {
     runAndDownload(10.0f);
     int lowThresholdEdges = 0;
     for (size_t i = 0; i < size_; i += 3) {
-        if (h_output_[i] > 0) lowThresholdEdges++;
+        if (h_output_[i] > 0) {
+            lowThresholdEdges++;
+        }
     }
 
     runAndDownload(10000.0f);
     int highThresholdEdges = 0;
     for (size_t i = 0; i < size_; i += 3) {
-        if (h_output_[i] > 0) highThresholdEdges++;
+        if (h_output_[i] > 0) {
+            highThresholdEdges++;
+        }
     }
 
     EXPECT_LE(highThresholdEdges, lowThresholdEdges);

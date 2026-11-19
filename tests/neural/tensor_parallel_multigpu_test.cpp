@@ -50,120 +50,106 @@ using namespace cuda::neural::optimizers;
 using namespace cuda::neural::loss;
 using namespace cuda::mesh;
 
-using cuda::distributed::test::run_per_rank;
 using cuda::distributed::test::RankBarrierTimeout;
+using cuda::distributed::test::run_per_rank;
 
 namespace {
 
-// Multi-GPU readiness for the shared NCCL singleton, self-healing a broken
-// context (milestone v2.18 P3): after a genuine timeout/async abort the
-// singleton is broken and would otherwise turn every later test into a silent
-// skip. Same shape as the distributed suites' gate.
-bool multigpu_nccl_ready() {
-    auto& ctx = cuda::nccl::NcclContext::instance();
-    try {
-        ctx.initialize();
-    } catch (const std::exception&) {
-        return false;
+    // Multi-GPU readiness for the shared NCCL singleton, self-healing a broken
+    // context (milestone v2.18 P3): after a genuine timeout/async abort the
+    // singleton is broken and would otherwise turn every later test into a silent
+    // skip. Same shape as the distributed suites' gate.
+    bool multigpu_nccl_ready() {
+        auto& ctx = cuda::nccl::NcclContext::instance();
+        try {
+            ctx.initialize();
+        } catch (const std::exception&) {
+            return false;
+        }
+        return cuda::distributed::test::heal_and_ready(ctx);
     }
-    return cuda::distributed::test::heal_and_ready(ctx);
-}
 
-void fill_random(float* data, size_t count) {
-    static std::mt19937 rng(7);  // Fixed seed for reproducibility
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = dist(rng);
-    }
-}
-
-// Single matmul on host-visible B; small matrices so 1e-2 is a loose bound for
-// fp32 accumulate order differences across the slice-then-AllReduce path.
-constexpr float kTolerance = 1e-2f;
-
-// Host double-precision matmul: C[m x n] = A[m x k] @ B[k x n] (row-major).
-void host_matmul(const float* A, const float* B, float* C, int m, int n, int k) {
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < n; ++j) {
-            double acc = 0.0;
-            for (int t = 0; t < k; ++t) {
-                acc += static_cast<double>(A[i * k + t]) *
-                       static_cast<double>(B[t * n + j]);
-            }
-            C[i * n + j] = static_cast<float>(acc);
+    void fill_random(float* data, size_t count) {
+        static std::mt19937 rng(7);  // Fixed seed for reproducibility
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = dist(rng);
         }
     }
-}
 
-// Analytic backward of Y = X W in double precision: dW = X^T dY, dX = dY W^T.
-void ref_linear_backward(const float* X, const float* W, const float* dY,
-                         float* dX, float* dW, int m, int k, int n) {
-    for (int a = 0; a < k; ++a) {
-        for (int b = 0; b < n; ++b) {
-            double acc = 0.0;
-            for (int i = 0; i < m; ++i) {
-                acc += static_cast<double>(X[i * k + a]) * dY[i * n + b];
+    // Single matmul on host-visible B; small matrices so 1e-2 is a loose bound for
+    // fp32 accumulate order differences across the slice-then-AllReduce path.
+    constexpr float kTolerance = 1e-2f;
+
+    // Host double-precision matmul: C[m x n] = A[m x k] @ B[k x n] (row-major).
+    void host_matmul(const float* A, const float* B, float* C, int m, int n, int k) {
+        for (int i = 0; i < m; ++i) {
+            for (int j = 0; j < n; ++j) {
+                double acc = 0.0;
+                for (int t = 0; t < k; ++t) {
+                    acc += static_cast<double>(A[i * k + t]) * static_cast<double>(B[t * n + j]);
+                }
+                C[i * n + j] = static_cast<float>(acc);
             }
-            dW[a * n + b] = static_cast<float>(acc);
         }
     }
-    for (int i = 0; i < m; ++i) {
+
+    // Analytic backward of Y = X W in double precision: dW = X^T dY, dX = dY W^T.
+    void ref_linear_backward(const float* X, const float* W, const float* dY, float* dX, float* dW, int m, int k, int n) {
         for (int a = 0; a < k; ++a) {
-            double acc = 0.0;
             for (int b = 0; b < n; ++b) {
-                acc += static_cast<double>(dY[i * n + b]) * W[a * n + b];
+                double acc = 0.0;
+                for (int i = 0; i < m; ++i) {
+                    acc += static_cast<double>(X[i * k + a]) * dY[i * n + b];
+                }
+                dW[a * n + b] = static_cast<float>(acc);
             }
-            dX[i * k + a] = static_cast<float>(acc);
+        }
+        for (int i = 0; i < m; ++i) {
+            for (int a = 0; a < k; ++a) {
+                double acc = 0.0;
+                for (int b = 0; b < n; ++b) {
+                    acc += static_cast<double>(dY[i * n + b]) * W[a * n + b];
+                }
+                dX[i * k + a] = static_cast<float>(acc);
+            }
         }
     }
-}
 
-// Single-GPU SiLU-gated MLP reference through the public matmul/activations
-// primitives: out = (silu(A @ W_gate) .* (A @ W_up)) @ W_down. The multi-GPU
-// TensorParallelMLP is compared against this (full-weight) computation.
-void ref_gated_mlp(const float* A, const float* W_gate, const float* W_up,
-                   const float* W_down, float* out, int m, int h, int inter) {
-    cuda::memory::Buffer<float> d_A(m * h);
-    cuda::memory::Buffer<float> d_gate(m * inter), d_up(m * inter),
-        d_sub(m * inter), d_out(m * h);
-    cuda::memory::Buffer<float> d_W_gate(h * inter), d_W_up(h * inter),
-        d_W_down(h * inter);
-    d_A.copy_from(A, static_cast<size_t>(m) * h);
-    d_W_gate.copy_from(W_gate, static_cast<size_t>(h) * inter);
-    d_W_up.copy_from(W_up, static_cast<size_t>(h) * inter);
-    d_W_down.copy_from(W_down, static_cast<size_t>(h) * inter);
+    // Single-GPU SiLU-gated MLP reference through the public matmul/activations
+    // primitives: out = (silu(A @ W_gate) .* (A @ W_up)) @ W_down. The multi-GPU
+    // TensorParallelMLP is compared against this (full-weight) computation.
+    void ref_gated_mlp(const float* A, const float* W_gate, const float* W_up, const float* W_down, float* out, int m, int h, int inter) {
+        cuda::memory::Buffer<float> d_A(m * h);
+        cuda::memory::Buffer<float> d_gate(m * inter), d_up(m * inter), d_sub(m * inter), d_out(m * h);
+        cuda::memory::Buffer<float> d_W_gate(h * inter), d_W_up(h * inter), d_W_down(h * inter);
+        d_A.copy_from(A, static_cast<size_t>(m) * h);
+        d_W_gate.copy_from(W_gate, static_cast<size_t>(h) * inter);
+        d_W_up.copy_from(W_up, static_cast<size_t>(h) * inter);
+        d_W_down.copy_from(W_down, static_cast<size_t>(h) * inter);
 
-    cuda::neural::matmul(d_A.data(), d_W_gate.data(), d_gate.data(),
-                         m, inter, h);
-    cuda::neural::matmul(d_A.data(), d_W_up.data(), d_up.data(), m, inter, h);
-    cuda::neural::silu_and_mul(d_gate.data(), d_up.data(), d_sub.data(),
-                               m * inter);
-    cuda::neural::matmul(d_sub.data(), d_W_down.data(), d_out.data(),
-                         m, h, inter);
-    d_out.copy_to(out, static_cast<size_t>(m) * h);
-}
+        cuda::neural::matmul(d_A.data(), d_W_gate.data(), d_gate.data(), m, inter, h);
+        cuda::neural::matmul(d_A.data(), d_W_up.data(), d_up.data(), m, inter, h);
+        cuda::neural::silu_and_mul(d_gate.data(), d_up.data(), d_sub.data(), m * inter);
+        cuda::neural::matmul(d_sub.data(), d_W_down.data(), d_out.data(), m, h, inter);
+        d_out.copy_to(out, static_cast<size_t>(m) * h);
+    }
 
 }  // namespace
 
 class TensorParallelMultiGpuTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        DeviceMesh::instance().initialize();
-    }
+    void SetUp() override { DeviceMesh::instance().initialize(); }
 
     static void SetUpTestSuite() {
         cudaFree(nullptr);  // Ensure CUDA context for device discovery
     }
 
-    static testing::AssertionResult arrays_near(
-        const float* expected, const float* actual,
-        size_t count, float tolerance) {
+    static testing::AssertionResult arrays_near(const float* expected, const float* actual, size_t count, float tolerance) {
         for (size_t i = 0; i < count; ++i) {
             if (std::abs(expected[i] - actual[i]) > tolerance) {
-                return testing::AssertionFailure()
-                       << "mismatch at " << i << ": expected " << expected[i]
-                       << " actual " << actual[i] << " (|diff| "
-                       << std::abs(expected[i] - actual[i]) << " > " << tolerance << ")";
+                return testing::AssertionFailure() << "mismatch at " << i << ": expected " << expected[i] << " actual " << actual[i] << " (|diff| "
+                                                   << std::abs(expected[i] - actual[i]) << " > " << tolerance << ")";
             }
         }
         return testing::AssertionSuccess();
@@ -222,8 +208,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelColumnParallel) {
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
         EXPECT_TRUE(arrays_near(h_C_ref.data(), h_results[rank].data(), m * n, kTolerance))
-            << "ColumnParallel TP matmul result on rank " << rank
-            << " differs from the single-GPU reference";
+            << "ColumnParallel TP matmul result on rank " << rank << " differs from the single-GPU reference";
     }
 }
 
@@ -278,8 +263,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelColumnParallelAsync) {
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
         EXPECT_TRUE(arrays_near(h_C_ref.data(), h_results[rank].data(), m * n, kTolerance))
-            << "ColumnParallel async TP matmul result on rank " << rank
-            << " differs from the single-GPU reference";
+            << "ColumnParallel async TP matmul result on rank " << rank << " differs from the single-GPU reference";
     }
 }
 
@@ -320,16 +304,16 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelColumnParallelNonDivis
     // Every rank must reject the non-divisible shape (fail fast), not produce a
     // partial result. run_per_rank rethrows the first per-rank exception, so an
     // EXPECT_THROW around it is satisfied when any rank raises.
-    EXPECT_THROW(
-        run_per_rank(device_count, [&](int d) {
-            cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m * n);
-            d_A.copy_from(h_A.data(), m * k);
-            d_B.copy_from(h_B.data(), k * n);
+    EXPECT_THROW(run_per_rank(device_count,
+                              [&](int d) {
+                                  cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m * n);
+                                  d_A.copy_from(h_A.data(), m * k);
+                                  d_B.copy_from(h_B.data(), k * n);
 
-            TensorParallelMatmul tpm(ctx, TensorParallelStrategy::ColumnParallel);
-            tpm.matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
-        }),
-        std::exception)
+                                  TensorParallelMatmul tpm(ctx, TensorParallelStrategy::ColumnParallel);
+                                  tpm.matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
+                              }),
+                 std::exception)
         << "ColumnParallel TP matmul with n % tp_degree != 0 must reject the "
            "shape explicitly instead of silently dropping columns";
 }
@@ -381,10 +365,8 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallel) {
 
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(h_C_ref.data() + rank * local_m * n,
-                                h_results[rank].data(), local_m * n, kTolerance))
-            << "RowParallel TP matmul row block on rank " << rank
-            << " differs from the single-GPU reference";
+        EXPECT_TRUE(arrays_near(h_C_ref.data() + rank * local_m * n, h_results[rank].data(), local_m * n, kTolerance))
+            << "RowParallel TP matmul row block on rank " << rank << " differs from the single-GPU reference";
     }
 }
 
@@ -428,8 +410,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_ShardConcatMatch
         d_C.copy_to(h_ref.data(), m * n);
     }
 
-    std::vector<std::vector<float>> shards(
-        device_count, std::vector<float>(m * n_local));
+    std::vector<std::vector<float>> shards(device_count, std::vector<float>(m * n_local));
     run_per_rank(device_count, [&](int d) {
         cuda::memory::Buffer<float> d_A(m * k), d_out(m * n_local);
         d_A.copy_from(h_A.data(), m * k);
@@ -446,14 +427,12 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_ShardConcatMatch
     for (int i = 0; i < m; ++i) {
         for (int r = 0; r < device_count; ++r) {
             for (int j = 0; j < n_local; ++j) {
-                assembled[i * n + r * n_local + j] =
-                    shards[r][i * n_local + j];
+                assembled[i * n + r * n_local + j] = shards[r][i * n_local + j];
             }
         }
     }
-    EXPECT_TRUE(arrays_near(h_ref.data(), assembled.data(), m * n, kTolerance))
-        << "concatenated ColumnParallelLayer shards differ from the "
-           "single-GPU full-weight reference";
+    EXPECT_TRUE(arrays_near(h_ref.data(), assembled.data(), m * n, kTolerance)) << "concatenated ColumnParallelLayer shards differ from the "
+                                                                                   "single-GPU full-weight reference";
 }
 
 // ColumnParallelLayer with out_features NOT divisible by tp_degree: the layer
@@ -474,11 +453,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_RejectsNonDivisi
     auto& ctx = cuda::nccl::NcclContext::instance();
 
     const int n = 8 * device_count + 1;  // out_features % tp_degree == 1
-    EXPECT_THROW(
-        run_per_rank(device_count, [&](int) {
-            ColumnParallelLayer layer(ctx, /*in_features=*/16, n);
-        }),
-        std::exception)
+    EXPECT_THROW(run_per_rank(device_count, [&](int) { ColumnParallelLayer layer(ctx, /*in_features=*/16, n); }), std::exception)
         << "ColumnParallelLayer with out_features % tp_degree != 0 must "
            "reject the shape at construction";
 }
@@ -516,8 +491,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_ReplicatedMatchesRe
         d_C.copy_to(h_ref.data(), m * n);
     }
 
-    std::vector<std::vector<float>> results(
-        device_count, std::vector<float>(m * n));
+    std::vector<std::vector<float>> results(device_count, std::vector<float>(m * n));
     run_per_rank(device_count, [&](int d) {
         // Each rank consumes its segment of the input (columns of X split by
         // the weight's input dimension) and its row shard of W.
@@ -538,10 +512,8 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_ReplicatedMatchesRe
 
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(h_ref.data(), results[rank].data(), m * n,
-                                kTolerance))
-            << "replicated RowParallelLayer output on rank " << rank
-            << " differs from the single-GPU full-weight reference";
+        EXPECT_TRUE(arrays_near(h_ref.data(), results[rank].data(), m * n, kTolerance))
+            << "replicated RowParallelLayer output on rank " << rank << " differs from the single-GPU full-weight reference";
     }
 }
 
@@ -562,11 +534,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_RejectsNonDivisible
     auto& ctx = cuda::nccl::NcclContext::instance();
 
     const int k = 16 * device_count + 1;  // in_features % tp_degree == 1
-    EXPECT_THROW(
-        run_per_rank(device_count, [&](int) {
-            RowParallelLayer layer(ctx, k, /*out_features=*/48);
-        }),
-        std::exception)
+    EXPECT_THROW(run_per_rank(device_count, [&](int) { RowParallelLayer layer(ctx, k, /*out_features=*/48); }), std::exception)
         << "RowParallelLayer with in_features % tp_degree != 0 must reject "
            "the shape at construction";
 }
@@ -600,11 +568,9 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_GatedMatchesRefere
     fill_random(h_W_down.data(), h_W_down.size());
 
     std::vector<float> h_ref(m * h);
-    ref_gated_mlp(h_A.data(), h_W_gate.data(), h_W_up.data(), h_W_down.data(),
-                  h_ref.data(), m, h, inter);
+    ref_gated_mlp(h_A.data(), h_W_gate.data(), h_W_up.data(), h_W_down.data(), h_ref.data(), m, h, inter);
 
-    std::vector<std::vector<float>> results(
-        device_count, std::vector<float>(m * h));
+    std::vector<std::vector<float>> results(device_count, std::vector<float>(m * h));
     run_per_rank(device_count, [&](int d) {
         cuda::memory::Buffer<float> d_A(m * h), d_out(m * h);
         d_A.copy_from(h_A.data(), m * h);
@@ -617,10 +583,8 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_GatedMatchesRefere
 
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(h_ref.data(), results[rank].data(), m * h,
-                                kTolerance))
-            << "replicated TensorParallelMLP output on rank " << rank
-            << " differs from the single-GPU full-weight gated MLP reference";
+        EXPECT_TRUE(arrays_near(h_ref.data(), results[rank].data(), m * h, kTolerance))
+            << "replicated TensorParallelMLP output on rank " << rank << " differs from the single-GPU full-weight gated MLP reference";
     }
 }
 
@@ -648,16 +612,16 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelRowParallelNonDivisibl
     fill_random(h_A.data(), m * k);
     fill_random(h_B.data(), k * n);
 
-    EXPECT_THROW(
-        run_per_rank(device_count, [&](int d) {
-            cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m);
-            d_A.copy_from(h_A.data(), m * k);
-            d_B.copy_from(h_B.data(), k * n);
+    EXPECT_THROW(run_per_rank(device_count,
+                              [&](int d) {
+                                  cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m);
+                                  d_A.copy_from(h_A.data(), m * k);
+                                  d_B.copy_from(h_B.data(), k * n);
 
-            TensorParallelMatmul tpm(ctx, TensorParallelStrategy::RowParallel);
-            tpm.matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
-        }),
-        std::exception)
+                                  TensorParallelMatmul tpm(ctx, TensorParallelStrategy::RowParallel);
+                                  tpm.matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
+                              }),
+                 std::exception)
         << "RowParallel TP matmul with m % tp_degree != 0 must reject the "
            "shape explicitly instead of silently dropping rows";
 }
@@ -696,16 +660,12 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_Backward_Matches
     fill_random(h_dY.data(), m * n);
 
     std::vector<float> ref_dX(m * k), ref_dW(k * n);
-    ref_linear_backward(h_X.data(), h_W.data(), h_dY.data(),
-                        ref_dX.data(), ref_dW.data(), m, k, n);
+    ref_linear_backward(h_X.data(), h_W.data(), h_dY.data(), ref_dX.data(), ref_dW.data(), m, k, n);
 
-    std::vector<std::vector<float>> dX_rank(device_count,
-                                            std::vector<float>(m * k));
-    std::vector<std::vector<float>> dW_slices(device_count,
-                                              std::vector<float>(k * n_local));
+    std::vector<std::vector<float>> dX_rank(device_count, std::vector<float>(m * k));
+    std::vector<std::vector<float>> dW_slices(device_count, std::vector<float>(k * n_local));
     run_per_rank(device_count, [&](int d) {
-        cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n_local),
-            d_dX(m * k), d_dW(k * n);
+        cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n_local), d_dX(m * k), d_dW(k * n);
         d_X.copy_from(h_X.data(), m * k);
 
         ColumnParallelLayer layer(ctx, k, n);
@@ -714,8 +674,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_Backward_Matches
         std::vector<float> dY_r(static_cast<size_t>(m) * n_local);
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < n_local; ++j) {
-                dY_r[static_cast<size_t>(i) * n_local + j] =
-                    h_dY[i * n + d * n_local + j];
+                dY_r[static_cast<size_t>(i) * n_local + j] = h_dY[i * n + d * n_local + j];
             }
         }
         d_dY.copy_from(dY_r.data(), dY_r.size());
@@ -727,8 +686,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_Backward_Matches
         d_dW.copy_to(full_dW.data(), k * n);
         for (int a = 0; a < k; ++a) {
             for (int b = 0; b < n_local; ++b) {
-                dW_slices[d][static_cast<size_t>(a) * n_local + b] =
-                    full_dW[static_cast<size_t>(a) * n + d * n_local + b];
+                dW_slices[d][static_cast<size_t>(a) * n_local + b] = full_dW[static_cast<size_t>(a) * n + d * n_local + b];
             }
         }
     });
@@ -736,24 +694,20 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_ColumnParallelLayer_Backward_Matches
     // Every rank's grad-input must be the full AllReduced reference.
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(ref_dX.data(), dX_rank[rank].data(), m * k,
-                                kTolerance))
-            << "column-layer AllReduced grad-input on rank " << rank
-            << " differs from the full reference dX (the grad-input AllReduce "
-               "collective is broken or not implemented)";
+        EXPECT_TRUE(arrays_near(ref_dX.data(), dX_rank[rank].data(), m * k, kTolerance)) << "column-layer AllReduced grad-input on rank " << rank
+                                                                                         << " differs from the full reference dX (the grad-input AllReduce "
+                                                                                            "collective is broken or not implemented)";
     }
     // Assemble the per-rank grad-weight column slices.
     std::vector<float> assembled_dW(k * n, 0.0f);
     for (int r = 0; r < device_count; ++r) {
         for (int a = 0; a < k; ++a) {
             for (int b = 0; b < n_local; ++b) {
-                assembled_dW[static_cast<size_t>(a) * n + r * n_local + b] =
-                    dW_slices[r][static_cast<size_t>(a) * n_local + b];
+                assembled_dW[static_cast<size_t>(a) * n + r * n_local + b] = dW_slices[r][static_cast<size_t>(a) * n_local + b];
             }
         }
     }
-    EXPECT_TRUE(arrays_near(ref_dW.data(), assembled_dW.data(), k * n, kTolerance))
-        << "assembled column-layer grad-weight slices differ from X^T dY_full";
+    EXPECT_TRUE(arrays_near(ref_dW.data(), assembled_dW.data(), k * n, kTolerance)) << "assembled column-layer grad-weight slices differ from X^T dY_full";
 }
 
 // RowParallelLayer backward on real multi-GPU: grad-input is local — each
@@ -782,23 +736,18 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_Backward_MatchesRef
     fill_random(h_dY.data(), m * n);
 
     std::vector<float> ref_dX(m * k), ref_dW(k * n);
-    ref_linear_backward(h_X.data(), h_W.data(), h_dY.data(),
-                        ref_dX.data(), ref_dW.data(), m, k, n);
+    ref_linear_backward(h_X.data(), h_W.data(), h_dY.data(), ref_dX.data(), ref_dW.data(), m, k, n);
 
-    std::vector<std::vector<float>> dX_rank(device_count,
-                                            std::vector<float>(m * k_local));
-    std::vector<std::vector<float>> dW_slices(device_count,
-                                              std::vector<float>(k_local * n));
+    std::vector<std::vector<float>> dX_rank(device_count, std::vector<float>(m * k_local));
+    std::vector<std::vector<float>> dW_slices(device_count, std::vector<float>(k_local * n));
     run_per_rank(device_count, [&](int d) {
         std::vector<float> x_r(static_cast<size_t>(m) * k_local);
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < k_local; ++j) {
-                x_r[static_cast<size_t>(i) * k_local + j] =
-                    h_X[i * k + d * k_local + j];
+                x_r[static_cast<size_t>(i) * k_local + j] = h_X[i * k + d * k_local + j];
             }
         }
-        cuda::memory::Buffer<float> d_X(m * k_local), d_dY(m * n),
-            d_dX(m * k_local), d_dW(k * n);
+        cuda::memory::Buffer<float> d_X(m * k_local), d_dY(m * n), d_dX(m * k_local), d_dW(k * n);
         d_X.copy_from(x_r.data(), x_r.size());
         d_dY.copy_from(h_dY.data(), m * n);
 
@@ -811,8 +760,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_Backward_MatchesRef
         d_dW.copy_to(full_dW.data(), k * n);
         for (int a = 0; a < k_local; ++a) {
             for (int b = 0; b < n; ++b) {
-                dW_slices[d][static_cast<size_t>(a) * n + b] =
-                    full_dW[static_cast<size_t>(d * k_local + a) * n + b];
+                dW_slices[d][static_cast<size_t>(a) * n + b] = full_dW[static_cast<size_t>(d * k_local + a) * n + b];
             }
         }
     });
@@ -826,26 +774,21 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_RowParallelLayer_Backward_MatchesRef
         std::vector<float> expect_block(static_cast<size_t>(m) * k_local);
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < k_local; ++j) {
-                expect_block[static_cast<size_t>(i) * k_local + j] =
-                    ref_dX[i * k + rank * k_local + j];
+                expect_block[static_cast<size_t>(i) * k_local + j] = ref_dX[i * k + rank * k_local + j];
             }
         }
-        EXPECT_TRUE(arrays_near(expect_block.data(), dX_rank[rank].data(),
-                                m * k_local, kTolerance))
-            << "row-layer local grad-input block on rank " << rank
-            << " differs from the reference";
+        EXPECT_TRUE(arrays_near(expect_block.data(), dX_rank[rank].data(), m * k_local, kTolerance))
+            << "row-layer local grad-input block on rank " << rank << " differs from the reference";
     }
     std::vector<float> assembled_dW(k * n, 0.0f);
     for (int r = 0; r < device_count; ++r) {
         for (int a = 0; a < k_local; ++a) {
             for (int b = 0; b < n; ++b) {
-                assembled_dW[static_cast<size_t>(r * k_local + a) * n + b] =
-                    dW_slices[r][static_cast<size_t>(a) * n + b];
+                assembled_dW[static_cast<size_t>(r * k_local + a) * n + b] = dW_slices[r][static_cast<size_t>(a) * n + b];
             }
         }
     }
-    EXPECT_TRUE(arrays_near(ref_dW.data(), assembled_dW.data(), k * n, kTolerance))
-        << "assembled row-layer grad-weight slices differ from X^T dY";
+    EXPECT_TRUE(arrays_near(ref_dW.data(), assembled_dW.data(), k * n, kTolerance)) << "assembled row-layer grad-weight slices differ from X^T dY";
 }
 
 // The full SiLU-gated TensorParallelMLP backward on real multi-GPU: grad-input
@@ -894,8 +837,7 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_Backward_MatchesRe
 
     std::vector<float> dsub(static_cast<size_t>(m) * inter);
     std::vector<float> ref_dWd(static_cast<size_t>(inter) * h);
-    ref_linear_backward(sub.data(), h_Wd.data(), h_dY.data(),
-                        dsub.data(), ref_dWd.data(), m, inter, h);
+    ref_linear_backward(sub.data(), h_Wd.data(), h_dY.data(), dsub.data(), ref_dWd.data(), m, inter, h);
     std::vector<float> dgate(static_cast<size_t>(m) * inter);
     std::vector<float> dup(static_cast<size_t>(m) * inter);
     for (int i = 0; i < m * inter; ++i) {
@@ -907,66 +849,51 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_Backward_MatchesRe
     std::vector<float> ref_dX(static_cast<size_t>(m) * h);
     std::vector<float> ref_dWg(static_cast<size_t>(h) * inter);
     std::vector<float> ref_dWu(static_cast<size_t>(h) * inter);
-    ref_linear_backward(h_X.data(), h_Wg.data(), dgate.data(),
-                        dXg.data(), ref_dWg.data(), m, h, inter);
-    ref_linear_backward(h_X.data(), h_Wu.data(), dup.data(),
-                        dXu.data(), ref_dWu.data(), m, h, inter);
+    ref_linear_backward(h_X.data(), h_Wg.data(), dgate.data(), dXg.data(), ref_dWg.data(), m, h, inter);
+    ref_linear_backward(h_X.data(), h_Wu.data(), dup.data(), dXu.data(), ref_dWu.data(), m, h, inter);
     for (int i = 0; i < m * h; ++i) {
         ref_dX[i] = dXg[i] + dXu[i];
     }
 
-    std::vector<std::vector<float>> dX_rank(device_count,
-                                            std::vector<float>(m * h));
-    std::vector<std::vector<float>> dWg_slices(device_count,
-                                               std::vector<float>(h * inter_local));
-    std::vector<std::vector<float>> dWu_slices(device_count,
-                                               std::vector<float>(h * inter_local));
-    std::vector<std::vector<float>> dWd_slices(device_count,
-                                               std::vector<float>(inter_local * h));
+    std::vector<std::vector<float>> dX_rank(device_count, std::vector<float>(m * h));
+    std::vector<std::vector<float>> dWg_slices(device_count, std::vector<float>(h * inter_local));
+    std::vector<std::vector<float>> dWu_slices(device_count, std::vector<float>(h * inter_local));
+    std::vector<std::vector<float>> dWd_slices(device_count, std::vector<float>(inter_local * h));
     run_per_rank(device_count, [&](int d) {
-        cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_out(m * h),
-            d_dX(m * h);
-        cuda::memory::Buffer<float> d_dWg(h * inter), d_dWu(h * inter),
-            d_dWd(inter * h);
+        cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_out(m * h), d_dX(m * h);
+        cuda::memory::Buffer<float> d_dWg(h * inter), d_dWu(h * inter), d_dWd(inter * h);
         d_X.copy_from(h_X.data(), m * h);
         d_dY.copy_from(h_dY.data(), m * h);
 
         TensorParallelMLP mlp(ctx, h, inter);
         mlp.set_weight(h_Wg.data(), h_Wu.data(), h_Wd.data());
         mlp.forward(d_X.data(), d_out.data(), m, 1);  // save activations
-        mlp.backward(d_X.data(), d_dY.data(), d_dX.data(),
-                     d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+        mlp.backward(d_X.data(), d_dY.data(), d_dX.data(), d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
 
         d_dX.copy_to(dX_rank[d].data(), m * h);
-        std::vector<float> full_dWg(h * inter), full_dWu(h * inter),
-            full_dWd(inter * h);
+        std::vector<float> full_dWg(h * inter), full_dWu(h * inter), full_dWd(inter * h);
         d_dWg.copy_to(full_dWg.data(), h * inter);
         d_dWu.copy_to(full_dWu.data(), h * inter);
         d_dWd.copy_to(full_dWd.data(), inter * h);
         // Column-shard slices for gate/up, row-shard slices for down.
         for (int a = 0; a < h; ++a) {
             for (int b = 0; b < inter_local; ++b) {
-                dWg_slices[d][static_cast<size_t>(a) * inter_local + b] =
-                    full_dWg[static_cast<size_t>(a) * inter + d * inter_local + b];
-                dWu_slices[d][static_cast<size_t>(a) * inter_local + b] =
-                    full_dWu[static_cast<size_t>(a) * inter + d * inter_local + b];
+                dWg_slices[d][static_cast<size_t>(a) * inter_local + b] = full_dWg[static_cast<size_t>(a) * inter + d * inter_local + b];
+                dWu_slices[d][static_cast<size_t>(a) * inter_local + b] = full_dWu[static_cast<size_t>(a) * inter + d * inter_local + b];
             }
         }
         for (int a = 0; a < inter_local; ++a) {
             for (int b = 0; b < h; ++b) {
-                dWd_slices[d][static_cast<size_t>(a) * h + b] =
-                    full_dWd[static_cast<size_t>(d * inter_local + a) * h + b];
+                dWd_slices[d][static_cast<size_t>(a) * h + b] = full_dWd[static_cast<size_t>(d * inter_local + a) * h + b];
             }
         }
     });
 
     for (int rank = 0; rank < device_count; ++rank) {
         SCOPED_TRACE("rank " + std::to_string(rank));
-        EXPECT_TRUE(arrays_near(ref_dX.data(), dX_rank[rank].data(), m * h,
-                                kTolerance))
-            << "MLP AllReduced grad-input on rank " << rank
-            << " differs from the full reference (the grad-input AllReduce is "
-               "broken in the chained backward)";
+        EXPECT_TRUE(arrays_near(ref_dX.data(), dX_rank[rank].data(), m * h, kTolerance)) << "MLP AllReduced grad-input on rank " << rank
+                                                                                         << " differs from the full reference (the grad-input AllReduce is "
+                                                                                            "broken in the chained backward)";
     }
     std::vector<float> assembled_dWg(h * inter, 0.0f);
     std::vector<float> assembled_dWu(h * inter, 0.0f);
@@ -974,28 +901,19 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_Backward_MatchesRe
     for (int r = 0; r < device_count; ++r) {
         for (int a = 0; a < h; ++a) {
             for (int b = 0; b < inter_local; ++b) {
-                assembled_dWg[static_cast<size_t>(a) * inter + r * inter_local + b] =
-                    dWg_slices[r][static_cast<size_t>(a) * inter_local + b];
-                assembled_dWu[static_cast<size_t>(a) * inter + r * inter_local + b] =
-                    dWu_slices[r][static_cast<size_t>(a) * inter_local + b];
+                assembled_dWg[static_cast<size_t>(a) * inter + r * inter_local + b] = dWg_slices[r][static_cast<size_t>(a) * inter_local + b];
+                assembled_dWu[static_cast<size_t>(a) * inter + r * inter_local + b] = dWu_slices[r][static_cast<size_t>(a) * inter_local + b];
             }
         }
         for (int a = 0; a < inter_local; ++a) {
             for (int b = 0; b < h; ++b) {
-                assembled_dWd[static_cast<size_t>(r * inter_local + a) * h + b] =
-                    dWd_slices[r][static_cast<size_t>(a) * h + b];
+                assembled_dWd[static_cast<size_t>(r * inter_local + a) * h + b] = dWd_slices[r][static_cast<size_t>(a) * h + b];
             }
         }
     }
-    EXPECT_TRUE(arrays_near(ref_dWg.data(), assembled_dWg.data(), h * inter,
-                            kTolerance))
-        << "assembled MLP gate grad-weight slices differ from the reference";
-    EXPECT_TRUE(arrays_near(ref_dWu.data(), assembled_dWu.data(), h * inter,
-                            kTolerance))
-        << "assembled MLP up grad-weight slices differ from the reference";
-    EXPECT_TRUE(arrays_near(ref_dWd.data(), assembled_dWd.data(), inter * h,
-                            kTolerance))
-        << "assembled MLP down grad-weight slices differ from the reference";
+    EXPECT_TRUE(arrays_near(ref_dWg.data(), assembled_dWg.data(), h * inter, kTolerance)) << "assembled MLP gate grad-weight slices differ from the reference";
+    EXPECT_TRUE(arrays_near(ref_dWu.data(), assembled_dWu.data(), h * inter, kTolerance)) << "assembled MLP up grad-weight slices differ from the reference";
+    EXPECT_TRUE(arrays_near(ref_dWd.data(), assembled_dWd.data(), inter * h, kTolerance)) << "assembled MLP down grad-weight slices differ from the reference";
 }
 
 // ============================================================================
@@ -1012,93 +930,97 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TensorParallelMLP_Backward_MatchesRe
 
 namespace {
 
-// Host double-precision AdamW reference (identical formula to the library).
-struct HostAdamW {
-    std::vector<double> m, v;
-    void step(const float* w, const float* dw, float* w_out, size_t n,
-              int step, float lr, float beta1, float beta2, float eps,
-              float wd) {
-        if (m.size() != n) {
-            m.assign(n, 0.0);
-            v.assign(n, 0.0);
+    // Host double-precision AdamW reference (identical formula to the library).
+    struct HostAdamW {
+        std::vector<double> m, v;
+        void step(const float* w, const float* dw, float* w_out, size_t n, int step, float lr, float beta1, float beta2, float eps, float wd) {
+            if (m.size() != n) {
+                m.assign(n, 0.0);
+                v.assign(n, 0.0);
+            }
+            const double b1p = std::pow(static_cast<double>(beta1), step);
+            const double b2p = std::pow(static_cast<double>(beta2), step);
+            const double lr_t = static_cast<double>(lr) * std::sqrt(1.0 - b2p) / (1.0 - b1p);
+            for (size_t i = 0; i < n; ++i) {
+                const double g = dw[i];
+                m[i] = beta1 * m[i] + (1.0 - beta1) * g;
+                v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
+                const double m_hat = m[i] / (1.0 - b1p);
+                const double v_hat = v[i] / (1.0 - b2p);
+                double update = m_hat / (std::sqrt(v_hat) + eps) + wd * w[i];
+                w_out[i] = static_cast<float>(w[i] - lr_t * update);
+            }
         }
-        const double b1p = std::pow(static_cast<double>(beta1), step);
-        const double b2p = std::pow(static_cast<double>(beta2), step);
-        const double lr_t =
-            static_cast<double>(lr) * std::sqrt(1.0 - b2p) / (1.0 - b1p);
-        for (size_t i = 0; i < n; ++i) {
-            const double g = dw[i];
-            m[i] = beta1 * m[i] + (1.0 - beta1) * g;
-            v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
-            const double m_hat = m[i] / (1.0 - b1p);
-            const double v_hat = v[i] / (1.0 - b2p);
-            double update = m_hat / (std::sqrt(v_hat) + eps) + wd * w[i];
-            w_out[i] = static_cast<float>(w[i] - lr_t * update);
-        }
-    }
-};
-
-// One host fp64 training step of the gated MLP on full weights:
-// logits = down(silu(gate) .* up); dlogits = (softmax - onehot)/B; analytic
-// backward for dWg/dWu/dWd; then AdamW steps each full weight.
-void host_training_step(const float* X, const int* targets,
-                        float* Wg, float* Wu, float* Wd,
-                        HostAdamW& ag, HostAdamW& au, HostAdamW& ad,
-                        int m, int h, int inter, int step_no,
-                        float lr, float beta1, float beta2, float eps,
-                        float wd) {
-    auto silu = [](double x) { return x / (1.0 + std::exp(-x)); };
-    auto silu_prime = [](double x) {
-        const double s = 1.0 / (1.0 + std::exp(-x));
-        return s * (1.0 + x * (1.0 - s));
     };
-    std::vector<float> G(m * inter), U(m * inter), sub(m * inter);
-    std::vector<float> logits(m * h);
-    host_matmul(X, Wg, G.data(), m, inter, h);
-    host_matmul(X, Wu, U.data(), m, inter, h);
-    for (size_t i = 0; i < sub.size(); ++i) {
-        sub[i] = static_cast<float>(silu(G[i]) * U[i]);
-    }
-    host_matmul(sub.data(), Wd, logits.data(), m, h, inter);
 
-    // dlogits = (softmax - onehot) / B (reduction_mean).
-    std::vector<float> dlogits(m * h);
-    for (int b = 0; b < m; ++b) {
-        double mm = logits[b * h];
-        for (int c = 1; c < h; ++c) {
-            mm = std::max(mm, static_cast<double>(logits[b * h + c]));
+    // One host fp64 training step of the gated MLP on full weights:
+    // logits = down(silu(gate) .* up); dlogits = (softmax - onehot)/B; analytic
+    // backward for dWg/dWu/dWd; then AdamW steps each full weight.
+    void host_training_step(const float* X,
+                            const int* targets,
+                            float* Wg,
+                            float* Wu,
+                            float* Wd,
+                            HostAdamW& ag,
+                            HostAdamW& au,
+                            HostAdamW& ad,
+                            int m,
+                            int h,
+                            int inter,
+                            int step_no,
+                            float lr,
+                            float beta1,
+                            float beta2,
+                            float eps,
+                            float wd) {
+        auto silu = [](double x) { return x / (1.0 + std::exp(-x)); };
+        auto silu_prime = [](double x) {
+            const double s = 1.0 / (1.0 + std::exp(-x));
+            return s * (1.0 + x * (1.0 - s));
+        };
+        std::vector<float> G(m * inter), U(m * inter), sub(m * inter);
+        std::vector<float> logits(m * h);
+        host_matmul(X, Wg, G.data(), m, inter, h);
+        host_matmul(X, Wu, U.data(), m, inter, h);
+        for (size_t i = 0; i < sub.size(); ++i) {
+            sub[i] = static_cast<float>(silu(G[i]) * U[i]);
         }
-        double sum = 0.0;
-        for (int c = 0; c < h; ++c) {
-            sum += std::exp(static_cast<double>(logits[b * h + c]) - mm);
-        }
-        for (int c = 0; c < h; ++c) {
-            double sm = std::exp(static_cast<double>(logits[b * h + c]) - mm) / sum;
-            dlogits[b * h + c] = static_cast<float>((sm - (c == targets[b])) / m);
-        }
-    }
+        host_matmul(sub.data(), Wd, logits.data(), m, h, inter);
 
-    // Analytic MLP backward to the full-weight grads.
-    std::vector<float> dsub(m * inter), dg(m * inter), du(m * inter);
-    std::vector<float> dWg(h * inter), dWu(h * inter), dWd(inter * h);
-    std::vector<float> dXg(m * h), dXu(m * h);
-    ref_linear_backward(sub.data(), Wd, dlogits.data(), dsub.data(),
-                        dWd.data(), m, inter, h);
-    for (int i = 0; i < m * inter; ++i) {
-        dg[i] = static_cast<float>(dsub[i] * U[i] * silu_prime(G[i]));
-        du[i] = static_cast<float>(dsub[i] * silu(G[i]));
-    }
-    std::vector<float> tmp_dx(m * h);  // unused grad-input
-    ref_linear_backward(X, Wg, dg.data(), tmp_dx.data(), dWg.data(), m, h, inter);
-    ref_linear_backward(X, Wu, du.data(), tmp_dx.data(), dWu.data(), m, h, inter);
+        // dlogits = (softmax - onehot) / B (reduction_mean).
+        std::vector<float> dlogits(m * h);
+        for (int b = 0; b < m; ++b) {
+            double mm = logits[b * h];
+            for (int c = 1; c < h; ++c) {
+                mm = std::max(mm, static_cast<double>(logits[b * h + c]));
+            }
+            double sum = 0.0;
+            for (int c = 0; c < h; ++c) {
+                sum += std::exp(static_cast<double>(logits[b * h + c]) - mm);
+            }
+            for (int c = 0; c < h; ++c) {
+                double sm = std::exp(static_cast<double>(logits[b * h + c]) - mm) / sum;
+                dlogits[b * h + c] = static_cast<float>((sm - (c == targets[b])) / m);
+            }
+        }
 
-    ag.step(Wg, dWg.data(), Wg, static_cast<size_t>(h) * inter, step_no,
-            lr, beta1, beta2, eps, wd);
-    au.step(Wu, dWu.data(), Wu, static_cast<size_t>(h) * inter, step_no,
-            lr, beta1, beta2, eps, wd);
-    ad.step(Wd, dWd.data(), Wd, static_cast<size_t>(inter) * h, step_no,
-            lr, beta1, beta2, eps, wd);
-}
+        // Analytic MLP backward to the full-weight grads.
+        std::vector<float> dsub(m * inter), dg(m * inter), du(m * inter);
+        std::vector<float> dWg(h * inter), dWu(h * inter), dWd(inter * h);
+        std::vector<float> dXg(m * h), dXu(m * h);
+        ref_linear_backward(sub.data(), Wd, dlogits.data(), dsub.data(), dWd.data(), m, inter, h);
+        for (int i = 0; i < m * inter; ++i) {
+            dg[i] = static_cast<float>(dsub[i] * U[i] * silu_prime(G[i]));
+            du[i] = static_cast<float>(dsub[i] * silu(G[i]));
+        }
+        std::vector<float> tmp_dx(m * h);  // unused grad-input
+        ref_linear_backward(X, Wg, dg.data(), tmp_dx.data(), dWg.data(), m, h, inter);
+        ref_linear_backward(X, Wu, du.data(), tmp_dx.data(), dWu.data(), m, h, inter);
+
+        ag.step(Wg, dWg.data(), Wg, static_cast<size_t>(h) * inter, step_no, lr, beta1, beta2, eps, wd);
+        au.step(Wu, dWu.data(), Wu, static_cast<size_t>(h) * inter, step_no, lr, beta1, beta2, eps, wd);
+        ad.step(Wd, dWd.data(), Wd, static_cast<size_t>(inter) * h, step_no, lr, beta1, beta2, eps, wd);
+    }
 
 }  // namespace
 
@@ -1138,29 +1060,35 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) 
     std::vector<float> rWg = Wg0, rWu = Wu0, rWd = Wd0;
     HostAdamW ri_rg, ri_ru, ri_rd;
     for (int s = 1; s <= K; ++s) {
-        host_training_step(X.data(), targets.data(),
-                           rWg.data(), rWu.data(), rWd.data(),
-                           ri_rg, ri_ru, ri_rd, m, h, inter, s,
-                           opt_cfg.learning_rate, opt_cfg.beta1,
-                           opt_cfg.beta2, opt_cfg.epsilon,
+        host_training_step(X.data(),
+                           targets.data(),
+                           rWg.data(),
+                           rWu.data(),
+                           rWd.data(),
+                           ri_rg,
+                           ri_ru,
+                           ri_rd,
+                           m,
+                           h,
+                           inter,
+                           s,
+                           opt_cfg.learning_rate,
+                           opt_cfg.beta1,
+                           opt_cfg.beta2,
+                           opt_cfg.epsilon,
                            opt_cfg.weight_decay);
     }
 
     // Device: each rank steps its own shard over the same K steps.
     const int inter_local = inter / device_count;
-    std::vector<std::vector<float>> sg(device_count,
-                                      std::vector<float>(h * inter_local));
-    std::vector<std::vector<float>> su(device_count,
-                                      std::vector<float>(h * inter_local));
-    std::vector<std::vector<float>> sd(device_count,
-                                      std::vector<float>(inter_local * h));
+    std::vector<std::vector<float>> sg(device_count, std::vector<float>(h * inter_local));
+    std::vector<std::vector<float>> su(device_count, std::vector<float>(h * inter_local));
+    std::vector<std::vector<float>> sd(device_count, std::vector<float>(inter_local * h));
     run_per_rank(device_count, [&](int d) {
-        cuda::memory::Buffer<float> d_X(m * h), d_out(m * h),
-            d_dlogits(m * h);
+        cuda::memory::Buffer<float> d_X(m * h), d_out(m * h), d_dlogits(m * h);
         cuda::memory::Buffer<int> d_targets(m);
         cuda::memory::Buffer<float> d_dX(m * h);
-        cuda::memory::Buffer<float> d_dWg(h * inter), d_dWu(h * inter),
-            d_dWd(inter * h);
+        cuda::memory::Buffer<float> d_dWg(h * inter), d_dWu(h * inter), d_dWd(inter * h);
         d_X.copy_from(X.data(), X.size());
         d_targets.copy_from(targets.data(), m);
 
@@ -1178,14 +1106,9 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) 
             // Seed the chain. The MLP output is replicated (the down row layer
             // AllReduces), so every rank computes the identical dlogits =
             // (softmax - onehot)/B from the same full-width logits — no comm.
-            cross_entropy_logits_backward(
-                d_out.data(), d_targets.data(), d_dlogits.data(),
-                m, h, ce_cfg, nullptr);
-            mlp.backward(d_X.data(), d_dlogits.data(), d_dX.data(),
-                         d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
-            EXPECT_NO_THROW(mlp.step(opt_g, opt_u, opt_d,
-                                     d_dWg.data(), d_dWu.data(), d_dWd.data(),
-                                     s));
+            cross_entropy_logits_backward(d_out.data(), d_targets.data(), d_dlogits.data(), m, h, ce_cfg, nullptr);
+            mlp.backward(d_X.data(), d_dlogits.data(), d_dX.data(), d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+            EXPECT_NO_THROW(mlp.step(opt_g, opt_u, opt_d, d_dWg.data(), d_dWu.data(), d_dWd.data(), s));
         }
 
         mlp.copy_weights(sg[d].data(), su[d].data(), sd[d].data());
@@ -1197,27 +1120,21 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) 
     for (int r = 0; r < device_count; ++r) {
         for (int a = 0; a < h; ++a) {
             for (int b = 0; b < inter_local; ++b) {
-                aWg[a * inter + r * inter_local + b] =
-                    sg[r][a * inter_local + b];
-                aWu[a * inter + r * inter_local + b] =
-                    su[r][a * inter_local + b];
+                aWg[a * inter + r * inter_local + b] = sg[r][a * inter_local + b];
+                aWu[a * inter + r * inter_local + b] = su[r][a * inter_local + b];
             }
         }
         for (int a = 0; a < inter_local; ++a) {
             for (int b = 0; b < h; ++b) {
-                aWd[(r * inter_local + a) * h + b] =
-                    sd[r][a * h + b];
+                aWd[(r * inter_local + a) * h + b] = sd[r][a * h + b];
             }
         }
     }
     // 2e-2 absorbs fp32 accumulate-order + shard-step noise across K=3 steps.
-    EXPECT_TRUE(arrays_near(rWg.data(), aWg.data(), h * inter, 2e-2f))
-        << "multi-GPU trained gate weights differ from the host full-weight "
-           "reference";
-    EXPECT_TRUE(arrays_near(rWu.data(), aWu.data(), h * inter, 2e-2f))
-        << "multi-GPU trained up weights differ from the host full-weight "
-           "reference";
-    EXPECT_TRUE(arrays_near(rWd.data(), aWd.data(), inter * h, 2e-2f))
-        << "multi-GPU trained down weights differ from the host full-weight "
-           "reference";
+    EXPECT_TRUE(arrays_near(rWg.data(), aWg.data(), h * inter, 2e-2f)) << "multi-GPU trained gate weights differ from the host full-weight "
+                                                                          "reference";
+    EXPECT_TRUE(arrays_near(rWu.data(), aWu.data(), h * inter, 2e-2f)) << "multi-GPU trained up weights differ from the host full-weight "
+                                                                          "reference";
+    EXPECT_TRUE(arrays_near(rWd.data(), aWd.data(), inter * h, 2e-2f)) << "multi-GPU trained down weights differ from the host full-weight "
+                                                                          "reference";
 }

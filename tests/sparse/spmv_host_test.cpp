@@ -26,95 +26,101 @@
 
 namespace nova::sparse::test {
 
-namespace {
+    namespace {
 
-// diag(2, 3, 4): rows() == cols() == 3, three non-zeros.
-SparseMatrix<double> diagonal_matrix() {
-    std::vector<double> dense = {
-        2.0, 0.0, 0.0,
-        0.0, 3.0, 0.0,
-        0.0, 0.0, 4.0,
-    };
-    auto matrix = SparseMatrix<double>::FromDense(dense.data(), 3, 3);
-    EXPECT_TRUE(matrix.has_value());
-    return matrix ? std::move(*matrix) : SparseMatrix<double>();
-}
+        // diag(2, 3, 4): rows() == cols() == 3, three non-zeros.
+        SparseMatrix<double> diagonal_matrix() {
+            std::vector<double> dense = {
+                2.0,
+                0.0,
+                0.0,
+                0.0,
+                3.0,
+                0.0,
+                0.0,
+                0.0,
+                4.0,
+            };
+            auto matrix = SparseMatrix<double>::FromDense(dense.data(), 3, 3);
+            EXPECT_TRUE(matrix.has_value());
+            return matrix ? std::move(*matrix) : SparseMatrix<double>();
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(SpmvHostTest, SizesTheOutputVectorWhenEmpty) {
-    auto matrix = diagonal_matrix();
+    TEST(SpmvHostTest, SizesTheOutputVectorWhenEmpty) {
+        auto matrix = diagonal_matrix();
 
-    std::vector<double> x = {1.0, 2.0, 3.0};
-    std::vector<double> y;  // caller did not pre-size it
+        std::vector<double> x = {1.0, 2.0, 3.0};
+        std::vector<double> y;  // caller did not pre-size it
 
-    ASSERT_NO_THROW(spmv(matrix, x, y));
-    ASSERT_EQ(y.size(), 3u);
-    EXPECT_DOUBLE_EQ(y[0], 2.0);
-    EXPECT_DOUBLE_EQ(y[1], 6.0);
-    EXPECT_DOUBLE_EQ(y[2], 12.0);
-}
+        ASSERT_NO_THROW(spmv(matrix, x, y));
+        ASSERT_EQ(y.size(), 3u);
+        EXPECT_DOUBLE_EQ(y[0], 2.0);
+        EXPECT_DOUBLE_EQ(y[1], 6.0);
+        EXPECT_DOUBLE_EQ(y[2], 12.0);
+    }
 
-TEST(SpmvHostTest, ResizesAnOutputVectorThatIsTooSmall) {
-    auto matrix = diagonal_matrix();
+    TEST(SpmvHostTest, ResizesAnOutputVectorThatIsTooSmall) {
+        auto matrix = diagonal_matrix();
 
-    std::vector<double> x = {1.0, 1.0, 1.0};
-    std::vector<double> y = {0.0};  // wrong size, would have overflowed
+        std::vector<double> x = {1.0, 1.0, 1.0};
+        std::vector<double> y = {0.0};  // wrong size, would have overflowed
 
-    ASSERT_NO_THROW(spmv(matrix, x, y));
-    ASSERT_EQ(y.size(), 3u);
-    EXPECT_DOUBLE_EQ(y[0], 2.0);
-    EXPECT_DOUBLE_EQ(y[1], 3.0);
-    EXPECT_DOUBLE_EQ(y[2], 4.0);
-}
+        ASSERT_NO_THROW(spmv(matrix, x, y));
+        ASSERT_EQ(y.size(), 3u);
+        EXPECT_DOUBLE_EQ(y[0], 2.0);
+        EXPECT_DOUBLE_EQ(y[1], 3.0);
+        EXPECT_DOUBLE_EQ(y[2], 4.0);
+    }
 
-TEST(SpmvHostTest, ShrinksAnOutputVectorThatIsTooLarge) {
-    auto matrix = diagonal_matrix();
+    TEST(SpmvHostTest, ShrinksAnOutputVectorThatIsTooLarge) {
+        auto matrix = diagonal_matrix();
 
-    std::vector<double> x = {1.0, 1.0, 1.0};
-    std::vector<double> y(7, -1.0);  // trailing entries must not survive
+        std::vector<double> x = {1.0, 1.0, 1.0};
+        std::vector<double> y(7, -1.0);  // trailing entries must not survive
 
-    ASSERT_NO_THROW(spmv(matrix, x, y));
-    ASSERT_EQ(y.size(), 3u) << "the result must be exactly rows() long";
-    EXPECT_DOUBLE_EQ(y[0], 2.0);
-    EXPECT_DOUBLE_EQ(y[1], 3.0);
-    EXPECT_DOUBLE_EQ(y[2], 4.0);
-}
+        ASSERT_NO_THROW(spmv(matrix, x, y));
+        ASSERT_EQ(y.size(), 3u) << "the result must be exactly rows() long";
+        EXPECT_DOUBLE_EQ(y[0], 2.0);
+        EXPECT_DOUBLE_EQ(y[1], 3.0);
+        EXPECT_DOUBLE_EQ(y[2], 4.0);
+    }
 
-// Regression: a short input used to be read past its end, producing a
-// plausible but wrong answer with no error. Reject it instead.
-TEST(SpmvHostTest, RejectsAnInputShorterThanTheColumnCount) {
-    auto matrix = diagonal_matrix();
+    // Regression: a short input used to be read past its end, producing a
+    // plausible but wrong answer with no error. Reject it instead.
+    TEST(SpmvHostTest, RejectsAnInputShorterThanTheColumnCount) {
+        auto matrix = diagonal_matrix();
 
-    std::vector<double> x = {1.0, 2.0};  // cols() == 3
-    std::vector<double> y(3, 0.0);
+        std::vector<double> x = {1.0, 2.0};  // cols() == 3
+        std::vector<double> y(3, 0.0);
 
-    EXPECT_THROW(spmv(matrix, x, y), std::invalid_argument);
-}
+        EXPECT_THROW(spmv(matrix, x, y), std::invalid_argument);
+    }
 
-TEST(SpmvHostTest, RejectsAnInputLongerThanTheColumnCount) {
-    auto matrix = diagonal_matrix();
+    TEST(SpmvHostTest, RejectsAnInputLongerThanTheColumnCount) {
+        auto matrix = diagonal_matrix();
 
-    std::vector<double> x = {1.0, 2.0, 3.0, 4.0};  // cols() == 3
-    std::vector<double> y(3, 0.0);
+        std::vector<double> x = {1.0, 2.0, 3.0, 4.0};  // cols() == 3
+        std::vector<double> y(3, 0.0);
 
-    EXPECT_THROW(spmv(matrix, x, y), std::invalid_argument);
-}
+        EXPECT_THROW(spmv(matrix, x, y), std::invalid_argument);
+    }
 
-TEST(SpmvHostTest, MatchesTheDevicePointerPathOnTheSameInput) {
-    // The host overload is a copy-and-call wrapper around the device one; both
-    // must agree, so a mismatch between them shows up here rather than as a
-    // strange numerical result downstream.
-    auto matrix = diagonal_matrix();
+    TEST(SpmvHostTest, MatchesTheDevicePointerPathOnTheSameInput) {
+        // The host overload is a copy-and-call wrapper around the device one; both
+        // must agree, so a mismatch between them shows up here rather than as a
+        // strange numerical result downstream.
+        auto matrix = diagonal_matrix();
 
-    std::vector<double> x = {1.5, -2.0, 0.25};
-    std::vector<double> y_host;
-    spmv(matrix, x, y_host);
+        std::vector<double> x = {1.5, -2.0, 0.25};
+        std::vector<double> y_host;
+        spmv(matrix, x, y_host);
 
-    ASSERT_EQ(y_host.size(), 3u);
-    EXPECT_DOUBLE_EQ(y_host[0], 3.0);
-    EXPECT_DOUBLE_EQ(y_host[1], -6.0);
-    EXPECT_DOUBLE_EQ(y_host[2], 1.0);
-}
+        ASSERT_EQ(y_host.size(), 3u);
+        EXPECT_DOUBLE_EQ(y_host[0], 3.0);
+        EXPECT_DOUBLE_EQ(y_host[1], -6.0);
+        EXPECT_DOUBLE_EQ(y_host[2], 1.0);
+    }
 
 }  // namespace nova::sparse::test

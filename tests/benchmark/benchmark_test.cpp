@@ -3,18 +3,14 @@
 
 class BenchmarkTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(BenchmarkTest, WarmupRunsExecuteBeforeMeasurement) {
     int warmup_count = 0;
     int measurement_count = 0;
 
-    auto kernel = [&]() {
-        warmup_count++;
-    };
+    auto kernel = [&]() { warmup_count++; };
 
     cuda::benchmark::BenchmarkOptions options;
     options.warmup_iterations = 5;
@@ -27,8 +23,7 @@ TEST_F(BenchmarkTest, WarmupRunsExecuteBeforeMeasurement) {
 }
 
 TEST_F(BenchmarkTest, ResultsIncludeMeanAndStddev) {
-    auto kernel = []() {
-    };
+    auto kernel = []() {};
 
     cuda::benchmark::Benchmark bench("variance_test");
     auto result = bench.run(kernel);
@@ -39,8 +34,7 @@ TEST_F(BenchmarkTest, ResultsIncludeMeanAndStddev) {
 }
 
 TEST_F(BenchmarkTest, ResultsIncludeMinAndMax) {
-    auto kernel = []() {
-    };
+    auto kernel = []() {};
 
     cuda::benchmark::Benchmark bench("range_test");
     auto result = bench.run(kernel);
@@ -75,9 +69,7 @@ TEST_F(BenchmarkTest, ThroughputCalculationIsCorrect) {
 
 class RegressionTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(RegressionTest, NoRegressionWhenPerformanceIsWithinTolerance) {
@@ -132,9 +124,7 @@ TEST_F(RegressionTest, FormatReportShowsDeltaPercent) {
 
     std::string report = bench.format_regression_report(current);
 
-    EXPECT_TRUE(report.find("110") != std::string::npos ||
-                report.find("+10") != std::string::npos ||
-                report.find("10%") != std::string::npos);
+    EXPECT_TRUE(report.find("110") != std::string::npos || report.find("+10") != std::string::npos || report.find("10%") != std::string::npos);
 }
 
 TEST_F(RegressionTest, ReturnsTrueWithoutBaseline) {

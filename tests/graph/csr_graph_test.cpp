@@ -10,18 +10,13 @@ using namespace cuda::graph;
 
 namespace {
 
-// Directed graph that distinguishes forward SpMV from its transpose:
-//   0 -> {1},  1 -> {2},  2 -> {},  3 -> {0, 1}
-// Forward  A*x:  y0=x1, y1=x2, y2=0, y3=x0+x1
-// Transpose:     y0=x3, y1=x0+x3, y2=x1, y3=0
-std::vector<std::vector<int>> directed_graph() {
-    return {
-        {1},
-        {2},
-        {},
-        {0, 1}
-    };
-}
+    // Directed graph that distinguishes forward SpMV from its transpose:
+    //   0 -> {1},  1 -> {2},  2 -> {},  3 -> {0, 1}
+    // Forward  A*x:  y0=x1, y1=x2, y2=0, y3=x0+x1
+    // Transpose:     y0=x3, y1=x0+x3, y2=x1, y3=0
+    std::vector<std::vector<int>> directed_graph() {
+        return {{1}, {2}, {}, {0, 1}};
+    }
 
 }  // namespace
 
@@ -39,14 +34,7 @@ protected:
         cudaGetLastError();
     }
 
-    std::vector<std::vector<int>> create_simple_graph() {
-        return {
-            {1, 2},
-            {0, 2},
-            {0, 1},
-            {}
-        };
-    }
+    std::vector<std::vector<int>> create_simple_graph() { return {{1, 2}, {0, 2}, {0, 1}, {}}; }
 };
 
 TEST_F(CSRGraphTest, CreateFromAdjacency) {
@@ -81,16 +69,8 @@ TEST_F(CSRGraphTest, CreateFromEdges) {
 TEST_F(CSRGraphTest, CreateFromWeightedAdjacency) {
     // Same shape as the adjacency: per-edge weights honored in row-major CSR
     // position. This is the path the old `bool weighted` flag silently no-op'd.
-    std::vector<std::vector<int>> adj = {
-        {1, 2},
-        {0},
-        {}
-    };
-    std::vector<std::vector<float>> w = {
-        {7.0f, 3.5f},
-        {1.25f},
-        {}
-    };
+    std::vector<std::vector<int>> adj = {{1, 2}, {0}, {}};
+    std::vector<std::vector<float>> w = {{7.0f, 3.5f}, {1.25f}, {}};
 
     auto graph = create_csr_from_adjacency(adj, w);
     ASSERT_NE(graph, nullptr);
@@ -107,20 +87,15 @@ TEST_F(CSRGraphTest, CreateFromWeightedAdjacency) {
 }
 
 TEST_F(CSRGraphTest, WeightedAdjacencyShapeMismatchThrows) {
-    std::vector<std::vector<int>> adj = {
-        {1},
-        {0}
-    };
+    std::vector<std::vector<int>> adj = {{1}, {0}};
 
     // Outer-size mismatch: fewer weight rows than adjacency rows.
     std::vector<std::vector<float>> w_fewer_rows = {{7.0f}};
-    EXPECT_THROW(create_csr_from_adjacency(adj, w_fewer_rows),
-                 std::invalid_argument);
+    EXPECT_THROW(create_csr_from_adjacency(adj, w_fewer_rows), std::invalid_argument);
 
     // Row-length mismatch in a single row.
     std::vector<std::vector<float>> w_bad_row = {{7.0f, 8.0f}, {1.25f}};
-    EXPECT_THROW(create_csr_from_adjacency(adj, w_bad_row),
-                 std::invalid_argument);
+    EXPECT_THROW(create_csr_from_adjacency(adj, w_bad_row), std::invalid_argument);
 }
 
 TEST_F(CSRGraphTest, RowOffsetsAreValid) {
@@ -188,12 +163,7 @@ TEST_F(CSRGraphTest, SingleVertexNoEdges) {
 }
 
 TEST_F(CSRGraphTest, LinearChainGraph) {
-    std::vector<std::vector<int>> adj = {
-        {1},
-        {0, 2},
-        {1, 3},
-        {2}
-    };
+    std::vector<std::vector<int>> adj = {{1}, {0, 2}, {1, 3}, {2}};
     auto graph = create_csr_from_adjacency(adj);
 
     EXPECT_EQ(graph->vertices(), 4);

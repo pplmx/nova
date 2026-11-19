@@ -14,8 +14,8 @@ protected:
     size_t pixelCount_;
     std::vector<uint8_t> h_input_;
     std::vector<uint32_t> h_histogram_;
-    uint8_t *d_input_ = nullptr;
-    uint32_t *d_histogram_ = nullptr;
+    uint8_t* d_input_ = nullptr;
+    uint32_t* d_histogram_ = nullptr;
 
     static constexpr int NUM_BINS = 256;
 
@@ -37,13 +37,9 @@ protected:
         CUDA_CHECK(cudaFree(d_histogram_));
     }
 
-    void uploadInput() {
-        CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), size_ * sizeof(uint8_t), cudaMemcpyHostToDevice));
-    }
+    void uploadInput() { CUDA_CHECK(cudaMemcpy(d_input_, h_input_.data(), size_ * sizeof(uint8_t), cudaMemcpyHostToDevice)); }
 
-    void downloadHistogram() {
-        CUDA_CHECK(cudaMemcpy(h_histogram_.data(), d_histogram_, NUM_BINS * sizeof(uint32_t), cudaMemcpyDeviceToHost));
-    }
+    void downloadHistogram() { CUDA_CHECK(cudaMemcpy(h_histogram_.data(), d_histogram_, NUM_BINS * sizeof(uint32_t), cudaMemcpyDeviceToHost)); }
 };
 
 TEST_F(HistogramTest, UniformDistribution) {
@@ -193,7 +189,7 @@ TEST_F(HistogramTest, EqualizeOutputRange) {
 
     CUDA_CHECK(cudaMemcpy(d_histogram_, h_histogram_.data(), NUM_BINS * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-    uint8_t *d_output;
+    uint8_t* d_output;
     CUDA_CHECK(cudaMalloc(&d_output, size_ * sizeof(uint8_t)));
 
     equalizeHistogram(d_input_, d_output, d_histogram_, width_, height_);
@@ -239,11 +235,10 @@ TEST_F(HistogramTest, EqualizeChangesImage) {
             ++nonempty_bins;
         }
     }
-    ASSERT_GT(nonempty_bins, 0u)
-        << "the histogram handed to equalizeHistogram is empty, so the result would be "
-           "trivial";
+    ASSERT_GT(nonempty_bins, 0u) << "the histogram handed to equalizeHistogram is empty, so the result would be "
+                                    "trivial";
 
-    uint8_t *d_output;
+    uint8_t* d_output;
     CUDA_CHECK(cudaMalloc(&d_output, size_ * sizeof(uint8_t)));
 
     equalizeHistogram(d_input_, d_output, d_histogram_, width_, height_);

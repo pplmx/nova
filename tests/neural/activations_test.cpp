@@ -11,9 +11,7 @@ using namespace cuda::neural;
 
 class ActivationTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(ActivationTest, ReLUPositiveValues) {
@@ -154,13 +152,11 @@ TEST_F(ActivationTest, SiluAndMulBackwardMatchesFormula) {
         exp_du[i] = static_cast<float>(dout[i] * silu(gate[i]));
     }
 
-    cuda::memory::Buffer<float> d_gate(size), d_up(size), d_dout(size),
-        d_dg(size), d_du(size);
+    cuda::memory::Buffer<float> d_gate(size), d_up(size), d_dout(size), d_dg(size), d_du(size);
     d_gate.copy_from(gate.data(), size);
     d_up.copy_from(up.data(), size);
     d_dout.copy_from(dout.data(), size);
-    cuda::neural::silu_and_mul_backward(
-        d_gate.data(), d_up.data(), d_dout.data(), d_dg.data(), d_du.data(), size);
+    cuda::neural::silu_and_mul_backward(d_gate.data(), d_up.data(), d_dout.data(), d_dg.data(), d_du.data(), size);
     d_dg.copy_to(gate.data(), size);
     d_du.copy_to(up.data(), size);
 
@@ -191,8 +187,7 @@ TEST_F(ActivationTest, ElementwiseAddMatchesReference) {
 
 TEST_F(ActivationTest, TransposeMatchesReference) {
     const int rows = 6, cols = 9;
-    std::vector<float> in(static_cast<size_t>(rows) * cols),
-        ref(static_cast<size_t>(cols) * rows);
+    std::vector<float> in(static_cast<size_t>(rows) * cols), ref(static_cast<size_t>(cols) * rows);
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
             in[r * cols + c] = static_cast<float>(r * 100 + c);

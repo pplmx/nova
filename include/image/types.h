@@ -14,10 +14,10 @@ struct ImageDimensions {
 
 enum class PixelFormat { UCHAR3, FLOAT3 };
 
-template<PixelFormat Format>
+template <PixelFormat Format>
 class ImageBuffer;
 
-template<>
+template <>
 class ImageBuffer<PixelFormat::UCHAR3> {
 public:
     using PixelType = uint8_t;
@@ -26,14 +26,15 @@ private:
     PixelType* d_data_ = nullptr;
     ImageDimensions dims_;
     struct Deleter {
-        void operator()(PixelType* p) const {
-            cudaFree(p);
-        }
+        void operator()(PixelType* p) const { cudaFree(p); }
     };
     std::unique_ptr<PixelType, Deleter> data_owner_;
 
 public:
-    ImageBuffer() : d_data_(nullptr), dims_{0, 0, 0}, data_owner_(nullptr) {}
+    ImageBuffer()
+        : d_data_(nullptr),
+          dims_{0, 0, 0},
+          data_owner_(nullptr) {}
 
     explicit ImageBuffer(size_t width, size_t height, size_t channels = 3)
         : dims_{width, height, channels} {
@@ -63,7 +64,7 @@ public:
     }
 };
 
-template<>
+template <>
 class ImageBuffer<PixelFormat::FLOAT3> {
 public:
     using PixelType = float;
@@ -72,14 +73,15 @@ private:
     PixelType* d_data_ = nullptr;
     ImageDimensions dims_;
     struct Deleter {
-        void operator()(PixelType* p) const {
-            cudaFree(p);
-        }
+        void operator()(PixelType* p) const { cudaFree(p); }
     };
     std::unique_ptr<PixelType, Deleter> data_owner_;
 
 public:
-    ImageBuffer() : d_data_(nullptr), dims_{0, 0, 0}, data_owner_(nullptr) {}
+    ImageBuffer()
+        : d_data_(nullptr),
+          dims_{0, 0, 0},
+          data_owner_(nullptr) {}
 
     explicit ImageBuffer(size_t width, size_t height, size_t channels = 3)
         : dims_{width, height, channels} {

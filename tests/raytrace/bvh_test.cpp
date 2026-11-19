@@ -8,9 +8,7 @@ using namespace cuda::raytrace;
 
 class BVHTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 
     static constexpr size_t MAX_NODES = 256;
     static constexpr size_t MAX_PRIMS = 64;
@@ -32,10 +30,7 @@ TEST_F(BVHTest, BuildBVHWithKnownPrimitives) {
     std::vector<BVHNode> nodes(MAX_NODES);
     std::vector<uint32_t> prim_indices(MAX_PRIMS);
 
-    size_t num_nodes = build_bvh(
-        &single_box, 1,
-        nodes.data(), prim_indices.data(), MAX_NODES
-    );
+    size_t num_nodes = build_bvh(&single_box, 1, nodes.data(), prim_indices.data(), MAX_NODES);
 
     EXPECT_GE(num_nodes, 1);
 }
@@ -63,18 +58,11 @@ TEST_F(BVHTest, BVHTraversalFindsHit) {
     BVHBuildOptions options;
     options.max_prims_per_leaf = 2;
 
-    size_t num_nodes = build_bvh(
-        prim_bounds.data(), prim_bounds.size(),
-        nodes.data(), prim_indices.data(), MAX_NODES,
-        options
-    );
+    size_t num_nodes = build_bvh(prim_bounds.data(), prim_bounds.size(), nodes.data(), prim_indices.data(), MAX_NODES, options);
 
     Ray ray(Vec3(-1, 0.5f, 0.5f), Vec3(1, 0, 0));
 
-    auto result = traverse_bvh(
-        ray, nodes.data(), num_nodes,
-        prim_bounds.data(), prim_indices.data()
-    );
+    auto result = traverse_bvh(ray, nodes.data(), num_nodes, prim_bounds.data(), prim_indices.data());
 
     EXPECT_TRUE(result.hit);
     EXPECT_EQ(result.stats.nodes_visited, result.stats.nodes_visited);
@@ -88,18 +76,11 @@ TEST_F(BVHTest, BVHTraversalFindsNoHit) {
     BVHBuildOptions options;
     options.max_prims_per_leaf = 2;
 
-    size_t num_nodes = build_bvh(
-        prim_bounds.data(), prim_bounds.size(),
-        nodes.data(), prim_indices.data(), MAX_NODES,
-        options
-    );
+    size_t num_nodes = build_bvh(prim_bounds.data(), prim_bounds.size(), nodes.data(), prim_indices.data(), MAX_NODES, options);
 
     Ray ray(Vec3(-1, 10, 10), Vec3(1, 0, 0));
 
-    auto result = traverse_bvh(
-        ray, nodes.data(), num_nodes,
-        prim_bounds.data(), prim_indices.data()
-    );
+    auto result = traverse_bvh(ray, nodes.data(), num_nodes, prim_bounds.data(), prim_indices.data());
 
     EXPECT_FALSE(result.hit);
 }
@@ -114,10 +95,7 @@ TEST_F(BVHTest, EmptyBVHReturnsNoHit) {
 
     Ray ray(Vec3(0, 0, 0), Vec3(1, 0, 0));
 
-    auto result = traverse_bvh(
-        ray, nodes.data(), 1,
-        &single_box, prim_indices.data()
-    );
+    auto result = traverse_bvh(ray, nodes.data(), 1, &single_box, prim_indices.data());
 
     EXPECT_FALSE(result.hit);
 }
@@ -160,10 +138,7 @@ TEST_F(BVHTest, BVHBuildRejectsInsufficientCapacity) {
     BVHBuildOptions options;
     options.max_prims_per_leaf = 1;
 
-    EXPECT_THROW(
-        build_bvh(prim_bounds.data(), prim_bounds.size(),
-                  nodes.data(), prim_indices.data(), /*max_nodes=*/4, options),
-        std::overflow_error);
+    EXPECT_THROW(build_bvh(prim_bounds.data(), prim_bounds.size(), nodes.data(), prim_indices.data(), /*max_nodes=*/4, options), std::overflow_error);
 }
 
 TEST_F(BVHTest, BVHBuildStaysWithinDeclaredCapacity) {
@@ -178,9 +153,7 @@ TEST_F(BVHTest, BVHBuildStaysWithinDeclaredCapacity) {
     options.max_prims_per_leaf = 2;
     const size_t worst_case = 2 * prim_bounds.size() - 1;  // 11
 
-    const size_t num_nodes = build_bvh(
-        prim_bounds.data(), prim_bounds.size(),
-        nodes.data(), prim_indices.data(), /*max_nodes=*/worst_case, options);
+    const size_t num_nodes = build_bvh(prim_bounds.data(), prim_bounds.size(), nodes.data(), prim_indices.data(), /*max_nodes=*/worst_case, options);
 
     EXPECT_GT(num_nodes, 1);
     EXPECT_LE(num_nodes, worst_case);
@@ -194,18 +167,11 @@ TEST_F(BVHTest, BVHTraversalStats) {
     BVHBuildOptions options;
     options.max_prims_per_leaf = 2;
 
-    size_t num_nodes = build_bvh(
-        prim_bounds.data(), prim_bounds.size(),
-        nodes.data(), prim_indices.data(), MAX_NODES,
-        options
-    );
+    size_t num_nodes = build_bvh(prim_bounds.data(), prim_bounds.size(), nodes.data(), prim_indices.data(), MAX_NODES, options);
 
     Ray ray(Vec3(-1, 0.5f, 0.5f), Vec3(1, 0, 0));
 
-    auto result = traverse_bvh(
-        ray, nodes.data(), num_nodes,
-        prim_bounds.data(), prim_indices.data()
-    );
+    auto result = traverse_bvh(ray, nodes.data(), num_nodes, prim_bounds.data(), prim_indices.data());
 
     EXPECT_GE(result.stats.nodes_visited, 1u);
 }

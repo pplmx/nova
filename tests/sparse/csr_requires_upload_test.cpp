@@ -24,65 +24,64 @@
 
 namespace csr_requires_upload_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-class CsrRequiresUploadTest : public ::testing::Test {
-protected:
-    void TearDown() override { (void)cudaGetLastError(); }
-};
+    class CsrRequiresUploadTest : public ::testing::Test {
+    protected:
+        void TearDown() override { (void)cudaGetLastError(); }
+    };
 
-TEST_F(CsrRequiresUploadTest, AGraphThatWasNeverUploadedHoldsNoDeviceArrays) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST_F(CsrRequiresUploadTest, AGraphThatWasNeverUploadedHoldsNoDeviceArrays) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    cuda::graph::CSRGraph graph(3, 2);
-    // upload() was never called. This is the state in which compute_degrees(), csr_mv() and
-    // friends would pass null device pointers to their kernels.
-    EXPECT_EQ(graph.d_row_offsets, nullptr)
-        << "the device arrays stay null until upload() is called";
-    EXPECT_EQ(graph.d_columns, nullptr);
+        cuda::graph::CSRGraph graph(3, 2);
+        // upload() was never called. This is the state in which compute_degrees(), csr_mv() and
+        // friends would pass null device pointers to their kernels.
+        EXPECT_EQ(graph.d_row_offsets, nullptr) << "the device arrays stay null until upload() is called";
+        EXPECT_EQ(graph.d_columns, nullptr);
 
-    // Not calling those functions here: a launch reading through a null device pointer does not
-    // fail an assertion, it corrupts the CUDA context. An earlier version of this file did
-    // exactly that, and every later case in the process then failed.
-    graph.upload();
-    EXPECT_NE(graph.d_row_offsets, nullptr) << "upload() is what allocates and fills them";
-}
-
-TEST_F(CsrRequiresUploadTest, AnUploadedGraphComputesDegreesNormally) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // Not calling those functions here: a launch reading through a null device pointer does not
+        // fail an assertion, it corrupts the CUDA context. An earlier version of this file did
+        // exactly that, and every later case in the process then failed.
+        graph.upload();
+        EXPECT_NE(graph.d_row_offsets, nullptr) << "upload() is what allocates and fills them";
     }
 
-    cuda::graph::CSRGraph graph(3, 2);
-    graph.row_offsets[0] = 0;
-    graph.row_offsets[1] = 1;
-    graph.row_offsets[2] = 2;
-    graph.row_offsets[3] = 2;
-    graph.columns[0] = 1;
-    graph.columns[1] = 2;
-    graph.upload();
+    TEST_F(CsrRequiresUploadTest, AnUploadedGraphComputesDegreesNormally) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    cuda::memory::Buffer<int> degrees(3);
-    ASSERT_NO_THROW(cuda::graph::compute_degrees(graph, degrees.data()));
+        cuda::graph::CSRGraph graph(3, 2);
+        graph.row_offsets[0] = 0;
+        graph.row_offsets[1] = 1;
+        graph.row_offsets[2] = 2;
+        graph.row_offsets[3] = 2;
+        graph.columns[0] = 1;
+        graph.columns[1] = 2;
+        graph.upload();
 
-    std::vector<int> host(3, -1);
-    degrees.copy_to(host.data(), 3);
-    EXPECT_EQ(host[0], 1) << "vertex 0 has one out-edge";
-    EXPECT_EQ(host[1], 1) << "vertex 1 has one out-edge";
-    EXPECT_EQ(host[2], 0) << "vertex 2 has none";
-}
+        cuda::memory::Buffer<int> degrees(3);
+        ASSERT_NO_THROW(cuda::graph::compute_degrees(graph, degrees.data()));
+
+        std::vector<int> host(3, -1);
+        degrees.copy_to(host.data(), 3);
+        EXPECT_EQ(host[0], 1) << "vertex 0 has one out-edge";
+        EXPECT_EQ(host[1], 1) << "vertex 1 has one out-edge";
+        EXPECT_EQ(host[2], 0) << "vertex 2 has none";
+    }
 
 }  // namespace csr_requires_upload_test

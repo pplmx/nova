@@ -97,13 +97,11 @@ TEST_F(AsyncCopyTest, AsyncCopyWithDirectionWorks) {
     cudaMalloc(&d_ptr, N * sizeof(float));
 
     cuda::stream::Stream stream;
-    cuda::async::async_copy(d_ptr, h_data.data(), N * sizeof(float),
-                            cuda::async::CopyDirection::HostToDevice, stream.get());
+    cuda::async::async_copy(d_ptr, h_data.data(), N * sizeof(float), cuda::async::CopyDirection::HostToDevice, stream.get());
     stream.synchronize();
 
     std::vector<float> result(N);
-    cuda::async::async_copy(result.data(), d_ptr, N * sizeof(float),
-                            cuda::async::CopyDirection::DeviceToHost, stream.get());
+    cuda::async::async_copy(result.data(), d_ptr, N * sizeof(float), cuda::async::CopyDirection::DeviceToHost, stream.get());
     stream.synchronize();
 
     EXPECT_FLOAT_EQ(result[0], 3.14f);

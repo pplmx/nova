@@ -36,54 +36,48 @@ using namespace cuda::neural::optimizers;
 
 namespace {
 
-// An uninitialized NcclContext reports 0 devices; the layers treat tp <= 1 as
-// a plain single-shard matmul on the full weight (no rank slicing, no NCCL).
-cuda::nccl::NcclContext& uninitialized_ctx() {
-    static cuda::nccl::NcclContext* ctx = new cuda::nccl::NcclContext();
-    return *ctx;
-}
-
-void fill_random(float* data, size_t count) {
-    static std::mt19937 rng(11);  // Fixed seed for reproducibility
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = dist(rng);
+    // An uninitialized NcclContext reports 0 devices; the layers treat tp <= 1 as
+    // a plain single-shard matmul on the full weight (no rank slicing, no NCCL).
+    cuda::nccl::NcclContext& uninitialized_ctx() {
+        static cuda::nccl::NcclContext* ctx = new cuda::nccl::NcclContext();
+        return *ctx;
     }
-}
 
-// Single-GPU reference: C = A @ B through the public matmul primitive.
-void ref_matmul(const float* A, const float* B, float* C, int m, int n, int k) {
-    cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m * n);
-    d_A.copy_from(A, static_cast<size_t>(m) * k);
-    d_B.copy_from(B, static_cast<size_t>(k) * n);
-    cuda::neural::matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
-    d_C.copy_to(C, static_cast<size_t>(m) * n);
-}
+    void fill_random(float* data, size_t count) {
+        static std::mt19937 rng(11);  // Fixed seed for reproducibility
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = dist(rng);
+        }
+    }
 
-// SiLU-gated reference: out = (silu(A @ W_gate) .* (A @ W_up)) @ W_down.
-// Computed on device via the public primitives so the layer is compared
-// against the library's own matmul/activation stack (single-GPU).
-void ref_gated_mlp(const float* A, const float* W_gate, const float* W_up,
-                   const float* W_down, float* out, int m, int h, int inter) {
-    cuda::memory::Buffer<float> d_A(m * h);
-    cuda::memory::Buffer<float> d_gate(m * inter), d_up(m * inter),
-        d_sub(m * inter), d_out(m * h);
-    cuda::memory::Buffer<float> d_W_gate(h * inter), d_W_up(h * inter),
-        d_W_down(h * inter);
-    d_A.copy_from(A, static_cast<size_t>(m) * h);
-    d_W_gate.copy_from(W_gate, static_cast<size_t>(h) * inter);
-    d_W_up.copy_from(W_up, static_cast<size_t>(h) * inter);
-    d_W_down.copy_from(W_down, static_cast<size_t>(h) * inter);
+    // Single-GPU reference: C = A @ B through the public matmul primitive.
+    void ref_matmul(const float* A, const float* B, float* C, int m, int n, int k) {
+        cuda::memory::Buffer<float> d_A(m * k), d_B(k * n), d_C(m * n);
+        d_A.copy_from(A, static_cast<size_t>(m) * k);
+        d_B.copy_from(B, static_cast<size_t>(k) * n);
+        cuda::neural::matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
+        d_C.copy_to(C, static_cast<size_t>(m) * n);
+    }
 
-    cuda::neural::matmul(d_A.data(), d_W_gate.data(), d_gate.data(),
-                         m, inter, h);
-    cuda::neural::matmul(d_A.data(), d_W_up.data(), d_up.data(), m, inter, h);
-    cuda::neural::silu_and_mul(d_gate.data(), d_up.data(), d_sub.data(),
-                               m * inter);
-    cuda::neural::matmul(d_sub.data(), d_W_down.data(), d_out.data(),
-                         m, h, inter);
-    d_out.copy_to(out, static_cast<size_t>(m) * h);
-}
+    // SiLU-gated reference: out = (silu(A @ W_gate) .* (A @ W_up)) @ W_down.
+    // Computed on device via the public primitives so the layer is compared
+    // against the library's own matmul/activation stack (single-GPU).
+    void ref_gated_mlp(const float* A, const float* W_gate, const float* W_up, const float* W_down, float* out, int m, int h, int inter) {
+        cuda::memory::Buffer<float> d_A(m * h);
+        cuda::memory::Buffer<float> d_gate(m * inter), d_up(m * inter), d_sub(m * inter), d_out(m * h);
+        cuda::memory::Buffer<float> d_W_gate(h * inter), d_W_up(h * inter), d_W_down(h * inter);
+        d_A.copy_from(A, static_cast<size_t>(m) * h);
+        d_W_gate.copy_from(W_gate, static_cast<size_t>(h) * inter);
+        d_W_up.copy_from(W_up, static_cast<size_t>(h) * inter);
+        d_W_down.copy_from(W_down, static_cast<size_t>(h) * inter);
+
+        cuda::neural::matmul(d_A.data(), d_W_gate.data(), d_gate.data(), m, inter, h);
+        cuda::neural::matmul(d_A.data(), d_W_up.data(), d_up.data(), m, inter, h);
+        cuda::neural::silu_and_mul(d_gate.data(), d_up.data(), d_sub.data(), m * inter);
+        cuda::neural::matmul(d_sub.data(), d_W_down.data(), d_out.data(), m, h, inter);
+        d_out.copy_to(out, static_cast<size_t>(m) * h);
+    }
 
 }  // namespace
 
@@ -93,15 +87,11 @@ protected:
         cudaFree(nullptr);  // Ensure a CUDA context for device-dependent calls
     }
 
-    static testing::AssertionResult arrays_near(
-        const float* expected, const float* actual,
-        size_t count, float tolerance) {
+    static testing::AssertionResult arrays_near(const float* expected, const float* actual, size_t count, float tolerance) {
         for (size_t i = 0; i < count; ++i) {
             if (std::abs(expected[i] - actual[i]) > tolerance) {
-                return testing::AssertionFailure()
-                       << "mismatch at " << i << ": expected " << expected[i]
-                       << " actual " << actual[i] << " (|diff| "
-                       << std::abs(expected[i] - actual[i]) << " > " << tolerance << ")";
+                return testing::AssertionFailure() << "mismatch at " << i << ": expected " << expected[i] << " actual " << actual[i] << " (|diff| "
+                                                   << std::abs(expected[i] - actual[i]) << " > " << tolerance << ")";
             }
         }
         return testing::AssertionSuccess();
@@ -114,8 +104,7 @@ void host_matmul(const float* A, const float* B, float* C, int m, int n, int k) 
         for (int j = 0; j < n; ++j) {
             double acc = 0.0;
             for (int t = 0; t < k; ++t) {
-                acc += static_cast<double>(A[i * k + t]) *
-                       static_cast<double>(B[t * n + j]);
+                acc += static_cast<double>(A[i * k + t]) * static_cast<double>(B[t * n + j]);
             }
             C[i * n + j] = static_cast<float>(acc);
         }
@@ -124,8 +113,7 @@ void host_matmul(const float* A, const float* B, float* C, int m, int n, int k) 
 
 // dW = X^T dY [k x n], dX = dY W^T [m x k] — analytic backward of Y = X W,
 // computed in double precision.
-void ref_linear_backward(const float* X, const float* W, const float* dY,
-                         float* dX, float* dW, int m, int k, int n) {
+void ref_linear_backward(const float* X, const float* W, const float* dY, float* dX, float* dW, int m, int k, int n) {
     for (int a = 0; a < k; ++a) {
         for (int b = 0; b < n; ++b) {
             double acc = 0.0;
@@ -210,8 +198,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_MatchesReference) {
     fill_random(W_down.data(), W_down.size());
 
     std::vector<float> ref(static_cast<size_t>(m) * h);
-    ref_gated_mlp(A.data(), W_gate.data(), W_up.data(), W_down.data(),
-                  ref.data(), m, h, inter);
+    ref_gated_mlp(A.data(), W_gate.data(), W_up.data(), W_down.data(), ref.data(), m, h, inter);
 
     TensorParallelMLP mlp(uninitialized_ctx(), h, inter);
     mlp.set_weight(W_gate.data(), W_up.data(), W_down.data());
@@ -269,14 +256,12 @@ TEST_F(TensorParallelLayersSingleGpuTest, ColumnParallelLayer_Backward_MatchesRe
 
     std::vector<float> ref_dX(static_cast<size_t>(m) * k);
     std::vector<float> ref_dW(static_cast<size_t>(k) * n);
-    ref_linear_backward(X.data(), W.data(), dY.data(),
-                        ref_dX.data(), ref_dW.data(), m, k, n);
+    ref_linear_backward(X.data(), W.data(), dY.data(), ref_dX.data(), ref_dW.data(), m, k, n);
 
     ColumnParallelLayer layer(uninitialized_ctx(), k, n);
     layer.set_weight(W.data());
 
-    cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n), d_dX(m * k),
-        d_dW(k * n);
+    cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n), d_dX(m * k), d_dW(k * n);
     d_X.copy_from(X.data(), X.size());
     d_dY.copy_from(dY.data(), dY.size());
 
@@ -301,14 +286,12 @@ TEST_F(TensorParallelLayersSingleGpuTest, RowParallelLayer_Backward_MatchesRefer
 
     std::vector<float> ref_dX(static_cast<size_t>(m) * k);
     std::vector<float> ref_dW(static_cast<size_t>(k) * n);
-    ref_linear_backward(X.data(), W.data(), dY.data(),
-                        ref_dX.data(), ref_dW.data(), m, k, n);
+    ref_linear_backward(X.data(), W.data(), dY.data(), ref_dX.data(), ref_dW.data(), m, k, n);
 
     RowParallelLayer layer(uninitialized_ctx(), k, n);
     layer.set_weight(W.data());
 
-    cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n), d_dX(m * k),
-        d_dW(k * n);
+    cuda::memory::Buffer<float> d_X(m * k), d_dY(m * n), d_dX(m * k), d_dW(k * n);
     d_X.copy_from(X.data(), X.size());
     d_dY.copy_from(dY.data(), dY.size());
 
@@ -357,8 +340,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
 
     std::vector<float> ref_dsub(static_cast<size_t>(m) * inter);
     std::vector<float> ref_dW_d(static_cast<size_t>(inter) * h);
-    ref_linear_backward(sub.data(), W_d.data(), dY.data(),
-                        ref_dsub.data(), ref_dW_d.data(), m, inter, h);
+    ref_linear_backward(sub.data(), W_d.data(), dY.data(), ref_dsub.data(), ref_dW_d.data(), m, inter, h);
 
     std::vector<float> dgate(static_cast<size_t>(m) * inter);
     std::vector<float> dup(static_cast<size_t>(m) * inter);
@@ -372,10 +354,8 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
     std::vector<float> dXu(static_cast<size_t>(m) * h);
     std::vector<float> ref_dW_g(static_cast<size_t>(h) * inter);
     std::vector<float> ref_dW_u(static_cast<size_t>(h) * inter);
-    ref_linear_backward(X.data(), W_g.data(), dgate.data(),
-                        dXg.data(), ref_dW_g.data(), m, h, inter);
-    ref_linear_backward(X.data(), W_u.data(), dup.data(),
-                        dXu.data(), ref_dW_u.data(), m, h, inter);
+    ref_linear_backward(X.data(), W_g.data(), dgate.data(), dXg.data(), ref_dW_g.data(), m, h, inter);
+    ref_linear_backward(X.data(), W_u.data(), dup.data(), dXu.data(), ref_dW_u.data(), m, h, inter);
     for (int i = 0; i < m * h; ++i) {
         ref_dX[i] = dXg[i] + dXu[i];
     }
@@ -383,8 +363,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
     TensorParallelMLP mlp(uninitialized_ctx(), h, inter);
     mlp.set_weight(W_g.data(), W_u.data(), W_d.data());
 
-    cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_dX(m * h),
-        d_dWg(h * inter), d_dWu(h * inter), d_dWd(h * inter);
+    cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_dX(m * h), d_dWg(h * inter), d_dWu(h * inter), d_dWd(h * inter);
     cuda::memory::Buffer<float> d_out(m * h);
     d_X.copy_from(X.data(), X.size());
     d_dY.copy_from(dY.data(), dY.size());
@@ -394,8 +373,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
     std::vector<float> dWg(static_cast<size_t>(h) * inter);
     std::vector<float> dWu(static_cast<size_t>(h) * inter);
     std::vector<float> dWd(static_cast<size_t>(inter) * h);
-    mlp.backward(d_X.data(), d_dY.data(), d_dX.data(),
-                 d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+    mlp.backward(d_X.data(), d_dY.data(), d_dX.data(), d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
     d_dX.copy_to(dX.data(), dX.size());
     d_dWg.copy_to(dWg.data(), dWg.size());
     d_dWu.copy_to(dWu.data(), dWu.size());
@@ -417,25 +395,33 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesRefe
 
 namespace {
 
-// Host double-precision AdamW reference (mirrors the library formula in
-// optimizers.cpp exactly, computed in double to check the fp32 path).
-void host_adamw_step(const float* w, const float* dw, float* w_out,
-                     std::vector<double>& m, std::vector<double>& v,
-                     size_t n, int step, float lr, float beta1, float beta2,
-                     float eps, float wd) {
-    const double b1p = std::pow(static_cast<double>(beta1), step);
-    const double b2p = std::pow(static_cast<double>(beta2), step);
-    const double lr_t = static_cast<double>(lr) * std::sqrt(1.0 - b2p) / (1.0 - b1p);
-    for (size_t i = 0; i < n; ++i) {
-        const double g = dw[i];
-        m[i] = beta1 * m[i] + (1.0 - beta1) * g;
-        v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
-        const double m_hat = m[i] / (1.0 - b1p);
-        const double v_hat = v[i] / (1.0 - b2p);
-        double update = m_hat / (std::sqrt(v_hat) + eps) + wd * w[i];
-        w_out[i] = static_cast<float>(w[i] - lr_t * update);
+    // Host double-precision AdamW reference (mirrors the library formula in
+    // optimizers.cpp exactly, computed in double to check the fp32 path).
+    void host_adamw_step(const float* w,
+                         const float* dw,
+                         float* w_out,
+                         std::vector<double>& m,
+                         std::vector<double>& v,
+                         size_t n,
+                         int step,
+                         float lr,
+                         float beta1,
+                         float beta2,
+                         float eps,
+                         float wd) {
+        const double b1p = std::pow(static_cast<double>(beta1), step);
+        const double b2p = std::pow(static_cast<double>(beta2), step);
+        const double lr_t = static_cast<double>(lr) * std::sqrt(1.0 - b2p) / (1.0 - b1p);
+        for (size_t i = 0; i < n; ++i) {
+            const double g = dw[i];
+            m[i] = beta1 * m[i] + (1.0 - beta1) * g;
+            v[i] = beta2 * v[i] + (1.0 - beta2) * g * g;
+            const double m_hat = m[i] / (1.0 - b1p);
+            const double v_hat = v[i] / (1.0 - b2p);
+            double update = m_hat / (std::sqrt(v_hat) + eps) + wd * w[i];
+            w_out[i] = static_cast<float>(w[i] - lr_t * update);
+        }
     }
-}
 
 }  // namespace
 
@@ -451,8 +437,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, ColumnParallelLayer_Step_MatchesHostAd
     std::vector<float> dW(static_cast<size_t>(k) * n);
     {
         std::vector<float> dX(static_cast<size_t>(m) * k);
-        ref_linear_backward(X.data(), W.data(), dY.data(),
-                            dX.data(), dW.data(), m, k, n);
+        ref_linear_backward(X.data(), W.data(), dY.data(), dX.data(), dW.data(), m, k, n);
     }
 
     // Host AdamW reference over one step.
@@ -461,9 +446,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, ColumnParallelLayer_Step_MatchesHostAd
     std::vector<float> ref_w(static_cast<size_t>(k) * n);
     std::vector<double> mom(static_cast<size_t>(k) * n, 0.0);
     std::vector<double> mom_v(static_cast<size_t>(k) * n, 0.0);
-    host_adamw_step(W.data(), dW.data(), ref_w.data(), mom, mom_v,
-                    static_cast<size_t>(k) * n, 1, cfg.learning_rate,
-                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W.data(), dW.data(), ref_w.data(), mom, mom_v, static_cast<size_t>(k) * n, 1, cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
 
     ColumnParallelLayer layer(uninitialized_ctx(), k, n);
     layer.set_weight(W.data());
@@ -491,8 +474,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, RowParallelLayer_Step_MatchesHostAdamW
     std::vector<float> dW(static_cast<size_t>(k) * n);
     {
         std::vector<float> dX(static_cast<size_t>(m) * k);
-        ref_linear_backward(X.data(), W.data(), dY.data(),
-                            dX.data(), dW.data(), m, k, n);
+        ref_linear_backward(X.data(), W.data(), dY.data(), dX.data(), dW.data(), m, k, n);
     }
 
     OptimizerConfig cfg;
@@ -500,9 +482,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, RowParallelLayer_Step_MatchesHostAdamW
     std::vector<float> ref_w(static_cast<size_t>(k) * n);
     std::vector<double> mom(static_cast<size_t>(k) * n, 0.0);
     std::vector<double> mom_v(static_cast<size_t>(k) * n, 0.0);
-    host_adamw_step(W.data(), dW.data(), ref_w.data(), mom, mom_v,
-                    static_cast<size_t>(k) * n, 1, cfg.learning_rate,
-                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W.data(), dW.data(), ref_w.data(), mom, mom_v, static_cast<size_t>(k) * n, 1, cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
 
     RowParallelLayer layer(uninitialized_ctx(), k, n);
     layer.set_weight(W.data());
@@ -535,8 +515,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Step_MatchesHostAdam
     // Forward activations on device (scratch) and analytic grads on host.
     TensorParallelMLP mlp(uninitialized_ctx(), h, inter);
     mlp.set_weight(W_g.data(), W_u.data(), W_d.data());
-    cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_dX(m * h),
-        d_dWg(h * inter), d_dWu(h * inter), d_dWd(inter * h), d_out(m * h);
+    cuda::memory::Buffer<float> d_X(m * h), d_dY(m * h), d_dX(m * h), d_dWg(h * inter), d_dWu(h * inter), d_dWd(inter * h), d_out(m * h);
     d_X.copy_from(X.data(), X.size());
     d_dY.copy_from(dY.data(), dY.size());
     mlp.forward(d_X.data(), d_out.data(), m, 1);
@@ -544,8 +523,7 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Step_MatchesHostAdam
     std::vector<float> dWg(static_cast<size_t>(h) * inter);
     std::vector<float> dWu(static_cast<size_t>(h) * inter);
     std::vector<float> dWd(static_cast<size_t>(inter) * h);
-    mlp.backward(d_X.data(), d_dY.data(), d_dX.data(),
-                 d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
+    mlp.backward(d_X.data(), d_dY.data(), d_dX.data(), d_dWg.data(), d_dWu.data(), d_dWd.data(), m, 1);
 
     // Host AdamW reference over one step per weight.
     OptimizerConfig cfg;
@@ -559,27 +537,19 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Step_MatchesHostAdam
     std::vector<double> vu(static_cast<size_t>(h) * inter, 0.0);
     std::vector<double> md(static_cast<size_t>(inter) * h, 0.0);
     std::vector<double> vd(static_cast<size_t>(inter) * h, 0.0);
-    host_adamw_step(W_g.data(), dWg.data(), ref_g.data(), mg, vg,
-                    static_cast<size_t>(h) * inter, 1, cfg.learning_rate,
-                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
-    host_adamw_step(W_u.data(), dWu.data(), ref_u.data(), mu, vu,
-                    static_cast<size_t>(h) * inter, 1, cfg.learning_rate,
-                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
-    host_adamw_step(W_d.data(), dWd.data(), ref_d.data(), md, vd,
-                    static_cast<size_t>(inter) * h, 1, cfg.learning_rate,
-                    cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W_g.data(), dWg.data(), ref_g.data(), mg, vg, static_cast<size_t>(h) * inter, 1, cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W_u.data(), dWu.data(), ref_u.data(), mu, vu, static_cast<size_t>(h) * inter, 1, cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
+    host_adamw_step(W_d.data(), dWd.data(), ref_d.data(), md, vd, static_cast<size_t>(inter) * h, 1, cfg.learning_rate, cfg.beta1, cfg.beta2, cfg.epsilon, cfg.weight_decay);
 
     // One optimizer per weight tensor: a shared AdamW would corrupt the up/down
     // moments with the gate history (moment buffers are per-element and not
     // per-tensor). The reference uses a fresh moment set per weight too.
     AdamWOptimizer opt_g(cfg), opt_u(cfg), opt_d(cfg);
-    cuda::memory::Buffer<float> d_g((size_t)h * inter), d_u((size_t)h * inter),
-        d_d((size_t)inter * h);
+    cuda::memory::Buffer<float> d_g((size_t)h * inter), d_u((size_t)h * inter), d_d((size_t)inter * h);
     d_g.copy_from(dWg.data(), dWg.size());
     d_u.copy_from(dWu.data(), dWu.size());
     d_d.copy_from(dWd.data(), dWd.size());
-    EXPECT_NO_THROW(mlp.step(opt_g, opt_u, opt_d,
-                             d_g.data(), d_u.data(), d_d.data(), 1));
+    EXPECT_NO_THROW(mlp.step(opt_g, opt_u, opt_d, d_g.data(), d_u.data(), d_d.data(), 1));
 
     // Read the stepped shards back (tp==1: each shard is the full weight) and
     // compare directly against the host AdamW images — a stricter check than a
@@ -591,6 +561,5 @@ TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Step_MatchesHostAdam
     mlp.copy_weights(g_out.data(), u_out.data(), down_out.data());
     EXPECT_TRUE(arrays_near(ref_g.data(), g_out.data(), g_out.size(), 2e-4f));
     EXPECT_TRUE(arrays_near(ref_u.data(), u_out.data(), u_out.size(), 2e-4f));
-    EXPECT_TRUE(arrays_near(ref_d.data(), down_out.data(), down_out.size(),
-                            2e-4f));
+    EXPECT_TRUE(arrays_near(ref_d.data(), down_out.data(), down_out.size(), 2e-4f));
 }

@@ -19,42 +19,40 @@
 
 namespace mpi_context_thread_safety_test {
 
-TEST(MpiContextThreadSafetyTest, TheSingletonIsOneObjectAndStaysOneObject) {
-    // Meyer's singleton: the object is created on first use and every call returns it. This is
-    // the part the header's note is about at the object level.
-    auto& first = cuda::mpi::MpiContext::instance();
-    auto& second = cuda::mpi::MpiContext::instance();
+    TEST(MpiContextThreadSafetyTest, TheSingletonIsOneObjectAndStaysOneObject) {
+        // Meyer's singleton: the object is created on first use and every call returns it. This is
+        // the part the header's note is about at the object level.
+        auto& first = cuda::mpi::MpiContext::instance();
+        auto& second = cuda::mpi::MpiContext::instance();
 
-    EXPECT_EQ(&first, &second);
-}
+        EXPECT_EQ(&first, &second);
+    }
 
-TEST(MpiContextThreadSafetyTest, RepeatedInstanceCallsFromTwoThreadsReturnOneObject) {
-    // Concurrent first-use is the case a singleton has to survive. If the initialisation were
-    // not guarded, two threads could observe different objects here.
-    cuda::mpi::MpiContext* from_first = nullptr;
-    cuda::mpi::MpiContext* from_second = nullptr;
+    TEST(MpiContextThreadSafetyTest, RepeatedInstanceCallsFromTwoThreadsReturnOneObject) {
+        // Concurrent first-use is the case a singleton has to survive. If the initialisation were
+        // not guarded, two threads could observe different objects here.
+        cuda::mpi::MpiContext* from_first = nullptr;
+        cuda::mpi::MpiContext* from_second = nullptr;
 
-    std::thread one([&from_first] { from_first = &cuda::mpi::MpiContext::instance(); });
-    std::thread two([&from_second] { from_second = &cuda::mpi::MpiContext::instance(); });
-    one.join();
-    two.join();
+        std::thread one([&from_first] { from_first = &cuda::mpi::MpiContext::instance(); });
+        std::thread two([&from_second] { from_second = &cuda::mpi::MpiContext::instance(); });
+        one.join();
+        two.join();
 
-    ASSERT_NE(from_first, nullptr);
-    ASSERT_NE(from_second, nullptr);
-    EXPECT_EQ(from_first, from_second)
-        << "concurrent instance() calls must agree on the object";
-}
+        ASSERT_NE(from_first, nullptr);
+        ASSERT_NE(from_second, nullptr);
+        EXPECT_EQ(from_first, from_second) << "concurrent instance() calls must agree on the object";
+    }
 
-TEST(MpiContextThreadSafetyTest, TheRankAccessorsReportConsistentValuesAfterInitialisation) {
-    // Reading after initialisation has returned is the documented-safe usage, and is where
-    // these values are meaningful. Without MPI the context reports a single-rank world.
-    auto& context = cuda::mpi::MpiContext::instance();
+    TEST(MpiContextThreadSafetyTest, TheRankAccessorsReportConsistentValuesAfterInitialisation) {
+        // Reading after initialisation has returned is the documented-safe usage, and is where
+        // these values are meaningful. Without MPI the context reports a single-rank world.
+        auto& context = cuda::mpi::MpiContext::instance();
 
-    EXPECT_GE(context.world_rank(), 0);
-    EXPECT_GE(context.world_size(), 1);
-    EXPECT_LE(context.world_rank(), context.world_size());
-    EXPECT_GE(context.get_local_device_id(), 0)
-        << "the device id falls back to 0 rather than an uninitialised value";
-}
+        EXPECT_GE(context.world_rank(), 0);
+        EXPECT_GE(context.world_size(), 1);
+        EXPECT_LE(context.world_rank(), context.world_size());
+        EXPECT_GE(context.get_local_device_id(), 0) << "the device id falls back to 0 rather than an uninitialised value";
+    }
 
 }  // namespace mpi_context_thread_safety_test

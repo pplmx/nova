@@ -34,199 +34,192 @@
 
 namespace cuda::testing::test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-/// Free device memory in bytes.
-size_t free_bytes() {
-    size_t free_mem = 0;
-    size_t total_mem = 0;
-    if (cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
-        return 0;
-    }
-    return free_mem;
-}
+        /// Free device memory in bytes.
+        size_t free_bytes() {
+            size_t free_mem = 0;
+            size_t total_mem = 0;
+            if (cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
+                return 0;
+            }
+            return free_mem;
+        }
 
-}  // namespace
+    }  // namespace
 
-// Regression: five runs leaked 8388608 bytes.
-//
-// NOTE ON RELIABILITY: this case reads DEVICE-WIDE free-memory snapshots
-// (cudaMemGetInfo aggregates every process), so any other process allocating
-// between the two reads is indistinguishable from a leak. It therefore cannot run
-// concurrently with other GPU tests. It lives in its own suite name so CMake can
-// exclude it from the parallel discovery set and register it separately with
-// RUN_SERIAL, which is where it means something.
-// A batch-to-batch comparison was tried to work around that and is NOT usable: a
-// steady per-run leak drops both batches equally, so the difference is near zero
-// and the test stops detecting the very defect it exists for. The measurement is
-// kept, with the constraint stated: run this suite serially, or with no competing
-// GPU work, for the leak check to mean anything. It does catch the pre-fix code
-// there, reporting 6291456 bytes lost across five runs against a 262144 tolerance.
-TEST(RobustnessProfileSerialTest, RepeatedRunsDoNotLeakDeviceMemory) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    // Regression: five runs leaked 8388608 bytes.
+    //
+    // NOTE ON RELIABILITY: this case reads DEVICE-WIDE free-memory snapshots
+    // (cudaMemGetInfo aggregates every process), so any other process allocating
+    // between the two reads is indistinguishable from a leak. It therefore cannot run
+    // concurrently with other GPU tests. It lives in its own suite name so CMake can
+    // exclude it from the parallel discovery set and register it separately with
+    // RUN_SERIAL, which is where it means something.
+    // A batch-to-batch comparison was tried to work around that and is NOT usable: a
+    // steady per-run leak drops both batches equally, so the difference is near zero
+    // and the test stops detecting the very defect it exists for. The measurement is
+    // kept, with the constraint stated: run this suite serially, or with no competing
+    // GPU work, for the leak check to mean anything. It does catch the pre-fix code
+    // there, reporting 6291456 bytes lost across five runs against a 262144 tolerance.
+    TEST(RobustnessProfileSerialTest, RepeatedRunsDoNotLeakDeviceMemory) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // Warm up once so any one-time allocator growth is not counted as a leak.
-    (void)run_e2e_robustness_with_profiling();
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-
-    const size_t before = free_bytes();
-
-    constexpr int kRuns = 5;
-    for (int i = 0; i < kRuns; ++i) {
+        // Warm up once so any one-time allocator growth is not counted as a leak.
         (void)run_e2e_robustness_with_profiling();
-    }
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
-    const size_t after = free_bytes();
+        const size_t before = free_bytes();
 
-    // A leak of the old form is kRuns * 1 MiB at minimum.
-    const size_t leaked = (before > after) ? (before - after) : 0;
-    const size_t tolerance = 256 * 1024;
-    EXPECT_LE(leaked, tolerance)
-        << "device memory fell by " << leaked << " bytes across " << kRuns
-        << " runs; the probes must release their allocations. If this fails only "
-           "under a parallel test run, another process is competing for the device.";
-}
+        constexpr int kRuns = 5;
+        for (int i = 0; i < kRuns; ++i) {
+            (void)run_e2e_robustness_with_profiling();
+        }
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
-TEST(RobustnessProfileTest, ProfileReportsEachTestOutcome) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+        const size_t after = free_bytes();
 
-    const auto profile = run_e2e_robustness_with_profiling();
-
-    EXPECT_EQ(profile.tests_passed + profile.tests_failed, 4u)
-        << "the profile registers four probes";
-    EXPECT_TRUE(profile.robust) << "a healthy device passes all four";
-    EXPECT_EQ(profile.tests_failed, 0u);
-    EXPECT_TRUE(profile.failed_tests.empty());
-    EXPECT_GE(profile.total_time_ms, 0);
-}
-
-TEST(RobustnessProfileTest, RobustFlagFollowsTheFailures) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // A leak of the old form is kRuns * 1 MiB at minimum.
+        const size_t leaked = (before > after) ? (before - after) : 0;
+        const size_t tolerance = 256 * 1024;
+        EXPECT_LE(leaked, tolerance) << "device memory fell by " << leaked << " bytes across " << kRuns
+                                     << " runs; the probes must release their allocations. If this fails only "
+                                        "under a parallel test run, another process is competing for the device.";
     }
 
-    const auto profile = run_e2e_robustness_with_profiling();
+    TEST(RobustnessProfileTest, ProfileReportsEachTestOutcome) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // The flag is derived from the results, not hard-coded: if any probe had
-    // failed, robust would be false and the name recorded.
-    if (profile.tests_failed > 0) {
-        EXPECT_FALSE(profile.robust);
-        EXPECT_EQ(profile.failed_tests.size(), profile.tests_failed);
-    } else {
-        EXPECT_TRUE(profile.robust);
+        const auto profile = run_e2e_robustness_with_profiling();
+
+        EXPECT_EQ(profile.tests_passed + profile.tests_failed, 4u) << "the profile registers four probes";
+        EXPECT_TRUE(profile.robust) << "a healthy device passes all four";
+        EXPECT_EQ(profile.tests_failed, 0u);
         EXPECT_TRUE(profile.failed_tests.empty());
-    }
-}
-
-// LIMITATION, stated rather than hidden: this case passes against both the empty
-// `return true;` lambdas and the real probes, because it can only observe the
-// report's shape. No public signal distinguishes "inspected nothing" from
-// "inspected and found no issue" — which is precisely how the empty version went
-// unnoticed. What the probes genuinely do is covered by the leak cases below and by
-// exercising the allocation paths they share with the algorithms.
-TEST(RobustnessProfileTest, SafetyReportReportsItsShape) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_GE(profile.total_time_ms, 0);
     }
 
-    const auto report = validate_all_algorithm_memory_safety();
+    TEST(RobustnessProfileTest, RobustFlagFollowsTheFailures) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_EQ(report.algorithms_validated, 6u);
-    EXPECT_TRUE(report.all_safe)
-        << "a healthy device supports the allocation each algorithm needs";
-    EXPECT_EQ(report.issues_found, 0u);
-    EXPECT_TRUE(report.unsafe_algorithms.empty());
-}
+        const auto profile = run_e2e_robustness_with_profiling();
 
-TEST(RobustnessProfileTest, SafetyReportIsRepeatable) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // The flag is derived from the results, not hard-coded: if any probe had
+        // failed, robust would be false and the name recorded.
+        if (profile.tests_failed > 0) {
+            EXPECT_FALSE(profile.robust);
+            EXPECT_EQ(profile.failed_tests.size(), profile.tests_failed);
+        } else {
+            EXPECT_TRUE(profile.robust);
+            EXPECT_TRUE(profile.failed_tests.empty());
+        }
     }
 
-    const auto first = validate_all_algorithm_memory_safety();
-    const auto second = validate_all_algorithm_memory_safety();
+    // LIMITATION, stated rather than hidden: this case passes against both the empty
+    // `return true;` lambdas and the real probes, because it can only observe the
+    // report's shape. No public signal distinguishes "inspected nothing" from
+    // "inspected and found no issue" — which is precisely how the empty version went
+    // unnoticed. What the probes genuinely do is covered by the leak cases below and by
+    // exercising the allocation paths they share with the algorithms.
+    TEST(RobustnessProfileTest, SafetyReportReportsItsShape) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_EQ(first.algorithms_validated, second.algorithms_validated);
-    EXPECT_EQ(first.all_safe, second.all_safe);
-    EXPECT_EQ(first.issues_found, second.issues_found);
-}
+        const auto report = validate_all_algorithm_memory_safety();
 
-// Same constraint as RepeatedRunsDoNotLeakDeviceMemory: device-wide free-memory
-// snapshots cannot distinguish a leak from a neighbour allocating, so this lives in
-// the serial suite too.
-TEST(RobustnessProfileSerialTest, SafetyReportDoesNotLeakBetweenCalls) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(report.algorithms_validated, 6u);
+        EXPECT_TRUE(report.all_safe) << "a healthy device supports the allocation each algorithm needs";
+        EXPECT_EQ(report.issues_found, 0u);
+        EXPECT_TRUE(report.unsafe_algorithms.empty());
     }
 
-    // The probes in the report allocate, so a missed release would show up here.
-    (void)validate_all_algorithm_memory_safety();
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    const size_t before = free_bytes();
+    TEST(RobustnessProfileTest, SafetyReportIsRepeatable) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    for (int i = 0; i < 5; ++i) {
+        const auto first = validate_all_algorithm_memory_safety();
+        const auto second = validate_all_algorithm_memory_safety();
+
+        EXPECT_EQ(first.algorithms_validated, second.algorithms_validated);
+        EXPECT_EQ(first.all_safe, second.all_safe);
+        EXPECT_EQ(first.issues_found, second.issues_found);
+    }
+
+    // Same constraint as RepeatedRunsDoNotLeakDeviceMemory: device-wide free-memory
+    // snapshots cannot distinguish a leak from a neighbour allocating, so this lives in
+    // the serial suite too.
+    TEST(RobustnessProfileSerialTest, SafetyReportDoesNotLeakBetweenCalls) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // The probes in the report allocate, so a missed release would show up here.
         (void)validate_all_algorithm_memory_safety();
-    }
-    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
-    const size_t after = free_bytes();
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        const size_t before = free_bytes();
 
-    const size_t leaked = (before > after) ? (before - after) : 0;
-    EXPECT_LE(leaked, 256 * 1024)
-        << "the safety probes allocated " << leaked << " bytes they did not free";
-}
+        for (int i = 0; i < 5; ++i) {
+            (void)validate_all_algorithm_memory_safety();
+        }
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+        const size_t after = free_bytes();
 
-TEST(RobustnessProfileTest, IntegrationRunnerReportsTimingAndOutcomes) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    IntegrationTestRunner runner;
-    runner.add_test({"always_passes", "control", []() { return true; }});
-    runner.add_test({"always_fails", "control", []() { return false; }});
-
-    const auto results = runner.run_all();
-
-    ASSERT_EQ(results.size(), 2u);
-    EXPECT_TRUE(results[0].passed);
-    EXPECT_FALSE(results[1].passed) << "a failing probe must be reported as such";
-    for (const auto& result : results) {
-        EXPECT_GE(result.execution_time_ms, 0);
-    }
-}
-
-TEST(RobustnessProfileTest, IntegrationRunnerSurvivesAThrowingProbe) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        const size_t leaked = (before > after) ? (before - after) : 0;
+        EXPECT_LE(leaked, 256 * 1024) << "the safety probes allocated " << leaked << " bytes they did not free";
     }
 
-    // A probe that throws must not abort the run; it is recorded as a failure.
-    IntegrationTestRunner runner;
-    runner.add_test({"throws", "control", []() -> bool {
-                         throw std::runtime_error("probe exploded");
-                     }});
-    runner.add_test({"still_runs", "control", []() { return true; }});
+    TEST(RobustnessProfileTest, IntegrationRunnerReportsTimingAndOutcomes) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_NO_THROW({
+        IntegrationTestRunner runner;
+        runner.add_test({"always_passes", "control", []() { return true; }});
+        runner.add_test({"always_fails", "control", []() { return false; }});
+
         const auto results = runner.run_all();
+
         ASSERT_EQ(results.size(), 2u);
-        EXPECT_FALSE(results[0].passed) << "the throwing probe did not pass";
-        EXPECT_TRUE(results[1].passed)
-            << "a throw in one probe must not stop the others";
-    });
-}
+        EXPECT_TRUE(results[0].passed);
+        EXPECT_FALSE(results[1].passed) << "a failing probe must be reported as such";
+        for (const auto& result : results) {
+            EXPECT_GE(result.execution_time_ms, 0);
+        }
+    }
+
+    TEST(RobustnessProfileTest, IntegrationRunnerSurvivesAThrowingProbe) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // A probe that throws must not abort the run; it is recorded as a failure.
+        IntegrationTestRunner runner;
+        runner.add_test({"throws", "control", []() -> bool { throw std::runtime_error("probe exploded"); }});
+        runner.add_test({"still_runs", "control", []() { return true; }});
+
+        EXPECT_NO_THROW({
+            const auto results = runner.run_all();
+            ASSERT_EQ(results.size(), 2u);
+            EXPECT_FALSE(results[0].passed) << "the throwing probe did not pass";
+            EXPECT_TRUE(results[1].passed) << "a throw in one probe must not stop the others";
+        });
+    }
 
 }  // namespace cuda::testing::test

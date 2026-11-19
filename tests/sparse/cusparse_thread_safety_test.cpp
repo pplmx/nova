@@ -21,55 +21,54 @@
 
 namespace cusparse_thread_safety_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(CusparseThreadSafetyTest, GetReturnsTheSameHandleEveryTime) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(CusparseThreadSafetyTest, GetReturnsTheSameHandleEveryTime) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // The single shared object is what makes set_stream racy. If get() ever returned a
-    // per-thread context, this case would fail and the warning could be removed.
-    auto& first = nova::sparse::detail::CusparseContext::get();
-    auto& second = nova::sparse::detail::CusparseContext::get();
+        // The single shared object is what makes set_stream racy. If get() ever returned a
+        // per-thread context, this case would fail and the warning could be removed.
+        auto& first = nova::sparse::detail::CusparseContext::get();
+        auto& second = nova::sparse::detail::CusparseContext::get();
 
-    EXPECT_EQ(&first, &second) << "the context is a process-wide singleton";
-    EXPECT_NE(first.handle(), nullptr);
-}
-
-TEST(CusparseThreadSafetyTest, SetStreamChangesWhatTheNextReaderSees) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_EQ(&first, &second) << "the context is a process-wide singleton";
+        EXPECT_NE(first.handle(), nullptr);
     }
 
-    auto& ctx = nova::sparse::detail::CusparseContext::get();
-    cudaStream_t stream_a = nullptr;
-    cudaStream_t stream_b = nullptr;
-    ASSERT_EQ(cudaStreamCreate(&stream_a), cudaSuccess);
-    ASSERT_EQ(cudaStreamCreate(&stream_b), cudaSuccess);
+    TEST(CusparseThreadSafetyTest, SetStreamChangesWhatTheNextReaderSees) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // Sequential calls are consistent; only concurrent ones interfere. This is the positive
-    // half of the same property, and the second assertion is the shape of the race.
-    ctx.set_stream(stream_a);
-    EXPECT_EQ(ctx.stream(), stream_a);
-    ctx.set_stream(stream_b);
-    EXPECT_EQ(ctx.stream(), stream_b)
-        << "a second set_stream overrides the first, which is what two threads would do";
+        auto& ctx = nova::sparse::detail::CusparseContext::get();
+        cudaStream_t stream_a = nullptr;
+        cudaStream_t stream_b = nullptr;
+        ASSERT_EQ(cudaStreamCreate(&stream_a), cudaSuccess);
+        ASSERT_EQ(cudaStreamCreate(&stream_b), cudaSuccess);
 
-    ctx.set_stream(nullptr);
-    (void)cudaStreamDestroy(stream_a);
-    (void)cudaStreamDestroy(stream_b);
-}
+        // Sequential calls are consistent; only concurrent ones interfere. This is the positive
+        // half of the same property, and the second assertion is the shape of the race.
+        ctx.set_stream(stream_a);
+        EXPECT_EQ(ctx.stream(), stream_a);
+        ctx.set_stream(stream_b);
+        EXPECT_EQ(ctx.stream(), stream_b) << "a second set_stream overrides the first, which is what two threads would do";
+
+        ctx.set_stream(nullptr);
+        (void)cudaStreamDestroy(stream_a);
+        (void)cudaStreamDestroy(stream_b);
+    }
 
 }  // namespace cusparse_thread_safety_test

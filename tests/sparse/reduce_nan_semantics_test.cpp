@@ -31,94 +31,92 @@
 
 namespace reduce_nan_semantics_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-cuda::memory::Buffer<float> stage(const std::vector<float>& host) {
-    cuda::memory::Buffer<float> device(host.size());
-    if (!host.empty()) {
-        device.copy_from(host.data(), host.size());
-    }
-    return device;
-}
+        cuda::memory::Buffer<float> stage(const std::vector<float>& host) {
+            cuda::memory::Buffer<float> device(host.size());
+            if (!host.empty()) {
+                device.copy_from(host.data(), host.size());
+            }
+            return device;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(ReduceNanSemanticsTest, AnAllNanInputSumsToNan) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(ReduceNanSemanticsTest, AnAllNanInputSumsToNan) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const float nan_value = std::numeric_limits<float>::quiet_NaN();
-    const auto device = stage({nan_value, nan_value});
+        const float nan_value = std::numeric_limits<float>::quiet_NaN();
+        const auto device = stage({nan_value, nan_value});
 
-    EXPECT_TRUE(std::isnan(cuda::algo::reduce_sum(device.data(), 2)))
-        << "sum propagates NaN because 0 + NaN is NaN";
-}
-
-TEST(ReduceNanSemanticsTest, AnAllNanInputMaximisesToNegativeInfinity) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_TRUE(std::isnan(cuda::algo::reduce_sum(device.data(), 2))) << "sum propagates NaN because 0 + NaN is NaN";
     }
 
-    const float nan_value = std::numeric_limits<float>::quiet_NaN();
-    const auto device = stage({nan_value, nan_value});
+    TEST(ReduceNanSemanticsTest, AnAllNanInputMaximisesToNegativeInfinity) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const float result = cuda::algo::reduce_max(device.data(), 2);
-    // Not NaN: max() drops it. Not a real maximum either: it is the identity, which the
-    // header now warns about.
-    EXPECT_TRUE(std::isinf(result));
-    EXPECT_LT(result, 0.0F) << "the documented identity for max is negative infinity";
-}
+        const float nan_value = std::numeric_limits<float>::quiet_NaN();
+        const auto device = stage({nan_value, nan_value});
 
-TEST(ReduceNanSemanticsTest, AnAllNanInputMinimisesToPositiveInfinity) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        const float result = cuda::algo::reduce_max(device.data(), 2);
+        // Not NaN: max() drops it. Not a real maximum either: it is the identity, which the
+        // header now warns about.
+        EXPECT_TRUE(std::isinf(result));
+        EXPECT_LT(result, 0.0F) << "the documented identity for max is negative infinity";
     }
 
-    const float nan_value = std::numeric_limits<float>::quiet_NaN();
-    const auto device = stage({nan_value, nan_value});
+    TEST(ReduceNanSemanticsTest, AnAllNanInputMinimisesToPositiveInfinity) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const float result = cuda::algo::reduce_min(device.data(), 2);
-    EXPECT_TRUE(std::isinf(result));
-    EXPECT_GT(result, 0.0F) << "the documented identity for min is positive infinity";
-}
+        const float nan_value = std::numeric_limits<float>::quiet_NaN();
+        const auto device = stage({nan_value, nan_value});
 
-TEST(ReduceNanSemanticsTest, OneNanAmongRealValuesStillSumsToNanButIsIgnoredByMax) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        const float result = cuda::algo::reduce_min(device.data(), 2);
+        EXPECT_TRUE(std::isinf(result));
+        EXPECT_GT(result, 0.0F) << "the documented identity for min is positive infinity";
     }
 
-    const float nan_value = std::numeric_limits<float>::quiet_NaN();
-    const auto device = stage({1.0F, nan_value, 3.0F, 2.0F});
+    TEST(ReduceNanSemanticsTest, OneNanAmongRealValuesStillSumsToNanButIsIgnoredByMax) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // The two treatments side by side, which is what the header's note describes.
-    EXPECT_TRUE(std::isnan(cuda::algo::reduce_sum(device.data(), 4)));
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_max(device.data(), 4), 3.0F)
-        << "max skips the NaN and finds the real maximum";
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_min(device.data(), 4), 1.0F);
-}
+        const float nan_value = std::numeric_limits<float>::quiet_NaN();
+        const auto device = stage({1.0F, nan_value, 3.0F, 2.0F});
 
-TEST(ReduceNanSemanticsTest, AnEmptyBufferIsTheIdentityForAllThree) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        // The two treatments side by side, which is what the header's note describes.
+        EXPECT_TRUE(std::isnan(cuda::algo::reduce_sum(device.data(), 4)));
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_max(device.data(), 4), 3.0F) << "max skips the NaN and finds the real maximum";
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_min(device.data(), 4), 1.0F);
     }
 
-    cuda::memory::Buffer<float> empty(0);
+    TEST(ReduceNanSemanticsTest, AnEmptyBufferIsTheIdentityForAllThree) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // Distinct from the NaN cases above: here there really is no data, and the identity is
-    // the right answer for every operation.
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_sum(empty.data(), 0), 0.0F);
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_max(empty.data(), 0), 0.0F);
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_min(empty.data(), 0), 0.0F);
-}
+        cuda::memory::Buffer<float> empty(0);
+
+        // Distinct from the NaN cases above: here there really is no data, and the identity is
+        // the right answer for every operation.
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_sum(empty.data(), 0), 0.0F);
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_max(empty.data(), 0), 0.0F);
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_min(empty.data(), 0), 0.0F);
+    }
 
 }  // namespace reduce_nan_semantics_test

@@ -10,189 +10,183 @@
 
 namespace nova::preemption {
 
-enum class ShutdownPhase {
-    Idle,
-    Signaling,
-    Checkpointing,
-    Finalizing,
-    Complete
-};
+    enum class ShutdownPhase { Idle, Signaling, Checkpointing, Finalizing, Complete };
 
-struct ShutdownConfig {
-    std::chrono::seconds shutdown_timeout{30};
-    bool checkpoint_on_shutdown{true};
-    bool validate_checkpoint_before_save{true};
-    int max_checkpoint_retries{3};
-    bool coordinated_checkpoint{true};
-};
-
-/**
- * Installs handlers for SIGTERM and SIGUSR1.
- *
- * The handler itself is async-signal-safe: it stores two lock-free atomics and writes one
- * byte to a self-pipe. Everything else — taking a lock, reading the clock, invoking the
- * registered callback — runs on a dispatcher thread that reads the other end of the pipe.
- *
- * This replaced an implementation that did all of that work inside signal context, which
- * POSIX does not permit: it took a std::mutex twice, called a function-local-static
- * accessor, read a steady_clock and invoked a std::function. The mutex was the worst of
- * those, because a signal arriving while the same thread held it deadlocked the process
- * permanently.
- *
- * The callback therefore runs on the dispatcher thread, not on the thread the signal
- * interrupted. Code that the callback touches must be safe to call from that thread, and
- * the callback should not assume the interrupted thread's state.
- */
-class SignalHandler {
-public:
-    static SignalHandler& instance();
-
-    void install_handlers();
-    void uninstall_handlers();
-
-    bool is_shutdown_requested() const;
-    int received_signal() const;
-
-    using ShutdownCallback = std::function<void(int signal)>;
-    void set_shutdown_callback(ShutdownCallback callback);
-
-    struct HandlerState {
-        bool handler_installed;
-        bool shutdown_requested;
-        int received_signal_number;
-        std::chrono::steady_clock::time_point signal_received_at;
+    struct ShutdownConfig {
+        std::chrono::seconds shutdown_timeout{30};
+        bool checkpoint_on_shutdown{true};
+        bool validate_checkpoint_before_save{true};
+        int max_checkpoint_retries{3};
+        bool coordinated_checkpoint{true};
     };
 
-    HandlerState get_state() const;
+    /**
+     * Installs handlers for SIGTERM and SIGUSR1.
+     *
+     * The handler itself is async-signal-safe: it stores two lock-free atomics and writes one
+     * byte to a self-pipe. Everything else — taking a lock, reading the clock, invoking the
+     * registered callback — runs on a dispatcher thread that reads the other end of the pipe.
+     *
+     * This replaced an implementation that did all of that work inside signal context, which
+     * POSIX does not permit: it took a std::mutex twice, called a function-local-static
+     * accessor, read a steady_clock and invoked a std::function. The mutex was the worst of
+     * those, because a signal arriving while the same thread held it deadlocked the process
+     * permanently.
+     *
+     * The callback therefore runs on the dispatcher thread, not on the thread the signal
+     * interrupted. Code that the callback touches must be safe to call from that thread, and
+     * the callback should not assume the interrupted thread's state.
+     */
+    class SignalHandler {
+    public:
+        static SignalHandler& instance();
 
-private:
-    SignalHandler();
-    ~SignalHandler() = default;
+        void install_handlers();
+        void uninstall_handlers();
 
-    static void signal_handler(int signal);
+        bool is_shutdown_requested() const;
+        int received_signal() const;
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
+        using ShutdownCallback = std::function<void(int signal)>;
+        void set_shutdown_callback(ShutdownCallback callback);
 
-class ShutdownCoordinator {
-public:
-    static ShutdownCoordinator& instance();
+        struct HandlerState {
+            bool handler_installed;
+            bool shutdown_requested;
+            int received_signal_number;
+            std::chrono::steady_clock::time_point signal_received_at;
+        };
 
-    void initialize(const ShutdownConfig& config);
-    void shutdown();
+        HandlerState get_state() const;
 
-    void request_shutdown(int signal);
+    private:
+        SignalHandler();
+        ~SignalHandler() = default;
 
-    ShutdownPhase get_phase() const;
-    bool is_shutdown_in_progress() const;
-    bool is_shutdown_complete() const;
+        static void signal_handler(int signal);
 
-    void begin_graceful_shutdown();
-    // Runs the user-registered checkpoint callback when checkpoint_on_shutdown
-    // is set. Returns true only when the callback ran and reported success;
-    // false when checkpointing was requested but no callback is registered or
-    // the callback itself failed (never a silent "saving…" lie).
-    bool checkpoint_coordinated();
-    void finalize_shutdown();
-
-    using ShutdownStageCallback = std::function<void(ShutdownPhase)>;
-    void set_stage_callback(ShutdownStageCallback callback);
-
-    // The user-supplied durable save invoked by checkpoint_coordinated().
-    // Registered via PreemptionManager::set_checkpoint_callback.
-    using CheckpointCallback = std::function<bool()>;
-    void set_checkpoint_callback(CheckpointCallback callback);
-
-    std::chrono::milliseconds get_elapsed_time() const;
-    std::chrono::seconds get_remaining_timeout() const;
-
-    bool extend_timeout(std::chrono::seconds additional_time);
-
-private:
-    ShutdownCoordinator();
-
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
-
-class ResumeValidator {
-public:
-    static ResumeValidator& instance();
-
-    struct ValidationResult {
-        bool is_valid;
-        bool has_model_state;
-        bool has_optimizer_state;
-        bool has_rng_state;
-        int checkpoint_step;
-        std::string error_message;
-        std::vector<std::string> warnings;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
-    ValidationResult validate_checkpoint(const std::string& checkpoint_path);
+    class ShutdownCoordinator {
+    public:
+        static ShutdownCoordinator& instance();
 
-    bool recover_state(const std::string& checkpoint_path);
+        void initialize(const ShutdownConfig& config);
+        void shutdown();
 
-    struct RecoveryResult {
-        bool success;
-        int recovered_step;
-        std::string error_message;
+        void request_shutdown(int signal);
+
+        ShutdownPhase get_phase() const;
+        bool is_shutdown_in_progress() const;
+        bool is_shutdown_complete() const;
+
+        void begin_graceful_shutdown();
+        // Runs the user-registered checkpoint callback when checkpoint_on_shutdown
+        // is set. Returns true only when the callback ran and reported success;
+        // false when checkpointing was requested but no callback is registered or
+        // the callback itself failed (never a silent "saving…" lie).
+        bool checkpoint_coordinated();
+        void finalize_shutdown();
+
+        using ShutdownStageCallback = std::function<void(ShutdownPhase)>;
+        void set_stage_callback(ShutdownStageCallback callback);
+
+        // The user-supplied durable save invoked by checkpoint_coordinated().
+        // Registered via PreemptionManager::set_checkpoint_callback.
+        using CheckpointCallback = std::function<bool()>;
+        void set_checkpoint_callback(CheckpointCallback callback);
+
+        std::chrono::milliseconds get_elapsed_time() const;
+        std::chrono::seconds get_remaining_timeout() const;
+
+        bool extend_timeout(std::chrono::seconds additional_time);
+
+    private:
+        ShutdownCoordinator();
+
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
-    RecoveryResult attempt_recovery(const std::string& checkpoint_path);
+    class ResumeValidator {
+    public:
+        static ResumeValidator& instance();
 
-    std::string get_latest_checkpoint_path() const;
+        struct ValidationResult {
+            bool is_valid;
+            bool has_model_state;
+            bool has_optimizer_state;
+            bool has_rng_state;
+            int checkpoint_step;
+            std::string error_message;
+            std::vector<std::string> warnings;
+        };
 
-    void set_checkpoint_dir(const std::string& dir);
+        ValidationResult validate_checkpoint(const std::string& checkpoint_path);
 
-private:
-    ResumeValidator();
+        bool recover_state(const std::string& checkpoint_path);
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
+        struct RecoveryResult {
+            bool success;
+            int recovered_step;
+            std::string error_message;
+        };
 
-class PreemptionManager {
-public:
-    static PreemptionManager& instance();
+        RecoveryResult attempt_recovery(const std::string& checkpoint_path);
 
-    void initialize(const ShutdownConfig& config);
-    void shutdown();
+        std::string get_latest_checkpoint_path() const;
 
-    void on_preemption_signal(int signal);
+        void set_checkpoint_dir(const std::string& dir);
 
-    bool is_shutdown_requested() const;
-    void wait_for_shutdown();
+    private:
+        ResumeValidator();
 
-    bool request_timeout_extension(std::chrono::seconds additional_time);
-
-    using PreemptionCallback = std::function<void(int signal)>;
-    void set_preemption_callback(PreemptionCallback callback);
-
-    // The durable save to run when ShutdownConfig::checkpoint_on_shutdown is
-    // set. Without one, checkpoint_coordinated() reports the misconfiguration
-    // instead of pretending to save. Return true only if the state was durably
-    // persisted.
-    using CheckpointCallback = ShutdownCoordinator::CheckpointCallback;
-    void set_checkpoint_callback(CheckpointCallback callback);
-
-    struct Status {
-        bool preemption_handlers_installed;
-        bool shutdown_in_progress;
-        bool shutdown_complete;
-        int received_signal;
-        std::chrono::milliseconds shutdown_elapsed;
-        std::chrono::seconds remaining_timeout;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
-    Status get_status() const;
+    class PreemptionManager {
+    public:
+        static PreemptionManager& instance();
 
-private:
-    PreemptionManager();
+        void initialize(const ShutdownConfig& config);
+        void shutdown();
 
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
+        void on_preemption_signal(int signal);
 
-} // namespace nova::preemption
+        bool is_shutdown_requested() const;
+        void wait_for_shutdown();
+
+        bool request_timeout_extension(std::chrono::seconds additional_time);
+
+        using PreemptionCallback = std::function<void(int signal)>;
+        void set_preemption_callback(PreemptionCallback callback);
+
+        // The durable save to run when ShutdownConfig::checkpoint_on_shutdown is
+        // set. Without one, checkpoint_coordinated() reports the misconfiguration
+        // instead of pretending to save. Return true only if the state was durably
+        // persisted.
+        using CheckpointCallback = ShutdownCoordinator::CheckpointCallback;
+        void set_checkpoint_callback(CheckpointCallback callback);
+
+        struct Status {
+            bool preemption_handlers_installed;
+            bool shutdown_in_progress;
+            bool shutdown_complete;
+            int received_signal;
+            std::chrono::milliseconds shutdown_elapsed;
+            std::chrono::seconds remaining_timeout;
+        };
+
+        Status get_status() const;
+
+    private:
+        PreemptionManager();
+
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+
+}  // namespace nova::preemption

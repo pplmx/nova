@@ -29,19 +29,18 @@
 
 namespace nova::sparse {
 
-NOVA_REQUIRE_CPP23_HOST("sparse_concepts.hpp")
+    NOVA_REQUIRE_CPP23_HOST("sparse_concepts.hpp")
 
-
-/**
- * @brief Scalar type an iterative solver or preconditioner can work with
- *
- * Floating point covers every instantiation in the tree (float and double) and
- * is what the algorithms need: a triangular solve and a residual norm are
- * floating-point operations. Complex is not supported by the kernels, so it is
- * deliberately excluded rather than silently accepted.
- */
-template<typename T>
-concept SparseScalar = std::floating_point<T>;
+    /**
+     * @brief Scalar type an iterative solver or preconditioner can work with
+     *
+     * Floating point covers every instantiation in the tree (float and double) and
+     * is what the algorithms need: a triangular solve and a residual norm are
+     * floating-point operations. Complex is not supported by the kernels, so it is
+     * deliberately excluded rather than silently accepted.
+     */
+    template <typename T>
+    concept SparseScalar = std::floating_point<T>;
 
 }  // namespace nova::sparse
 

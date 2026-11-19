@@ -7,17 +7,15 @@
 
 namespace {
 
-void reset() {
-    cudaDeviceReset();
-}
+    void reset() {
+        cudaDeviceReset();
+    }
 
-}
+}  // namespace
 
 class StreamTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(StreamTest, DefaultConstruction) {
@@ -68,8 +66,7 @@ TEST_F(StreamTest, SynchronizeVerifiesDataTransfer) {
     int* d_data = nullptr;
     CUDA_CHECK(cudaMalloc(&d_data, N * sizeof(int)));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_data, h_input.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data, h_input.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
 
     stream.synchronize();
 
@@ -92,8 +89,7 @@ TEST_F(StreamTest, QueryAfterAsyncWork) {
     int* d_data = nullptr;
     CUDA_CHECK(cudaMalloc(&d_data, N * sizeof(int)));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
 
     // Busy-waiting until query() reports idle was the whole test and it asserted nothing.
     // The read-back below is more than that, but it is not enough to catch a query() that
@@ -108,8 +104,7 @@ TEST_F(StreamTest, QueryAfterAsyncWork) {
     std::vector<int> result(N, 0);
     CUDA_CHECK(cudaMemcpy(result.data(), d_data, N * sizeof(int), cudaMemcpyDeviceToHost));
     for (int i = 0; i < N; ++i) {
-        ASSERT_EQ(result[i], 42) << "index " << i
-                                 << ": the stream reported idle before the copy landed";
+        ASSERT_EQ(result[i], 42) << "index " << i << ": the stream reported idle before the copy landed";
     }
 
     CUDA_CHECK(cudaFree(d_data));
@@ -122,9 +117,7 @@ TEST_F(StreamTest, MakeStream) {
 
 class EventTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(EventTest, DefaultConstruction) {
@@ -174,8 +167,7 @@ TEST_F(EventTest, RecordOnStreamAndQuery) {
     int* d_data = nullptr;
     CUDA_CHECK(cudaMalloc(&d_data, N * sizeof(int)));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
 
     event.record(stream);
     stream.synchronize();
@@ -210,8 +202,7 @@ TEST_F(EventTest, QueryAfterRecordWithDataTransfer) {
     CUDA_CHECK(cudaMalloc(&d_data, N * sizeof(int)));
 
     start_event.record(stream);
-    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
     end_event.record(stream);
 
     stream.synchronize();
@@ -236,8 +227,7 @@ TEST_F(EventTest, ElapsedTimeIsNonNegative) {
 
     start_event.record(stream);
     for (int i = 0; i < 100; ++i) {
-        CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
-                                 cudaMemcpyHostToDevice, stream.get()));
+        CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
     }
     end_event.record(stream);
 
@@ -278,9 +268,7 @@ TEST_F(EventTest, MakeEvent) {
 
 class StreamEventIntegrationTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(StreamEventIntegrationTest, MeasureKernelTimeAndVerifyData) {
@@ -298,8 +286,7 @@ TEST_F(StreamEventIntegrationTest, MeasureKernelTimeAndVerifyData) {
     CUDA_CHECK(cudaMemcpy(d_input, h_input.data(), N * sizeof(int), cudaMemcpyHostToDevice));
 
     start_event.record(stream);
-    CUDA_CHECK(cudaMemcpyAsync(d_output, d_input, N * sizeof(int),
-                             cudaMemcpyDeviceToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_output, d_input, N * sizeof(int), cudaMemcpyDeviceToDevice, stream.get()));
     end_event.record(stream);
 
     stream.synchronize();
@@ -327,10 +314,8 @@ TEST_F(StreamEventIntegrationTest, MultipleStreamsIndependenceWithDataVerificati
     CUDA_CHECK(cudaMalloc(&d_data1, N * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_data2, N * sizeof(int)));
 
-    CUDA_CHECK(cudaMemcpyAsync(d_data1, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream1.get()));
-    CUDA_CHECK(cudaMemcpyAsync(d_data2, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream2.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data1, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream1.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data2, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream2.get()));
 
     stream1.synchronize();
     stream2.synchronize();
@@ -359,11 +344,9 @@ TEST_F(StreamEventIntegrationTest, EventOrderingWithDataVerification) {
     CUDA_CHECK(cudaMalloc(&d_data, N * sizeof(int)));
 
     events[0].record(stream);
-    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
     events[1].record(stream);
-    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d_data, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream.get()));
     events[2].record(stream);
 
     stream.synchronize();
@@ -423,10 +406,8 @@ TEST_F(StreamEventIntegrationTest, StreamPriorityIndependence) {
     CUDA_CHECK(cudaMalloc(&d1, N * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d2, N * sizeof(int)));
 
-    CUDA_CHECK(cudaMemcpyAsync(d1, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream1.get()));
-    CUDA_CHECK(cudaMemcpyAsync(d2, h_data.data(), N * sizeof(int),
-                             cudaMemcpyHostToDevice, stream2.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d1, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream1.get()));
+    CUDA_CHECK(cudaMemcpyAsync(d2, h_data.data(), N * sizeof(int), cudaMemcpyHostToDevice, stream2.get()));
 
     stream1.synchronize();
     stream2.synchronize();

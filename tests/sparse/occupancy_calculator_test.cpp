@@ -37,168 +37,149 @@
 
 namespace cuda::performance::test {
 
-namespace {
+    namespace {
 
-using cuda::performance::OccupancyCalculator;
+        using cuda::performance::OccupancyCalculator;
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
+
+        /// Runs `call` and returns the exception message, or an empty string.
+        template <typename Callable>
+        std::string message_from(Callable&& call) {
+            try {
+                call();
+            } catch (const std::exception& error) {
+                return error.what();
+            }
+            return "";
+        }
+
+    }  // namespace
+
+    // Regression: this aborted the process with integer division by zero.
+    TEST(OccupancyCalculatorTest, ZeroBlockSizeIsRejected) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::string message = message_from([] { (void)OccupancyCalculator::calculate_theoretical_occupancy(0, 32, 0, 0); });
+
+        EXPECT_FALSE(message.empty()) << "a block size of zero cannot be divided into";
+        EXPECT_NE(message.find("threads_per_block"), std::string::npos) << message;
+    }
+
+    // Regression: the clamp kept a negative value and returned 1.0.
+    TEST(OccupancyCalculatorTest, NegativeBlockSizeIsRejected) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::string message = message_from([] { (void)OccupancyCalculator::calculate_theoretical_occupancy(-64, 32, 0, 0); });
+
+        EXPECT_FALSE(message.empty()) << "a negative block size is not a small block size; the clamp made it look "
+                                         "like a perfectly occupied one";
+        EXPECT_NE(message.find("-64"), std::string::npos) << message;
+    }
+
+    // Regression: this also aborted the process.
+    TEST(OccupancyCalculatorTest, ZeroRegistersIsTreatedAsNoLimit) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        float occupancy = -1.0f;
+        EXPECT_NO_THROW(occupancy = OccupancyCalculator::calculate_theoretical_occupancy(256, 0, 0, 0));
+
+        EXPECT_TRUE(std::isfinite(occupancy));
+        EXPECT_GT(occupancy, 0.0f) << "a kernel with no register pressure should still be schedulable";
+        EXPECT_LE(occupancy, 1.0f);
+    }
+
+    TEST(OccupancyCalculatorTest, OccupancyIsAFractionOfTheDeviceMaximum) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        for (const int block_size : {32, 64, 128, 256, 512, 1024}) {
+            const float occupancy = OccupancyCalculator::calculate_theoretical_occupancy(block_size, 32, 0, 0);
+            ASSERT_TRUE(std::isfinite(occupancy)) << "block size " << block_size;
+            ASSERT_GE(occupancy, 0.0f) << "block size " << block_size;
+            ASSERT_LE(occupancy, 1.0f) << "block size " << block_size;
+            ASSERT_GT(occupancy, 0.0f) << "block size " << block_size << " should fit at least one block per SM";
+        }
+    }
+
+    TEST(OccupancyCalculatorTest, SmallBlocksAreBoundedByTheBlockLimit) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // My first version of this case asserted that a larger block cannot occupy more
+        // of the SM, and it failed: the implementation is right and the assumption was
+        // wrong. A 32-thread block is capped by maxBlocksPerMultiProcessor (32 blocks x
+        // 32 threads = 1024 of 2048 threads, i.e. 50%), while a 1024-thread block reaches
+        // two blocks per SM and fills it. The interesting property is the cap itself.
+        cudaDeviceProp prop{};
+        ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
+
+        const float small = OccupancyCalculator::calculate_theoretical_occupancy(32, 32, 0, 0);
+
+        // 32 threads times the per-SM block ceiling, over the per-SM thread ceiling.
+        const double expected = std::min(static_cast<double>(prop.maxBlocksPerMultiProcessor) * 32.0 / static_cast<double>(prop.maxThreadsPerMultiProcessor), 1.0);
+        EXPECT_NEAR(small, expected, 1e-4) << "the smallest block is limited by the block count, not the thread count";
+        EXPECT_LT(small, 1.0f) << "32 threads cannot fill a 2048-thread SM at a 32-block limit";
+    }
+
+    TEST(OccupancyCalculatorTest, BlockSizeAboveTheDeviceMaximumIsClamped) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cudaDeviceProp prop{};
+        ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
+
+        // Asking for more threads than the device allows is a caller error the function
+        // tolerates by clamping, so it must still answer with a usable fraction.
+        const float occupancy = OccupancyCalculator::calculate_theoretical_occupancy(prop.maxThreadsPerBlock * 4, 32, 0, 0);
+
+        EXPECT_TRUE(std::isfinite(occupancy));
+        EXPECT_GE(occupancy, 0.0f);
+        EXPECT_LE(occupancy, 1.0f);
+    }
+
+    TEST(OccupancyCalculatorTest, InvalidDeviceReportsZeroRatherThanThrowing) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // Unlike the block size, a bad device index is reported as zero occupancy: no
+        // query succeeded, so there is nothing to compute.
+        float occupancy = -1.0f;
+        EXPECT_NO_THROW(occupancy = OccupancyCalculator::calculate_theoretical_occupancy(256, 32, 0, 9999));
+        EXPECT_FLOAT_EQ(occupancy, 0.0f);
         (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
-
-/// Runs `call` and returns the exception message, or an empty string.
-template <typename Callable>
-std::string message_from(Callable&& call) {
-    try {
-        call();
-    } catch (const std::exception& error) {
-        return error.what();
-    }
-    return "";
-}
-
-}  // namespace
-
-// Regression: this aborted the process with integer division by zero.
-TEST(OccupancyCalculatorTest, ZeroBlockSizeIsRejected) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
     }
 
-    const std::string message = message_from([] {
-        (void)OccupancyCalculator::calculate_theoretical_occupancy(0, 32, 0, 0);
-    });
+    TEST(OccupancyCalculatorTest, RecommendedBlockSizeIsAValidBlockSize) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_FALSE(message.empty()) << "a block size of zero cannot be divided into";
-    EXPECT_NE(message.find("threads_per_block"), std::string::npos) << message;
-}
+        const int block_size = OccupancyCalculator::recommended_block_size(256, 32, 0, 0);
 
-// Regression: the clamp kept a negative value and returned 1.0.
-TEST(OccupancyCalculatorTest, NegativeBlockSizeIsRejected) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        cudaDeviceProp prop{};
+        ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
+
+        EXPECT_GT(block_size, 0);
+        EXPECT_LE(block_size, prop.maxThreadsPerBlock);
+        EXPECT_EQ(block_size % 32, 0) << "the sweep steps by 32 threads, so the result must be a multiple of 32";
     }
-
-    const std::string message = message_from([] {
-        (void)OccupancyCalculator::calculate_theoretical_occupancy(-64, 32, 0, 0);
-    });
-
-    EXPECT_FALSE(message.empty())
-        << "a negative block size is not a small block size; the clamp made it look "
-           "like a perfectly occupied one";
-    EXPECT_NE(message.find("-64"), std::string::npos) << message;
-}
-
-// Regression: this also aborted the process.
-TEST(OccupancyCalculatorTest, ZeroRegistersIsTreatedAsNoLimit) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    float occupancy = -1.0f;
-    EXPECT_NO_THROW(
-        occupancy = OccupancyCalculator::calculate_theoretical_occupancy(256, 0, 0, 0));
-
-    EXPECT_TRUE(std::isfinite(occupancy));
-    EXPECT_GT(occupancy, 0.0f)
-        << "a kernel with no register pressure should still be schedulable";
-    EXPECT_LE(occupancy, 1.0f);
-}
-
-TEST(OccupancyCalculatorTest, OccupancyIsAFractionOfTheDeviceMaximum) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    for (const int block_size : {32, 64, 128, 256, 512, 1024}) {
-        const float occupancy =
-            OccupancyCalculator::calculate_theoretical_occupancy(block_size, 32, 0, 0);
-        ASSERT_TRUE(std::isfinite(occupancy)) << "block size " << block_size;
-        ASSERT_GE(occupancy, 0.0f) << "block size " << block_size;
-        ASSERT_LE(occupancy, 1.0f) << "block size " << block_size;
-        ASSERT_GT(occupancy, 0.0f)
-            << "block size " << block_size << " should fit at least one block per SM";
-    }
-}
-
-TEST(OccupancyCalculatorTest, SmallBlocksAreBoundedByTheBlockLimit) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // My first version of this case asserted that a larger block cannot occupy more
-    // of the SM, and it failed: the implementation is right and the assumption was
-    // wrong. A 32-thread block is capped by maxBlocksPerMultiProcessor (32 blocks x
-    // 32 threads = 1024 of 2048 threads, i.e. 50%), while a 1024-thread block reaches
-    // two blocks per SM and fills it. The interesting property is the cap itself.
-    cudaDeviceProp prop{};
-    ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
-
-    const float small =
-        OccupancyCalculator::calculate_theoretical_occupancy(32, 32, 0, 0);
-
-    // 32 threads times the per-SM block ceiling, over the per-SM thread ceiling.
-    const double expected = std::min(
-        static_cast<double>(prop.maxBlocksPerMultiProcessor) * 32.0 /
-            static_cast<double>(prop.maxThreadsPerMultiProcessor),
-        1.0);
-    EXPECT_NEAR(small, expected, 1e-4)
-        << "the smallest block is limited by the block count, not the thread count";
-    EXPECT_LT(small, 1.0f)
-        << "32 threads cannot fill a 2048-thread SM at a 32-block limit";
-}
-
-TEST(OccupancyCalculatorTest, BlockSizeAboveTheDeviceMaximumIsClamped) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    cudaDeviceProp prop{};
-    ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
-
-    // Asking for more threads than the device allows is a caller error the function
-    // tolerates by clamping, so it must still answer with a usable fraction.
-    const float occupancy = OccupancyCalculator::calculate_theoretical_occupancy(
-        prop.maxThreadsPerBlock * 4, 32, 0, 0);
-
-    EXPECT_TRUE(std::isfinite(occupancy));
-    EXPECT_GE(occupancy, 0.0f);
-    EXPECT_LE(occupancy, 1.0f);
-}
-
-TEST(OccupancyCalculatorTest, InvalidDeviceReportsZeroRatherThanThrowing) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    // Unlike the block size, a bad device index is reported as zero occupancy: no
-    // query succeeded, so there is nothing to compute.
-    float occupancy = -1.0f;
-    EXPECT_NO_THROW(occupancy =
-                        OccupancyCalculator::calculate_theoretical_occupancy(256, 32, 0,
-                                                                           9999));
-    EXPECT_FLOAT_EQ(occupancy, 0.0f);
-    (void)cudaGetLastError();
-}
-
-TEST(OccupancyCalculatorTest, RecommendedBlockSizeIsAValidBlockSize) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
-
-    const int block_size = OccupancyCalculator::recommended_block_size(256, 32, 0, 0);
-
-    cudaDeviceProp prop{};
-    ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
-
-    EXPECT_GT(block_size, 0);
-    EXPECT_LE(block_size, prop.maxThreadsPerBlock);
-    EXPECT_EQ(block_size % 32, 0)
-        << "the sweep steps by 32 threads, so the result must be a multiple of 32";
-}
 
 }  // namespace cuda::performance::test

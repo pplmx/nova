@@ -3,9 +3,7 @@
 
 class MemoryMetricsTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(MemoryMetricsTest, UsedReturnsNonNegativeValue) {

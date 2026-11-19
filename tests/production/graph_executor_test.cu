@@ -9,17 +9,15 @@
 
 namespace {
 
-void reset() {
-    cudaDeviceReset();
-}
+    void reset() {
+        cudaDeviceReset();
+    }
 
-}
+}  // namespace
 
 class GraphExecutorTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(GraphExecutorTest, DefaultConstruction) {
@@ -167,9 +165,7 @@ TEST_F(GraphExecutorTest, ReuseAfterReset) {
 
 class MemoryNodeTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        reset();
-    }
+    void SetUp() override { reset(); }
 };
 
 TEST_F(MemoryNodeTest, DefaultConstruction) {
@@ -263,8 +259,7 @@ TEST_F(MemoryNodeTest, ScopedGraphBuffer) {
     // throws - that is the documented limitation. Assert it, then restore a
     // clean CUDA state so this negative test cannot invalidate the capture on
     // `stream` and poison later GPU work in the same process.
-    EXPECT_THROW({ cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 100); },
-                 cuda::device::CudaException);
+    EXPECT_THROW({ cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 100); }, cuda::device::CudaException);
 
     // The failed allocation invalidated the capture; abort whatever capture
     // state is left on the stream and drain the sticky error before returning.
@@ -284,8 +279,7 @@ TEST_F(MemoryNodeTest, ScopedGraphBufferMove) {
 
     executor.begin_capture(stream);
 
-    EXPECT_THROW({ cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 50); },
-                 cuda::device::CudaException);
+    EXPECT_THROW({ cuda::production::ScopedGraphBuffer<float> buffer(manager, executor, nullptr, 50); }, cuda::device::CudaException);
 
     cudaGraph_t abandoned = nullptr;
     if (cudaStreamEndCapture(stream.get(), &abandoned) == cudaSuccess && abandoned != nullptr) {

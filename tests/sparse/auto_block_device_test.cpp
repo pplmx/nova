@@ -36,84 +36,83 @@
 
 namespace auto_block_device_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-// Regression: the default was a literal device 0.
-TEST(AutoBlockDeviceTest, TheDefaultUsesTheCurrentDevice) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    // Regression: the default was a literal device 0.
+    TEST(AutoBlockDeviceTest, TheDefaultUsesTheCurrentDevice) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    int original = 0;
-    ASSERT_EQ(cudaGetDevice(&original), cudaSuccess);
+        int original = 0;
+        ASSERT_EQ(cudaGetDevice(&original), cudaSuccess);
 
-    // Pick a device that is not 0 when one exists, so "used the current device" and
-    // "used device 0" are distinguishable by construction.
-    int count = 0;
-    ASSERT_EQ(cudaGetDeviceCount(&count), cudaSuccess);
-    const int target = count > 1 ? 1 : 0;
-    ASSERT_EQ(cudaSetDevice(target), cudaSuccess);
+        // Pick a device that is not 0 when one exists, so "used the current device" and
+        // "used device 0" are distinguishable by construction.
+        int count = 0;
+        ASSERT_EQ(cudaGetDeviceCount(&count), cudaSuccess);
+        const int target = count > 1 ? 1 : 0;
+        ASSERT_EQ(cudaSetDevice(target), cudaSuccess);
 
-    cuda::detail::KernelLauncher launcher;
-    launcher.auto_block();
+        cuda::detail::KernelLauncher launcher;
+        launcher.auto_block();
 
-    const int expected = cuda::performance::get_optimal_block_size(target);
-    EXPECT_EQ(static_cast<int>(launcher.get_block().x), expected)
-        << "auto_block() should size for device " << target;
+        const int expected = cuda::performance::get_optimal_block_size(target);
+        EXPECT_EQ(static_cast<int>(launcher.get_block().x), expected) << "auto_block() should size for device " << target;
 
-    ASSERT_EQ(cudaSetDevice(original), cudaSuccess);
-}
-
-TEST(AutoBlockDeviceTest, AnExplicitDeviceIdIsHonoured) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        ASSERT_EQ(cudaSetDevice(original), cudaSuccess);
     }
 
-    cuda::detail::KernelLauncher launcher;
-    launcher.auto_block(0);
+    TEST(AutoBlockDeviceTest, AnExplicitDeviceIdIsHonoured) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const int expected = cuda::performance::get_optimal_block_size(0);
-    EXPECT_EQ(static_cast<int>(launcher.get_block().x), expected);
-}
+        cuda::detail::KernelLauncher launcher;
+        launcher.auto_block(0);
 
-TEST(AutoBlockDeviceTest, TheBlockSizeIsAlwaysPositiveAndBounded) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        const int expected = cuda::performance::get_optimal_block_size(0);
+        EXPECT_EQ(static_cast<int>(launcher.get_block().x), expected);
     }
 
-    // Whatever the resolution path, the value handed to the launcher has to be a usable
-    // block size: positive, and a multiple of the warp size on this hardware.
-    cuda::detail::KernelLauncher launcher;
-    launcher.auto_block();
+    TEST(AutoBlockDeviceTest, TheBlockSizeIsAlwaysPositiveAndBounded) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const int block = static_cast<int>(launcher.get_block().x);
-    EXPECT_GT(block, 0);
-    EXPECT_LE(block, 1024) << "no CUDA device supports a block above 1024 threads";
-}
+        // Whatever the resolution path, the value handed to the launcher has to be a usable
+        // block size: positive, and a multiple of the warp size on this hardware.
+        cuda::detail::KernelLauncher launcher;
+        launcher.auto_block();
 
-TEST(AutoBlockDeviceTest, ChainingStillReturnsTheLauncher) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        const int block = static_cast<int>(launcher.get_block().x);
+        EXPECT_GT(block, 0);
+        EXPECT_LE(block, 1024) << "no CUDA device supports a block above 1024 threads";
     }
 
-    // auto_block participates in the fluent interface; a change to its body must not
-    // break that.
-    cuda::detail::KernelLauncher launcher;
-    auto& chained = launcher.auto_block().grid({4, 1, 1});
+    TEST(AutoBlockDeviceTest, ChainingStillReturnsTheLauncher) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_EQ(&chained, &launcher);
-    EXPECT_EQ(launcher.get_grid().x, 4u);
-}
+        // auto_block participates in the fluent interface; a change to its body must not
+        // break that.
+        cuda::detail::KernelLauncher launcher;
+        auto& chained = launcher.auto_block().grid({4, 1, 1});
+
+        EXPECT_EQ(&chained, &launcher);
+        EXPECT_EQ(launcher.get_grid().x, 4u);
+    }
 
 }  // namespace auto_block_device_test

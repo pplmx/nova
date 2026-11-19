@@ -39,8 +39,7 @@ __global__ __launch_bounds__(256, 2) void sharpenKernel(const uint8_t* input, ui
                 if (dx == 0 && dy == 0) {
                     continue;  // the centre is handled below with its -4 weight
                 }
-                neighbours +=
-                    static_cast<float>(input[((y + dy) * width + (x + dx)) * 3 + c]);
+                neighbours += static_cast<float>(input[((y + dy) * width + (x + dx)) * 3 + c]);
             }
         }
 

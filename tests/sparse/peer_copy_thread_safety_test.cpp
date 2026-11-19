@@ -21,55 +21,55 @@
 
 namespace peer_copy_thread_safety_test {
 
-namespace {
+    namespace {
 
-bool two_devices_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count >= 2;
-}
+        bool two_devices_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count >= 2;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(PeerCopyThreadSafetyTest, EnablingAPairThatIsUnavailableFailsLoudly) {
-    if (!two_devices_available()) {
-        GTEST_SKIP() << "need at least two devices";
-    }
+    TEST(PeerCopyThreadSafetyTest, EnablingAPairThatIsUnavailableFailsLoudly) {
+        if (!two_devices_available()) {
+            GTEST_SKIP() << "need at least two devices";
+        }
 
-    cuda::mesh::PeerCopy copier;
+        cuda::mesh::PeerCopy copier;
 
-    // The set that enable_peer_access() maintains is keyed on the ordered device pair, and
-    // the two calls below exercise it without needing P2P to exist on this machine. The
-    // existing PeerCopyTest.PeerAccessAvailableMultiGPU notes that the answer "may be true or
-    // false depending on hardware", so requiring true here would make this case a hardware
-    // probe rather than a check of the class.
-    const bool available = copier.peer_access_available(0, 1);
-    if (!available) {
-        // A pair that cannot access itself fails loudly instead of silently doing nothing —
-        // the behaviour the set's lookup guards.
-        EXPECT_THROW(copier.enable_peer_access(0, 1), cuda::device::CudaException);
-        return;
-    }
+        // The set that enable_peer_access() maintains is keyed on the ordered device pair, and
+        // the two calls below exercise it without needing P2P to exist on this machine. The
+        // existing PeerCopyTest.PeerAccessAvailableMultiGPU notes that the answer "may be true or
+        // false depending on hardware", so requiring true here would make this case a hardware
+        // probe rather than a check of the class.
+        const bool available = copier.peer_access_available(0, 1);
+        if (!available) {
+            // A pair that cannot access itself fails loudly instead of silently doing nothing —
+            // the behaviour the set's lookup guards.
+            EXPECT_THROW(copier.enable_peer_access(0, 1), cuda::device::CudaException);
+            return;
+        }
 
-    EXPECT_NO_THROW(copier.enable_peer_access(0, 1));
-}
-
-TEST(PeerCopyThreadSafetyTest, SelfAccessNeedsNoEnablingAndNeverTouchesTheSet) {
-    if (!two_devices_available()) {
-        GTEST_SKIP() << "need at least two devices";
+        EXPECT_NO_THROW(copier.enable_peer_access(0, 1));
     }
 
-    cuda::mesh::PeerCopy copier;
+    TEST(PeerCopyThreadSafetyTest, SelfAccessNeedsNoEnablingAndNeverTouchesTheSet) {
+        if (!two_devices_available()) {
+            GTEST_SKIP() << "need at least two devices";
+        }
 
-    // Self-access returns before the set is consulted (enable_peer_access's first branch), so
-    // it is safe no matter what state the set is in — the one path that is genuinely
-    // thread-safe today.
-    EXPECT_TRUE(copier.peer_access_available(0, 0));
-    EXPECT_NO_THROW(copier.enable_peer_access(0, 0));
-    EXPECT_NO_THROW(copier.enable_peer_access(1, 1));
-}
+        cuda::mesh::PeerCopy copier;
+
+        // Self-access returns before the set is consulted (enable_peer_access's first branch), so
+        // it is safe no matter what state the set is in — the one path that is genuinely
+        // thread-safe today.
+        EXPECT_TRUE(copier.peer_access_available(0, 0));
+        EXPECT_NO_THROW(copier.enable_peer_access(0, 0));
+        EXPECT_NO_THROW(copier.enable_peer_access(1, 1));
+    }
 
 }  // namespace peer_copy_thread_safety_test

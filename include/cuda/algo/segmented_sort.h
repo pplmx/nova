@@ -8,26 +8,30 @@
 
 namespace cuda::algo::segmented {
 
-template <typename T>
-void sort_by_key(const T* keys, const int* segment_ids, T* out_keys, int* out_segments,
-                 size_t count, size_t num_segments, cudaStream_t stream = nullptr);
+    template <typename T>
+    void sort_by_key(const T* keys, const int* segment_ids, T* out_keys, int* out_segments, size_t count, size_t num_segments, cudaStream_t stream = nullptr);
 
-template <typename T>
-void sort_by_key_inplace(T* keys, int* segment_ids, size_t count,
-                         size_t num_segments, cudaStream_t stream = nullptr);
+    template <typename T>
+    void sort_by_key_inplace(T* keys, int* segment_ids, size_t count, size_t num_segments, cudaStream_t stream = nullptr);
 
-template <typename Key, typename Value>
-void sort_pairs_by_key(const Key* keys, const Value* values, const int* segment_ids,
-                       Key* out_keys, Value* out_values, int* out_segments,
-                       size_t count, size_t num_segments, cudaStream_t stream = nullptr);
+    template <typename Key, typename Value>
+    void sort_pairs_by_key(const Key* keys,
+                           const Value* values,
+                           const int* segment_ids,
+                           Key* out_keys,
+                           Value* out_values,
+                           int* out_segments,
+                           size_t count,
+                           size_t num_segments,
+                           cudaStream_t stream = nullptr);
 
-struct SegmentedSortConfig {
-    size_t max_segments_per_block = 4;
-    size_t elements_per_segment_block = 256;
-    bool stable = true;
-};
+    struct SegmentedSortConfig {
+        size_t max_segments_per_block = 4;
+        size_t elements_per_segment_block = 256;
+        bool stable = true;
+    };
 
-void set_config(const SegmentedSortConfig& config);
-SegmentedSortConfig get_config();
+    void set_config(const SegmentedSortConfig& config);
+    SegmentedSortConfig get_config();
 
 }  // namespace cuda::algo::segmented

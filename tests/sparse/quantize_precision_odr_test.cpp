@@ -29,30 +29,30 @@
 
 namespace quantize_precision_odr_test {
 
-TEST(QuantizePrecisionOdrTest, BothHeadersCanBeIncludedTogether) {
-    // Reaching this point at all is the regression check.
-    SUCCEED();
-}
+    TEST(QuantizePrecisionOdrTest, BothHeadersCanBeIncludedTogether) {
+        // Reaching this point at all is the regression check.
+        SUCCEED();
+    }
 
-TEST(QuantizePrecisionOdrTest, TheEnumCoversEveryPrecisionQuantizeOffers) {
-    // The surviving definition is the wider one, so the FP8 formats qat.hpp needs are
-    // present. Had the three-value version won, these two names would not exist.
-    const nova::quantize::Precision e4m3 = nova::quantize::Precision::FP8_E4M3;
-    const nova::quantize::Precision e5m2 = nova::quantize::Precision::FP8_E5M2;
+    TEST(QuantizePrecisionOdrTest, TheEnumCoversEveryPrecisionQuantizeOffers) {
+        // The surviving definition is the wider one, so the FP8 formats qat.hpp needs are
+        // present. Had the three-value version won, these two names would not exist.
+        const nova::quantize::Precision e4m3 = nova::quantize::Precision::FP8_E4M3;
+        const nova::quantize::Precision e5m2 = nova::quantize::Precision::FP8_E5M2;
 
-    EXPECT_NE(static_cast<int>(e4m3), static_cast<int>(e5m2));
+        EXPECT_NE(static_cast<int>(e4m3), static_cast<int>(e5m2));
 
-    const nova::quantize::Precision fp32 = nova::quantize::Precision::FP32;
-    const nova::quantize::Precision int8 = nova::quantize::Precision::INT8;
-    EXPECT_NE(static_cast<int>(fp32), static_cast<int>(int8));
-}
+        const nova::quantize::Precision fp32 = nova::quantize::Precision::FP32;
+        const nova::quantize::Precision int8 = nova::quantize::Precision::INT8;
+        EXPECT_NE(static_cast<int>(fp32), static_cast<int>(int8));
+    }
 
-TEST(QuantizePrecisionOdrTest, TheOpsApiAcceptsTheSharedEnum) {
-    // mixed_precision() takes the enum by value. If quantize_ops.hpp still had its own
-    // definition, this call would need a conversion between two distinct types that happen
-    // to share a name.
-    const auto precision = nova::quantize::Precision::FP32;
-    EXPECT_EQ(precision, nova::quantize::Precision::FP32);
-}
+    TEST(QuantizePrecisionOdrTest, TheOpsApiAcceptsTheSharedEnum) {
+        // mixed_precision() takes the enum by value. If quantize_ops.hpp still had its own
+        // definition, this call would need a conversion between two distinct types that happen
+        // to share a name.
+        const auto precision = nova::quantize::Precision::FP32;
+        EXPECT_EQ(precision, nova::quantize::Precision::FP32);
+    }
 
 }  // namespace quantize_precision_odr_test

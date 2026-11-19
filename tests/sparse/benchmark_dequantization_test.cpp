@@ -25,76 +25,73 @@
 
 namespace benchmark_dequantization_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-nova::quantize::benchmark::QuantizationBenchmark::Config small_config() {
-    nova::quantize::benchmark::QuantizationBenchmark::Config config;
-    config.warmup_runs = 1;
-    config.benchmark_runs = 2;
-    config.verify_accuracy = false;
-    return config;
-}
+        nova::quantize::benchmark::QuantizationBenchmark::Config small_config() {
+            nova::quantize::benchmark::QuantizationBenchmark::Config config;
+            config.warmup_runs = 1;
+            config.benchmark_runs = 2;
+            config.verify_accuracy = false;
+            return config;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(BenchmarkDequantizationTest, TheMeasurementRunsAndReportsItsName) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(BenchmarkDequantizationTest, TheMeasurementRunsAndReportsItsName) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    nova::quantize::benchmark::QuantizationBenchmark bench(small_config());
-    const std::vector<int8_t> data(256, 4);
+        nova::quantize::benchmark::QuantizationBenchmark bench(small_config());
+        const std::vector<int8_t> data(256, 4);
 
-    const auto result = bench.benchmark_dequantization(data);
+        const auto result = bench.benchmark_dequantization(data);
 
-    EXPECT_FALSE(result.name.empty());
-    EXPECT_NE(result.name.find("Dequantization"), std::string::npos);
-    EXPECT_EQ(result.batch_size, static_cast<int>(data.size()));
-    EXPECT_EQ(result.num_samples, 2);
-    EXPECT_GE(result.latency_us, 0.0F) << "a duration cannot be negative";
-    EXPECT_GE(result.throughput_gbps, 0.0F);
-}
-
-TEST(BenchmarkDequantizationTest, ItAcceptsAPrecisionArgument) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_FALSE(result.name.empty());
+        EXPECT_NE(result.name.find("Dequantization"), std::string::npos);
+        EXPECT_EQ(result.batch_size, static_cast<int>(data.size()));
+        EXPECT_EQ(result.num_samples, 2);
+        EXPECT_GE(result.latency_us, 0.0F) << "a duration cannot be negative";
+        EXPECT_GE(result.throughput_gbps, 0.0F);
     }
 
-    nova::quantize::benchmark::QuantizationBenchmark bench(small_config());
-    const std::vector<int8_t> data(128, -3);
+    TEST(BenchmarkDequantizationTest, ItAcceptsAPrecisionArgument) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const auto fp32 = bench.benchmark_dequantization(data,
-        nova::quantize::Precision::FP32);
-    const auto mixed = bench.benchmark_dequantization(data,
-        nova::quantize::Precision::FP16);
+        nova::quantize::benchmark::QuantizationBenchmark bench(small_config());
+        const std::vector<int8_t> data(128, -3);
 
-    EXPECT_NE(fp32.name, mixed.name)
-        << "the requested precision should be visible in the result";
-}
+        const auto fp32 = bench.benchmark_dequantization(data, nova::quantize::Precision::FP32);
+        const auto mixed = bench.benchmark_dequantization(data, nova::quantize::Precision::FP16);
 
-TEST(BenchmarkDequantizationTest, EmptyInputDoesNotCrash) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_NE(fp32.name, mixed.name) << "the requested precision should be visible in the result";
     }
 
-    nova::quantize::benchmark::QuantizationBenchmark bench(small_config());
-    const std::vector<int8_t> empty;
+    TEST(BenchmarkDequantizationTest, EmptyInputDoesNotCrash) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    // dequantize_int8_to_f32 guards n == 0, and cudaMalloc(0) is legal, so this should
-    // return a result with no work in it rather than faulting.
-    EXPECT_NO_THROW({
-        const auto result = bench.benchmark_dequantization(empty);
-        EXPECT_EQ(result.batch_size, 0);
-    });
-}
+        nova::quantize::benchmark::QuantizationBenchmark bench(small_config());
+        const std::vector<int8_t> empty;
+
+        // dequantize_int8_to_f32 guards n == 0, and cudaMalloc(0) is legal, so this should
+        // return a result with no work in it rather than faulting.
+        EXPECT_NO_THROW({
+            const auto result = bench.benchmark_dequantization(empty);
+            EXPECT_EQ(result.batch_size, 0);
+        });
+    }
 
 }  // namespace benchmark_dequantization_test

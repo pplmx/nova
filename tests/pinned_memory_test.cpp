@@ -95,9 +95,7 @@ TEST_F(PinnedMemoryTest, MakePinned) {
 
 class PinnedBufferTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(PinnedBufferTest, CopyFromVector) {

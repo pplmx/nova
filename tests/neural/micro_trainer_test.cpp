@@ -27,10 +27,10 @@ using namespace cuda::neural::optimizers;
 
 namespace {
 
-cuda::nccl::NcclContext& uninitialized_ctx() {
-    static cuda::nccl::NcclContext* ctx = new cuda::nccl::NcclContext();
-    return *ctx;
-}
+    cuda::nccl::NcclContext& uninitialized_ctx() {
+        static cuda::nccl::NcclContext* ctx = new cuda::nccl::NcclContext();
+        return *ctx;
+    }
 
 }  // namespace
 
@@ -46,45 +46,44 @@ protected:
 // [m x hidden] is treated as logits over 8 classes.
 namespace {
 
-// Generate the dataset: gaussian inputs + a random full-rank label matrix
-// (the "teacher"). The 2-layer siLU MLP must learn to invert it.
-void make_task(std::vector<float>& X, std::vector<int>& Y, int m, int h,
-               unsigned seed) {
-    std::mt19937 rng(seed);
-    std::normal_distribution<float> norm(0.0f, 1.0f);
-    X.resize(static_cast<size_t>(m) * h);
-    Y.resize(m);
-    std::vector<float> T(static_cast<size_t>(h) * h);
-    for (size_t i = 0; i < T.size(); ++i) {
-        T[i] = norm(rng);
-    }
-    for (int i = 0; i < m; ++i) {
-        for (int d = 0; d < h; ++d) {
-            X[i * h + d] = norm(rng);
+    // Generate the dataset: gaussian inputs + a random full-rank label matrix
+    // (the "teacher"). The 2-layer siLU MLP must learn to invert it.
+    void make_task(std::vector<float>& X, std::vector<int>& Y, int m, int h, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::normal_distribution<float> norm(0.0f, 1.0f);
+        X.resize(static_cast<size_t>(m) * h);
+        Y.resize(m);
+        std::vector<float> T(static_cast<size_t>(h) * h);
+        for (size_t i = 0; i < T.size(); ++i) {
+            T[i] = norm(rng);
         }
-        double best = -1e30;
-        int argmax = 0;
-        for (int c = 0; c < h; ++c) {
-            double acc = 0.0;
+        for (int i = 0; i < m; ++i) {
             for (int d = 0; d < h; ++d) {
-                acc += static_cast<double>(X[i * h + d]) * T[c * h + d];
+                X[i * h + d] = norm(rng);
             }
-            if (acc > best) {
-                best = acc;
-                argmax = c;
+            double best = -1e30;
+            int argmax = 0;
+            for (int c = 0; c < h; ++c) {
+                double acc = 0.0;
+                for (int d = 0; d < h; ++d) {
+                    acc += static_cast<double>(X[i * h + d]) * T[c * h + d];
+                }
+                if (acc > best) {
+                    best = acc;
+                    argmax = c;
+                }
             }
+            Y[i] = argmax;
         }
-        Y[i] = argmax;
     }
-}
 
-void fill_random(float* data, size_t count, unsigned seed) {
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = dist(rng);
+    void fill_random(float* data, size_t count, unsigned seed) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = dist(rng);
+        }
     }
-}
 
 }  // namespace
 

@@ -23,8 +23,7 @@ namespace cuda::algo {
 
     }  // namespace
 
-    void matrixAdd(const memory::Buffer<float>& a, const memory::Buffer<float>& b,
-                   memory::Buffer<float>& c, int numRows, int numCols) {
+    void matrixAdd(const memory::Buffer<float>& a, const memory::Buffer<float>& b, memory::Buffer<float>& c, int numRows, int numCols) {
         // Reject a shape the kernel cannot cover instead of launching a grid of
         // zero blocks (which CUDA rejects) or reading past the buffers.
         if (numRows <= 0 || numCols <= 0) {
@@ -33,9 +32,7 @@ namespace cuda::algo {
 
         const size_t required = static_cast<size_t>(numRows) * static_cast<size_t>(numCols);
         if (a.size() < required || b.size() < required || c.size() < required) {
-            throw std::invalid_argument(
-                "matrixAdd: buffers must hold at least numRows*numCols = " +
-                std::to_string(required) + " elements");
+            throw std::invalid_argument("matrixAdd: buffers must hold at least numRows*numCols = " + std::to_string(required) + " elements");
         }
 
         detail::KernelLauncher launcher;

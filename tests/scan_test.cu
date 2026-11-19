@@ -148,10 +148,8 @@ TEST_F(ScanTest, ExceedsMaxSize) {
     std::vector<int> h_large(largeSize, 1);
     large_input.copy_from(h_large.data(), largeSize);
 
-    EXPECT_THROW(cuda::algo::exclusiveScan(large_input, large_output, largeSize),
-                 ScanSizeException);
-    EXPECT_THROW(cuda::algo::inclusiveScan(large_input, large_output, largeSize),
-                 ScanSizeException);
+    EXPECT_THROW(cuda::algo::exclusiveScan(large_input, large_output, largeSize), ScanSizeException);
+    EXPECT_THROW(cuda::algo::inclusiveScan(large_input, large_output, largeSize), ScanSizeException);
 }
 
 TEST_F(ScanTest, MaximumSize) {

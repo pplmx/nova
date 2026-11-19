@@ -4,9 +4,7 @@
 
 class DeviceInfoTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(DeviceInfoTest, GetDevicePropertiesReturnsValidComputeCapability) {
@@ -74,9 +72,7 @@ TEST_F(DeviceInfoTest, MultiprocessorCountIsPositive) {
 
 class KernelLauncherAutoTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(KernelLauncherAutoTest, AutoBlockSetsCorrectBlockSize) {

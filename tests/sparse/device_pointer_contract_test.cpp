@@ -25,58 +25,58 @@
 
 namespace device_pointer_contract_test {
 
-namespace {
+    namespace {
 
-bool device_available() {
-    int count = 0;
-    if (cudaGetDeviceCount(&count) != cudaSuccess) {
-        (void)cudaGetLastError();
-        return false;
-    }
-    return count > 0;
-}
+        bool device_available() {
+            int count = 0;
+            if (cudaGetDeviceCount(&count) != cudaSuccess) {
+                (void)cudaGetLastError();
+                return false;
+            }
+            return count > 0;
+        }
 
-}  // namespace
+    }  // namespace
 
-TEST(DevicePointerContractTest, ReduceSumWorksOnDeviceData) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
-    }
+    TEST(DevicePointerContractTest, ReduceSumWorksOnDeviceData) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    const std::vector<float> host{1.0F, 2.0F, 3.0F, 4.0F};
+        const std::vector<float> host{1.0F, 2.0F, 3.0F, 4.0F};
 
-    // The documented way: stage onto the device, then pass the device pointer.
-    cuda::memory::Buffer<float> device(host.size());
-    device.copy_from(host.data(), host.size());
+        // The documented way: stage onto the device, then pass the device pointer.
+        cuda::memory::Buffer<float> device(host.size());
+        device.copy_from(host.data(), host.size());
 
-    const float sum = cuda::algo::reduce_sum(device.data(), host.size());
-    EXPECT_FLOAT_EQ(sum, 10.0F) << "the staged path is the supported one";
-}
-
-TEST(DevicePointerContractTest, ReduceMaxAndMinAgreeOnTheSameDeviceData) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        const float sum = cuda::algo::reduce_sum(device.data(), host.size());
+        EXPECT_FLOAT_EQ(sum, 10.0F) << "the staged path is the supported one";
     }
 
-    const std::vector<float> host{-5.0F, 3.0F, 9.0F, 0.0F};
-    cuda::memory::Buffer<float> device(host.size());
-    device.copy_from(host.data(), host.size());
+    TEST(DevicePointerContractTest, ReduceMaxAndMinAgreeOnTheSameDeviceData) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
 
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_max(device.data(), host.size()), 9.0F);
-    EXPECT_FLOAT_EQ(cuda::algo::reduce_min(device.data(), host.size()), -5.0F);
-}
+        const std::vector<float> host{-5.0F, 3.0F, 9.0F, 0.0F};
+        cuda::memory::Buffer<float> device(host.size());
+        device.copy_from(host.data(), host.size());
 
-TEST(DevicePointerContractTest, AnEmptyDeviceBufferReducesToTheIdentity) {
-    if (!device_available()) {
-        GTEST_SKIP() << "no CUDA device";
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_max(device.data(), host.size()), 9.0F);
+        EXPECT_FLOAT_EQ(cuda::algo::reduce_min(device.data(), host.size()), -5.0F);
     }
 
-    // Size zero is the boundary the kernels have to handle without launching a bad grid.
-    cuda::memory::Buffer<float> device(0);
-    EXPECT_NO_THROW({
-        const float sum = cuda::algo::reduce_sum(device.data(), 0);
-        EXPECT_EQ(sum, 0.0F) << "an empty sum is the additive identity";
-    });
-}
+    TEST(DevicePointerContractTest, AnEmptyDeviceBufferReducesToTheIdentity) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        // Size zero is the boundary the kernels have to handle without launching a bad grid.
+        cuda::memory::Buffer<float> device(0);
+        EXPECT_NO_THROW({
+            const float sum = cuda::algo::reduce_sum(device.data(), 0);
+            EXPECT_EQ(sum, 0.0F) << "an empty sum is the additive identity";
+        });
+    }
 
 }  // namespace device_pointer_contract_test

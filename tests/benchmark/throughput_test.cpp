@@ -6,9 +6,7 @@
 
 class ThroughputTest : public ::testing::Test {
 protected:
-    void SetUp() override {
-        cudaDeviceReset();
-    }
+    void SetUp() override { cudaDeviceReset(); }
 };
 
 TEST_F(ThroughputTest, MemoryCopyThroughputInGBps) {

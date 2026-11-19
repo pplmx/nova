@@ -30,49 +30,45 @@
 
 namespace cuda::performance::bandwidth::test {
 
-// Regression: this reported all cache counters as available while measuring nothing.
-TEST(CacheAnalyzerHonestyTest, AvailabilityIsNotClaimedWithoutCUPTI) {
-    CacheAnalyzer analyzer;
+    // Regression: this reported all cache counters as available while measuring nothing.
+    TEST(CacheAnalyzerHonestyTest, AvailabilityIsNotClaimedWithoutCUPTI) {
+        CacheAnalyzer analyzer;
 
-    EXPECT_FALSE(analyzer.is_available())
-        << "no CUPTI code exists in this build, so cache counters are not available";
-    EXPECT_FALSE(analyzer.get_error_message().empty())
-        << "unavailability must come with a reason a caller can act on";
-}
+        EXPECT_FALSE(analyzer.is_available()) << "no CUPTI code exists in this build, so cache counters are not available";
+        EXPECT_FALSE(analyzer.get_error_message().empty()) << "unavailability must come with a reason a caller can act on";
+    }
 
-// Regression: analyze() returned 0.85 / 0.95 / 0.99 as if measured.
-TEST(CacheAnalyzerHonestyTest, AnalyzeDoesNotInventHitRates) {
-    CacheAnalyzer analyzer;
+    // Regression: analyze() returned 0.85 / 0.95 / 0.99 as if measured.
+    TEST(CacheAnalyzerHonestyTest, AnalyzeDoesNotInventHitRates) {
+        CacheAnalyzer analyzer;
 
-    const auto metrics = analyzer.analyze(0);
+        const auto metrics = analyzer.analyze(0);
 
-    EXPECT_FALSE(metrics.available);
-    EXPECT_FALSE(metrics.error_message.empty());
-}
-
-// Regression: analyze_kernel() picked different fake numbers from the kernel name.
-TEST(CacheAnalyzerHonestyTest, KernelNameDoesNotChangeInventedNumbers) {
-    CacheAnalyzer analyzer;
-
-    const auto shared = analyzer.analyze_kernel("shared_matmul", 0);
-    const auto global = analyzer.analyze_kernel("global_scan", 0);
-    const auto plain = analyzer.analyze_kernel("matmul_kernel", 0);
-
-    for (const auto& metrics : {shared, global, plain}) {
-        EXPECT_FALSE(metrics.available)
-            << "none of these kernels was profiled";
+        EXPECT_FALSE(metrics.available);
         EXPECT_FALSE(metrics.error_message.empty());
     }
-}
 
-TEST(CacheAnalyzerHonestyTest, AnUnavailableResultSaysWhy) {
-    // The message is the only guidance a caller gets, so it should point at the missing
-    // dependency rather than being a generic failure.
-    CacheAnalyzer analyzer;
-    const auto metrics = analyzer.analyze(0);
+    // Regression: analyze_kernel() picked different fake numbers from the kernel name.
+    TEST(CacheAnalyzerHonestyTest, KernelNameDoesNotChangeInventedNumbers) {
+        CacheAnalyzer analyzer;
 
-    EXPECT_NE(metrics.error_message.find("CUPTI"), std::string::npos)
-        << "the error should name the missing dependency: " << metrics.error_message;
-}
+        const auto shared = analyzer.analyze_kernel("shared_matmul", 0);
+        const auto global = analyzer.analyze_kernel("global_scan", 0);
+        const auto plain = analyzer.analyze_kernel("matmul_kernel", 0);
+
+        for (const auto& metrics : {shared, global, plain}) {
+            EXPECT_FALSE(metrics.available) << "none of these kernels was profiled";
+            EXPECT_FALSE(metrics.error_message.empty());
+        }
+    }
+
+    TEST(CacheAnalyzerHonestyTest, AnUnavailableResultSaysWhy) {
+        // The message is the only guidance a caller gets, so it should point at the missing
+        // dependency rather than being a generic failure.
+        CacheAnalyzer analyzer;
+        const auto metrics = analyzer.analyze(0);
+
+        EXPECT_NE(metrics.error_message.find("CUPTI"), std::string::npos) << "the error should name the missing dependency: " << metrics.error_message;
+    }
 
 }  // namespace cuda::performance::bandwidth::test

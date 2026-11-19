@@ -15,9 +15,9 @@ protected:
     std::vector<float> h_a_;
     std::vector<float> h_b_;
     std::vector<float> h_c_;
-    float *d_a_ = nullptr;
-    float *d_b_ = nullptr;
-    float *d_c_ = nullptr;
+    float* d_a_ = nullptr;
+    float* d_b_ = nullptr;
+    float* d_c_ = nullptr;
 
     void SetUp() override {
         CUDA_CHECK(cudaSetDevice(0));
@@ -44,9 +44,7 @@ protected:
         CUDA_CHECK(cudaMemcpy(d_b_, h_b_.data(), size_ * sizeof(float), cudaMemcpyHostToDevice));
     }
 
-    void downloadC() {
-        CUDA_CHECK(cudaMemcpy(h_c_.data(), d_c_, size_ * sizeof(float), cudaMemcpyDeviceToHost));
-    }
+    void downloadC() { CUDA_CHECK(cudaMemcpy(h_c_.data(), d_c_, size_ * sizeof(float), cudaMemcpyDeviceToHost)); }
 };
 
 TEST_F(MatrixOpsTest, ElementwiseAdd) {
