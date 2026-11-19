@@ -1,63 +1,85 @@
+# Label rules for srvaroa/labeler, used by .github/workflows/labeler.yml.
+#
+# Two things were wrong here, and together they made the action a no-op: it ran
+# 83 times, reported success every time, and applied zero labels across all 13
+# issues and pull requests.
+#
+# 1. Every label named below except the three issue ones did not exist in the
+#    repository. The action replaces an issue's label set through
+#    PUT /issues/{n}/labels, which does not create labels, and it never fails
+#    the run (fail_on_error defaults to false), so each unknown name was
+#    rejected and the failure swallowed. The rules now use the labels the
+#    repository actually has (bug, documentation, enhancement, ...).
+#
+# 2. The two issue rules used double-quoted regexes containing \b. YAML
+#    resolves \b inside a double-quoted scalar to a literal backspace (0x08),
+#    so the pattern required a backspace character in the title and could
+#    never match. Single quotes keep \b for the regex engine.
+#
+# `issues: true` is also new: without it the action ignores issue events even
+# though the workflow subscribes to them, so the 16 issue-triggered runs were
+# discarded ("Issues must be explicitly enabled").
+
 version: 1
+issues: true
 
 labels:
     # Type: Build-related changes
-    -   label: "@type/build"
+    -   label: "build"
         title: '^build(?:\(.+\))?\!?:'
 
     # Type: CI-related changes
-    -   label: "@type/ci"
+    -   label: "ci"
         title: '^ci(?:\(.+\))?\!?:'
         files:
             - '\.github/.+'
 
     # Type: Documentation changes
-    -   label: "@type/docs"
+    -   label: "documentation"
         title: '^docs(?:\(.+\))?\!?:'
         files:
             - "docs/.+"
             - "**/*.md"
 
     # Type: New feature
-    -   label: "@type/feature"
+    -   label: "enhancement"
         title: '^feat(?:\(.+\))?\!?:'
 
     # Type: Bug fix
-    -   label: "@type/fix"
+    -   label: "bug"
         title: '^fix(?:\(.+\))?\!?:'
 
-    # Type: Improvements such as style changes, refactoring, or performance improvements
-    -   label: "@type/improve"
+    # Type: Improvements such as style changes, refactoring, or performance
+    -   label: "improvement"
         title: '^(style|refactor|perf)(?:\(.+\))?\!?:'
 
     # Type: Dependency changes
-    -   label: "@type/dependency"
-        title: '^(chore|build)(?:\(deps\))?\!?:'
+    #
+    # `chore(deps)` only. The original pattern also matched a bare `build:` or
+    # `chore:` prefix, which would double-label every build change as a
+    # dependency change (the `build` rule above already claims that prefix).
+    -   label: "dependencies"
+        title: '^chore\(deps\)'
 
     # Type: Test-related changes
-    -   label: "@type/test"
+    -   label: "test"
         title: '^test(?:\(.+\))?\!?:'
         files:
             - "tests/.+"
             - "spec/.+"
 
     # Type: Security-related changes
-    -   label: "@type/security"
+    -   label: "security"
         title: '^security(?:\(.+\))?\!?:'
         files:
             - "**/security/.+"
 
-    # Issue Type Only: Feature Request
-    -   label: "Feature Request"
-        type: issue
-        title: "^Feature Request:"
-
     # Issue Type Only: Documentation
-    -   label: "Documentation"
+    -   label: "documentation"
         type: issue
-        title: "^.*(\b[Dd]ocumentation|doc(s)?\b).*"
+        title: '^.*(\b[Dd]ocumentation|doc(s)?\b).*'
 
     # Issue Type Only: Bug Report
-    -   label: "Bug Report"
+    -   label: "bug"
         type: issue
-        title: "^.*(\b[Bb]ug|b(u)?g(s)?\b).*"
+        title: '^.*(\b[Bb]ug|b(u)?g(s)?\b).*'

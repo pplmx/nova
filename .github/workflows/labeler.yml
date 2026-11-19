@@ -1,15 +1,51 @@
 name: Labeler
 
+# Applies the rules in .github/configs/labeler.yml to pull requests and issues.
+#
+# Three things were wrong:
+#
+# 1. `uses: srvaroa/labeler@master` pinned a moving branch. Pin the release.
+# 2. No `permissions:` block, and this repository's default GITHUB_TOKEN is
+#    read-only (GET /repos/.../actions/permissions/workflow ->
+#    default_workflow_permissions: read). The action replaces an issue's label
+#    set, which is a write, so it needs `issues: write` and
+#    `pull-requests: write`.
+# 3. The event types were not narrowed. `issues` fires for opened, edited,
+#    labeled, ...; re-running on `labeled` churns label writes. Only react to
+#    the events that can change what the rules should conclude.
 on:
-    - pull_request
-    - issues
+    pull_request:
+        types: [opened, reopened, synchronize, edited]
+    issues:
+        types: [opened, reopened, edited]
+
+permissions:
+    contents: read
+    issues: write
+    pull-requests: write
 
 jobs:
     labeler:
+        name: Apply Labels
         runs-on: ubuntu-latest
         steps:
-            -   uses: srvaroa/labeler@master
+            # `use_local_config: true` so the rules are read from this
+            # checkout. The default reads them from the default branch, which
+            # means a pull request that changes the rules is never evaluated
+            # by its own rules, and the file being edited silently has no
+            # effect on the run that edits it.
+            -   name: Checkout
+                uses: actions/checkout@v5
+
+            -   name: Apply Labels
+                uses: srvaroa/labeler@v1.14.0
                 with:
                     config_path: .github/configs/labeler.yml
+                    use_local_config: true
+                    # Surface rule/config errors instead of logging them and
+                    # exiting 0. A labeler that cannot apply a rule should say
+                    # so; the previous silent-failure default is how 83 green
+                    # runs applied zero labels.
+                    fail_on_error: true
                 env:
                     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
