@@ -1,60 +1,70 @@
-name: Cuda-Samples Release
+name: Release
 
+# Creates a GitHub Release, with notes generated from the commits since the
+# previous tag, when a version tag is pushed.
+#
+# What was wrong:
+#
+# 1. Tag filter 'v*.*.*' needs two dots. Every tag here is 'vMAJOR.MINOR'
+#    (v2.12, v2.3, v2.4), so this workflow had never run: run count 0,
+#    GET /repos/.../releases -> [].
+# 2. No `permissions:` block, while the repository default GITHUB_TOKEN is
+#    read-only. Both jobs write — the first pushes a commit, the second
+#    creates a release — and both would have been rejected. softprops/
+#    action-gh-release documents `contents: write` as required.
+# 3. `set +e` at the top of the commit step made every command in it unable to
+#    fail. The commit and the push could both error and the job still reported
+#    success. Worse, the step rewrote CHANGELOG.md from git-cliff output, and
+#    CHANGELOG.md is hand-maintained in Keep a Changelog format (see
+#    CONTRIBUTING.md, "Updating the changelog") — on the first successful run
+#    it would have replaced that curated file with generated text and pushed
+#    the result to main. Publishing release notes does not require modifying
+#    the repository, so that job is gone; the release notes are produced
+#    directly in the second job and attached to the release.
+# 4. `cliff.toml` did not exist (deleted by accident in 46b22d2), and git-cliff
+#    only warns about a missing config, so the notes silently came from the
+#    built-in defaults. The file is restored and points at pplmx/nova rather
+#    than the pre-rename pplmx/cu.
 on:
     push:
         tags:
-            - "v*.*.*"
+            - 'v[0-9]*'
+
+permissions:
+    contents: write
 
 jobs:
-    changelog:
-        runs-on: ubuntu-latest
-        steps:
-            -   name: Checkout Code
-                uses: actions/checkout@v5
-                with:
-                    fetch-depth: 0
-
-            -   name: Get Tag Version
-                id: tag_version
-                run: echo "CURRENT_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-
-            -   name: Generate Full Changelog
-                uses: orhun/git-cliff-action@v4
-                with:
-                    config: cliff.toml
-                    args: --verbose
-                env:
-                    OUTPUT: CHANGELOG.md
-                    GITHUB_REPO: ${{ github.repository }}
-
-            -   name: Commit Changelog
-                run: |
-                    git config user.name 'github-actions[bot]'
-                    git config user.email 'github-actions[bot]@users.noreply.github.com'
-                    set +e
-                    git switch main
-                    git add CHANGELOG.md
-                    git commit -m "chore(release-bot): prepare for release notes on ${CURRENT_TAG}"
-                    git push
-
     release:
+        name: Create GitHub Release
         runs-on: ubuntu-latest
         steps:
-            -   name: Checkout Code
+            -   name: Checkout
                 uses: actions/checkout@v5
                 with:
+                    # git-cliff walks the full tag history to find the
+                    # previous release; a shallow clone truncates it.
                     fetch-depth: 0
 
-            -   name: Generate Latest Release Notes
-                id: latest_release_notes
+            -   name: Generate Release Notes
                 uses: orhun/git-cliff-action@v4
                 with:
                     config: cliff.toml
+                    # --latest: only the commits in this tag.
+                    # --strip all: drop the leading version heading, because the
+                    # release already shows the tag as its title.
                     args: --latest --strip all
+                    # Without this, git-cliff's GitHub API calls are
+                    # unauthenticated and hit the 60-request rate limit.
+                    github_token: ${{ secrets.GITHUB_TOKEN }}
                 env:
-                    OUTPUT: CHANGELOG.txt
+                    OUTPUT: RELEASE_NOTES.md
+                    GITHUB_REPO: ${{ github.repository }}
 
             -   name: Create GitHub Release
                 uses: softprops/action-gh-release@v2
                 with:
-                    body_path: CHANGELOG.txt
+                    body_path: RELEASE_NOTES.md
+                    # Mark prereleases by tag suffix, so v2.13.0-rc1 does not
+                    # become "latest".
+                    prerelease: ${{ contains(github.ref_name, '-') }}
+                    generate_release_notes: false
