@@ -25,6 +25,13 @@
 
 #include <cuda/comm/comm_error_recovery.h>
 
+// The NCCL status names below are constants, not preprocessor symbols, so they
+// have to exist at compile time even in a build without NCCL. comm_error_recovery.h
+// only pulls in <nccl.h> when NCCL is on; nccl_types.h is the header that carries
+// the stub values for the other configuration, which is what this test needs in
+// order to reach its runtime GTEST_SKIP().
+#include <cuda/nccl/nccl_types.h>
+
 #include <gtest/gtest.h>
 
 #include <atomic>

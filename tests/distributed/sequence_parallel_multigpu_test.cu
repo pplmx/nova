@@ -525,7 +525,10 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_CommPoisonSeam_FlipsHasNccl_AndHea
 // host-only (no communicator is touched on the immediate-error path): a launch
 // that returns an error must throw, never return.
 TEST_F(SequenceParallelMultiGpuTest, CollectiveError_IsSurfacedNotDiscarded) {
-#if !defined(NOVA_NCCL_ENABLED)
+// NOVA_NCCL_ENABLED is always defined (to 0 or 1), so `!defined(...)` was never
+// true: the #else branch compiled in a no-NCCL build, where detail:: does not
+// exist at all. Test the value, not the definedness.
+#if !NOVA_NCCL_ENABLED
     GTEST_SKIP() << "checked_collective is compiled only in an NCCL build";
 #else
     // An immediate non-success is a caller error: thrown (never silently
