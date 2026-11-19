@@ -283,7 +283,7 @@ jobs:
           source ./scripts/coverage/coverage_summary.sh build-coverage
 
       - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
