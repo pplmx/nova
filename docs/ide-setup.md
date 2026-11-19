@@ -79,8 +79,11 @@ cmake --build build
 ## CLion Setup
 
 1. Open Nova as a CMake project
+
 2. Go to **File > Settings > Build, Execution, Deployment > CMake**
+
 3. Set Generator: **Ninja**
+
 4. Add CMake options:
 
    ```text

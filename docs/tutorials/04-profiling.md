@@ -195,5 +195,5 @@ cudaSetDevice(device);
 
 ## Next Steps
 
-- [API Reference](../api/html/index.html) - Full API documentation
-- [Examples](../examples/) - More code examples
+- [Architecture](../ARCHITECTURE.md) - Layer and module reference
+- [Examples](../../examples/) - More code examples

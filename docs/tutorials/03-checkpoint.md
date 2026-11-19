@@ -170,4 +170,4 @@ Check:
 ## Next Steps
 
 - [Profiling Guide](04-profiling.md) - Benchmark your training
-- [API Reference](../api/html/group__checkpoint.html) - Full checkpoint API
+- [Architecture](../ARCHITECTURE.md) - Layer and module reference

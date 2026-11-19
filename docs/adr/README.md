@@ -15,7 +15,7 @@ decisions in Nova.
 
 Each ADR follows the format:
 
-```
+```text
 # ADR-NNN: Title
 
 **Date:** YYYY-MM-DD

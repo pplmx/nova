@@ -12,6 +12,7 @@ containers, and domain-specific operations (sparse, quantize, GNN).
 
 A flat or single-layer design would mix these concerns, making it hard
 to:
+
 - Swap memory allocation strategies without touching kernel code
 - Test kernels in isolation
 - Expose a clean API to external consumers
@@ -21,13 +22,13 @@ to:
 
 Adopt a five-layer architecture:
 
-| Layer | Namespace | Responsibility |
-|-------|-----------|----------------|
-| 0 | `cuda::memory` | RAII buffers, memory pools, distributed pools |
-| 1 | `cuda::device` | Pure CUDA kernels, warp primitives |
-| 2 | `cuda::algo` | Algorithm orchestration, device memory management |
-| 3 | `cuda::api` | STL-style containers (DeviceVector, Stream) |
-| 4 | `cuda::sparse/quantize/gnn` | Domain-specific operations |
+| Layer | Namespace                   | Responsibility                                    |
+| ----- | --------------------------- | ------------------------------------------------- |
+| 0     | `cuda::memory`              | RAII buffers, memory pools, distributed pools     |
+| 1     | `cuda::device`              | Pure CUDA kernels, warp primitives                |
+| 2     | `cuda::algo`                | Algorithm orchestration, device memory management |
+| 3     | `cuda::api`                 | STL-style containers (DeviceVector, Stream)       |
+| 4     | `cuda::sparse/quantize/gnn` | Domain-specific operations                        |
 
 Dependencies flow strictly upward: Layer N may only depend on Layers
 0..N-1. No layer may depend on a higher layer.

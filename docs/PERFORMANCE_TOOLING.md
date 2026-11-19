@@ -302,5 +302,5 @@ New performance domains added in v2.11:
 ## See Also
 
 - [Production Guide](./PRODUCTION.md)
-- [Benchmarking Guide](./BENCHMARKING.md)
+- [Build Performance Guide](./build-performance.md)
 - [API Reference](../include/cuda/performance/)

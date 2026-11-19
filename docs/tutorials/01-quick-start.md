@@ -111,7 +111,7 @@ Available algorithms:
 
 - [Multi-GPU Tutorial](02-multi-gpu.md) - Scale to multiple GPUs
 - [Checkpoint Tutorial](03-checkpoint.md) - Save and restore state
-- [API Reference](../api/html/index.html) - Full API documentation
+- [Architecture](../ARCHITECTURE.md) - Layer and module reference
 
 ## Troubleshooting
 

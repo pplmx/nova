@@ -18,11 +18,11 @@ hardware (A100, V100) that lack native FP8 tensor cores.
 
 Implement both quantization paths as equal citizens:
 
-| Mode | Precision | Use case |
-|------|-----------|----------|
-| INT8 | 8-bit integer | General inference, all GPUs |
-| FP8 E4M3 | 8-bit float (4 exp, 3 mantissa) | Activations, small values |
-| FP8 E5M2 | 8-bit float (5 exp, 2 mantissa) | Weights, large values |
+| Mode     | Precision                       | Use case                    |
+| -------- | ------------------------------- | --------------------------- |
+| INT8     | 8-bit integer                   | General inference, all GPUs |
+| FP8 E4M3 | 8-bit float (4 exp, 3 mantissa) | Activations, small values   |
+| FP8 E5M2 | 8-bit float (5 exp, 2 mantissa) | Weights, large values       |
 
 Quantization is calibration-driven: `MinMaxCalibrator` collects
 statistics from representative data to determine per-tensor scales.

@@ -57,13 +57,13 @@ ccache --version
 
 ### Enabling ccache
 
-## Option 1: CMake Preset (recommended)
+#### Option 1: CMake Preset (recommended)
 
 ```bash
 cmake --preset dev  # dev preset has ccache enabled by default
 ```
 
-## Option 2: Manual configuration
+#### Option 2: Manual configuration
 
 ```bash
 cmake -B build -DNOVA_USE_CCACHE=ON
@@ -95,13 +95,13 @@ Unity builds combine multiple source files into single compilation units, signif
 
 ### Enabling Unity Builds
 
-## Option 1: CMake Preset (recommended)
+#### Option 1: CMake Preset (recommended)
 
 ```bash
 cmake --preset release  # release preset has unity builds enabled
 ```
 
-## Option 2: Manual configuration
+#### Option 2: Manual configuration
 
 ```bash
 cmake -B build -DNOVA_ENABLE_UNITY_BUILD=ON

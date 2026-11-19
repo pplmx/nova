@@ -157,4 +157,4 @@ int main() {
 ## Next Steps
 
 - [Checkpoint Tutorial](03-checkpoint.md) - Save distributed training state
-- [API Reference](../api/html/group__mesh.html) - DeviceMesh API
+- [Architecture](../ARCHITECTURE.md) - Layer and module reference
