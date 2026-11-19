@@ -1,8 +1,15 @@
-.PHONY: help init build build-ninja configure clean run test test-patterns benchmark image lint fmt
+.PHONY: help init build build-ninja configure configure-ninja clean clean-build clean-ninja \
+	run run-ninja test test-ninja test-one test-patterns benchmark image \
+	lint fmt fmt-check sanitize prek
 
 DEFAULT_GOAL := help
 APP_NAME := nova
 NINJA_BUILD := build-ninja
+
+# Every source file clang-format and clang-tidy cover. Shared by the fmt and
+# fmt-check targets so the two can never drift apart.
+SOURCE_DIRS := src include tests benchmark
+SOURCE_GLOBS := -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.cu' -o -name '*.cuh'
 
 # init
 init:
@@ -91,7 +98,10 @@ help:
 	@echo "    make test-ninja         Run tests (Ninja build)"
 	@echo ""
 	@echo "Quality Targets:"
+	@echo "    make init               Install the prek git hooks"
+	@echo "    make prek               Run all prek hooks over the whole tree"
 	@echo "    make lint               Run clang-tidy static analysis"
+	@echo "    make fmt                Apply clang-format in place"
 	@echo "    make fmt-check          Check formatting with clang-format"
 	@echo "    make sanitize           Build & test with ASan+UBSan"
 	@echo ""
@@ -114,8 +124,18 @@ lint:
 
 # Check code formatting
 fmt-check:
-	@find src/ include/ tests/ benchmark/ -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.cu' -o -name '*.cuh' \
-		| xargs clang-format --dry-run --Werror --style=file && echo "Format: OK"
+	@find $(SOURCE_DIRS) \( $(SOURCE_GLOBS) \) -type f -print0 \
+		| xargs -0 clang-format --dry-run --Werror --style=file && echo "Format: OK"
+
+# Apply clang-format in place. `fmt` was listed in .PHONY with no rule, so
+# `make fmt` exited 0 having done nothing.
+fmt:
+	@find $(SOURCE_DIRS) \( $(SOURCE_GLOBS) \) -type f -print0 \
+		| xargs -0 clang-format -i --style=file && echo "Format: applied"
+
+# Run every pre-commit hook over the whole tree, without needing a commit.
+prek:
+	@prek run --all-files
 
 # Build and test with AddressSanitizer + UndefinedBehaviorSanitizer
 sanitize:

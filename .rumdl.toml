@@ -1,7 +1,10 @@
 [global]
 disable = ["MD029", "MD034", "MD036", "MD059", "MD033", "MD025"]
 respect_gitignore = true
-exclude = ["docs/superpowers", "docs/infographic", "CLAUDE.md", "AGENTS.md"]
+# docs/superpowers holds dated architecture design records. They are kept
+# verbatim as a decision trail, so reflowing their tables and headings would
+# rewrite the record rather than maintain it. Every other tree is linted.
+exclude = ["docs/superpowers", "CLAUDE.md", "AGENTS.md", "LICENSE.md"]
 
 [MD004]
 style = "dash"

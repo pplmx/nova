@@ -1,3 +1,6 @@
+# Run with prek (https://github.com/j178/prek), which implements this config
+# format plus the local `builtin` repo used below. Install the hooks once with
+# `make init`.
 fail_fast: true
 repos:
   - repo: builtin
@@ -21,7 +24,11 @@ repos:
       - id: rumdl
         name: rumdl fmt & check
         language: system
-        entry: rumdl fmt && rumdl check
+        # `entry` is a single command string; a shell metacharacter such as
+        # `&&` is passed to rumdl verbatim and read as a filename, which made
+        # every markdown commit fail with "File not found: &&". Run the check
+        # instead, since it reports the same problems without writing files.
+        entry: rumdl check
         files: \.md$
         pass_filenames: true
         require_serial: true
