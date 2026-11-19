@@ -7,8 +7,8 @@ so a green CI run is not mistaken for "everything is verified".
 
 ## What runs in CI
 
-All three workflows run on GitHub-hosted runners: `ubuntu-latest`, plus
-`windows-2022` for the build in `ci.yml`.
+The checks run on GitHub-hosted runners: `ubuntu-latest`, plus `windows-2022`
+for the build in `ci.yml`.
 
 | Check                | Workflow          | Tool                                      | Needs GPU |
 | -------------------- | ----------------- | ----------------------------------------- | --------- |
@@ -66,6 +66,52 @@ ctest --test-dir build-coverage -j16
 ./scripts/coverage/generate_coverage.sh build-coverage
 bash ./scripts/coverage/coverage_summary.sh build-coverage
 ```
+
+## Release workflows
+
+Three workflows respond to a version tag, and all three were dead until the
+tag filter was fixed.
+
+The filter was `v*.*.*`, which requires two dots. Every tag in this repository
+is `vMAJOR.MINOR` (`v2.12`, `v2.3`, `v2.4`), so nothing ever matched and the
+three workflows had a combined recorded run count of 0. GitHub tag filters are
+glob patterns, not regular expressions; `v[0-9]*` is used now, which matches
+both the existing two-part form and a future `v2.14.0`.
+
+| Workflow      | Does                                                      | Permissions needed |
+| ------------- | --------------------------------------------------------- | ------------------ |
+| `release.yml` | GitHub Release with notes from `cliff.toml`               | `contents: write`  |
+| `docker.yml`  | Builds the image from `Dockerfile`, pushes to GHCR        | `packages: write`  |
+| `labeler.yml` | Applies `.github/configs/labeler.yml` to PRs and issues   | `issues: write`    |
+
+The repository default for `GITHUB_TOKEN` is read-only, so each workflow
+declares its own `permissions:` block. Without them the release and the image
+push fail with 403 while the run still looks like it started correctly.
+
+`cd.yml` was removed. Its only step was `actions/checkout`, so on the first
+tag it would have reported a successful deployment having deployed nothing —
+the same "green check that proves nothing" the GPU jobs had. Delivery here is
+the GitHub Release and the container image.
+
+Notes on the two files that were broken:
+
+- `cliff.toml` had been deleted by accident in `46b22d2`, a commit about tests.
+  `git-cliff` only warns when its `--config` is missing and falls back to the
+  built-in defaults, so nothing failed; the notes would silently have used the
+  wrong style. It is restored, and it now names `pplmx/nova` rather than the
+  pre-rename `pplmx/cu` that its commit and compare links are built from.
+- `Dockerfile` started from `rockylinux:9`, which has no CUDA toolkit, against
+  a project that declares `LANGUAGES ... CUDA` and requires CMake 4.0 (Rocky 9
+  ships 3.31.8). It now uses a two-stage CUDA build: `devel` to compile,
+  `runtime` — which carries the cuBLAS, cuSOLVER and cuFFT the demo links
+  against — to run. The image needs a GPU and the NVIDIA container runtime, so
+  `docker.yml` no longer runs it as a smoke test; a hosted runner cannot.
+
+`CHANGELOG.md` is maintained by hand in Keep a Changelog format (see
+CONTRIBUTING.md, "Updating the changelog"). `cliff.toml` output is a different
+shape, so it is used only for release notes and never written back over that
+file. The previous `release.yml` would have replaced it and pushed the result
+to `main`.
 
 ## Adding a GPU runner later
 
