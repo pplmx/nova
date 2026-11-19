@@ -55,13 +55,18 @@ gemm.forward(fp8_weights, d_x, d_y, config);
 
 ## Modules
 
-| Module             | Description                       | Documentation                                |
-| ------------------ | --------------------------------- | -------------------------------------------- |
-| **cuda::sparse**   | Sparse matrix formats and solvers | [docs/SPARSE.md](docs/SPARSE.md)             |
-| **cuda::quantize** | INT8/FP8 quantization             | [docs/QUANTIZATION.md](docs/QUANTIZATION.md) |
-| **cuda::gnn**      | Graph neural network operations   | [docs/GNN.md](docs/GNN.md)                   |
-| **cuda::memory**   | Memory management and pools       | Layer 0 foundation                           |
-| **cuda::algo**     | Parallel algorithms               | [docs/ALGORITHMS.md](docs/ALGORITHMS.md)     |
+| Module                  | Description                                                          | Documentation                                              |
+| ----------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------- |
+| **cuda::sparse**        | Sparse matrix formats (CSR, ELL, SELL, HYB), SpMV, iterative solvers | [docs/SPARSE.md](docs/SPARSE.md)                           |
+| **cuda::quantize**      | INT8/FP8 quantization, calibration, QAT support                      | [docs/QUANTIZATION.md](docs/QUANTIZATION.md)               |
+| **cuda::gnn**           | Graph sampling, message passing, graph attention                     | See `include/cuda/gnn`                                     |
+| **cuda::memory**        | Buffer, unique_ptr, MemoryPool, DistributedMemoryPool                | See `include/cuda/memory`                                  |
+| **cuda::error**         | Error handling, timeout management, retry logic                      | See `include/cuda/error`                                   |
+| **cuda::observability** | Logging, NVTX, performance analysis                                  | [docs/PERFORMANCE_TOOLING.md](docs/PERFORMANCE_TOOLING.md) |
+| **cuda::algo**          | Parallel primitives (reduce, scan, sort)                             | See `include/cuda/algo`                                    |
+| **cuda::device**        | CUDA kernels, warp primitives                                        | See `include/cuda/device`                                  |
+
+Layer-level design is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Architecture
 
@@ -149,7 +154,7 @@ src/
 | **Layer 2** | `cuda::algo`   | Memory management, algorithms    | Layers 0, 1    |
 | **Layer 3** | `cuda::api`    | STL-style containers             | Layers 0, 1, 2 |
 
-## Quick Start
+## Building from Source
 
 ### Build (Make)
 
@@ -226,7 +231,7 @@ stream.synchronize();
 auto config = cuda::api::ReduceConfig::optimized_config();
 ```
 
-## Modules
+## Module Reference
 
 | Module                  | Description                                                          |
 | ----------------------- | -------------------------------------------------------------------- |
@@ -312,7 +317,7 @@ graph; the build tells you immediately.
 
 ## Requirements
 
-- CUDA Toolkit 20+
+- CUDA Toolkit 12.0+
 - CMake 4.0+
 - C++23 compatible compiler for host code; nvcc supports up to C++20, so device
   code stays C++20 (see [Language standard split](#language-standard-split))
@@ -323,19 +328,13 @@ graph; the build tells you immediately.
 
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0
-  ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license
-  ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option.
+Licensed under the MIT license ([LICENSE.md](LICENSE.md) or
+<http://opensource.org/licenses/MIT>).
 
 ## Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+for inclusion in the work by you shall be licensed under the MIT license as
+above, without any additional terms or conditions.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
