@@ -126,7 +126,7 @@ jobs:
       # Restore before configuring: CMakeLists.txt only wires sccache in when
       # it is already on PATH at configure time.
       - name: Restore sccache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.SCCACHE_DIR }}
           # A unique key per run so the post-job save always writes a fresh
@@ -171,7 +171,7 @@ jobs:
       # cancelled or times out, so a run that hit timeout-minutes would save
       # nothing and leave the next run just as cold.
       - name: Save sccache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         if: always()
         with:
           path: ${{ env.SCCACHE_DIR }}
