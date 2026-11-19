@@ -52,7 +52,17 @@ CTestTestfile.cmake
 _deps/
 
 ### Visual Studio Code
-.vscode/
+#
+# The shared editor configuration is committed (c_cpp_properties.json,
+# extensions.json, settings.json), so ignoring the whole directory only
+# dropped *new* files silently: anything added there later would never be
+# tracked. Ignore the per-user files instead.
+.vscode/*
+!.vscode/c_cpp_properties.json
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
 
 ### JetBrains IDEs (CLion, IntelliJ, etc.)
 .idea/
@@ -74,12 +84,19 @@ cmake-build-*/
 *.VC.opendb
 
 # Visual Studio build results
-[Bb]in/
-[Oo]bj/
-[Dd]ebug*/
-[Rr]elease*/
-x64/
-x86/
+#
+# These were copied from a Visual Studio template and were unanchored, so
+# `[Dd]ebug*/` matched any directory whose name starts with "debug" at any
+# depth. It silently ignored real source: `.agents/skills/debug-inference/`
+# never reached the repository, and a future `src/debug/` would not either.
+# Anchor them to the repository root to keep the intended meaning (build
+# output next to the project file) without swallowing source trees.
+/bin/
+/obj/
+/Debug/
+/Release/
+/x64/
+/x86/
 
 # Visual Studio cache files
 *.sdf
@@ -126,7 +143,6 @@ dist/
 *.cudagpu.o.*
 *.cu.deps
 *.cu.o
-*.cuh
 nvcc_*.log
 cuda_profile_*.log
 *.gputhings
