@@ -1,7 +1,20 @@
 service:
     nova:
+        # Builds the image from the repository Dockerfile (two-stage CUDA:
+        # devel to compile, runtime to run).
         build: .
         image: nova
+        # The demo allocates device memory and aborts with "no CUDA-capable
+        # device is detected" without a GPU, so the container needs the NVIDIA
+        # runtime. Use `docker compose run --rm nova` with the NVIDIA container
+        # toolkit installed and a device visible.
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        -   driver: nvidia
+                            count: 1
+                            capabilities: [gpu]
 
 networks:
     nova-net:

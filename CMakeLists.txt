@@ -94,6 +94,17 @@ option(NOVA_ENABLE_NCCL "Enable NCCL for optimized multi-GPU collectives" ON)
 # Enable multi-node training with MPI-based NCCL bootstrapping
 option(NOVA_ENABLE_MPI "Enable MPI for multi-node support" OFF)
 
+# Examples, tests and benchmarks (optional)
+#
+# ON by default so nothing existing changes. Off lets a consumer build just the
+# library and the `nova` demo, which is what the container image needs: those
+# subdirectories pull dependencies at configure time (benchmark/CMakeLists.txt
+# FetchContent's Google Benchmark, tests/CMakeLists.txt FetchContent's
+# GoogleTest), so they cost a network fetch and build time even when only the
+# `nova` target is requested.
+option(NOVA_BUILD_TESTS_AND_BENCHMARKS
+       "Build examples, tests and benchmarks" ON)
+
 # Unity build for faster compilation (CMake 3.16+)
 option(NOVA_ENABLE_UNITY_BUILD "Enable unity build to speed up compilation" ON)
 
@@ -807,14 +818,18 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         ${CUDA_MEMORY_DIR}
 )
 
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG v1.17.0
-)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
+# GoogleTest is only needed by examples/tests/benchmarks. Guarding it with the
+# same option keeps a library-only configure from cloning it and building it.
+if(NOVA_BUILD_TESTS_AND_BENCHMARKS)
+    include(FetchContent)
+    FetchContent_Declare(
+      googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG v1.17.0
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+endif()
 
 # Enable parallel test execution
 include(CTest)
@@ -896,7 +911,9 @@ install(
     DESTINATION lib/cmake/nova
 )
 
-enable_testing()
-add_subdirectory(examples)
-add_subdirectory(tests)
-add_subdirectory(benchmark)
+if(NOVA_BUILD_TESTS_AND_BENCHMARKS)
+    enable_testing()
+    add_subdirectory(examples)
+    add_subdirectory(tests)
+    add_subdirectory(benchmark)
+endif()

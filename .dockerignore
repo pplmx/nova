@@ -1,4 +1,8 @@
-# all start with .(dot), including directories and files
+# Files and directories not sent to the Docker build context.
+#
+# The `.*` line already drops every dotfile and dot-directory, including
+# .git/, .github/ and the editor config. Nothing here is needed to compile the
+# library and the demo.
 .*
 CHANGELOG.md
 CODE_OF_CONDUCT.md
@@ -7,3 +11,36 @@ compose.yml
 LICENSE*
 Makefile
 README.md
+docs
+scripts
+
+# Build trees. These are not excluded by `.*`, they are large, and they were
+# being copied into the context on every local build. `build-*/` covers the
+# out-of-tree trees the documentation and CI use.
+build/
+build-*/
+cmake-build-*/
+out/
+target/
+
+# Object files and artefacts from in-source or partial builds.
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.gcda
+*.gcno
+*.profraw
+core
+core.*
+
+# Python caches from scripts/ (already excluded above) and elsewhere.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated benchmark baselines (created at run time by update_baseline.py).
+scripts/benchmark/baselines/
