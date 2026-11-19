@@ -153,6 +153,12 @@ cub_cache/
 nvcc_cache/
 build-ninja/
 
+# Compiler caches. sccache in CI writes into the workspace rather than $HOME,
+# because the job runs in a container and the cache action copies files from
+# the host side of the mount; locally either tool may be pointed here too.
+.sccache/
+.ccache/
+
 # Fuzzing
 tests/fuzz/crashes/
 

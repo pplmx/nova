@@ -108,6 +108,13 @@ jobs:
     container:
       image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
       options: --gpus all
+    env:
+      # Under the workspace, not $HOME: the job runs inside a container, and
+      # actions/cache copies files from the host side of the mount, so a path
+      # inside github.workspace is the one both sides agree on.
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      SCCACHE_CACHE_SIZE: 2G
+      SCCACHE_IDLE_TIMEOUT: 0
     steps:
       - uses: actions/checkout@v4
 
@@ -115,6 +122,31 @@ jobs:
         run: |
           apt-get update
           apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }} python3 python3-pip
+
+      # Restore before configuring: CMakeLists.txt only wires sccache in when
+      # it is already on PATH at configure time.
+      - name: Restore sccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          # A unique key per run so the post-job save always writes a fresh
+          # snapshot; restore-keys pulls the most recent previous one. Without
+          # the run id in the primary key the entry would be written once and
+          # then never updated, and the cache would stop growing.
+          key: sccache-${{ runner.os }}-gcc${{ env.GCC_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            sccache-${{ runner.os }}-gcc${{ env.GCC_VERSION }}-
+
+      - name: Install sccache
+        run: |
+          # Pinned version: sccache talks to a versioned cache backend, and the
+          # 0.10.x line predates the current GitHub cache API.
+          SCCACHE_VERSION=v0.17.0
+          curl -fsSL "https://github.com/mozilla/sccache/releases/download/${SCCACHE_VERSION}/sccache-${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/sccache'
+          sccache --version
+          sccache --start-server
+          sccache --zero-stats
 
       - name: Configure
         run: |
@@ -127,6 +159,23 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure -j16
+
+      - name: Stop sccache so its directory is complete before saving
+        if: always()
+        run: |
+          sccache --show-stats | tee -a "$GITHUB_STEP_SUMMARY"
+          sccache --stop-server || true
+
+      # Separate restore/save rather than the combined actions/cache action:
+      # that one saves in a post-job step, which is skipped when the job is
+      # cancelled or times out, so a run that hit timeout-minutes would save
+      # nothing and leave the next run just as cold.
+      - name: Save sccache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-${{ runner.os }}-gcc${{ env.GCC_VERSION }}-${{ github.run_id }}
 
   # -------------------------------------------------------------------------
   # Property-Based Tests
