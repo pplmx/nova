@@ -24,14 +24,14 @@ TEST_F(TimeoutTest, TimeoutManagerSingletonIsAccessible) {
 
 TEST_F(TimeoutTest, StartOperationReturnsValidId) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{100});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {100});
     EXPECT_GT(id, 0u);
     manager.end_operation(id);
 }
 
 TEST_F(TimeoutTest, EndOperationRemovesFromActiveCount) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{100});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {100});
     EXPECT_EQ(manager.active_count(), 1u);
     manager.end_operation(id);
     EXPECT_EQ(manager.active_count(), 0u);
@@ -39,9 +39,9 @@ TEST_F(TimeoutTest, EndOperationRemovesFromActiveCount) {
 
 TEST_F(TimeoutTest, MultipleOperationsHaveUniqueIds) {
     auto& manager = timeout_manager::instance();
-    auto id1 = manager.start_operation("op1", std::chrono::milliseconds{100});
-    auto id2 = manager.start_operation("op2", std::chrono::milliseconds{100});
-    auto id3 = manager.start_operation("op3", std::chrono::milliseconds{100});
+    auto id1 = manager.start_operation("op1", std::chrono::milliseconds {100});
+    auto id2 = manager.start_operation("op2", std::chrono::milliseconds {100});
+    auto id3 = manager.start_operation("op3", std::chrono::milliseconds {100});
 
     EXPECT_NE(id1, id2);
     EXPECT_NE(id2, id3);
@@ -54,16 +54,16 @@ TEST_F(TimeoutTest, MultipleOperationsHaveUniqueIds) {
 
 TEST_F(TimeoutTest, IsExpiredReturnsFalseForActiveOperation) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{1000});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {1000});
     EXPECT_FALSE(manager.is_expired(id));
     manager.end_operation(id);
 }
 
 TEST_F(TimeoutTest, IsExpiredReturnsTrueAfterDeadline) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{10});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {10});
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    std::this_thread::sleep_for(std::chrono::milliseconds {20});
     EXPECT_TRUE(manager.is_expired(id));
 
     manager.end_operation(id);
@@ -71,7 +71,7 @@ TEST_F(TimeoutTest, IsExpiredReturnsTrueAfterDeadline) {
 
 TEST_F(TimeoutTest, CancelOperationMarksAsCancelled) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{1000});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {1000});
     EXPECT_FALSE(manager.is_cancelled(id));
 
     manager.cancel_operation(id);
@@ -82,10 +82,10 @@ TEST_F(TimeoutTest, CancelOperationMarksAsCancelled) {
 
 TEST_F(TimeoutTest, GetRemainingDecreasesOverTime) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{100});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {100});
 
     auto initial = manager.get_remaining(id);
-    std::this_thread::sleep_for(std::chrono::milliseconds{30});
+    std::this_thread::sleep_for(std::chrono::milliseconds {30});
     auto later = manager.get_remaining(id);
 
     EXPECT_LE(later.count(), initial.count());
@@ -94,9 +94,9 @@ TEST_F(TimeoutTest, GetRemainingDecreasesOverTime) {
 
 TEST_F(TimeoutTest, GetRemainingReturnsZeroWhenExpired) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{5});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {5});
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    std::this_thread::sleep_for(std::chrono::milliseconds {10});
     EXPECT_EQ(manager.get_remaining(id).count(), 0);
 
     manager.end_operation(id);
@@ -104,12 +104,12 @@ TEST_F(TimeoutTest, GetRemainingReturnsZeroWhenExpired) {
 
 TEST_F(TimeoutTest, UpdateTimeoutExtendsDeadline) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{10});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {10});
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    std::this_thread::sleep_for(std::chrono::milliseconds {5});
     auto remaining_before = manager.get_remaining(id);
 
-    manager.update_timeout(id, std::chrono::milliseconds{100});
+    manager.update_timeout(id, std::chrono::milliseconds {100});
     auto remaining_after = manager.get_remaining(id);
 
     EXPECT_GT(remaining_after.count(), remaining_before.count());
@@ -118,7 +118,7 @@ TEST_F(TimeoutTest, UpdateTimeoutExtendsDeadline) {
 
 TEST_F(TimeoutTest, TimeoutGuardManagesLifespan) {
     {
-        timeout_guard guard("test_op", std::chrono::milliseconds{100});
+        timeout_guard guard("test_op", std::chrono::milliseconds {100});
         EXPECT_GT(guard.id(), 0u);
         EXPECT_FALSE(guard.is_expired());
         auto remaining = guard.remaining();
@@ -130,7 +130,7 @@ TEST_F(TimeoutTest, TimeoutGuardManagesLifespan) {
 }
 
 TEST_F(TimeoutTest, TimeoutGuardCancel) {
-    timeout_guard guard("test_op", std::chrono::milliseconds{100});
+    timeout_guard guard("test_op", std::chrono::milliseconds {100});
     auto id = guard.id();
 
     guard.cancel();
@@ -138,20 +138,20 @@ TEST_F(TimeoutTest, TimeoutGuardCancel) {
 }
 
 TEST_F(TimeoutTest, TimeoutGuardExtend) {
-    timeout_guard guard("test_op", std::chrono::milliseconds{10});
+    timeout_guard guard("test_op", std::chrono::milliseconds {10});
     auto id = guard.id();
 
     auto before = timeout_manager::instance().get_remaining(id);
-    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    std::this_thread::sleep_for(std::chrono::milliseconds {5});
 
-    guard.extend(std::chrono::milliseconds{50});
+    guard.extend(std::chrono::milliseconds {50});
     auto after = timeout_manager::instance().get_remaining(id);
 
     EXPECT_GE(after.count(), before.count());
 }
 
 TEST_F(TimeoutTest, TimeoutGuardMoveSemantics) {
-    timeout_guard guard1("test_op", std::chrono::milliseconds{100});
+    timeout_guard guard1("test_op", std::chrono::milliseconds {100});
     auto id1 = guard1.id();
 
     timeout_guard guard2(std::move(guard1));
@@ -165,21 +165,21 @@ TEST_F(TimeoutTest, TimeoutGuardMoveSemantics) {
 TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
     auto& manager = timeout_manager::instance();
 
-    operation_id callback_id{0};
-    bool callback_invoked{false};
+    operation_id callback_id {0};
+    bool callback_invoked {false};
 
     manager.set_callback([&](operation_id id, std::error_code) {
         callback_id = id;
         callback_invoked = true;
     });
 
-    auto config = timeout_config{};
-    config.watchdog_interval = std::chrono::milliseconds{10};
+    auto config = timeout_config {};
+    config.watchdog_interval = std::chrono::milliseconds {10};
     manager.set_config(config);
 
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{5});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {5});
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{30});
+    std::this_thread::sleep_for(std::chrono::milliseconds {30});
 
     // The case is named for the callback being invoked; guarding the only assertion with
     // `if (callback_invoked)` meant a callback that never fired asserted nothing and the case
@@ -193,7 +193,7 @@ TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
 
 TEST_F(TimeoutTest, ConfigDefaultTimeoutIsUsedWhenNotSpecified) {
     auto& manager = timeout_manager::instance();
-    auto id = manager.start_operation("test_op", std::chrono::milliseconds{0});
+    auto id = manager.start_operation("test_op", std::chrono::milliseconds {0});
 
     auto config = manager.get_config();
     EXPECT_GT(config.default_timeout.count(), 0);
@@ -207,7 +207,7 @@ TEST_F(TimeoutTest, ConcurrentOperationsAreHandled) {
 
     std::vector<operation_id> ids;
     for (size_t i = 0; i < num_ops; ++i) {
-        auto id = manager.start_operation("concurrent_op", std::chrono::milliseconds{1000});
+        auto id = manager.start_operation("concurrent_op", std::chrono::milliseconds {1000});
         if (id > 0) {
             ids.push_back(id);
         }

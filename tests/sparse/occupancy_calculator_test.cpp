@@ -126,7 +126,7 @@ namespace cuda::performance::test {
         // wrong. A 32-thread block is capped by maxBlocksPerMultiProcessor (32 blocks x
         // 32 threads = 1024 of 2048 threads, i.e. 50%), while a 1024-thread block reaches
         // two blocks per SM and fills it. The interesting property is the cap itself.
-        cudaDeviceProp prop{};
+        cudaDeviceProp prop {};
         ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
 
         const float small = OccupancyCalculator::calculate_theoretical_occupancy(32, 32, 0, 0);
@@ -142,7 +142,7 @@ namespace cuda::performance::test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        cudaDeviceProp prop{};
+        cudaDeviceProp prop {};
         ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
 
         // Asking for more threads than the device allows is a caller error the function
@@ -174,7 +174,7 @@ namespace cuda::performance::test {
 
         const int block_size = OccupancyCalculator::recommended_block_size(256, 32, 0, 0);
 
-        cudaDeviceProp prop{};
+        cudaDeviceProp prop {};
         ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
 
         EXPECT_GT(block_size, 0);

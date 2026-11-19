@@ -14,7 +14,7 @@ namespace nova::error {
     }
     void degradation_manager::reset() {
         callback_ = nullptr;
-        threshold_ = quality_threshold{};
+        threshold_ = quality_threshold {};
         precision_by_op_.clear();
     }
 

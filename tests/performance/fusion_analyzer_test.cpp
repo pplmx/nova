@@ -11,7 +11,7 @@ namespace cuda::performance::fusion::test {
     };
 
     Operation make_op(const std::string& name, OpType type, uint64_t latency_ns = 1000) {
-        return Operation{name, type, latency_ns, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
+        return Operation {name, type, latency_ns, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
     }
 
     TEST_F(FusionAnalyzerTest, DetectMatmulBiasPattern) {

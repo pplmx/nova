@@ -91,7 +91,7 @@ namespace nova::memory::test {
     }
 
     TEST(MemoryErrorTest, RecoverabilityFollowsSeverity) {
-        MemoryError error{};
+        MemoryError error {};
         error.severity = MemoryErrorSeverity::Warning;
         EXPECT_TRUE(error.is_recoverable());
 
@@ -106,7 +106,7 @@ namespace nova::memory::test {
     }
 
     TEST(MemoryErrorTest, ErrorStringComesFromTheRuntime) {
-        MemoryError error{};
+        MemoryError error {};
         error.cuda_error = cudaErrorMemoryAllocation;
         EXPECT_EQ(error.get_cuda_error_string(), cudaGetErrorString(cudaErrorMemoryAllocation));
     }
@@ -246,7 +246,7 @@ namespace nova::memory::test {
         auto& handler = MemoryErrorHandler::instance();
         handler.reset_telemetry();
 
-        MemoryError corruption{};
+        MemoryError corruption {};
         corruption.category = MemoryErrorCategory::MemoryCorruption;
         corruption.severity = MemoryErrorSeverity::Fatal;
         corruption.cuda_error = cudaSuccess;

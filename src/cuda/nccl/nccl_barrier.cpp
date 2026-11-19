@@ -19,10 +19,10 @@ namespace cuda::nccl {
 
     NcclResult NcclBarrier::barrier_async(cudaStream_t stream) {
 #ifndef NOVA_NCCL_ENABLED
-        return NcclResult{.code = ncclInternalError, .error_message = "NCCL not enabled"};
+        return NcclResult {.code = ncclInternalError, .error_message = "NCCL not enabled"};
 #else
         if (!has_nccl()) {
-            return NcclResult{.code = ncclInternalError, .error_message = "NCCL context not initialized"};
+            return NcclResult {.code = ncclInternalError, .error_message = "NCCL context not initialized"};
         }
 
         // NCCL barrier is a 1-element all-reduce(min) of 0 — meaningless result,
@@ -32,7 +32,7 @@ namespace cuda::nccl {
             // Per-rank operation: use the current device's communicator.
             comm = current_comm();
         } catch (const std::exception& e) {
-            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+            return NcclResult {.code = ncclInvalidArgument, .error_message = e.what()};
         }
 
         return safe_nccl_call(
@@ -52,10 +52,10 @@ namespace cuda::nccl {
 
     NcclResult NcclBarrier::barrier_async(int device, cudaStream_t stream) {
 #ifndef NOVA_NCCL_ENABLED
-        return NcclResult{.code = ncclInternalError, .error_message = "NCCL not enabled"};
+        return NcclResult {.code = ncclInternalError, .error_message = "NCCL not enabled"};
 #else
         if (!has_nccl()) {
-            return NcclResult{.code = ncclInternalError, .error_message = "NCCL context not initialized"};
+            return NcclResult {.code = ncclInternalError, .error_message = "NCCL context not initialized"};
         }
 
         return safe_nccl_call(

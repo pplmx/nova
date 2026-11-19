@@ -32,10 +32,10 @@ namespace nova {
 
         struct LayerConfig {
             std::string name;
-            Precision precision{Precision::FP32};
-            float scale{1.0f};
-            float zero_point{0.0f};
-            bool trainable{true};
+            Precision precision {Precision::FP32};
+            float scale {1.0f};
+            float zero_point {0.0f};
+            bool trainable {true};
 
             LayerConfig() = default;
             LayerConfig(const std::string& n, Precision p)
@@ -46,11 +46,11 @@ namespace nova {
         class FakeQuantize {
         public:
             struct Config {
-                Precision precision{Precision::INT8};
-                float scale{1.0f};
-                float zero_point{0.0f};
-                int quant_bits{8};
-                bool per_channel{false};
+                Precision precision {Precision::INT8};
+                float scale {1.0f};
+                float zero_point {0.0f};
+                int quant_bits {8};
+                bool per_channel {false};
             };
 
             FakeQuantize(const Config& config)
@@ -132,9 +132,9 @@ namespace nova {
         public:
             struct LayerSensitivity {
                 std::string name;
-                float gradient_magnitude{0.0f};
-                Precision recommended_precision{Precision::FP16};
-                float confidence{0.0f};
+                float gradient_magnitude {0.0f};
+                Precision recommended_precision {Precision::FP16};
+                float confidence {0.0f};
             };
 
             void analyze_layer(const std::string& name, const float* activations, size_t n, const float* gradients, size_t grad_n) {

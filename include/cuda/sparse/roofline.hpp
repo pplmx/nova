@@ -293,8 +293,8 @@ namespace nova {
             size_t bytes_read = 0;
             size_t bytes_written = 0;
             double time_ms = 0.0;
-            T achieved_gflops = T{0};
-            T achieved_bandwidth_gbps = T{0};
+            T achieved_gflops = T {0};
+            T achieved_bandwidth_gbps = T {0};
         };
 
         class ScopedTimer {

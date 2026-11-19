@@ -26,10 +26,10 @@ namespace cuda::production {
         executor_.begin_capture(stream_handle);
 
         if (reduce_fn_) {
-            reduce_fn_(nullptr, input_size_, T{});
+            reduce_fn_(nullptr, input_size_, T {});
         }
 
-        set_value_kernel<<<1, 1, 0, stream_handle>>>(reduce_scratch_, T{}, 1);
+        set_value_kernel<<<1, 1, 0, stream_handle>>>(reduce_scratch_, T {}, 1);
 
         (void)executor_.end_capture();
         executor_.instantiate();

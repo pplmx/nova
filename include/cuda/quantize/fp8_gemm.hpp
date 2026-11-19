@@ -56,9 +56,9 @@ namespace nova {
                       num_streams(ns) {}
             };
 
-            static void forward(const FP8E4M3* a, const FP8E4M3* b, float* output, int m, int k, int n, Config config = Config{}, cudaStream_t stream = 0);
+            static void forward(const FP8E4M3* a, const FP8E4M3* b, float* output, int m, int k, int n, Config config = Config {}, cudaStream_t stream = 0);
 
-            static void forward_async(const FP8E4M3* a, const FP8E4M3* b, float* output, int m, int k, int n, Config config = Config{}, cudaStream_t stream = 0);
+            static void forward_async(const FP8E4M3* a, const FP8E4M3* b, float* output, int m, int k, int n, Config config = Config {}, cudaStream_t stream = 0);
 
             static void backward(const FP8E4M3* grad_output,
                                  const FP8E4M3* a,
@@ -68,7 +68,7 @@ namespace nova {
                                  int m,
                                  int k,
                                  int n,
-                                 Config config = Config{},
+                                 Config config = Config {},
                                  cudaStream_t stream = 0);
 
             static size_t get_workspace_size(int m, int k, int n, const Config& config);
@@ -95,7 +95,7 @@ namespace nova {
                       num_streams(ns) {}
             };
 
-            static void forward(const FP8E5M2* a, const FP8E5M2* b, float* output, int m, int k, int n, Config config = Config{}, cudaStream_t stream = 0);
+            static void forward(const FP8E5M2* a, const FP8E5M2* b, float* output, int m, int k, int n, Config config = Config {}, cudaStream_t stream = 0);
         };
 
     }  // namespace quantize

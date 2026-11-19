@@ -219,7 +219,7 @@ namespace nova {
                 int row_nnz = 0;
                 for (int j = 0; j < cols; ++j) {
                     T val = dense[i * cols + j];
-                    if (val != T{0}) {
+                    if (val != T {0}) {
                         values.push_back(val);
                         col_indices.push_back(j);
                         ++row_nnz;
@@ -452,7 +452,7 @@ namespace nova {
         int SparseMatrixELL<T>::count_nnz() const {
             int count = 0;
             for (int i = 0; i < padded_nnz(); ++i) {
-                if (col_indices_[i] >= 0 && values_[i] != T{0}) {
+                if (col_indices_[i] >= 0 && values_[i] != T {0}) {
                     ++count;
                 }
             }
@@ -463,7 +463,7 @@ namespace nova {
         int SparseMatrixSELL<T>::count_nnz() const {
             int count = 0;
             for (int i = 0; i < padded_nnz(); ++i) {
-                if (col_indices_[i] >= 0 && values_[i] != T{0}) {
+                if (col_indices_[i] >= 0 && values_[i] != T {0}) {
                     ++count;
                 }
             }
@@ -485,7 +485,7 @@ namespace nova {
                 return SparseMatrixELL<T>();
             }
 
-            std::vector<T> values(num_rows * max_nnz, T{0});
+            std::vector<T> values(num_rows * max_nnz, T {0});
             std::vector<int> col_indices(num_rows * max_nnz, -1);
 
             for (int i = 0; i < num_rows; ++i) {
@@ -530,7 +530,7 @@ namespace nova {
                 return SparseMatrixSELL<T>({}, {}, std::move(slice_ptr), num_rows, num_cols, slice_height);
             }
 
-            std::vector<T> values(total_padded_nnz, T{0});
+            std::vector<T> values(total_padded_nnz, T {0});
             std::vector<int> col_indices(total_padded_nnz, -1);
 
             for (int slice_idx = 0; slice_idx < num_slices; ++slice_idx) {

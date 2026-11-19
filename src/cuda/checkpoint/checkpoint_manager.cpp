@@ -450,7 +450,7 @@ namespace nova::checkpoint {
         // Every field is set: CheckpointInfo has no default member initialisers, so
         // returning a partially filled struct handed the caller indeterminate
         // timestamp and size_bytes (undefined behaviour on read).
-        CheckpointInfo info{};
+        CheckpointInfo info {};
         info.step = step;
         info.path = ckpt_dir;
         info.timestamp = 0;

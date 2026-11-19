@@ -29,26 +29,26 @@ namespace cuda::device {
                 constexpr T kSignBit = static_cast<T>(static_cast<T>(1) << (kWidth - 1));
                 switch (op) {
                     case ReduceOp::SUM:
-                        return T{};
+                        return T {};
                     case ReduceOp::MAX:
-                        return std::numeric_limits<T>::is_signed ? kSignBit : T{};
+                        return std::numeric_limits<T>::is_signed ? kSignBit : T {};
                     case ReduceOp::MIN:
                         return std::numeric_limits<T>::is_signed ? static_cast<T>(kAllBits ^ kSignBit) : kAllBits;
                 }
-                return T{};
+                return T {};
             } else {
                 // for float/double, build the largest finite magnitude without calling
                 // any __host__ constexpr helper.
                 const T huge = static_cast<T>(1e38) * static_cast<T>(1e38);
                 switch (op) {
                     case ReduceOp::SUM:
-                        return T{};
+                        return T {};
                     case ReduceOp::MAX:
                         return -huge;
                     case ReduceOp::MIN:
                         return huge;
                 }
-                return T{};
+                return T {};
             }
         }
 

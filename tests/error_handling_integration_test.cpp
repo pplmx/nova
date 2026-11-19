@@ -21,7 +21,7 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {
     degrade_mgr.set_callback([&](const degradation_event& event) { degraded = true; });
 
     retry_config retry_cfg;
-    retry_cfg.base_delay = std::chrono::milliseconds{5};
+    retry_cfg.base_delay = std::chrono::milliseconds {5};
     retry_cfg.max_attempts = 2;
     retry_cfg.jitter_enabled = false;
 
@@ -44,8 +44,7 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {
 
             return precision;
         });
-    } catch (...) {
-    }
+    } catch (...) {}
 
     EXPECT_EQ(attempts, 2);
     EXPECT_TRUE(degraded || !degraded);
@@ -54,10 +53,10 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {
 TEST_F(ErrorHandlingIntegrationTest, CircuitBreakerUnderConcurrentLoad) {
     circuit_breaker_config cb_cfg;
     cb_cfg.failure_threshold = 5;
-    cb_cfg.reset_timeout = std::chrono::seconds{1};
+    cb_cfg.reset_timeout = std::chrono::seconds {1};
     circuit_breaker cb(cb_cfg);
 
-    std::atomic<int> blocked_count{0};
+    std::atomic<int> blocked_count {0};
     std::vector<std::thread> threads;
 
     for (int i = 0; i < 10; ++i) {
@@ -79,12 +78,12 @@ TEST_F(ErrorHandlingIntegrationTest, CircuitBreakerUnderConcurrentLoad) {
 }
 
 TEST_F(ErrorHandlingIntegrationTest, TimeoutGuardWithRetry) {
-    auto id = timeout_manager::instance().start_operation("critical_op", std::chrono::milliseconds{100});
+    auto id = timeout_manager::instance().start_operation("critical_op", std::chrono::milliseconds {100});
 
     retry_config retry_cfg;
     retry_cfg.max_attempts = 3;
     retry_cfg.jitter_enabled = false;
-    retry_cfg.base_delay = std::chrono::milliseconds{10};
+    retry_cfg.base_delay = std::chrono::milliseconds {10};
 
     retry_executor executor(retry_cfg);
 
@@ -114,7 +113,7 @@ TEST_F(ErrorHandlingIntegrationTest, BackwardCompatibility) {
     auto& manager = timeout_manager::instance();
     EXPECT_EQ(manager.active_count(), 0u);
 
-    auto id = manager.start_operation("test", std::chrono::milliseconds{1000});
+    auto id = manager.start_operation("test", std::chrono::milliseconds {1000});
     EXPECT_GT(id, 0u);
 
     EXPECT_EQ(manager.active_count(), 1u);

@@ -37,12 +37,12 @@ namespace nova {
 
             struct BenchmarkResult {
                 std::string name;
-                float throughput_gbps{0.0f};
-                float latency_us{0.0f};
-                float accuracy_loss{0.0f};
-                float relative_error{0.0f};
-                int batch_size{0};
-                int num_samples{0};
+                float throughput_gbps {0.0f};
+                float latency_us {0.0f};
+                float accuracy_loss {0.0f};
+                float relative_error {0.0f};
+                int batch_size {0};
+                int num_samples {0};
 
                 void print() const { printf("%s: %.2f GB/s, %.2f us latency, %.4f rel_error\n", name.c_str(), throughput_gbps, latency_us, relative_error); }
 
@@ -61,11 +61,11 @@ namespace nova {
             class QuantizationBenchmark {
             public:
                 struct Config {
-                    int warmup_runs{10};
-                    int benchmark_runs{100};
-                    int batch_size{1024};
-                    bool verify_accuracy{true};
-                    bool verbose{false};
+                    int warmup_runs {10};
+                    int benchmark_runs {100};
+                    int batch_size {1024};
+                    bool verify_accuracy {true};
+                    bool verbose {false};
                 };
 
                 explicit QuantizationBenchmark(const Config& config)

@@ -15,14 +15,14 @@
 
 namespace nova::preemption {
 
-    static std::atomic<bool> g_shutdown_requested{false};
-    static std::atomic<int> g_received_signal{0};
+    static std::atomic<bool> g_shutdown_requested {false};
+    static std::atomic<int> g_received_signal {0};
     static std::mutex g_signal_mutex;
-    static std::chrono::steady_clock::time_point g_signal_time{};
+    static std::chrono::steady_clock::time_point g_signal_time {};
 
     // Write end of the self-pipe. The handler's ONLY job is write(2) of one byte; everything
     // else happens on a thread reading the other end.
-    static std::atomic<int> g_signal_pipe_write{-1};
+    static std::atomic<int> g_signal_pipe_write {-1};
 
     struct SignalHandler::Impl {
         bool installed = false;
@@ -31,7 +31,7 @@ namespace nova::preemption {
         // Reader half of the self-pipe and the thread that services it.
         int pipe_read_fd = -1;
         std::thread dispatcher;
-        std::atomic<bool> dispatcher_stop{false};
+        std::atomic<bool> dispatcher_stop {false};
     };
 
     SignalHandler& SignalHandler::instance() {
@@ -180,15 +180,15 @@ namespace nova::preemption {
 
     struct ShutdownCoordinator::Impl {
         ShutdownConfig config;
-        std::atomic<ShutdownPhase> phase{ShutdownPhase::Idle};
+        std::atomic<ShutdownPhase> phase {ShutdownPhase::Idle};
         // Atomic so a status poller racing a REUSE round (reset via shutdown() then
         // a new request_shutdown) never formally data-races on a plain time_point —
         // the reader may pair with the previous round's store, but that is a benign
         // one-poll-stale value, not UB (review MEDIUM).
-        std::atomic<std::chrono::steady_clock::time_point> shutdown_start{};
-        std::atomic<int64_t> timeout_remaining{30};
-        std::atomic<bool> shutdown_in_progress{false};
-        std::atomic<bool> shutdown_complete{false};
+        std::atomic<std::chrono::steady_clock::time_point> shutdown_start {};
+        std::atomic<int64_t> timeout_remaining {30};
+        std::atomic<bool> shutdown_in_progress {false};
+        std::atomic<bool> shutdown_complete {false};
 
         ShutdownStageCallback stage_callback;
         ShutdownCoordinator::CheckpointCallback checkpoint_callback;
@@ -327,7 +327,7 @@ namespace nova::preemption {
 
     std::chrono::milliseconds ShutdownCoordinator::get_elapsed_time() const {
         if (!impl_->shutdown_in_progress.load()) {
-            return std::chrono::milliseconds{0};
+            return std::chrono::milliseconds {0};
         }
         return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - impl_->shutdown_start.load());
     }
@@ -434,7 +434,7 @@ namespace nova::preemption {
         ShutdownConfig config;
         PreemptionCallback preemption_callback;
         CheckpointCallback checkpoint_callback;
-        std::atomic<bool> initialized{false};
+        std::atomic<bool> initialized {false};
 
         std::thread shutdown_waiter;
     };

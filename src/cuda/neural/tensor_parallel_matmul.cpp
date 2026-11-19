@@ -55,7 +55,7 @@ namespace cuda::neural {
     }  // namespace
 
     void TensorParallelMatmul::matmul(const float* A, const float* B, float* C, int m, int n, int k) {
-        cudaStream_t stream{};
+        cudaStream_t stream {};
         CUDA_CHECK(cudaStreamCreate(&stream));
 
         // RAII stream guard: matmul_async can throw on shape-validation errors
@@ -67,7 +67,7 @@ namespace cuda::neural {
                     cudaStreamDestroy(s);
                 }
             }
-        } guard{stream};
+        } guard {stream};
 
         matmul_async(A, B, C, m, n, k, stream);
 

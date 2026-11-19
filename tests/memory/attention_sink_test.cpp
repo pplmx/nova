@@ -6,7 +6,7 @@ namespace cuda::memory {
     class AttentionSinkTest : public ::testing::Test {
     protected:
         void SetUp() override {
-            KVCacheAllocatorConfig config{
+            KVCacheAllocatorConfig config {
                 .num_heads = 32,
                 .head_dim = 128,
                 .block_size_tokens = 16,

@@ -13,11 +13,11 @@ namespace nova::preemption {
     enum class ShutdownPhase { Idle, Signaling, Checkpointing, Finalizing, Complete };
 
     struct ShutdownConfig {
-        std::chrono::seconds shutdown_timeout{30};
-        bool checkpoint_on_shutdown{true};
-        bool validate_checkpoint_before_save{true};
-        int max_checkpoint_retries{3};
-        bool coordinated_checkpoint{true};
+        std::chrono::seconds shutdown_timeout {30};
+        bool checkpoint_on_shutdown {true};
+        bool validate_checkpoint_before_save {true};
+        int max_checkpoint_retries {3};
+        bool coordinated_checkpoint {true};
     };
 
     /**

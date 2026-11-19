@@ -143,7 +143,7 @@ namespace cuda::neural {
 
         cudaStream_t stream;
         CUDA_CHECK(cudaStreamCreate(&stream));
-        StreamGuard guard{stream};
+        StreamGuard guard {stream};
 
         cublasHandle_t handle = ensure_handle();
         CUBLAS_CHECK(cublasSetStream(handle, stream));
@@ -168,7 +168,7 @@ namespace cuda::neural {
 
         cudaStream_t stream;
         CUDA_CHECK(cudaStreamCreate(&stream));
-        StreamGuard guard{stream};
+        StreamGuard guard {stream};
         cublasHandle_t handle = ensure_handle();
         CUBLAS_CHECK(cublasSetStream(handle, stream));
         MatmulOptions opts;
@@ -347,7 +347,7 @@ namespace cuda::neural {
 
         cudaStream_t stream;
         CUDA_CHECK(cudaStreamCreate(&stream));
-        StreamGuard guard{stream};
+        StreamGuard guard {stream};
 
         cublasHandle_t handle = ensure_handle();
         CUBLAS_CHECK(cublasSetStream(handle, stream));
@@ -386,7 +386,7 @@ namespace cuda::neural {
 
         cudaStream_t stream;
         CUDA_CHECK(cudaStreamCreate(&stream));
-        StreamGuard guard{stream};
+        StreamGuard guard {stream};
         cublasHandle_t handle = ensure_handle();
         CUBLAS_CHECK(cublasSetStream(handle, stream));
         MatmulOptions opts;

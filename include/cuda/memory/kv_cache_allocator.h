@@ -171,7 +171,7 @@ namespace cuda::memory {
         memory::Buffer<void> gpu_memory_;
 
         size_t block_memory_size_ = 0;
-        std::atomic<uint64_t> access_counter_{0};
+        std::atomic<uint64_t> access_counter_ {0};
 
         std::vector<KVCacheBlock*> sink_blocks_;
         L2PersistenceScope l2_scope_ = L2PersistenceScope::None;
@@ -425,7 +425,7 @@ namespace cuda::memory {
 
             if (block.in_use && block.sequence_id >= 0) {
                 stats_.prefix_cache_hits++;
-                return PrefixMatch{.sequence_id = block.sequence_id, .num_matching_tokens = block.num_tokens, .first_block_index = 0};
+                return PrefixMatch {.sequence_id = block.sequence_id, .num_matching_tokens = block.num_tokens, .first_block_index = 0};
             }
         }
 

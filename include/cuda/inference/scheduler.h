@@ -206,19 +206,19 @@ namespace cuda::inference {
     inline Scheduler::Scheduler(const SchedulerConfig& config)
         : config_(config),
           seq_manager_(config),
-          block_manager_(BlockManagerConfig{.max_model_len = config.max_sequence_length,
-                                            .block_size = config.block_size,
-                                            .num_gpu_blocks = config.max_batch_size * 64,
-                                            .kv_cache_config{.num_heads = config.num_kv_heads,
-                                                             .head_dim = config.head_dim,
-                                                             .block_size_tokens = config.block_size,
-                                                             .num_blocks = config.max_batch_size * 64,
-                                                             .num_layers = 32},
-                                            .attention_config{.num_heads = config.num_heads,
-                                                              .num_kv_heads = config.num_kv_heads,
-                                                              .head_dim = config.head_dim,
-                                                              .seq_len = config.max_sequence_length,
-                                                              .batch_size = config.max_batch_size}}) {}
+          block_manager_(BlockManagerConfig {.max_model_len = config.max_sequence_length,
+                                             .block_size = config.block_size,
+                                             .num_gpu_blocks = config.max_batch_size * 64,
+                                             .kv_cache_config {.num_heads = config.num_kv_heads,
+                                                               .head_dim = config.head_dim,
+                                                               .block_size_tokens = config.block_size,
+                                                               .num_blocks = config.max_batch_size * 64,
+                                                               .num_layers = 32},
+                                             .attention_config {.num_heads = config.num_heads,
+                                                                .num_kv_heads = config.num_kv_heads,
+                                                                .head_dim = config.head_dim,
+                                                                .seq_len = config.max_sequence_length,
+                                                                .batch_size = config.max_batch_size}}) {}
 
     inline Scheduler::~Scheduler() = default;
 

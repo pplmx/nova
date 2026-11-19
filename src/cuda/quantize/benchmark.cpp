@@ -434,8 +434,8 @@ namespace nova {
                 // against the float reference. The error is therefore the error that
                 // precision introduces, not an artefact of the timing loop.
                 for (const PrecisionCase& test_case : {
-                         PrecisionCase{"fp8_e4m3", [](float v) { return static_cast<float>(FP8E4M3(v)); }},
-                         PrecisionCase{"int8", [](float v) { return static_cast<float>(static_cast<int8_t>(std::round(std::fmin(std::fmax(v, -127.0f), 127.0f)))); }},
+                         PrecisionCase {"fp8_e4m3", [](float v) { return static_cast<float>(FP8E4M3(v)); }},
+                         PrecisionCase {"int8", [](float v) { return static_cast<float>(static_cast<int8_t>(std::round(std::fmin(std::fmax(v, -127.0f), 127.0f)))); }},
                      }) {
                     BenchmarkResult result;
                     result.name = std::string("precision_compare_") + test_case.label + " " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n);

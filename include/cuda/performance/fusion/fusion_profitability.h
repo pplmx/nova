@@ -10,10 +10,10 @@ namespace cuda::performance::fusion {
     enum class ConfidenceLevel { HIGH, MEDIUM, LOW };
 
     struct FusionProfitabilityConfig {
-        double launch_overhead_us{100.0};
-        double memory_coalescing_benefit_multiplier{1.2};
-        double register_pressure_cost_multiplier{0.8};
-        double min_profitability_threshold{0.1};
+        double launch_overhead_us {100.0};
+        double memory_coalescing_benefit_multiplier {1.2};
+        double register_pressure_cost_multiplier {0.8};
+        double min_profitability_threshold {0.1};
     };
 
     class FusionProfitabilityModel {
@@ -57,13 +57,13 @@ namespace cuda::performance::fusion {
 
     private:
         FusionOpportunity opportunity_;
-        ConfidenceLevel confidence_{ConfidenceLevel::LOW};
-        double profitability_score_{0.0};
+        ConfidenceLevel confidence_ {ConfidenceLevel::LOW};
+        double profitability_score_ {0.0};
 
-        uint64_t before_latency_us_{0};
-        uint64_t after_latency_us_{0};
-        uint64_t latency_saved_us_{0};
-        double speedup_factor_{1.0};
+        uint64_t before_latency_us_ {0};
+        uint64_t after_latency_us_ {0};
+        uint64_t latency_saved_us_ {0};
+        double speedup_factor_ {1.0};
 
         std::string pattern_name_;
         std::string description_;

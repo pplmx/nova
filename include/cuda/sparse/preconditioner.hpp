@@ -71,9 +71,9 @@ namespace nova::sparse {
     template <SparseScalar T>
     class JacobiPreconditioner : public Preconditioner<T> {
     public:
-        explicit JacobiPreconditioner(T omega = T{1.0})
+        explicit JacobiPreconditioner(T omega = T {1.0})
             : omega_(omega) {
-            if (omega <= T{0} || omega > T{2}) {
+            if (omega <= T {0} || omega > T {2}) {
                 throw PreconditionerError("JacobiPreconditioner: omega must be in (0, 2], got " + std::to_string(static_cast<double>(omega)));
             }
         }
@@ -95,7 +95,7 @@ namespace nova::sparse {
             for (int i = 0; i < n; ++i) {
                 const int row_start = h_row_offsets[i];
                 const int row_end = h_row_offsets[i + 1];
-                T diag_val = T{0};
+                T diag_val = T {0};
 
                 for (int idx = row_start; idx < row_end; ++idx) {
                     if (h_col_indices[idx] == i) {
@@ -109,7 +109,7 @@ namespace nova::sparse {
                                               + ". Consider using a different preconditioner or matrix reordering.");
                 }
 
-                h_diagonal[i] = T{1.0} / diag_val;
+                h_diagonal[i] = T {1.0} / diag_val;
             }
 
             diagonal_.copy_from(h_diagonal.data(), n);

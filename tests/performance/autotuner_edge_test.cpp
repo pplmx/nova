@@ -69,7 +69,7 @@ namespace cuda::performance::test {
         config.config_path = "/tmp/custom_autotune.json";
 
         Autotuner tuner(config);
-        tuner.save_result("custom_path_test", AutotuneResult{});
+        tuner.save_result("custom_path_test", AutotuneResult {});
 
         auto result = tuner.load_cached_result("custom_path_test");
         EXPECT_TRUE(result.has_value());

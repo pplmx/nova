@@ -171,7 +171,7 @@ namespace cuda::mesh {
 
         int device_count_ = 0;
         PeerCapabilityMap peer_capabilities_;
-        std::atomic<bool> initialized_{false};
+        std::atomic<bool> initialized_ {false};
     };
 
     /**

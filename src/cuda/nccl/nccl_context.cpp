@@ -81,7 +81,7 @@ namespace cuda::nccl {
     }
 
     void NcclContext::initialize() {
-        initialize(NcclContextConfig{});
+        initialize(NcclContextConfig {});
     }
 
     void NcclContext::initialize(const NcclContextConfig& config) {

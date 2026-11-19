@@ -86,7 +86,7 @@ namespace nova {
                     }
                 }
 
-                result.values_ell_.resize(result.ell_row_count_ * max_nnz_per_row, T{0});
+                result.values_ell_.resize(result.ell_row_count_ * max_nnz_per_row, T {0});
                 result.col_indices_ell_.resize(result.ell_row_count_ * max_nnz_per_row, -1);
                 result.row_offsets_ell_.resize(result.ell_row_count_ + 1);
                 result.row_offsets_ell_[0] = 0;
@@ -197,7 +197,7 @@ namespace nova {
             int num_rows = A.num_rows();
 
             for (int i = 0; i < num_rows; ++i) {
-                y[i] = T{0};
+                y[i] = T {0};
             }
 
             int max_nnz = A.max_nnz_per_row();
@@ -205,7 +205,7 @@ namespace nova {
             const int* ell_col = A.ell_col_indices();
 
             for (int csr_row = 0; csr_row < A.ell_row_count(); ++csr_row) {
-                T sum = T{0};
+                T sum = T {0};
                 int base = csr_row * max_nnz;
 
                 for (int j = 0; j < max_nnz; ++j) {

@@ -50,7 +50,7 @@ namespace cuda::performance::fusion {
         Operation first_op_;
         Operation second_op_;
         FusionPattern pattern_;
-        size_t location_index_{0};
+        size_t location_index_ {0};
     };
 
     class KernelFusionAnalyzer {

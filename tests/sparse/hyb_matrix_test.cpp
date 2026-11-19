@@ -60,7 +60,7 @@ namespace nova::sparse::test {
     }
 
     TEST(HybMatrixTest, FromEmptyCsrStaysEmpty) {
-        auto hyb = SparseMatrixHYB<double>::FromCSR(CSR{});
+        auto hyb = SparseMatrixHYB<double>::FromCSR(CSR {});
 
         EXPECT_EQ(hyb.num_rows(), 0);
         EXPECT_EQ(hyb.nnz(), 0);
@@ -68,7 +68,7 @@ namespace nova::sparse::test {
     }
 
     TEST(HybMatrixTest, ZeroNnzCsrKeepsItsShape) {
-        CSR csr(std::vector<double>{}, std::vector<int>{0, 0, 0}, std::vector<int>{}, 2, 2);
+        CSR csr(std::vector<double> {}, std::vector<int> {0, 0, 0}, std::vector<int> {}, 2, 2);
         auto hyb = SparseMatrixHYB<double>::FromCSR(csr);
 
         EXPECT_EQ(hyb.num_rows(), 2);
@@ -177,7 +177,7 @@ namespace nova::sparse::test {
     }
 
     TEST(HybMatrixTest, DiagonalMatrixGoesEntirelyToEll) {
-        CSR csr(std::vector<double>{1, 1, 1}, std::vector<int>{0, 1, 2, 3}, std::vector<int>{0, 1, 2}, 3, 3);
+        CSR csr(std::vector<double> {1, 1, 1}, std::vector<int> {0, 1, 2, 3}, std::vector<int> {0, 1, 2}, 3, 3);
         auto hyb = SparseMatrixHYB<double>::FromCSR(csr, 2);
 
         EXPECT_EQ(hyb.nnz(), 3);

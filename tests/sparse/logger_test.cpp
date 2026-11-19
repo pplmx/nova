@@ -47,7 +47,7 @@ namespace nova::logging::test {
         // the file after a peer had truncated it. The name now carries the pid and a
         // per-call counter, and the file is uniquely owned by this call.
         std::string capture_log(const std::function<void()>& emit) {
-            static std::atomic<unsigned> counter{0};
+            static std::atomic<unsigned> counter {0};
 
             const auto path = std::filesystem::temp_directory_path() / ("nova_logger_test." + std::to_string(::getpid()) + "." + std::to_string(counter.fetch_add(1)) + ".log");
 
@@ -174,7 +174,7 @@ namespace nova::logging::test {
         constexpr int kThreads = 8;
         constexpr int kIterations = 100;
         std::vector<std::thread> workers;
-        std::atomic<int> malformed{0};
+        std::atomic<int> malformed {0};
 
         for (int i = 0; i < kThreads; ++i) {
             workers.emplace_back([&malformed] {

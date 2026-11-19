@@ -53,8 +53,8 @@ namespace cuda::performance::test {
 
     TEST_F(PerformanceToolingIntegrationTest, FusionAnalysisPipeline) {
         fusion::KernelFusionAnalyzer analyzer;
-        fusion::Operation op1{"matmul", fusion::OpType::Matmul, 100, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
-        fusion::Operation op2{"bias", fusion::OpType::ElementWise, 50, 64, 64, 1, 1, 1, 128, 1, 1, 0.8f, false};
+        fusion::Operation op1 {"matmul", fusion::OpType::Matmul, 100, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
+        fusion::Operation op2 {"bias", fusion::OpType::ElementWise, 50, 64, 64, 1, 1, 1, 128, 1, 1, 0.8f, false};
 
         analyzer.add_operation(op1);
         analyzer.add_operation(op2);
@@ -142,8 +142,8 @@ namespace cuda::performance::test {
         collector.record_kernel(km);
 
         fusion::KernelFusionAnalyzer fusion_analyzer;
-        fusion::Operation matmul{"matmul_kernel", fusion::OpType::Matmul, 1000, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
-        fusion::Operation bias{"bias_add", fusion::OpType::ElementWise, 100, 64, 64, 1, 1, 1, 128, 1, 1, 0.8f, false};
+        fusion::Operation matmul {"matmul_kernel", fusion::OpType::Matmul, 1000, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
+        fusion::Operation bias {"bias_add", fusion::OpType::ElementWise, 100, 64, 64, 1, 1, 1, 128, 1, 1, 0.8f, false};
         fusion_analyzer.add_operation(matmul);
         fusion_analyzer.add_operation(bias);
 
@@ -160,7 +160,7 @@ namespace cuda::performance::test {
         EXPECT_FALSE(json.empty());
 
         dashboard::FlameGraphGenerator flame_gen;
-        dashboard::ChromeTraceEvent event{"matmul_kernel", "algo", "X", 1000, 1000, 1, 1};
+        dashboard::ChromeTraceEvent event {"matmul_kernel", "algo", "X", 1000, 1000, 1, 1};
         flame_gen.add_event(event);
 
         std::string flame_json = flame_gen.to_json();

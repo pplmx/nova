@@ -188,7 +188,7 @@ namespace nova::sparse {
         for (int i = 0; i < rows; ++i) {
             for (int j = 0; j < cols; ++j) {
                 T val = dense[i * cols + j];
-                if (val != T{0} && std::abs(val) > threshold) {
+                if (val != T {0} && std::abs(val) > threshold) {
                     values.push_back(val);
                     col_indices.push_back(j);
                 }
@@ -284,7 +284,7 @@ namespace nova::sparse {
         for (size_t e = 0; e < edges.size(); ++e) {
             const size_t slot = static_cast<size_t>(next[static_cast<size_t>(edges[e].first)]++);
             col_indices[slot] = edges[e].second;
-            values[slot] = weights ? (*weights)[e] : T{1};
+            values[slot] = weights ? (*weights)[e] : T {1};
         }
 
         return FromHostData(values, row_offsets, col_indices, num_vertices, num_vertices);

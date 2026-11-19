@@ -33,11 +33,11 @@ private:
 public:
     ImageBuffer()
         : d_data_(nullptr),
-          dims_{0, 0, 0},
+          dims_ {0, 0, 0},
           data_owner_(nullptr) {}
 
     explicit ImageBuffer(size_t width, size_t height, size_t channels = 3)
-        : dims_{width, height, channels} {
+        : dims_ {width, height, channels} {
         if (size() > 0) {
             PixelType* raw_ptr = nullptr;
             CUDA_CHECK(cudaMalloc(&raw_ptr, size() * sizeof(PixelType)));
@@ -80,11 +80,11 @@ private:
 public:
     ImageBuffer()
         : d_data_(nullptr),
-          dims_{0, 0, 0},
+          dims_ {0, 0, 0},
           data_owner_(nullptr) {}
 
     explicit ImageBuffer(size_t width, size_t height, size_t channels = 3)
-        : dims_{width, height, channels} {
+        : dims_ {width, height, channels} {
         if (size() > 0) {
             PixelType* raw_ptr = nullptr;
             CUDA_CHECK(cudaMalloc(&raw_ptr, size() * sizeof(PixelType)));

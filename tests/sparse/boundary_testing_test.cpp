@@ -89,21 +89,21 @@ namespace cuda::testing::test {
         BoundaryConditionTest harness;
 
         // Legal configurations.
-        EXPECT_TRUE(harness.test_grid_size(dim3{65535, 1, 1}));
-        EXPECT_TRUE(harness.test_grid_size(dim3{1, 65535, 1}));
-        EXPECT_TRUE(harness.test_block_size(dim3{256, 1, 1}));
-        EXPECT_TRUE(harness.test_block_size(dim3{32, 32, 1}));
+        EXPECT_TRUE(harness.test_grid_size(dim3 {65535, 1, 1}));
+        EXPECT_TRUE(harness.test_grid_size(dim3 {1, 65535, 1}));
+        EXPECT_TRUE(harness.test_block_size(dim3 {256, 1, 1}));
+        EXPECT_TRUE(harness.test_block_size(dim3 {32, 32, 1}));
 
         // Over the limit in one axis.
-        EXPECT_FALSE(harness.test_grid_size(dim3{65536, 1, 1}));
-        EXPECT_FALSE(harness.test_grid_size(dim3{1, 1, 65536}));
+        EXPECT_FALSE(harness.test_grid_size(dim3 {65536, 1, 1}));
+        EXPECT_FALSE(harness.test_grid_size(dim3 {1, 1, 65536}));
 
         // A zero-sized dimension describes no threads at all.
-        EXPECT_FALSE(harness.test_block_size(dim3{0, 1, 1}));
-        EXPECT_FALSE(harness.test_block_size(dim3{1, 0, 1}));
+        EXPECT_FALSE(harness.test_block_size(dim3 {0, 1, 1}));
+        EXPECT_FALSE(harness.test_block_size(dim3 {1, 0, 1}));
 
         // More threads than the per-block maximum.
-        EXPECT_FALSE(harness.test_block_size(dim3{CUDA_MAX_THREADS_PER_BLOCK + 1, 1, 1}));
+        EXPECT_FALSE(harness.test_block_size(dim3 {CUDA_MAX_THREADS_PER_BLOCK + 1, 1, 1}));
     }
 
     // Regression: these returned all twelve results regardless of category.

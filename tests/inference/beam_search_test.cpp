@@ -206,8 +206,8 @@ namespace cuda::inference {
         hyp2.sequence_id = 2;
         hyp2.log_prob = -11000.0f;
 
-        BeamSearchTraceEntry entry1{0, 0, 42, -12000.0f, -10.0f, -5.0f, 1};
-        BeamSearchTraceEntry entry2{0, 1, 43, -11000.0f, -9.0f, -4.5f, 2};
+        BeamSearchTraceEntry entry1 {0, 0, 42, -12000.0f, -10.0f, -5.0f, 1};
+        BeamSearchTraceEntry entry2 {0, 1, 43, -11000.0f, -9.0f, -4.5f, 2};
 
         const float threshold = -1e4f;
         EXPECT_LT(hyp1.log_prob, threshold);
@@ -304,8 +304,8 @@ namespace cuda::inference {
     TEST_F(BeamSearchTest, TraceExportIncludesPerTokenScores) {
         beam_manager->clear_trace();
 
-        BeamSearchTraceEntry entry1{0, 0, 42, -2.5f, -0.5f, -2.5f, 1};
-        BeamSearchTraceEntry entry2{1, 0, 43, -5.2f, -0.6f, -2.7f, 1};
+        BeamSearchTraceEntry entry1 {0, 0, 42, -2.5f, -0.5f, -2.5f, 1};
+        BeamSearchTraceEntry entry2 {1, 0, 43, -5.2f, -0.6f, -2.7f, 1};
 
         auto csv = beam_manager->export_trace_csv();
         EXPECT_TRUE(csv.find("step,beam,token,score,norm_score,sequence") == 0);

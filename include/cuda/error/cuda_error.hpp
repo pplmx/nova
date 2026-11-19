@@ -43,19 +43,19 @@ namespace nova::error {
         cudaError_t code;
 
         /** @brief Name of the operation that failed (e.g., "cudaMalloc") */
-        const char* operation{nullptr};
+        const char* operation {nullptr};
 
         /** @brief Source file where error occurred */
-        const char* file{nullptr};
+        const char* file {nullptr};
 
         /** @brief Line number in source file */
-        int line{0};
+        int line {0};
 
         /** @brief Device ID where error occurred (-1 if unknown) */
-        int device_id{-1};
+        int device_id {-1};
 
         /** @brief Stream where error occurred (nullptr if not applicable) */
-        void* stream{nullptr};
+        void* stream {nullptr};
 
         /**
          * @brief Get formatted error message
@@ -241,7 +241,7 @@ namespace nova::error {
 
     private:
         cuda_error_info info_;
-        bool ok_{true};
+        bool ok_ {true};
     };
 
 /**
@@ -259,11 +259,11 @@ namespace nova::error {
  * @def NOVA_CHECK
  * @ingroup error
  */
-#define NOVA_CHECK(call)                                                                      \
-    do {                                                                                      \
-        static_assert(sizeof(#call) > 0, "NOVA_CHECK requires a CUDA call");                  \
-        nova::error::cuda_error_guard nova_err_guard{#call, -1, nullptr, __FILE__, __LINE__}; \
-        nova_err_guard.check(call);                                                           \
+#define NOVA_CHECK(call)                                                                       \
+    do {                                                                                       \
+        static_assert(sizeof(#call) > 0, "NOVA_CHECK requires a CUDA call");                   \
+        nova::error::cuda_error_guard nova_err_guard {#call, -1, nullptr, __FILE__, __LINE__}; \
+        nova_err_guard.check(call);                                                            \
     } while (0)
 
 /**
@@ -277,10 +277,10 @@ namespace nova::error {
  * @def NOVA_CHECK_WITH_STREAM
  * @ingroup error
  */
-#define NOVA_CHECK_WITH_STREAM(call, stream)                                                 \
-    do {                                                                                     \
-        nova::error::cuda_error_guard nova_err_guard{#call, -1, stream, __FILE__, __LINE__}; \
-        nova_err_guard.check(call);                                                          \
+#define NOVA_CHECK_WITH_STREAM(call, stream)                                                  \
+    do {                                                                                      \
+        nova::error::cuda_error_guard nova_err_guard {#call, -1, stream, __FILE__, __LINE__}; \
+        nova_err_guard.check(call);                                                           \
     } while (0)
 
 /**

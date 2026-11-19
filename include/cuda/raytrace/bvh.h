@@ -41,7 +41,7 @@ namespace cuda::raytrace {
                      BVHNode* nodes,
                      uint32_t* prim_indices,
                      size_t max_nodes,
-                     const BVHBuildOptions& options = BVHBuildOptions{},
+                     const BVHBuildOptions& options = BVHBuildOptions {},
                      cudaStream_t stream = nullptr);
 
     size_t build_bvh_spheres(const Sphere* spheres,
@@ -49,7 +49,7 @@ namespace cuda::raytrace {
                              BVHNode* nodes,
                              uint32_t* prim_indices,
                              size_t max_nodes,
-                             const BVHBuildOptions& options = BVHBuildOptions{},
+                             const BVHBuildOptions& options = BVHBuildOptions {},
                              cudaStream_t stream = nullptr);
 
     struct BVHStats {

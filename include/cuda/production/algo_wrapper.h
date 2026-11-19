@@ -34,7 +34,7 @@ namespace cuda::production {
     private:
         ReduceFn reduce_fn_;
         GraphExecutor executor_;
-        T result_{};
+        T result_ {};
         size_t input_size_ = 0;
         // Owned here so it can be allocated before capture begins and freed after
         // the graph is gone; allocating inside a capturing stream is an error.

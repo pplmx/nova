@@ -116,7 +116,7 @@ namespace cuda::parallel {
         memory::Buffer<T> d_data(paddedSize);
         d_data.copy_from(input.data(), size);
 
-        T maxVal = T{};
+        T maxVal = T {};
         if constexpr (std::is_integral_v<T>) {
             maxVal = std::numeric_limits<T>::max();
         }

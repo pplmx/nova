@@ -11,11 +11,11 @@ namespace cuda::performance {
 
     struct AggregatedMetric {
         std::string name;
-        double min{0.0};
-        double max{0.0};
-        double mean{0.0};
-        double stddev{0.0};
-        size_t sample_count{0};
+        double min {0.0};
+        double max {0.0};
+        double mean {0.0};
+        double stddev {0.0};
+        size_t sample_count {0};
     };
 
     class ArithmeticIntensityAggregator {
@@ -46,9 +46,9 @@ namespace cuda::performance {
 
     private:
         std::vector<double> achieved_samples_;
-        double device_fp64_peak_{0.0};
-        double device_fp32_peak_{0.0};
-        double device_fp16_peak_{0.0};
+        double device_fp64_peak_ {0.0};
+        double device_fp32_peak_ {0.0};
+        double device_fp16_peak_ {0.0};
     };
 
     class BandwidthAggregator {
@@ -75,9 +75,9 @@ namespace cuda::performance {
         std::vector<double> h2d_samples_;
         std::vector<double> d2h_samples_;
         std::vector<double> d2d_samples_;
-        double peak_h2d_{0.0};
-        double peak_d2h_{0.0};
-        double peak_d2d_{90.0 * 1024.0 * 1024.0 * 1024.0 / 1e9};
+        double peak_h2d_ {0.0};
+        double peak_d2h_ {0.0};
+        double peak_d2d_ {90.0 * 1024.0 * 1024.0 * 1024.0 / 1e9};
     };
 
     class MetricAggregatorPipeline {

@@ -103,8 +103,8 @@ namespace cuda::algo::segmented::test {
         sort_by_key(d_keys.data(), d_segments.data(), d_out_keys.data(), d_out_segments.data(), keys.size(), 2);
 
         // Each segment sorted independently; nothing crosses a boundary.
-        EXPECT_EQ(d_out_keys.to_host(), (std::vector<int>{1, 5, 2, 4}));
-        EXPECT_EQ(d_out_segments.to_host(), (std::vector<int>{0, 0, 1, 1}));
+        EXPECT_EQ(d_out_keys.to_host(), (std::vector<int> {1, 5, 2, 4}));
+        EXPECT_EQ(d_out_segments.to_host(), (std::vector<int> {0, 0, 1, 1}));
     }
 
     TEST(SegmentedSortByKeyTest, KeepsEachKeyWithItsOwnSegmentId) {
@@ -126,8 +126,8 @@ namespace cuda::algo::segmented::test {
         const auto sorted_keys = d_out_keys.to_host();
         const auto sorted_segments = d_out_segments.to_host();
 
-        EXPECT_EQ(sorted_keys, (std::vector<int>{3, 9, 2, 8, 1, 7}));
-        EXPECT_EQ(sorted_segments, (std::vector<int>{0, 0, 1, 1, 2, 2}));
+        EXPECT_EQ(sorted_keys, (std::vector<int> {3, 9, 2, 8, 1, 7}));
+        EXPECT_EQ(sorted_segments, (std::vector<int> {0, 0, 1, 1, 2, 2}));
 
         // Within every segment the keys must be ascending.
         for (size_t i = 1; i < sorted_keys.size(); ++i) {
@@ -169,7 +169,7 @@ namespace cuda::algo::segmented::test {
 
         sort_by_key(d_keys.data(), d_segments.data(), d_out_keys.data(), d_out_segments.data(), keys.size(), 2);
 
-        EXPECT_EQ(d_out_keys.to_host(), (std::vector<float>{0.5f, 2.5f, 1.0f, 9.0f}));
+        EXPECT_EQ(d_out_keys.to_host(), (std::vector<float> {0.5f, 2.5f, 1.0f, 9.0f}));
     }
 
     TEST(SegmentedSortByKeyInplaceTest, SortsTheBufferInPlace) {
@@ -184,8 +184,8 @@ namespace cuda::algo::segmented::test {
 
         sort_by_key_inplace(d_keys.data(), d_segments.data(), keys.size(), 2);
 
-        EXPECT_EQ(d_keys.to_host(), (std::vector<int>{2, 4, 1, 3}));
-        EXPECT_EQ(d_segments.to_host(), (std::vector<int>{0, 0, 1, 1}));
+        EXPECT_EQ(d_keys.to_host(), (std::vector<int> {2, 4, 1, 3}));
+        EXPECT_EQ(d_segments.to_host(), (std::vector<int> {0, 0, 1, 1}));
     }
 
     // Regression: this function had no definition at all.
@@ -208,9 +208,9 @@ namespace cuda::algo::segmented::test {
 
         sort_pairs_by_key(d_keys.data(), d_values.data(), d_segments.data(), d_out_keys.data(), d_out_values.data(), d_out_segments.data(), keys.size(), 2);
 
-        EXPECT_EQ(d_out_keys.to_host(), (std::vector<int>{1, 5, 2, 4})) << "keys must be sorted within each segment";
-        EXPECT_EQ(d_out_values.to_host(), (std::vector<int>{10, 50, 20, 40})) << "each value must follow the key it was paired with";
-        EXPECT_EQ(d_out_segments.to_host(), (std::vector<int>{0, 0, 1, 1}));
+        EXPECT_EQ(d_out_keys.to_host(), (std::vector<int> {1, 5, 2, 4})) << "keys must be sorted within each segment";
+        EXPECT_EQ(d_out_values.to_host(), (std::vector<int> {10, 50, 20, 40})) << "each value must follow the key it was paired with";
+        EXPECT_EQ(d_out_segments.to_host(), (std::vector<int> {0, 0, 1, 1}));
     }
 
     TEST(SegmentedSortPairsByKeyTest, ValuesStayPairedAcrossManySegments) {
@@ -233,7 +233,7 @@ namespace cuda::algo::segmented::test {
 
         const auto sorted_keys = d_out_keys.to_host();
         const auto sorted_values = d_out_values.to_host();
-        EXPECT_EQ(sorted_keys, (std::vector<int>{1, 2, 3, 4, 5, 6}));
+        EXPECT_EQ(sorted_keys, (std::vector<int> {1, 2, 3, 4, 5, 6}));
 
         // Value == key * 10 in the input, so the pairing is verifiable after sorting.
         for (size_t i = 0; i < sorted_keys.size(); ++i) {

@@ -11,15 +11,15 @@ namespace cuda::inference::test {
             CUDA_CHECK(cudaSetDevice(0));
             stream_ = std::make_unique<stream::Stream>();
 
-            config_ = SchedulerConfig{.max_batch_size = 16,
-                                      .max_sequence_length = 512,
-                                      .prefill_batch_size = 4,
-                                      .enable_continuous_batching = true,
-                                      .enable_prefix_caching = true,
-                                      .num_heads = 4,
-                                      .num_kv_heads = 2,
-                                      .head_dim = 64,
-                                      .block_size = 16};
+            config_ = SchedulerConfig {.max_batch_size = 16,
+                                       .max_sequence_length = 512,
+                                       .prefill_batch_size = 4,
+                                       .enable_continuous_batching = true,
+                                       .enable_prefix_caching = true,
+                                       .num_heads = 4,
+                                       .num_kv_heads = 2,
+                                       .head_dim = 64,
+                                       .block_size = 16};
         }
 
         void TearDown() override {

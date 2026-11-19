@@ -33,7 +33,7 @@ namespace cuda::observability {
     }
 
     OccupancyAnalysis OccupancyAnalyzer::analyze(const void* kernel_func, int block_size, size_t dynamic_smem_bytes) {
-        OccupancyAnalysis analysis{};
+        OccupancyAnalysis analysis {};
         analysis.theoretical_occupancy = 0.0;
         analysis.achieved_occupancy = 0.0;
         analysis.active_blocks_per_sm = 0;
@@ -72,7 +72,7 @@ namespace cuda::observability {
     }
 
     OccupancyRecommendation OccupancyAnalyzer::recommend(const void* kernel_func, size_t dynamic_smem_bytes, int preferred_block_size) {
-        OccupancyRecommendation rec{};
+        OccupancyRecommendation rec {};
         rec.recommended_block_size = 256;
         rec.recommended_grid_size = 0;
         rec.expected_occupancy = 0.0;

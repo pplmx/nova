@@ -68,13 +68,13 @@ namespace nova {
             }
 
             void reset() {
-                std::fill(r_.begin(), r_.end(), T{0});
-                std::fill(p_.begin(), p_.end(), T{0});
-                std::fill(Ap_.begin(), Ap_.end(), T{0});
-                std::fill(r_tilde_.begin(), r_tilde_.end(), T{0});
-                std::fill(p_hat_.begin(), p_hat_.end(), T{0});
-                std::fill(s_.begin(), s_.end(), T{0});
-                std::fill(t_.begin(), t_.end(), T{0});
+                std::fill(r_.begin(), r_.end(), T {0});
+                std::fill(p_.begin(), p_.end(), T {0});
+                std::fill(Ap_.begin(), Ap_.end(), T {0});
+                std::fill(r_tilde_.begin(), r_tilde_.end(), T {0});
+                std::fill(p_hat_.begin(), p_hat_.end(), T {0});
+                std::fill(s_.begin(), s_.end(), T {0});
+                std::fill(t_.begin(), t_.end(), T {0});
             }
 
             int size() const { return size_; }
@@ -143,8 +143,8 @@ namespace nova {
         struct TimedSolverResult {
             bool converged = false;
             int iterations = 0;
-            T residual_norm = T{0};
-            T relative_residual = T{0};
+            T residual_norm = T {0};
+            T relative_residual = T {0};
             SolverError error_code = SolverError::SUCCESS;
             std::vector<T> residual_history;
             SolverDiagnostics diagnostics;

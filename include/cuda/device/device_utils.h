@@ -55,7 +55,7 @@ namespace cuda::device {
     }
 
     template <typename T>
-    __device__ T load_tile(const T* global, int idx, int max_idx, T default_val = T{}) {
+    __device__ T load_tile(const T* global, int idx, int max_idx, T default_val = T {}) {
         return idx < max_idx ? global[idx] : default_val;
     }
 

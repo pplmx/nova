@@ -55,8 +55,8 @@ namespace nova::sparse {
 
             CUSPARSE_CHECK(cusparseCreateDnVec(&vec_y_desc, A.rows(), y, CusparseTraits<T>::type));
 
-            T alpha = T{1};
-            T beta = T{0};
+            T alpha = T {1};
+            T beta = T {0};
 
             // beta == 0 means y is overwritten, so its incoming contents are irrelevant to
             // the result — but cuSPARSE still reads it. Its vector_scalar_multiply fast path,
@@ -65,7 +65,7 @@ namespace nova::sparse {
             // checks for uninitialised reads: compute-sanitizer --tool initcheck reported 22
             // such reads across the sparse suites, all of them here. Clearing y keeps the
             // contract honest at the cost of one synchronous memset.
-            if (beta == T{0}) {
+            if (beta == T {0}) {
                 CUDA_CHECK(cudaMemsetAsync(y, 0, static_cast<size_t>(A.rows()) * sizeof(T), stream));
             }
 
@@ -120,13 +120,13 @@ namespace nova::sparse {
 
             CUSPARSE_CHECK(cusparseCreateDnVec(&vec_y_desc, A.cols(), y, CusparseTraits<T>::type));
 
-            T alpha = T{1};
-            T beta = T{0};
+            T alpha = T {1};
+            T beta = T {0};
 
             // Same reasoning as spmv_impl: beta == 0 overwrites y, but cuSPARSE's
             // vector_scalar_multiply fast path still loads it first. The transpose writes
             // A.cols() outputs.
-            if (beta == T{0}) {
+            if (beta == T {0}) {
                 CUDA_CHECK(cudaMemsetAsync(y, 0, static_cast<size_t>(A.cols()) * sizeof(T), stream));
             }
 

@@ -11,10 +11,10 @@
 namespace cuda::performance::bandwidth {
 
     struct CacheMetrics {
-        double l1_hit_rate{0.0};
-        double l2_hit_rate{0.0};
-        double texture_hit_rate{0.0};
-        bool available{false};
+        double l1_hit_rate {0.0};
+        double l2_hit_rate {0.0};
+        double texture_hit_rate {0.0};
+        bool available {false};
         std::string error_message;
     };
 
@@ -31,7 +31,7 @@ namespace cuda::performance::bandwidth {
         static bool check_cupti_availability();
 
     private:
-        bool available_{false};
+        bool available_ {false};
         std::string error_message_;
     };
 
@@ -53,10 +53,10 @@ namespace cuda::performance::bandwidth {
         [[nodiscard]] std::string get_report() const;
 
     private:
-        double peak_fp64_{0.0};
-        double peak_fp32_{0.0};
-        double peak_fp16_{0.0};
-        double peak_bandwidth_{0.0};
+        double peak_fp64_ {0.0};
+        double peak_fp32_ {0.0};
+        double peak_fp16_ {0.0};
+        double peak_bandwidth_ {0.0};
 
         std::unique_ptr<RooflineModel> roofline_;
         std::unique_ptr<BandwidthUtilizationTracker> tracker_;

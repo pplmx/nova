@@ -301,13 +301,13 @@ namespace cuda::inference {
 
                 float normalized = new_hyp.length > 0 ? static_cast<float>(new_hyp.log_prob / std::pow(new_hyp.length, config_.length_penalty)) : new_hyp.log_prob;
 
-                BeamSearchTraceEntry entry{.step = step,
-                                           .beam_id = static_cast<int>(i),
-                                           .token = token,
-                                           .score = new_hyp.log_prob,
-                                           .normalized_score = normalized,
-                                           .log_prob = token_log_prob,
-                                           .sequence_id = new_hyp.sequence_id};
+                BeamSearchTraceEntry entry {.step = step,
+                                            .beam_id = static_cast<int>(i),
+                                            .token = token,
+                                            .score = new_hyp.log_prob,
+                                            .normalized_score = normalized,
+                                            .log_prob = token_log_prob,
+                                            .sequence_id = new_hyp.sequence_id};
                 trace_.push_back(entry);
 
                 next_hypotheses_.push_back(new_hyp);
@@ -354,7 +354,7 @@ namespace cuda::inference {
     }
 
     BeamSearchManager::TraceStats BeamSearchManager::get_trace_stats() const {
-        TraceStats stats{};
+        TraceStats stats {};
         stats.total_steps = 0;
 
         if (!trace_.empty()) {

@@ -65,7 +65,7 @@ namespace cuda::graph {
         float min_rank = 0.0f;
     };
 
-    PageRankResult pagerank(const CSRGraph& graph, const PageRankOptions& options = PageRankOptions{}, cudaStream_t stream = nullptr);
+    PageRankResult pagerank(const CSRGraph& graph, const PageRankOptions& options = PageRankOptions {}, cudaStream_t stream = nullptr);
 
     void pagerank_iteration(const CSRGraph& graph, const float* prev_ranks, float* next_ranks, float damping, float min_rank, cudaStream_t stream = nullptr);
 

@@ -165,7 +165,7 @@ namespace image_morphology_edge_test {
         const auto index_of = [width](size_t x, size_t y) { return (y * width + x) * 3; };
 
         for (size_t x = 0; x < width; ++x) {
-            for (const size_t y : {size_t{0}, height - 1}) {
+            for (const size_t y : {size_t {0}, height - 1}) {
                 const size_t base = index_of(x, y);
                 for (size_t c = 0; c < 3; ++c) {
                     EXPECT_EQ(result[base + c], host[base + c]) << "border pixel (" << x << "," << y << ") channel " << c;
@@ -173,7 +173,7 @@ namespace image_morphology_edge_test {
             }
         }
         for (size_t y = 0; y < height; ++y) {
-            for (const size_t x : {size_t{0}, width - 1}) {
+            for (const size_t x : {size_t {0}, width - 1}) {
                 const size_t base = index_of(x, y);
                 for (size_t c = 0; c < 3; ++c) {
                     EXPECT_EQ(result[base + c], host[base + c]) << "border pixel (" << x << "," << y << ") channel " << c;

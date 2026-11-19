@@ -7,7 +7,7 @@
 namespace nova::sparse::test {
 
     template <typename T>
-    bool approx_equal(T a, T b, T tol = T{1e-4}) {
+    bool approx_equal(T a, T b, T tol = T {1e-4}) {
         return std::abs(a - b) < tol;
     }
 

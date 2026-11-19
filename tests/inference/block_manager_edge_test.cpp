@@ -11,13 +11,13 @@ namespace cuda::inference::test {
             CUDA_CHECK(cudaSetDevice(0));
             stream_ = std::make_unique<stream::Stream>();
 
-            config_ = BlockManagerConfig{.max_model_len = 512,
-                                         .block_size = 16,
-                                         .num_cpu_blocks = 128,
-                                         .num_gpu_blocks = 256,
-                                         .enable_cuda_graph = false,
-                                         .kv_cache_config{.num_heads = 4, .head_dim = 64, .block_size_tokens = 16, .num_blocks = 256, .num_layers = 1},
-                                         .attention_config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1}};
+            config_ = BlockManagerConfig {.max_model_len = 512,
+                                          .block_size = 16,
+                                          .num_cpu_blocks = 128,
+                                          .num_gpu_blocks = 256,
+                                          .enable_cuda_graph = false,
+                                          .kv_cache_config {.num_heads = 4, .head_dim = 64, .block_size_tokens = 16, .num_blocks = 256, .num_layers = 1},
+                                          .attention_config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1}};
         }
 
         void TearDown() override {

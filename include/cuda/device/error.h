@@ -97,12 +97,12 @@ namespace cuda::device {
         #op, dims, device              \
     }
 
-#define CUDA_VALIDATE_SIZE(size, max_size, operation)                                                                                    \
-    do {                                                                                                                                 \
-        if ((size) > (max_size)) {                                                                                                       \
-            throw ::cuda::device::CudaExceptionWithContext(                                                                              \
-                cudaErrorLaunchFailure, __FILE__, __LINE__, ::cuda::device::OperationContext{#operation, static_cast<size_t>(size), 0}); \
-        }                                                                                                                                \
+#define CUDA_VALIDATE_SIZE(size, max_size, operation)                                                                                     \
+    do {                                                                                                                                  \
+        if ((size) > (max_size)) {                                                                                                        \
+            throw ::cuda::device::CudaExceptionWithContext(                                                                               \
+                cudaErrorLaunchFailure, __FILE__, __LINE__, ::cuda::device::OperationContext {#operation, static_cast<size_t>(size), 0}); \
+        }                                                                                                                                 \
     } while (0)
 
 #ifndef CUDA_CHECK

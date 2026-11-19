@@ -42,6 +42,15 @@ SpaceBeforeCtorInitializerColon: true      # Space before constructor initialize
 SpaceBeforeInheritanceColon: true          # Space before inheritance colon
 SpaceBeforeRangeBasedForLoopColon: true    # Space before range-based for loop colon
 SpacesBeforeTrailingComments: 2            # Two spaces before trailing comments
+# Pinned because the default differs between clang-format releases: v18 emits
+# `struct S s {}` and v20 emits `struct S s{}` for the same input, so leaving
+# this implicit means the format check passes or fails depending on which
+# clang-format the machine happens to have. True matches what this tree
+# already contains.
+SpaceBeforeCpp11BracedList: true
+# Same reason: v18 keeps `{ stmt; }` on one line, v20 expands it. Empty is the
+# value both releases agree on.
+AllowShortBlocksOnASingleLine: Empty
 SpacesInContainerLiterals: false           # No extra spaces in container literals
 SpacesInParensOptions:
     InEmptyParentheses: false              # No spaces in empty parentheses

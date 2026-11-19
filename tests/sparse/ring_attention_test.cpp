@@ -94,9 +94,9 @@ namespace cuda::distributed::test {
         // scores are 1 and 0 and the softmax weights are e/(e+1) and 1/(e+1).
         // v0 = [10,0], v1 = [0,20], giving out = [7.3106, 5.3789].
         const int seq = 1, keys = 2, hidden = 2;
-        DeviceArray q(std::vector<float>{1.0f, 0.0f});
-        DeviceArray k(std::vector<float>{1.0f, 0.0f, 0.0f, 1.0f});
-        DeviceArray v(std::vector<float>{10.0f, 0.0f, 0.0f, 20.0f});
+        DeviceArray q(std::vector<float> {1.0f, 0.0f});
+        DeviceArray k(std::vector<float> {1.0f, 0.0f, 0.0f, 1.0f});
+        DeviceArray v(std::vector<float> {10.0f, 0.0f, 0.0f, 20.0f});
         DeviceArray out(static_cast<size_t>(seq) * hidden);
         DeviceArray running_max(seq);
         DeviceArray running_l(seq);
@@ -122,9 +122,9 @@ namespace cuda::distributed::test {
         // gives: the online softmax is incrementally correct.
         const int seq = 1, hidden = 2;
 
-        DeviceArray q(std::vector<float>{1.0f, 0.0f});
-        DeviceArray k(std::vector<float>{1.0f, 0.0f, 0.0f, 1.0f});
-        DeviceArray v(std::vector<float>{10.0f, 0.0f, 0.0f, 20.0f});
+        DeviceArray q(std::vector<float> {1.0f, 0.0f});
+        DeviceArray k(std::vector<float> {1.0f, 0.0f, 0.0f, 1.0f});
+        DeviceArray v(std::vector<float> {10.0f, 0.0f, 0.0f, 20.0f});
 
         // Single call with both keys.
         DeviceArray out_once(static_cast<size_t>(seq) * hidden);
@@ -200,9 +200,9 @@ namespace cuda::distributed::test {
 
         // With one key the softmax weight is 1, so the output is v itself.
         const int seq = 1, hidden = 3;
-        DeviceArray q(std::vector<float>{0.0f, 0.0f, 0.0f});
-        DeviceArray k(std::vector<float>{0.0f, 0.0f, 0.0f});
-        DeviceArray v(std::vector<float>{1.5f, -2.5f, 3.5f});
+        DeviceArray q(std::vector<float> {0.0f, 0.0f, 0.0f});
+        DeviceArray k(std::vector<float> {0.0f, 0.0f, 0.0f});
+        DeviceArray v(std::vector<float> {1.5f, -2.5f, 3.5f});
         DeviceArray out(static_cast<size_t>(seq) * hidden);
         DeviceArray running_max(seq);
         DeviceArray running_l(seq);
@@ -227,9 +227,9 @@ namespace cuda::distributed::test {
         // Scores around 100 would make exp(100) overflow without the running-max
         // trick; the online formulation subtracts the max first.
         const int seq = 1, keys = 2, hidden = 1;
-        DeviceArray q(std::vector<float>{1.0f});
-        DeviceArray k(std::vector<float>{200.0f, 100.0f});
-        DeviceArray v(std::vector<float>{1.0f, 2.0f});
+        DeviceArray q(std::vector<float> {1.0f});
+        DeviceArray k(std::vector<float> {200.0f, 100.0f});
+        DeviceArray v(std::vector<float> {1.0f, 2.0f});
         DeviceArray out(static_cast<size_t>(seq) * hidden);
         DeviceArray running_max(seq);
         DeviceArray running_l(seq);

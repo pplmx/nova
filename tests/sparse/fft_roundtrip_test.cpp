@@ -66,7 +66,7 @@ namespace cuda::fft::test {
             void upload(const std::vector<T>& host) { cudaMemcpy(ptr_, host.data(), host.size() * sizeof(T), cudaMemcpyHostToDevice); }
 
             std::vector<T> download() const {
-                std::vector<T> host(count_, T{});
+                std::vector<T> host(count_, T {});
                 cudaMemcpy(host.data(), ptr_, count_ * sizeof(T), cudaMemcpyDeviceToHost);
                 return host;
             }
@@ -216,7 +216,7 @@ namespace cuda::fft::test {
         }
 
         // Small and large windows, so a size-dependent plan or launch bug shows up.
-        for (const size_t n : {size_t{8}, size_t{128}, size_t{1024}}) {
+        for (const size_t n : {size_t {8}, size_t {128}, size_t {1024}}) {
             std::vector<float> input(n);
             for (size_t i = 0; i < n; ++i) {
                 input[i] = static_cast<float>(i % 17) - 8.0f;

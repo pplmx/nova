@@ -10,54 +10,54 @@
 namespace cuda::performance::dashboard {
 
     struct DashboardConfig {
-        bool include_roofline{true};
-        bool include_fusion{true};
-        bool include_bandwidth{true};
-        bool include_kernel_metrics{true};
-        std::string output_format{"json"};
+        bool include_roofline {true};
+        bool include_fusion {true};
+        bool include_bandwidth {true};
+        bool include_kernel_metrics {true};
+        std::string output_format {"json"};
     };
 
     struct DashboardData {
         struct Header {
-            std::string title{"Nova Performance Dashboard"};
+            std::string title {"Nova Performance Dashboard"};
             std::string version;
             std::string timestamp;
             std::string gpu_name;
-            int cuda_version{0};
+            int cuda_version {0};
         } header;
 
         struct RooflineSection {
-            double peak_fp64_gflops{0.0};
-            double peak_fp32_gflops{0.0};
-            double peak_bandwidth_gbs{0.0};
-            double ridge_point{0.0};
-            size_t point_count{0};
-            size_t memory_bound_count{0};
-            size_t compute_bound_count{0};
+            double peak_fp64_gflops {0.0};
+            double peak_fp32_gflops {0.0};
+            double peak_bandwidth_gbs {0.0};
+            double ridge_point {0.0};
+            size_t point_count {0};
+            size_t memory_bound_count {0};
+            size_t compute_bound_count {0};
         } roofline;
 
         struct FusionSection {
-            size_t opportunity_count{0};
-            size_t high_confidence_count{0};
-            size_t medium_confidence_count{0};
-            size_t low_confidence_count{0};
-            double total_latency_saved_us{0.0};
-            double best_speedup{0.0};
+            size_t opportunity_count {0};
+            size_t high_confidence_count {0};
+            size_t medium_confidence_count {0};
+            size_t low_confidence_count {0};
+            double total_latency_saved_us {0.0};
+            double best_speedup {0.0};
         } fusion;
 
         struct BandwidthSection {
-            double average_bandwidth_gbs{0.0};
-            double peak_bandwidth_gbs{0.0};
-            double utilization_percent{0.0};
-            size_t sample_count{0};
-            bool has_low_utilization_warning{false};
+            double average_bandwidth_gbs {0.0};
+            double peak_bandwidth_gbs {0.0};
+            double utilization_percent {0.0};
+            size_t sample_count {0};
+            bool has_low_utilization_warning {false};
         } bandwidth;
 
         struct KernelSection {
-            size_t kernel_count{0};
-            double total_latency_us{0.0};
-            double average_occupancy{0.0};
-            double peak_throughput_gflops{0.0};
+            size_t kernel_count {0};
+            double total_latency_us {0.0};
+            double average_occupancy {0.0};
+            double peak_throughput_gflops {0.0};
         } kernels;
     };
 

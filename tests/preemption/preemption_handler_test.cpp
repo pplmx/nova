@@ -68,7 +68,7 @@ namespace nova::preemption::test {
         cfg.shutdown_timeout = std::chrono::seconds(5);
         c.initialize(cfg);
 
-        std::atomic<bool> ran{false};
+        std::atomic<bool> ran {false};
         c.set_checkpoint_callback([&]() {
             ran.store(true);
             return true;
@@ -99,7 +99,7 @@ namespace nova::preemption::test {
         cfg.shutdown_timeout = std::chrono::seconds(5);
         c.initialize(cfg);
 
-        std::atomic<bool> ran{false};
+        std::atomic<bool> ran {false};
         c.set_checkpoint_callback([&]() {
             ran.store(true);
             return false;
@@ -116,7 +116,7 @@ namespace nova::preemption::test {
         cfg.shutdown_timeout = std::chrono::seconds(5);
         c.initialize(cfg);
 
-        std::atomic<bool> ran{false};
+        std::atomic<bool> ran {false};
         c.set_checkpoint_callback([&]() {
             ran.store(true);
             return true;
@@ -180,7 +180,7 @@ namespace nova::preemption::test {
         m.initialize(cfg);
         EXPECT_TRUE(m.get_status().preemption_handlers_installed);
 
-        std::atomic<bool> ran{false};
+        std::atomic<bool> ran {false};
         m.set_checkpoint_callback([&]() {
             ran.store(true);
             return true;

@@ -14,12 +14,12 @@ namespace cuda::algo {
             if (tid < size) {
                 temp[tid] = input[tid];
             } else {
-                temp[tid] = T{};
+                temp[tid] = T {};
             }
             __syncthreads();
 
             for (int offset = 1; offset < size; offset *= 2) {
-                T val = T{};
+                T val = T {};
                 if (tid >= offset) {
                     val = temp[tid - offset];
                 }
@@ -32,7 +32,7 @@ namespace cuda::algo {
             }
 
             if (tid < size) {
-                output[tid] = (tid > 0) ? temp[tid - 1] : T{};
+                output[tid] = (tid > 0) ? temp[tid - 1] : T {};
             }
         }
 
@@ -45,12 +45,12 @@ namespace cuda::algo {
             if (tid < size) {
                 temp[tid] = input[tid];
             } else {
-                temp[tid] = T{};
+                temp[tid] = T {};
             }
             __syncthreads();
 
             for (int offset = 1; offset < size; offset *= 2) {
-                T val = T{};
+                T val = T {};
                 if (tid >= offset) {
                     val = temp[tid - offset];
                 }
@@ -76,7 +76,7 @@ namespace cuda::algo {
             if (tid < size) {
                 temp[tid] = input[tid];
             } else {
-                temp[tid] = T{};
+                temp[tid] = T {};
             }
             __syncthreads();
 
@@ -91,7 +91,7 @@ namespace cuda::algo {
             // the previous step whenever the hardware schedules the read first, but that
             // is a scheduling assumption, not a guarantee.
             for (int offset = 1; offset < size; offset *= 2) {
-                const T value = (tid >= static_cast<size_t>(offset)) ? temp[tid - offset] : T{};
+                const T value = (tid >= static_cast<size_t>(offset)) ? temp[tid - offset] : T {};
                 __syncthreads();
                 if (tid >= static_cast<size_t>(offset)) {
                     temp[tid] += value;
@@ -100,7 +100,7 @@ namespace cuda::algo {
             }
 
             if (tid < size) {
-                output[tid] = (tid > 0) ? temp[tid - 1] : T{};
+                output[tid] = (tid > 0) ? temp[tid - 1] : T {};
             }
         }
 

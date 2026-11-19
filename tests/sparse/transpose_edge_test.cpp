@@ -172,7 +172,7 @@ namespace transpose_edge_test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        DeviceArray d_input(std::vector<float>{7.5f});
+        DeviceArray d_input(std::vector<float> {7.5f});
         DeviceArray d_output(1);
 
         transposeMatrix<float>(d_input.data(), d_output.data(), 1, 1);

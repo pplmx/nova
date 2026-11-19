@@ -46,7 +46,7 @@ namespace nova {
 
             if (err == cudaSuccess && ptr != nullptr) {
                 // Touch the memory to ensure it's accessible
-                memset(ptr, 0x42, std::min(alloc_size, size_t{256}));
+                memset(ptr, 0x42, std::min(alloc_size, size_t {256}));
 
                 err = cudaFree(ptr);
                 if (err != cudaSuccess) {

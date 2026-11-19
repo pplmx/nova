@@ -34,7 +34,7 @@ namespace cuda::fft::test {
         EXPECT_TRUE(is_power_of_two(2));
         EXPECT_TRUE(is_power_of_two(4));
         EXPECT_TRUE(is_power_of_two(512));
-        EXPECT_TRUE(is_power_of_two(size_t{1} << 40));
+        EXPECT_TRUE(is_power_of_two(size_t {1} << 40));
     }
 
     TEST(IsPowerOfTwoTest, NeighboursOfAPowerAreNot) {

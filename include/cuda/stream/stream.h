@@ -78,7 +78,7 @@ namespace cuda::stream {
         }
 
     private:
-        cudaStream_t stream_{nullptr};
+        cudaStream_t stream_ {nullptr};
     };
 
     [[nodiscard]] inline std::unique_ptr<Stream> make_stream() {

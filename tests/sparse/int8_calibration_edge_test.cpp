@@ -50,7 +50,7 @@ namespace nova::quantize::cuda::test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        QuantizationParams params{};
+        QuantizationParams params {};
         params.scale = 1.0f;
         params.zero_point = 0;
 
@@ -121,7 +121,7 @@ namespace nova::quantize::cuda::test {
         const size_t n = input.size();
         constexpr float scale = 1.0f / 16.0f;
 
-        QuantizationParams params{};
+        QuantizationParams params {};
         params.scale = scale;
         params.zero_point = 0;
 

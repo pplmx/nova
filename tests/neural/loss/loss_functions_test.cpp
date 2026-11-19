@@ -326,8 +326,8 @@ namespace cuda::neural::loss::test {
 
         const int batch = 1;
         const int C = 8;
-        std::vector<float> logits{3.0f, -1.0f, 0.5f, 2.2f, -4.0f, 1.1f, 0.0f, 0.7f};
-        std::vector<int> targets{2};
+        std::vector<float> logits {3.0f, -1.0f, 0.5f, 2.2f, -4.0f, 1.1f, 0.0f, 0.7f};
+        std::vector<int> targets {2};
         const double expected = host_ce_loss_reference(logits, targets, batch, C, true);
 
         cuda::memory::Buffer<float> d_logits(logits.size());
@@ -390,8 +390,8 @@ namespace cuda::neural::loss::test {
         //        target 0 -> correct
         // Row 3: all equal; earliest max is class 0; target 0 -> correct
         // Row 4: target 3 == argmax(9.0 at class 3)  -> correct
-        std::vector<float> logits{0.0f, 3.0f, 0.0f, 0.5f, 1.0f, 0.0f, 0.0f, 4.0f, 2.0f, 2.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 0.0f, 0.5f, 9.0f};
-        std::vector<int> targets{1, 2, 0, 0, 3};
+        std::vector<float> logits {0.0f, 3.0f, 0.0f, 0.5f, 1.0f, 0.0f, 0.0f, 4.0f, 2.0f, 2.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 0.0f, 0.5f, 9.0f};
+        std::vector<int> targets {1, 2, 0, 0, 3};
 
         int host_correct = 0;
         for (int b = 0; b < batch; ++b) {
@@ -468,8 +468,8 @@ namespace cuda::neural::loss::test {
         const int batch = 2;
         const int C = 3;
         // Row 0: target 0 is the max class. Row 1: target 1 is the min class.
-        std::vector<float> logits{10.0f, 0.0f, 0.0f, 0.0f, -10.0f, 0.0f};
-        std::vector<int> targets{0, 1};
+        std::vector<float> logits {10.0f, 0.0f, 0.0f, 0.0f, -10.0f, 0.0f};
+        std::vector<int> targets {0, 1};
 
         cuda::memory::Buffer<float> d_logits(logits.size());
         cuda::memory::Buffer<int> d_targets(targets.size());

@@ -21,7 +21,7 @@ namespace cuda::algo::sssp {
     };
 
     template <typename Weight>
-    RunStats delta_stepping(const graph::CSRGraph& graph, int source, Weight* distances, Weight delta = Weight{1.0}, cudaStream_t stream = nullptr);
+    RunStats delta_stepping(const graph::CSRGraph& graph, int source, Weight* distances, Weight delta = Weight {1.0}, cudaStream_t stream = nullptr);
 
     template <typename Weight>
     RunStats bellman_ford(const graph::CSRGraph& graph, int source, Weight* distances, cudaStream_t stream = nullptr);
@@ -33,7 +33,7 @@ namespace cuda::algo::sssp {
     /// but cannot see the run statistics; use the pointer overload when convergence
     /// or negative-cycle detection matters.
     template <typename Weight>
-    memory::Buffer<Weight> compute_distances(const graph::CSRGraph& graph, int source, Weight delta = Weight{1.0}, cudaStream_t stream = nullptr);
+    memory::Buffer<Weight> compute_distances(const graph::CSRGraph& graph, int source, Weight delta = Weight {1.0}, cudaStream_t stream = nullptr);
 
     struct SSSPResult {
         memory::Buffer<float> distances;

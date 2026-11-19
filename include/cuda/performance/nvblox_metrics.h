@@ -14,18 +14,18 @@ namespace cuda::performance {
 
     struct KernelMetrics {
         std::string name;
-        uint64_t latency_ns{0};
-        double throughput_gflops{0.0};
-        float sm_occupancy{0.0f};
-        double arithmetic_intensity{0.0};
-        double memory_bandwidth_gbs{0.0};
-        uint64_t timestamp_ns{0};
-        uint32_t block_x{0};
-        uint32_t block_y{0};
-        uint32_t block_z{0};
-        uint32_t grid_x{0};
-        uint32_t grid_y{0};
-        uint32_t grid_z{0};
+        uint64_t latency_ns {0};
+        double throughput_gflops {0.0};
+        float sm_occupancy {0.0f};
+        double arithmetic_intensity {0.0};
+        double memory_bandwidth_gbs {0.0};
+        uint64_t timestamp_ns {0};
+        uint32_t block_x {0};
+        uint32_t block_y {0};
+        uint32_t block_z {0};
+        uint32_t grid_x {0};
+        uint32_t grid_y {0};
+        uint32_t grid_z {0};
     };
 
     struct MetricSample {
@@ -63,7 +63,7 @@ namespace cuda::performance {
         std::unordered_map<std::string, MetricType> registered_metrics_;
         std::unordered_map<std::string, std::vector<MetricSample>> metric_samples_;
         std::vector<KernelMetrics> kernel_metrics_;
-        bool initialized_{false};
+        bool initialized_ {false};
     };
 
     double calculate_arithmetic_intensity(uint64_t flops, size_t bytes_accessed);

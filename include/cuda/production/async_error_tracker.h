@@ -40,9 +40,9 @@ namespace cuda::production {
     private:
         mutable std::mutex mutex_;
         std::vector<AsyncError> errors_;
-        std::atomic<bool> enabled_{true};
-        std::atomic<cudaError_t> last_error_{cudaSuccess};
-        std::atomic<uint64_t> error_count_{0};
+        std::atomic<bool> enabled_ {true};
+        std::atomic<cudaError_t> last_error_ {cudaSuccess};
+        std::atomic<uint64_t> error_count_ {0};
     };
 
     class ScopedErrorTracking {
@@ -57,7 +57,7 @@ namespace cuda::production {
 
     private:
         AsyncErrorTracker& tracker_;
-        bool needs_check_{true};
+        bool needs_check_ {true};
     };
 
 }  // namespace cuda::production

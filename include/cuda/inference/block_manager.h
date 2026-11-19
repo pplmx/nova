@@ -34,10 +34,10 @@ namespace cuda::inference {
         int num_gpu_blocks = 4096;
         bool enable_cuda_graph = true;
 
-        memory::KVCacheAllocatorConfig kv_cache_config{
+        memory::KVCacheAllocatorConfig kv_cache_config {
             .num_heads = 32, .head_dim = 128, .block_size_tokens = 16, .num_blocks = 4096, .num_layers = 32, .eviction_threshold_pct = 10, .enable_prefix_caching = true};
 
-        algo::FlashAttentionConfig attention_config{
+        algo::FlashAttentionConfig attention_config {
             .num_heads = 32, .num_kv_heads = 32, .head_dim = 128, .seq_len = 512, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
     };
 

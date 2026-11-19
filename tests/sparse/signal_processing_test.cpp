@@ -283,7 +283,7 @@ namespace cuda::signal::test {
         const std::vector<float> values(4, 1.0f);
         DeviceBuffer coefficients_source(values);
 
-        WaveletResult bogus{};
+        WaveletResult bogus {};
         bogus.coefficients = memory::Buffer<float>(4);
         cudaMemcpy(bogus.coefficients.data(), coefficients_source.data(), 4 * sizeof(float), cudaMemcpyDeviceToDevice);
         bogus.levels = 5;  // 4 samples cannot be decomposed five times
@@ -300,7 +300,7 @@ namespace cuda::signal::test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        for (const size_t n : {size_t{4}, size_t{8}, size_t{16}, size_t{32}}) {
+        for (const size_t n : {size_t {4}, size_t {8}, size_t {16}, size_t {32}}) {
             std::vector<float> values(n);
             for (size_t i = 0; i < n; ++i) {
                 values[i] = static_cast<float>(i + 1);

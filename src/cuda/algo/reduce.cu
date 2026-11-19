@@ -16,7 +16,7 @@ namespace cuda::algo {
         T execute_reduce(const T* input, size_t size, bool optimized, cuda::device::ReduceOp op) {
             // Handle empty input - return identity value for the operation
             if (size == 0) {
-                return T{};
+                return T {};
             }
 
             // Each block processes 2*blockSize elements (two-pass loading)

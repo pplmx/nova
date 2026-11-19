@@ -181,15 +181,15 @@ namespace cuda::algo {
         require("output", output.size(), qe);
         require("softmax_lse", softmax_lse.size(), static_cast<size_t>(B) * H);
 
-        AttentionGeometry g{.batch = B,
-                            .heads = H,
-                            .kv_heads = KH,
-                            .seq = S,
-                            .dim = D,
-                            .scale = 1.0f / std::sqrt(static_cast<float>(D)),
-                            .drop = config_.dropout_rate,
-                            .causal = config_.causal,
-                            .seed = config_.dropout_seed};
+        AttentionGeometry g {.batch = B,
+                             .heads = H,
+                             .kv_heads = KH,
+                             .seq = S,
+                             .dim = D,
+                             .scale = 1.0f / std::sqrt(static_cast<float>(D)),
+                             .drop = config_.dropout_rate,
+                             .causal = config_.causal,
+                             .seed = config_.dropout_seed};
 
         std::vector<float> h_q(qe), h_k(kve), h_v(kve), h_o(qe), h_lse(static_cast<size_t>(B) * H);
         query.copy_to(h_q.data(), qe);
@@ -320,15 +320,15 @@ namespace cuda::algo {
             return;
         }
 
-        AttentionGeometry g{.batch = B,
-                            .heads = H,
-                            .kv_heads = KH,
-                            .seq = S,
-                            .dim = D,
-                            .scale = 1.0f / std::sqrt(static_cast<float>(D)),
-                            .drop = config_.dropout_rate,
-                            .causal = config_.causal,
-                            .seed = config_.dropout_seed};
+        AttentionGeometry g {.batch = B,
+                             .heads = H,
+                             .kv_heads = KH,
+                             .seq = S,
+                             .dim = D,
+                             .scale = 1.0f / std::sqrt(static_cast<float>(D)),
+                             .drop = config_.dropout_rate,
+                             .causal = config_.causal,
+                             .seed = config_.dropout_seed};
 
         std::vector<float> h_q(qe), h_k(kve), h_v(kve), h_do(qe);
         std::vector<float> h_dq(qe, 0.0f), h_dk(qe, 0.0f), h_dv(qe, 0.0f);

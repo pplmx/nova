@@ -102,7 +102,7 @@ namespace cuda::inference {
     }  // anonymous namespace
 
     void LogProbTracker::record(int token_id, float log_prob, float draft_log_prob, bool accepted) {
-        LogProbEntry entry{.token_id = token_id, .log_prob = log_prob, .draft_log_prob = draft_log_prob, .accepted = accepted};
+        LogProbEntry entry {.token_id = token_id, .log_prob = log_prob, .draft_log_prob = draft_log_prob, .accepted = accepted};
         history_.push_back(entry);
     }
 
@@ -156,7 +156,7 @@ namespace cuda::inference {
     }
 
     void SpeculativeDecodingRunner::snapshot_kv_state() {
-        kv_snapshot_ = KVCacheSnapshot{};
+        kv_snapshot_ = KVCacheSnapshot {};
         kv_snapshot_->sequence_ids.clear();
         kv_snapshot_->num_blocks.clear();
 
@@ -276,7 +276,7 @@ namespace cuda::inference {
 
             bool accepted = acceptance >= config_.acceptance_threshold;
 
-            DraftToken dt{.token_id = token_id, .draft_prob = draft_prob, .target_prob = target_prob, .accepted = accepted};
+            DraftToken dt {.token_id = token_id, .draft_prob = draft_prob, .target_prob = target_prob, .accepted = accepted};
             result.tokens.push_back(dt);
 
             if (accepted) {

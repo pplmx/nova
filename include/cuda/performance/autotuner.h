@@ -16,8 +16,8 @@ namespace cuda::performance {
     struct AutotuneConfig {
         int device_id = 0;
         std::string kernel_name;
-        std::vector<int> block_sizes{64, 128, 256, 512, 1024};
-        std::vector<int> grid_sizes{1, 2, 4, 8, 16, 32, 64, 128, 256};
+        std::vector<int> block_sizes {64, 128, 256, 512, 1024};
+        std::vector<int> grid_sizes {1, 2, 4, 8, 16, 32, 64, 128, 256};
         int warmup_iterations = 10;
         int measure_iterations = 100;
         float max_time_ms = 1000.0f;

@@ -104,7 +104,7 @@ namespace signal_handler_state_test {
     TEST(SignalHandlerDispatchTest, TheCallbackRunsAfterASignalIsRaised) {
         nova::preemption::SignalHandler& handler = nova::preemption::SignalHandler::instance();
 
-        std::atomic<int> received{0};
+        std::atomic<int> received {0};
         handler.set_shutdown_callback([&received](int signal) { received.store(signal); });
         handler.install_handlers();
 
@@ -141,7 +141,7 @@ namespace signal_handler_state_test {
         // join against a thread that already finished, would show up as a hang or a failure
         // here rather than as a slow leak somewhere else.
         for (int i = 0; i < 3; ++i) {
-            std::atomic<int> received{0};
+            std::atomic<int> received {0};
             handler.set_shutdown_callback([&received](int signal) { received.store(signal); });
             handler.install_handlers();
             std::raise(SIGUSR1);

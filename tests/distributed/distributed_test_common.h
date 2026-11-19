@@ -111,7 +111,7 @@ namespace cuda::distributed::test {
         RankBarrier barrier(device_count);
         std::vector<std::thread> threads;
         threads.reserve(device_count);
-        std::atomic<bool> barrier_timed_out{false};
+        std::atomic<bool> barrier_timed_out {false};
         std::mutex error_mutex;
         std::exception_ptr first_error;
         for (int d = 0; d < device_count; ++d) {

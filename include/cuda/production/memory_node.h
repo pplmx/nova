@@ -32,10 +32,10 @@ namespace cuda::production {
         [[nodiscard]] size_t size() const { return size_; }
 
     private:
-        cudaGraphNode_t node_{nullptr};
-        MemoryType type_{MemoryType::Device};
-        void* ptr_{nullptr};
-        size_t size_{0};
+        cudaGraphNode_t node_ {nullptr};
+        MemoryType type_ {MemoryType::Device};
+        void* ptr_ {nullptr};
+        size_t size_ {0};
     };
 
     class GraphMemoryManager {

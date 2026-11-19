@@ -42,8 +42,8 @@ namespace cuda::production {
         void reset_error_count();
 
     private:
-        uint32_t error_count_24h_{0};
-        uint64_t last_reset_ns_{0};
+        uint32_t error_count_24h_ {0};
+        uint64_t last_reset_ns_ {0};
     };
 
 }  // namespace cuda::production

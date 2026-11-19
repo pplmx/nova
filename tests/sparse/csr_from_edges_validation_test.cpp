@@ -25,16 +25,16 @@
 namespace csr_from_edges_validation_test {
 
     TEST(CsrFromEdgesValidationTest, ANonPositiveVertexCountIsRejected) {
-        const std::vector<int> src{0};
-        const std::vector<int> dst{1};
+        const std::vector<int> src {0};
+        const std::vector<int> dst {1};
 
         auto call = [&] { return cuda::graph::create_csr_from_edges(src.data(), dst.data(), nullptr, 0, 1); };
         EXPECT_THROW(call(), std::invalid_argument);
     }
 
     TEST(CsrFromEdgesValidationTest, ANegativeEdgeCountIsRejected) {
-        const std::vector<int> src{0};
-        const std::vector<int> dst{1};
+        const std::vector<int> src {0};
+        const std::vector<int> dst {1};
 
         auto call = [&] { return cuda::graph::create_csr_from_edges(src.data(), dst.data(), nullptr, 2, -1); };
         EXPECT_THROW(call(), std::invalid_argument);
@@ -48,8 +48,8 @@ namespace csr_from_edges_validation_test {
 
     TEST(CsrFromEdgesValidationTest, ASourceOutsideTheVertexRangeIsRejected) {
         // counts[5] on a 4-entry array: heap corruption, not an error, before the guard.
-        const std::vector<int> src{0, 5};
-        const std::vector<int> dst{1, 2};
+        const std::vector<int> src {0, 5};
+        const std::vector<int> dst {1, 2};
 
         auto call = [&] { return cuda::graph::create_csr_from_edges(src.data(), dst.data(), nullptr, 4, 2); };
         EXPECT_THROW(call(), std::out_of_range);
@@ -58,17 +58,17 @@ namespace csr_from_edges_validation_test {
     TEST(CsrFromEdgesValidationTest, ADestinationOutsideTheVertexRangeIsRejected) {
         // Storing 9 in a graph of 4 vertices makes an invalid CSR structure that validate_csr
         // would reject after the fact; the constructor should not produce it in the first place.
-        const std::vector<int> src{0};
-        const std::vector<int> dst{9};
+        const std::vector<int> src {0};
+        const std::vector<int> dst {9};
 
         auto call = [&] { return cuda::graph::create_csr_from_edges(src.data(), dst.data(), nullptr, 4, 1); };
         EXPECT_THROW(call(), std::out_of_range);
     }
 
     TEST(CsrFromEdgesValidationTest, AValidEdgeListStillBuildsAValidGraph) {
-        const std::vector<int> src{0, 0, 1};
-        const std::vector<int> dst{1, 2, 2};
-        const std::vector<float> weights{1.0F, 2.0F, 3.0F};
+        const std::vector<int> src {0, 0, 1};
+        const std::vector<int> dst {1, 2, 2};
+        const std::vector<float> weights {1.0F, 2.0F, 3.0F};
 
         auto graph = cuda::graph::create_csr_from_edges(src.data(), dst.data(), weights.data(), 3, 3);
         ASSERT_NE(graph, nullptr);
@@ -78,8 +78,8 @@ namespace csr_from_edges_validation_test {
     }
 
     TEST(CsrFromEdgesValidationTest, NullWeightsMeansUnitWeight) {
-        const std::vector<int> src{0};
-        const std::vector<int> dst{1};
+        const std::vector<int> src {0};
+        const std::vector<int> dst {1};
 
         auto graph = cuda::graph::create_csr_from_edges(src.data(), dst.data(), nullptr, 2, 1);
         ASSERT_NE(graph, nullptr);

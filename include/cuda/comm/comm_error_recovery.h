@@ -78,8 +78,8 @@ namespace nova::comm {
 
         struct RetryConfig {
             int max_attempts = 3;
-            std::chrono::milliseconds initial_delay{100};
-            std::chrono::milliseconds max_delay{10000};
+            std::chrono::milliseconds initial_delay {100};
+            std::chrono::milliseconds max_delay {10000};
             double backoff_multiplier = 2.0;
             bool use_jitter = true;
         };
@@ -126,11 +126,11 @@ namespace nova::comm {
 
     struct RetryHandler::State {
         RetryHandler::RetryConfig config;
-        std::atomic<int> consecutive_failures{0};
-        std::atomic<bool> circuit_open{false};
+        std::atomic<int> consecutive_failures {0};
+        std::atomic<bool> circuit_open {false};
         std::chrono::steady_clock::time_point circuit_opened_at;
-        std::chrono::seconds circuit_breaker_window{60};
-        std::default_random_engine rng{std::random_device{}()};
+        std::chrono::seconds circuit_breaker_window {60};
+        std::default_random_engine rng {std::random_device {}()};
 
         void record_success() { consecutive_failures.store(0); }
 

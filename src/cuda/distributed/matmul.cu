@@ -117,7 +117,7 @@ namespace cuda::distributed {
     cuda::nccl::NcclResult DistributedMatmul::matmul_multi_gpu(const float* A, const float* B, float* C, int m, int n, int k, DistributedMatmulOptions options) {
         auto& ctx = cuda::nccl::NcclContext::instance();
         if (!ctx.has_nccl()) {
-            return cuda::nccl::NcclResult{
+            return cuda::nccl::NcclResult {
                 .code = ncclInternalError,
                 .error_message = "NCCL context not initialized for multi-GPU matmul (call NcclContext::instance().initialize() from a thread-per-rank context)"};
         }
@@ -125,7 +125,7 @@ namespace cuda::distributed {
         int device = 0;
         cudaError_t err = cudaGetDevice(&device);
         if (err != cudaSuccess) {
-            return cuda::nccl::NcclResult{.code = ncclSystemError, .error_message = cudaGetErrorString(err)};
+            return cuda::nccl::NcclResult {.code = ncclSystemError, .error_message = cudaGetErrorString(err)};
         }
 
         const int n_dev = ctx.device_count();
@@ -138,9 +138,9 @@ namespace cuda::distributed {
             try {
                 matmul_single_gpu(A, B, C, m, n, k, options);
             } catch (const std::exception& e) {
-                return cuda::nccl::NcclResult{.code = ncclInternalError, .error_message = e.what()};
+                return cuda::nccl::NcclResult {.code = ncclInternalError, .error_message = e.what()};
             }
-            return cuda::nccl::NcclResult{};
+            return cuda::nccl::NcclResult {};
         }
 
         // Fail fast on inputs the row-split path cannot express, before allocating
@@ -166,13 +166,13 @@ namespace cuda::distributed {
         // post-GEMM) are environmental and are the documented contract risk (see
         // matmul_multi_gpu's docstring).
         if (options.trans_a || options.trans_b) {
-            return cuda::nccl::NcclResult{.code = ncclInvalidArgument, .error_message = "transposed operands are not supported by the distributed row-split path"};
+            return cuda::nccl::NcclResult {.code = ncclInvalidArgument, .error_message = "transposed operands are not supported by the distributed row-split path"};
         }
         const int rows_per_gpu = (m + n_dev - 1) / n_dev;
         if (m < n_dev || (n_dev - 1) * rows_per_gpu >= m) {
-            return cuda::nccl::NcclResult{.code = ncclInvalidArgument,
-                                          .error_message = "m (" + std::to_string(m) + ") leaves device count (" + std::to_string(n_dev) + ") a rank with no rows to compute: "
-                                                           + "rows_per_gpu = ceil(m/n_dev) = " + std::to_string(rows_per_gpu) + " does not give every rank at least one row"};
+            return cuda::nccl::NcclResult {.code = ncclInvalidArgument,
+                                           .error_message = "m (" + std::to_string(m) + ") leaves device count (" + std::to_string(n_dev) + ") a rank with no rows to compute: "
+                                                            + "rows_per_gpu = ceil(m/n_dev) = " + std::to_string(rows_per_gpu) + " does not give every rank at least one row"};
         }
 
         // Row-wise split: rank r owns rows [r*rows_per_gpu, min((r+1)*rows_per_gpu, m))
@@ -190,7 +190,7 @@ namespace cuda::distributed {
         try {
             rank = ctx.rank_of_device(device);
         } catch (const std::exception& e) {
-            return cuda::nccl::NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+            return cuda::nccl::NcclResult {.code = ncclInvalidArgument, .error_message = e.what()};
         }
 
         const int start_row = rank * rows_per_gpu;
@@ -215,7 +215,7 @@ namespace cuda::distributed {
             // allocation holds and is ignored after all-gather.
             cudaError_t seed_err = cudaMemcpy(local.data(), C + static_cast<size_t>(start_row) * n, static_cast<size_t>(local_m) * n * sizeof(float), cudaMemcpyDeviceToDevice);
             if (seed_err != cudaSuccess) {
-                return cuda::nccl::NcclResult{.code = ncclSystemError, .error_message = cudaGetErrorString(seed_err)};
+                return cuda::nccl::NcclResult {.code = ncclSystemError, .error_message = cudaGetErrorString(seed_err)};
             }
 
             // Same per-device stream for the GEMM and the all-gather: the GEMM must
@@ -245,11 +245,11 @@ namespace cuda::distributed {
 
             cudaError_t cp_err = cudaMemcpy(C, gathered.data(), static_cast<size_t>(m) * n * sizeof(float), cudaMemcpyDeviceToDevice);
             if (cp_err != cudaSuccess) {
-                return cuda::nccl::NcclResult{.code = ncclSystemError, .error_message = cudaGetErrorString(cp_err)};
+                return cuda::nccl::NcclResult {.code = ncclSystemError, .error_message = cudaGetErrorString(cp_err)};
             }
-            return cuda::nccl::NcclResult{};
+            return cuda::nccl::NcclResult {};
         } catch (const std::exception& e) {
-            return cuda::nccl::NcclResult{.code = ncclInternalError, .error_message = e.what()};
+            return cuda::nccl::NcclResult {.code = ncclInternalError, .error_message = e.what()};
         }
     }
 

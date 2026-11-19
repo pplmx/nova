@@ -81,7 +81,7 @@ namespace cuda::observability {
                 return stat;
             }
         }
-        return KernelStats{};
+        return KernelStats {};
     }
 
     ScopedKernelTiming::ScopedKernelTiming(const char* name, KernelStatsCollector& collector, size_t blocks, size_t threads_per_block)
@@ -106,7 +106,7 @@ namespace cuda::observability {
     }
 
     OccupancyMetrics measure_occupancy(const void* kernel_func, size_t dynamic_smem_bytes, int device) {
-        OccupancyMetrics metrics{};
+        OccupancyMetrics metrics {};
 
         if (!kernel_func) {
             return metrics;

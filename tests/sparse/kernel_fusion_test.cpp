@@ -97,7 +97,7 @@ namespace cuda::neural::fusion::test {
 
         // Defaults come from the member initialisers; a fresh process has all three
         // on, which is the documented behaviour.
-        registry.set_config(FusionConfig{});
+        registry.set_config(FusionConfig {});
         EXPECT_TRUE(registry.is_fusion_enabled("matmul_bias"));
         EXPECT_TRUE(registry.is_fusion_enabled("matmul_bias_activation"));
         EXPECT_TRUE(registry.is_fusion_enabled("layernorm_softmax"));
@@ -113,7 +113,7 @@ namespace cuda::neural::fusion::test {
         registry.enable_fusion("matmul_bias");
         EXPECT_TRUE(registry.is_fusion_enabled("matmul_bias"));
 
-        registry.set_config(FusionConfig{});  // restore defaults
+        registry.set_config(FusionConfig {});  // restore defaults
     }
 
     TEST(FusionKernelRegistryTest, SetConfigAssignsAllThreeFlags) {
@@ -129,7 +129,7 @@ namespace cuda::neural::fusion::test {
         EXPECT_FALSE(registry.is_fusion_enabled("matmul_bias_activation"));
         EXPECT_FALSE(registry.is_fusion_enabled("layernorm_softmax"));
 
-        registry.set_config(FusionConfig{});
+        registry.set_config(FusionConfig {});
     }
 
     // Pinned as-is: a configuration registry that ignores an unknown key is a
@@ -142,7 +142,7 @@ namespace cuda::neural::fusion::test {
         EXPECT_NO_THROW(registry.disable_fusion("no-such-fusion"));
         EXPECT_FALSE(registry.is_fusion_enabled("no-such-fusion")) << "an unknown name reports disabled rather than throwing";
 
-        registry.set_config(FusionConfig{});
+        registry.set_config(FusionConfig {});
     }
 
     // ------------------------------------------------- fused matmul + bias -----

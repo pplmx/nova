@@ -11,7 +11,7 @@ template <typename T>
 bool MatmulIdentity(RandomGenerator& gen) {
     // Generate random square matrix
     auto n = gen.Uniform<size_t>(2, 32);
-    std::vector<T> A(n * n), I(n * n, T{0});
+    std::vector<T> A(n * n), I(n * n, T {0});
 
     // Fill A with random values
     for (size_t i = 0; i < n * n; ++i) {
@@ -20,11 +20,11 @@ bool MatmulIdentity(RandomGenerator& gen) {
 
     // Create identity matrix
     for (size_t i = 0; i < n; ++i) {
-        I[i * n + i] = T{1};
+        I[i * n + i] = T {1};
     }
 
     // Compute A @ I
-    std::vector<T> result(n * n, T{0});
+    std::vector<T> result(n * n, T {0});
     for (size_t i = 0; i < n; ++i) {
         for (size_t k = 0; k < n; ++k) {
             for (size_t j = 0; j < n; ++j) {
@@ -34,7 +34,7 @@ bool MatmulIdentity(RandomGenerator& gen) {
     }
 
     // Verify A @ I == A
-    T max_diff = T{0};
+    T max_diff = T {0};
     for (size_t i = 0; i < n * n; ++i) {
         T diff = std::abs(result[i] - A[i]);
         if (diff > max_diff) {
@@ -42,7 +42,7 @@ bool MatmulIdentity(RandomGenerator& gen) {
         }
     }
 
-    return max_diff < T{1e-5};
+    return max_diff < T {1e-5};
 }
 
 template <typename T>
@@ -72,7 +72,7 @@ bool TransposeInvolution(RandomGenerator& gen) {
     }
 
     // Verify (A^T)^T == A
-    T max_diff = T{0};
+    T max_diff = T {0};
     for (size_t i = 0; i < rows * cols; ++i) {
         T diff = std::abs(ATT[i] - A[i]);
         if (diff > max_diff) {
@@ -80,7 +80,7 @@ bool TransposeInvolution(RandomGenerator& gen) {
         }
     }
 
-    return max_diff < T{1e-5};
+    return max_diff < T {1e-5};
 }
 
 int main(int argc, char** argv) {

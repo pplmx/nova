@@ -103,7 +103,7 @@ namespace nova::comm::test {
     }
 
     TEST(CommErrorTest, RecoverabilityFollowsSeverity) {
-        CommError error{};
+        CommError error {};
         error.severity = ErrorSeverity::Recoverable;
         EXPECT_TRUE(error.is_recoverable());
 
@@ -242,12 +242,12 @@ namespace nova::comm::test {
     TEST(CommErrorRecoveryTest, ShouldRetryFollowsRecoverability) {
         auto& recovery = CommErrorRecovery::instance();
 
-        CommError transient_error{};
+        CommError transient_error {};
         transient_error.category = ErrorCategory::NetworkError;
         transient_error.severity = ErrorSeverity::Transient;
         EXPECT_TRUE(recovery.should_retry(transient_error));
 
-        CommError permanent_error{};
+        CommError permanent_error {};
         permanent_error.category = ErrorCategory::InvalidArgument;
         permanent_error.severity = ErrorSeverity::Permanent;
         EXPECT_FALSE(recovery.should_retry(permanent_error)) << "a permanent error must not be retried";
@@ -266,7 +266,7 @@ namespace nova::comm::test {
     TEST(CommErrorRecoveryTest, OnCommErrorIsAccepted) {
         auto& recovery = CommErrorRecovery::instance();
 
-        CommError error{};
+        CommError error {};
         error.category = ErrorCategory::Timeout;
         error.severity = ErrorSeverity::Recoverable;
         error.message = "collective timed out";

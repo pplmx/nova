@@ -99,9 +99,9 @@ namespace locked_accessor_test {
 
         cuda::memory::MemoryPool pool(config);
 
-        std::atomic<bool> start{false};
-        std::atomic<bool> stop{false};
-        std::atomic<size_t> samples{0};
+        std::atomic<bool> start {false};
+        std::atomic<bool> stop {false};
+        std::atomic<size_t> samples {0};
 
         std::thread reader([&] {
             while (!start.load(std::memory_order_acquire)) {

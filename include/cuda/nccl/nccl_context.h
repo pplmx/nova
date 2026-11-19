@@ -341,7 +341,7 @@ namespace cuda::nccl {
         std::vector<cudaStream_t> streams_;
         std::vector<int> device_ids_;
         bool initialized_ = false;
-        std::atomic<bool> broken_{false};
+        std::atomic<bool> broken_ {false};
         mutable std::mutex init_mutex_;
     };
 

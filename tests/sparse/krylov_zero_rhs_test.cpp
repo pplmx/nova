@@ -26,7 +26,7 @@ namespace nova::sparse::test {
         SparseMatrix<double> diagonal_matrix() {
             // diag(2, 3): well conditioned, so no test here depends on convergence
             // behaviour — only on what happens for b == 0.
-            return SparseMatrix<double>::FromHostData(std::vector<double>{2.0, 3.0}, std::vector<int>{0, 1, 2}, std::vector<int>{0, 1}, 2, 2);
+            return SparseMatrix<double>::FromHostData(std::vector<double> {2.0, 3.0}, std::vector<int> {0, 1, 2}, std::vector<int> {0, 1}, 2, 2);
         }
 
         constexpr double kSentinel = 777.0;

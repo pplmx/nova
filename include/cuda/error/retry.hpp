@@ -47,19 +47,19 @@ namespace nova::error {
      */
     struct retry_config {
         /** @brief Initial delay between retries (100ms) */
-        std::chrono::milliseconds base_delay{100};
+        std::chrono::milliseconds base_delay {100};
 
         /** @brief Backoff multiplier (2.0 = double each attempt) */
-        double multiplier{2.0};
+        double multiplier {2.0};
 
         /** @brief Maximum delay cap (30 seconds) */
-        std::chrono::milliseconds max_delay{30000};
+        std::chrono::milliseconds max_delay {30000};
 
         /** @brief Maximum retry attempts (5) */
-        int max_attempts{5};
+        int max_attempts {5};
 
         /** @brief Enable random jitter to prevent thundering herd */
-        bool jitter_enabled{true};
+        bool jitter_enabled {true};
     };
 
     /**
@@ -69,13 +69,13 @@ namespace nova::error {
      */
     struct circuit_breaker_config {
         /** @brief Failures before opening circuit (5) */
-        int failure_threshold{5};
+        int failure_threshold {5};
 
         /** @brief Time before attempting half-open (30 seconds) */
-        std::chrono::milliseconds reset_timeout{30000};
+        std::chrono::milliseconds reset_timeout {30000};
 
         /** @brief Successes needed in half-open to close (3) */
-        int half_open_success_threshold{3};
+        int half_open_success_threshold {3};
     };
 
     /** @brief Circuit breaker state machine states */
@@ -125,9 +125,9 @@ namespace nova::error {
         void transition_to_closed();
 
         circuit_breaker_config config_;
-        circuit_state state_{circuit_state::closed};
-        int failure_count_{0};
-        int success_count_{0};
+        circuit_state state_ {circuit_state::closed};
+        int failure_count_ {0};
+        int success_count_ {0};
         std::chrono::steady_clock::time_point last_failure_time_;
     };
 
@@ -179,8 +179,8 @@ namespace nova::error {
 
         retry_config config_;
         circuit_breaker circuit_breaker_;
-        int attempts_{0};
-        bool success_{false};
+        int attempts_ {0};
+        bool success_ {false};
         mutable std::uniform_int_distribution<int> dist_;
     };
 

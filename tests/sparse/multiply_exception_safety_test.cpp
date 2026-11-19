@@ -52,8 +52,8 @@ namespace multiply_exception_safety_test {
         // Row-major 2x3 times 3x2. The buffers became unique_ptr in the same change, so this
         // case is the one that would notice the buffers no longer being passed through
         // correctly.
-        const std::vector<float> a{1, 2, 3, 4, 5, 6};
-        const std::vector<float> b{7, 8, 9, 10, 11, 12};
+        const std::vector<float> a {1, 2, 3, 4, 5, 6};
+        const std::vector<float> b {7, 8, 9, 10, 11, 12};
         std::vector<float> c(4, 0.0F);
 
         multiplyMatricesOnGPU(a.data(), b.data(), c.data(), 2, 3, 2);

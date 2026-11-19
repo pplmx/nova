@@ -58,18 +58,18 @@ namespace nova {
             int iterations = 0;
 
             /** @brief Final residual norm */
-            T residual_norm = T{0};
+            T residual_norm = T {0};
 
             /** @brief Relative residual ||r||/||b|| */
-            T relative_residual = T{0};
+            T relative_residual = T {0};
             SolverError error_code = SolverError::SUCCESS;
             std::vector<T> residual_history;
         };
 
         template <SparseScalar T>
         struct SolverConfig {
-            T relative_tolerance = T{1e-6};
-            T absolute_tolerance = T{1e-10};
+            T relative_tolerance = T {1e-6};
+            T absolute_tolerance = T {1e-10};
             int max_iterations = 1000;
             bool verbose = false;
         };
@@ -77,7 +77,7 @@ namespace nova {
         namespace detail {
             template <SparseScalar T>
             T dot_product(const T* a, const T* b, int n) {
-                T result = T{0};
+                T result = T {0};
                 for (int i = 0; i < n; ++i) {
                     result += a[i] * b[i];
                 }
@@ -114,7 +114,7 @@ namespace nova {
 
             template <SparseScalar T>
             T norm2(const T* x, int n) {
-                T sum = T{0};
+                T sum = T {0};
                 for (int i = 0; i < n; ++i) {
                     sum += x[i] * x[i];
                 }
@@ -167,10 +167,10 @@ namespace nova {
                 }
 
                 memory::Buffer<T> d_b(n), d_x(n), d_r(n), d_z(n), d_p(n), d_Ap(n);
-                std::vector<T> h_x(n, T{0}), h_r(n), h_z(n), h_p(n), h_Ap(n);
+                std::vector<T> h_x(n, T {0}), h_r(n), h_z(n), h_p(n), h_Ap(n);
 
                 d_b.copy_from(b, n);
-                d_x.fill(T{0});
+                d_x.fill(T {0});
 
                 memory::Buffer<T> d_temp(n);
                 spmv(A, d_x.data(), d_temp.data());
@@ -187,11 +187,11 @@ namespace nova {
                     // a converged result is a licence for the caller to read x, so
                     // returning without touching x handed back whatever happened to be
                     // in the caller's array.
-                    detail::fill(x, T{0}, n);
+                    detail::fill(x, T {0}, n);
                     result.converged = true;
                     result.iterations = 0;
-                    result.residual_norm = T{0};
-                    result.relative_residual = T{0};
+                    result.residual_norm = T {0};
+                    result.relative_residual = T {0};
                     result.error_code = SolverError::SUCCESS;
                     return result;
                 }
@@ -209,7 +209,7 @@ namespace nova {
 
                 for (int iter = 0; iter < this->config_.max_iterations; ++iter) {
                     d_p.copy_from(h_p.data(), n);
-                    d_Ap.fill(T{0});
+                    d_Ap.fill(T {0});
                     spmv(A, d_p.data(), d_Ap.data());
                     d_Ap.copy_to(h_Ap.data(), n);
 
@@ -309,11 +309,11 @@ namespace nova {
                     // a converged result is a licence for the caller to read x, so
                     // returning without touching x handed back whatever happened to be
                     // in the caller's array.
-                    detail::fill(x, T{0}, n);
+                    detail::fill(x, T {0}, n);
                     result.converged = true;
                     result.iterations = 0;
-                    result.residual_norm = T{0};
-                    result.relative_residual = T{0};
+                    result.residual_norm = T {0};
+                    result.relative_residual = T {0};
                     result.error_code = SolverError::SUCCESS;
                     return result;
                 }
@@ -354,15 +354,15 @@ namespace nova {
 
                 for (int outer = 0; outer * m < this->config_.max_iterations; ++outer) {
                     // Arnoldi basis: V is (m+1) x n, H is (m+1) x m (column-major rows).
-                    std::vector<T> V((m + 1) * n, T{0});
-                    std::vector<T> H((m + 1) * m, T{0});
+                    std::vector<T> V((m + 1) * n, T {0});
+                    std::vector<T> H((m + 1) * m, T {0});
 
                     for (int i = 0; i < n; ++i) {
                         V[i] = r[i] / beta;
                     }
 
-                    std::vector<T> g(m + 1, T{0});
-                    std::vector<T> cs(m, T{0}), sn(m, T{0});
+                    std::vector<T> g(m + 1, T {0});
+                    std::vector<T> cs(m, T {0}), sn(m, T {0});
                     g[0] = beta;
 
                     for (int j = 0; j < m && total_iterations < this->config_.max_iterations; ++j) {
@@ -410,8 +410,8 @@ namespace nova {
                             c = hj / denom;
                             s = hnext / denom;
                         } else {
-                            c = T{1};
-                            s = T{0};
+                            c = T {1};
+                            s = T {0};
                         }
                         {
                             T tmp = c * H[j * m + j] + s * H[(j + 1) * m + j];
@@ -437,7 +437,7 @@ namespace nova {
 
                         if (result.relative_residual < this->config_.relative_tolerance) {
                             // Solve upper-triangular H[0..j][0..j] y = g[0..j].
-                            std::vector<T> y(j + 1, T{0});
+                            std::vector<T> y(j + 1, T {0});
                             for (int k = j; k >= 0; --k) {
                                 T sum = g[k];
                                 for (int i = k + 1; i <= j; ++i) {
@@ -462,7 +462,7 @@ namespace nova {
                     }
 
                     // Restart: solve the full m x m system, update the running solution.
-                    std::vector<T> y(m, T{0});
+                    std::vector<T> y(m, T {0});
                     for (int k = m - 1; k >= 0; --k) {
                         T sum = g[k];
                         for (int i = k + 1; i < m; ++i) {
@@ -471,7 +471,7 @@ namespace nova {
                         if (std::abs(H[k * m + k]) > std::numeric_limits<T>::epsilon()) {
                             y[k] = sum / H[k * m + k];
                         } else {
-                            y[k] = T{0};
+                            y[k] = T {0};
                         }
                     }
                     for (int k = 0; k < m; ++k) {
@@ -510,7 +510,7 @@ namespace nova {
                 }
 
                 result.iterations = total_iterations;
-                result.residual_norm = result.residual_history.empty() ? T{0} : result.residual_history.back();
+                result.residual_norm = result.residual_history.empty() ? T {0} : result.residual_history.back();
                 if (result.error_code == SolverError::SUCCESS) {
                     result.error_code = SolverError::MAX_ITERATIONS;
                 }
@@ -541,10 +541,10 @@ namespace nova {
                 }
 
                 memory::Buffer<T> d_b(n), d_x(n);
-                std::vector<T> h_x(n, T{0}), h_r(n), h_w(n);
+                std::vector<T> h_x(n, T {0}), h_r(n), h_w(n);
 
                 d_b.copy_from(b, n);
-                d_x.fill(T{0});
+                d_x.fill(T {0});
 
                 memory::Buffer<T> d_temp(n);
                 spmv(A, d_x.data(), d_temp.data());
@@ -560,12 +560,12 @@ namespace nova {
                 if (b_norm < std::numeric_limits<T>::epsilon()) {
                     // b == 0: x = 0 is exact. Write it, like the other solvers do.
                     for (int i = 0; i < n; ++i) {
-                        x[i] = T{0};
+                        x[i] = T {0};
                     }
                     result.converged = true;
                     result.iterations = 0;
-                    result.residual_norm = T{0};
-                    result.relative_residual = T{0};
+                    result.residual_norm = T {0};
+                    result.relative_residual = T {0};
                     result.error_code = SolverError::SUCCESS;
                     return result;
                 }
@@ -575,7 +575,7 @@ namespace nova {
 
                 for (int outer = 0; outer < this->config_.max_iterations / restart_; ++outer) {
                     std::vector<T> V((restart_ + 1) * n);
-                    std::vector<T> H((restart_ + 1) * restart_, T{0});
+                    std::vector<T> H((restart_ + 1) * restart_, T {0});
                     std::vector<T> s(restart_ + 1), cs(restart_), sn(restart_);
 
                     for (int i = 0; i < n; ++i) {
@@ -584,18 +584,18 @@ namespace nova {
 
                     s[0] = beta;
                     for (int i = 1; i <= restart_; ++i) {
-                        s[i] = T{0};
+                        s[i] = T {0};
                     }
 
                     for (int j = 0; j < restart_ && total_iterations < this->config_.max_iterations; ++j) {
                         memory::Buffer<T> d_v(n), d_w(n);
                         d_v.copy_from(&V[j * n], n);
-                        d_w.fill(T{0});
+                        d_w.fill(T {0});
                         spmv(A, d_v.data(), d_w.data());
                         d_w.copy_to(&V[(j + 1) * n], n);
 
                         for (int i = 0; i <= j; ++i) {
-                            T dot = T{0};
+                            T dot = T {0};
                             for (int k = 0; k < n; ++k) {
                                 dot += V[(j + 1) * n + k] * V[i * n + k];
                             }
@@ -605,7 +605,7 @@ namespace nova {
                             }
                         }
 
-                        T h_ij = T{0};
+                        T h_ij = T {0};
                         for (int i = 0; i < n; ++i) {
                             h_ij += V[(j + 1) * n + i] * V[(j + 1) * n + i];
                         }
@@ -613,7 +613,7 @@ namespace nova {
 
                         bool breakdown = h_ij < std::numeric_limits<T>::epsilon();
                         if (breakdown) {
-                            h_ij = T{1};
+                            h_ij = T {1};
                             result.error_code = SolverError::BREAKDOWN;
                         }
 
@@ -638,7 +638,7 @@ namespace nova {
                         sn[j] = s_k;
 
                         H[j * restart_ + j] = c * H[j * restart_ + j] + s_k * h_ij;
-                        H[(j + 1) * restart_ + j] = T{0};
+                        H[(j + 1) * restart_ + j] = T {0};
 
                         s[j + 1] = -s_k * s[j];
                         s[j] = c * s[j];
@@ -751,10 +751,10 @@ namespace nova {
                 }
 
                 memory::Buffer<T> d_b(n), d_x(n), d_s(n), d_p(n), d_temp(n);
-                std::vector<T> h_x(n, T{0}), h_r(n), h_r_tilde(n), h_p(n), h_s(n), h_t(n), h_temp(n);
+                std::vector<T> h_x(n, T {0}), h_r(n), h_r_tilde(n), h_p(n), h_s(n), h_t(n), h_temp(n);
 
                 d_b.copy_from(b, n);
-                d_x.fill(T{0});
+                d_x.fill(T {0});
 
                 spmv(A, d_x.data(), d_temp.data());
                 d_temp.copy_to(h_temp.data(), n);
@@ -771,11 +771,11 @@ namespace nova {
                     // a converged result is a licence for the caller to read x, so
                     // returning without touching x handed back whatever happened to be
                     // in the caller's array.
-                    detail::fill(x, T{0}, n);
+                    detail::fill(x, T {0}, n);
                     result.converged = true;
                     result.iterations = 0;
-                    result.residual_norm = T{0};
-                    result.relative_residual = T{0};
+                    result.residual_norm = T {0};
+                    result.relative_residual = T {0};
                     result.error_code = SolverError::SUCCESS;
                     return result;
                 }
@@ -789,7 +789,7 @@ namespace nova {
                 for (int iter = 0; iter < this->config_.max_iterations; ++iter) {
                     // v = A * p
                     d_p.copy_from(h_p.data(), n);
-                    d_temp.fill(T{0});
+                    d_temp.fill(T {0});
                     spmv(A, d_p.data(), d_temp.data());
                     d_temp.copy_to(h_temp.data(), n);
 
@@ -848,7 +848,7 @@ namespace nova {
 
                     // t = A * s
                     d_s.copy_from(h_s.data(), n);
-                    d_temp.fill(T{0});
+                    d_temp.fill(T {0});
                     spmv(A, d_s.data(), d_temp.data());
                     d_temp.copy_to(h_t.data(), n);
 

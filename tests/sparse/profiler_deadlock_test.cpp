@@ -113,9 +113,9 @@ namespace profiler_deadlock_test {
         cuda::performance::Profiler& profiler = cuda::performance::Profiler::instance();
         profiler.enable();
 
-        std::atomic<bool> running{true};
-        std::atomic<bool> reader_started{false};
-        std::atomic<size_t> reads{0};
+        std::atomic<bool> running {true};
+        std::atomic<bool> reader_started {false};
+        std::atomic<size_t> reads {0};
 
         std::thread reader([&] {
             reader_started.store(true, std::memory_order_release);

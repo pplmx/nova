@@ -9,19 +9,19 @@
 namespace cuda::performance::bandwidth {
 
     struct RooflinePoint {
-        double arithmetic_intensity{0.0};
-        double performance_gflops{0.0};
+        double arithmetic_intensity {0.0};
+        double performance_gflops {0.0};
         std::string kernel_name;
-        uint64_t flops{0};
-        size_t bytes_accessed{0};
-        uint64_t latency_ns{0};
+        uint64_t flops {0};
+        size_t bytes_accessed {0};
+        uint64_t latency_ns {0};
     };
 
     struct DevicePeaks {
-        double fp64_gflops{0.0};
-        double fp32_gflops{0.0};
-        double fp16_gflops{0.0};
-        double hbm_bandwidth_gbs{0.0};
+        double fp64_gflops {0.0};
+        double fp32_gflops {0.0};
+        double fp16_gflops {0.0};
+        double hbm_bandwidth_gbs {0.0};
 
         static DevicePeaks query(int device_id = 0);
     };
@@ -58,10 +58,10 @@ namespace cuda::performance::bandwidth {
     };
 
     struct BandwidthSample {
-        double bandwidth_gbs{0.0};
-        size_t bytes{0};
-        uint64_t elapsed_ns{0};
-        bool is_memory_bound{false};
+        double bandwidth_gbs {0.0};
+        size_t bytes {0};
+        uint64_t elapsed_ns {0};
+        bool is_memory_bound {false};
     };
 
     class BandwidthUtilizationTracker {
@@ -93,9 +93,9 @@ namespace cuda::performance::bandwidth {
 
     private:
         std::vector<BandwidthSample> samples_;
-        double peak_h2d_{20.0};
-        double peak_d2h_{20.0};
-        double peak_d2d_{900.0};
+        double peak_h2d_ {20.0};
+        double peak_d2h_ {20.0};
+        double peak_d2d_ {900.0};
     };
 
 }  // namespace cuda::performance::bandwidth

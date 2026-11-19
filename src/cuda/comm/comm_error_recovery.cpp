@@ -16,10 +16,10 @@
 namespace nova::comm {
 
     struct HealthMonitor::Impl {
-        std::atomic<bool> running{false};
+        std::atomic<bool> running {false};
         std::thread monitor_thread;
-        std::chrono::seconds timeout_threshold{60};
-        std::chrono::milliseconds check_interval{1000};
+        std::chrono::seconds timeout_threshold {60};
+        std::chrono::milliseconds check_interval {1000};
         ErrorCallback error_callback;
 
         struct CommState {
@@ -307,8 +307,8 @@ namespace nova::comm {
         HealthMonitor* health_monitor = &HealthMonitor::instance();
         RetryHandler* retry_handler = &RetryHandler::instance();
         ErrorClassifier* error_classifier = &ErrorClassifier::instance();
-        std::chrono::seconds timeout_threshold{60};
-        std::atomic<bool> initialized{false};
+        std::chrono::seconds timeout_threshold {60};
+        std::atomic<bool> initialized {false};
     };
 
     CommErrorRecovery& CommErrorRecovery::instance() {

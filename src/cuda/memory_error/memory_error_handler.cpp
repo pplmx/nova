@@ -10,9 +10,9 @@
 namespace nova::memory {
 
     struct DeviceHealthMonitor::Impl {
-        std::atomic<bool> running{false};
+        std::atomic<bool> running {false};
         std::thread monitor_thread;
-        std::chrono::milliseconds check_interval{5000};
+        std::chrono::milliseconds check_interval {5000};
         float warning_threshold = 0.9f;
         float critical_threshold = 0.95f;
         HealthCallback health_callback;
@@ -151,12 +151,12 @@ namespace nova::memory {
     }
 
     struct MemoryErrorHandler::Impl {
-        std::atomic<int> current_tp_degree{1};
-        std::atomic<int> total_errors{0};
-        std::atomic<int> critical_errors{0};
-        std::atomic<int> recoverable_errors{0};
-        std::atomic<int> reductions_triggered{0};
-        std::atomic<size_t> peak_memory_usage{0};
+        std::atomic<int> current_tp_degree {1};
+        std::atomic<int> total_errors {0};
+        std::atomic<int> critical_errors {0};
+        std::atomic<int> recoverable_errors {0};
+        std::atomic<int> reductions_triggered {0};
+        std::atomic<size_t> peak_memory_usage {0};
         std::chrono::steady_clock::time_point start_time;
 
         std::vector<std::function<void(const MemoryError&)>> error_callbacks;
@@ -357,7 +357,7 @@ namespace nova::memory {
     }
 
     struct DegradationManager::Impl {
-        std::atomic<DegradationLevel> level{DegradationLevel::Nominal};
+        std::atomic<DegradationLevel> level {DegradationLevel::Nominal};
         int base_tp_degree = 1;
         float batch_reduction_factor = 1.0f;
         int recovery_attempts = 0;

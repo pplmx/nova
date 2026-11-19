@@ -49,7 +49,7 @@ namespace cuda::topology {
         if (!best.name.empty()) {
             return best;
         }
-        return nics.empty() ? NicInfo{} : nics[0];
+        return nics.empty() ? NicInfo {} : nics[0];
     }
 
     bool TopologyMap::has_rdma() const {

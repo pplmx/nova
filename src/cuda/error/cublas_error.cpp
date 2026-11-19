@@ -94,7 +94,7 @@ namespace nova::error {
 
     cublas_exception::cublas_exception(cublasStatus_t status, const char* operation, const char* file, int line)
         : std::system_error(make_error_code(status, operation, file, line), cublas_status_name(status)),
-          info_{} {
+          info_ {} {
         info_.status = status;
         info_.operation = operation;
         info_.file = file;
@@ -102,7 +102,7 @@ namespace nova::error {
     }
 
     cublas_error_guard::cublas_error_guard(const char* operation, const char* file, int line) noexcept
-        : info_{} {
+        : info_ {} {
         info_.operation = operation;
         info_.file = file;
         info_.line = line;

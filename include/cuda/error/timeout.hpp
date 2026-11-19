@@ -157,16 +157,16 @@ namespace nova::error {
      */
     struct timeout_config {
         /** @brief Default timeout for operations (30 seconds) */
-        std::chrono::milliseconds default_timeout{30000};
+        std::chrono::milliseconds default_timeout {30000};
 
         /** @brief Interval between watchdog checks (100ms) */
-        std::chrono::milliseconds watchdog_interval{100};
+        std::chrono::milliseconds watchdog_interval {100};
 
         /** @brief Enable watchdog monitoring */
-        bool watchdog_enabled{true};
+        bool watchdog_enabled {true};
 
         /** @brief Maximum number of concurrent tracked operations */
-        size_t max_concurrent_operations{10000};
+        size_t max_concurrent_operations {10000};
     };
 
     /**
@@ -191,7 +191,7 @@ namespace nova::error {
         std::chrono::milliseconds timeout_duration;
 
         /** @brief Whether operation was cancelled */
-        bool cancelled{false};
+        bool cancelled {false};
 
         /**
          * @brief Check if deadline has passed
@@ -290,13 +290,13 @@ namespace nova::error {
 
         mutable std::mutex mutex_;
         std::unordered_map<operation_id, operation_context> operations_;
-        operation_id next_id_{1};
-        std::chrono::milliseconds default_timeout_{30000};
+        operation_id next_id_ {1};
+        std::chrono::milliseconds default_timeout_ {30000};
         timeout_callback callback_;
-        bool watchdog_running_{false};
+        bool watchdog_running_ {false};
         std::vector<std::jthread> watchdog_threads_;
-        std::atomic<int64_t> watchdog_interval_ms_{100};
-        size_t max_concurrent_{10000};
+        std::atomic<int64_t> watchdog_interval_ms_ {100};
+        size_t max_concurrent_ {10000};
     };
 
     /**
@@ -351,7 +351,7 @@ namespace nova::error {
 
     private:
         operation_id id_;
-        bool active_{true};
+        bool active_ {true};
     };
 
     /**

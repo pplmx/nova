@@ -17,7 +17,7 @@ namespace nova {
             template <typename T>
             T ConsumeIntegral() {
                 if (remaining() < sizeof(T)) {
-                    return T{};
+                    return T {};
                 }
                 T value = *reinterpret_cast<const T*>(data_ + offset_);
                 offset_ += sizeof(T);
@@ -36,7 +36,7 @@ namespace nova {
             template <typename T>
             T ConsumeFloatingPoint() {
                 if (remaining() < sizeof(T)) {
-                    return T{};
+                    return T {};
                 }
                 T value = *reinterpret_cast<const T*>(data_ + offset_);
                 offset_ += sizeof(T);

@@ -46,14 +46,14 @@ namespace cuda::production {
             cudaError_t error = cudaSuccess;
             bool always = false;
             double probability = 0.0;
-            std::atomic<size_t> count{0};
+            std::atomic<size_t> count {0};
         };
 
         // mutable so const queries (should_inject) may record an injection decision
         // in the per-target counter.
         mutable InjectionConfig configs_[5];
-        std::atomic<bool> enabled_{true};
-        mutable std::mt19937 rng_{std::random_device{}()};
+        std::atomic<bool> enabled_ {true};
+        mutable std::mt19937 rng_ {std::random_device {}()};
     };
 
     class ScopedErrorInjection {
@@ -70,8 +70,8 @@ namespace cuda::production {
     private:
         ErrorInjector& injector_;
         ErrorTarget target_;
-        bool was_injected_{false};
-        cudaError_t injected_error_{cudaSuccess};
+        bool was_injected_ {false};
+        cudaError_t injected_error_ {cudaSuccess};
     };
 
     class MemoryPressureTest {
@@ -87,7 +87,7 @@ namespace cuda::production {
 
     private:
         size_t limit_bytes_;
-        mutable std::atomic<size_t> used_bytes_{0};
+        mutable std::atomic<size_t> used_bytes_ {0};
     };
 
     class StressTestConfig {

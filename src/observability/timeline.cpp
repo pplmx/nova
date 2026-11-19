@@ -14,7 +14,7 @@ namespace cuda::observability {
     }
 
     TimelineExporter& TimelineExporter::instance() {
-        static TimelineExporter instance{ProcessIdTag{}};
+        static TimelineExporter instance {ProcessIdTag {}};
         return instance;
     }
 

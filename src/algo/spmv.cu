@@ -23,7 +23,7 @@ namespace cuda::algo::spmv {
         const int row = blockIdx.x * blockDim.x + threadIdx.x;
 
         if (row < num_rows) {
-            T sum = T{0};
+            T sum = T {0};
             const int row_start = row_offsets[row];
             const int row_end = row_offsets[row + 1];
 

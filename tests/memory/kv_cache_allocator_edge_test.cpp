@@ -14,14 +14,14 @@ namespace cuda::memory::test {
         void SetUp() override {
             cudaSetDevice(0);
 
-            config_ = KVCacheAllocatorConfig{.num_heads = 4,
-                                             .head_dim = 64,
-                                             .block_size_tokens = 16,
-                                             .num_blocks = 128,
-                                             .num_layers = 1,
-                                             .eviction_threshold_pct = 10,
-                                             .enable_prefix_caching = true,
-                                             .max_prefix_blocks = 32};
+            config_ = KVCacheAllocatorConfig {.num_heads = 4,
+                                              .head_dim = 64,
+                                              .block_size_tokens = 16,
+                                              .num_blocks = 128,
+                                              .num_layers = 1,
+                                              .eviction_threshold_pct = 10,
+                                              .enable_prefix_caching = true,
+                                              .max_prefix_blocks = 32};
         }
 
         void TearDown() override {}
@@ -297,7 +297,7 @@ namespace cuda::memory::test {
 
     TEST_F(KVCacheAllocatorEdgeTest, ConcurrentAllocationThreads) {
         auto allocator = std::make_unique<KVCacheAllocator>(config_);
-        std::atomic<int> success_count{0};
+        std::atomic<int> success_count {0};
 
         std::vector<std::thread> threads;
         for (int t = 0; t < 8; ++t) {

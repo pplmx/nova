@@ -20,23 +20,23 @@
 namespace cuda::benchmark::nvtx {
 
     struct MemoryDomain {
-        static constexpr char const* name{"Nova::Memory"};
+        static constexpr char const* name {"Nova::Memory"};
     };
 
     struct DeviceDomain {
-        static constexpr char const* name{"Nova::Device"};
+        static constexpr char const* name {"Nova::Device"};
     };
 
     struct AlgoDomain {
-        static constexpr char const* name{"Nova::Algorithm"};
+        static constexpr char const* name {"Nova::Algorithm"};
     };
 
     struct DistributedDomain {
-        static constexpr char const* name{"Nova::Distributed"};
+        static constexpr char const* name {"Nova::Distributed"};
     };
 
     struct BenchmarkDomain {
-        static constexpr char const* name{"Nova::Benchmark"};
+        static constexpr char const* name {"Nova::Benchmark"};
     };
 
     template <typename Domain = BenchmarkDomain>
@@ -44,7 +44,7 @@ namespace cuda::benchmark::nvtx {
     public:
         explicit ScopedRange(const char* name) { nvtx3::mark(name); }
 
-        void set_payload(int64_t payload) { nvtx3::mark(name_, nvtx3::payload{payload}); }
+        void set_payload(int64_t payload) { nvtx3::mark(name_, nvtx3::payload {payload}); }
 
         void set_message(const char* message) { nvtx3::mark(message); }
 
@@ -59,11 +59,11 @@ namespace cuda::benchmark::nvtx {
 
     template <typename Domain = BenchmarkDomain>
     void mark_with_payload(const char* name, int64_t payload) {
-        nvtx3::mark_in<Domain>(name, nvtx3::payload{payload});
+        nvtx3::mark_in<Domain>(name, nvtx3::payload {payload});
     }
 
     inline void push_range(const char* name, uint32_t color = 0xFF88CC) {
-        nvtx3::scoped_range range{name};
+        nvtx3::scoped_range range {name};
         (void)color;
     }
 

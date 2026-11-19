@@ -60,8 +60,8 @@ namespace documented_examples_test {
         // The example takes device pointers; the headers now say so. My first version of this
         // case passed host vectors and got "an illegal memory access was encountered", which is
         // exactly what the documented code would have done for a reader who copied it.
-        const std::vector<float> a{1, 2, 3, 4};
-        const std::vector<float> b{5, 6, 7, 8};
+        const std::vector<float> a {1, 2, 3, 4};
+        const std::vector<float> b {5, 6, 7, 8};
         float* d_a = nullptr;
         float* d_b = nullptr;
         float* d_c = nullptr;
@@ -115,7 +115,7 @@ namespace documented_examples_test {
             // thrown exception from EXPECT_THROW as an uncaught failure at "unknown file" when
             // the type does not match exactly. Catching it directly and asserting on the message
             // keeps the failure readable and does not depend on the macro's comma handling.
-            std::vector<float> send_data{1.0F, 2.0F, 3.0F, 4.0F};
+            std::vector<float> send_data {1.0F, 2.0F, 3.0F, 4.0F};
             bool threw = false;
             std::string message;
             try {
@@ -129,7 +129,7 @@ namespace documented_examples_test {
             return;
         }
 
-        const std::vector<float> send_data{1.0F, 2.0F, 3.0F, 4.0F};
+        const std::vector<float> send_data {1.0F, 2.0F, 3.0F, 4.0F};
         float* d_send = nullptr;
         float* d_recv = nullptr;
         ASSERT_EQ(cudaMalloc(&d_send, send_data.size() * sizeof(float)), cudaSuccess);
@@ -163,7 +163,7 @@ namespace documented_examples_test {
         mesh.initialize();
         if (mesh.device_count() > 1) {
             // Needs an initialised NCCL context, same as all_gather.
-            std::vector<float> data{1.0F, 2.0F};
+            std::vector<float> data {1.0F, 2.0F};
             bool threw = false;
             try {
                 cuda::distributed::DistributedReduce::all_reduce(data.data(), data.data(), data.size(), cuda::distributed::ReductionOp::Sum);
@@ -174,7 +174,7 @@ namespace documented_examples_test {
             return;
         }
 
-        const std::vector<float> send_data{1.0F, 2.0F, 3.0F, 4.0F};
+        const std::vector<float> send_data {1.0F, 2.0F, 3.0F, 4.0F};
         float* d_send = nullptr;
         float* d_recv = nullptr;
         ASSERT_EQ(cudaMalloc(&d_send, send_data.size() * sizeof(float)), cudaSuccess);

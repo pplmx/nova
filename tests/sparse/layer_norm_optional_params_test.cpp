@@ -49,7 +49,7 @@ namespace layer_norm_optional_params_test {
 
         constexpr int kRows = 2;
         constexpr int kCols = 8;
-        const std::vector<float> host{1, 2, 3, 4, 5, 6, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1};
+        const std::vector<float> host {1, 2, 3, 4, 5, 6, 7, 8, 8, 7, 6, 5, 4, 3, 2, 1};
         cuda::memory::Buffer<float> input(kRows * kCols);
         cuda::memory::Buffer<float> output(kRows * kCols);
         cuda::memory::Buffer<float> mean(kRows);
@@ -108,7 +108,7 @@ namespace layer_norm_optional_params_test {
         // They are required rather than optional precisely because the kernel writes them; this
         // checks they contain the row statistics and not the sentinel they started with.
         constexpr int kCols = 4;
-        const std::vector<float> host{2.0F, 4.0F, 6.0F, 8.0F};  // mean 5, variance 5
+        const std::vector<float> host {2.0F, 4.0F, 6.0F, 8.0F};  // mean 5, variance 5
         cuda::memory::Buffer<float> input(kCols);
         cuda::memory::Buffer<float> output(kCols);
         cuda::memory::Buffer<float> mean(1);

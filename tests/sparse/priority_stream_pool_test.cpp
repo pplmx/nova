@@ -83,7 +83,7 @@ namespace priority_stream_pool_test {
 
         // A default-constructed PriorityStream holds nullptr; releasing it must be a no-op
         // rather than storing a null handle the destructor would then try to destroy.
-        EXPECT_NO_THROW(pool.release(cuda::production::PriorityStream{}));
+        EXPECT_NO_THROW(pool.release(cuda::production::PriorityStream {}));
         EXPECT_EQ(pool.total_available(), before);
     }
 

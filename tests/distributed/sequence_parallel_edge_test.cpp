@@ -24,7 +24,7 @@ namespace cuda::distributed::test {
     };
 
     TEST_F(SequenceParallelEdgeTest, SingleGPUConfigValidation) {
-        SequenceParallelConfig config{.num_model_parallel_gpus = 1, .sequence_parallel_size = 1, .reduce_scatter_output = true, .rank = 0, .world_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.num_model_parallel_gpus = 1, .sequence_parallel_size = 1, .reduce_scatter_output = true, .rank = 0, .world_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -35,7 +35,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, MultiGPUConfigValidation) {
-        SequenceParallelConfig config{.num_model_parallel_gpus = 4, .sequence_parallel_size = 4, .reduce_scatter_output = true, .rank = 3, .world_size = 4, .comm = nullptr};
+        SequenceParallelConfig config {.num_model_parallel_gpus = 4, .sequence_parallel_size = 4, .reduce_scatter_output = true, .rank = 3, .world_size = 4, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -46,7 +46,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, GatherKVWithEmptyBuffers) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -59,7 +59,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, GatherKVWithLargeBuffers) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -78,7 +78,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, ScatterOutputWithEmptyBuffer) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -89,7 +89,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, ScatterOutputWithReduceScatterDisabled) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .reduce_scatter_output = false, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .reduce_scatter_output = false, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -105,7 +105,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, AllReduceWithEmptyBuffer) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -115,7 +115,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, AllReduceWithLargeBuffer) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -130,7 +130,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, RingAttentionSingleGPU) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .rank = 0, .world_size = 1};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .rank = 0, .world_size = 1};
 
         auto ring_attn = std::make_unique<RingSequenceParallelism>(config);
 
@@ -144,7 +144,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, RingAttentionWithLargerBuffers) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .rank = 0, .world_size = 1};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .rank = 0, .world_size = 1};
 
         auto ring_attn = std::make_unique<RingSequenceParallelism>(config);
 
@@ -164,9 +164,9 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, ConfigEqualityCheck) {
-        SequenceParallelConfig config1{.num_model_parallel_gpus = 2, .sequence_parallel_size = 2, .reduce_scatter_output = true, .rank = 0, .world_size = 2};
+        SequenceParallelConfig config1 {.num_model_parallel_gpus = 2, .sequence_parallel_size = 2, .reduce_scatter_output = true, .rank = 0, .world_size = 2};
 
-        SequenceParallelConfig config2{.num_model_parallel_gpus = 2, .sequence_parallel_size = 2, .reduce_scatter_output = true, .rank = 0, .world_size = 2};
+        SequenceParallelConfig config2 {.num_model_parallel_gpus = 2, .sequence_parallel_size = 2, .reduce_scatter_output = true, .rank = 0, .world_size = 2};
 
         auto sp_attn1 = std::make_unique<SequenceParallelAttention>(config1);
         auto sp_attn2 = std::make_unique<SequenceParallelAttention>(config2);
@@ -176,7 +176,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, ConfigModificationThroughAccessor) {
-        SequenceParallelConfig config{.num_model_parallel_gpus = 2, .sequence_parallel_size = 2, .rank = 1, .world_size = 2};
+        SequenceParallelConfig config {.num_model_parallel_gpus = 2, .sequence_parallel_size = 2, .rank = 1, .world_size = 2};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -188,7 +188,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, StreamSynchronizationAfterOperations) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -205,7 +205,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, MultipleGatherOperations) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -223,7 +223,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, MultipleScatterOperations) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -239,7 +239,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, MultipleAllReduceOperations) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -253,7 +253,7 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, KVBufferSizesMatch) {
-        SequenceParallelConfig config{.sequence_parallel_size = 1, .comm = nullptr};
+        SequenceParallelConfig config {.sequence_parallel_size = 1, .comm = nullptr};
 
         auto sp_attn = std::make_unique<SequenceParallelAttention>(config);
 
@@ -270,9 +270,9 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, ReduceScatterOutputFlag) {
-        SequenceParallelConfig config_rs{.sequence_parallel_size = 1, .reduce_scatter_output = true, .comm = nullptr};
+        SequenceParallelConfig config_rs {.sequence_parallel_size = 1, .reduce_scatter_output = true, .comm = nullptr};
 
-        SequenceParallelConfig config_no_rs{.sequence_parallel_size = 1, .reduce_scatter_output = false, .comm = nullptr};
+        SequenceParallelConfig config_no_rs {.sequence_parallel_size = 1, .reduce_scatter_output = false, .comm = nullptr};
 
         auto sp_attn_rs = std::make_unique<SequenceParallelAttention>(config_rs);
         auto sp_attn_no_rs = std::make_unique<SequenceParallelAttention>(config_no_rs);
@@ -282,9 +282,9 @@ namespace cuda::distributed::test {
     }
 
     TEST_F(SequenceParallelEdgeTest, SequenceParallelSizeAccessor) {
-        SequenceParallelConfig config1{.sequence_parallel_size = 1};
+        SequenceParallelConfig config1 {.sequence_parallel_size = 1};
 
-        SequenceParallelConfig config4{.sequence_parallel_size = 4};
+        SequenceParallelConfig config4 {.sequence_parallel_size = 4};
 
         auto sp_attn1 = std::make_unique<SequenceParallelAttention>(config1);
         auto sp_attn4 = std::make_unique<SequenceParallelAttention>(config4);

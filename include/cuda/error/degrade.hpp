@@ -177,13 +177,13 @@ namespace nova::error {
      */
     struct quality_threshold {
         /** @brief Minimum acceptable quality score (0.0-1.0) */
-        double min_quality_score{0.8};
+        double min_quality_score {0.8};
 
         /** @brief Retries before triggering degradation */
-        int max_retry_before_degrade{3};
+        int max_retry_before_degrade {3};
 
         /** @brief Lowest acceptable precision level */
-        precision_level min_acceptable_precision{precision_level::medium};
+        precision_level min_acceptable_precision {precision_level::medium};
     };
 
     /**

@@ -43,7 +43,7 @@ namespace device_pointer_contract_test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        const std::vector<float> host{1.0F, 2.0F, 3.0F, 4.0F};
+        const std::vector<float> host {1.0F, 2.0F, 3.0F, 4.0F};
 
         // The documented way: stage onto the device, then pass the device pointer.
         cuda::memory::Buffer<float> device(host.size());
@@ -58,7 +58,7 @@ namespace device_pointer_contract_test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        const std::vector<float> host{-5.0F, 3.0F, 9.0F, 0.0F};
+        const std::vector<float> host {-5.0F, 3.0F, 9.0F, 0.0F};
         cuda::memory::Buffer<float> device(host.size());
         device.copy_from(host.data(), host.size());
 

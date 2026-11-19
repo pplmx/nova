@@ -71,7 +71,7 @@ namespace cuda::device::test {
             }
             cudaDeviceSynchronize();
 
-            T result{};
+            T result {};
             cudaMemcpy(&result, device_out, sizeof(T), cudaMemcpyDeviceToHost);
             cudaFree(device_in);
             cudaFree(device_out);

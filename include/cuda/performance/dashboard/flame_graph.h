@@ -11,8 +11,8 @@ namespace cuda::performance::dashboard {
 
     struct FlameGraphNode {
         std::string name;
-        uint64_t value{0};
-        uint64_t self_value{0};
+        uint64_t value {0};
+        uint64_t self_value {0};
         std::vector<FlameGraphNode> children;
 
         std::string to_json(int indent = 0) const;
@@ -22,10 +22,10 @@ namespace cuda::performance::dashboard {
         std::string name;
         std::string category;
         std::string ph;
-        uint64_t ts{0};
-        uint64_t dur{0};
-        int pid{0};
-        int tid{0};
+        uint64_t ts {0};
+        uint64_t dur {0};
+        int pid {0};
+        int tid {0};
     };
 
     class FlameGraphGenerator {

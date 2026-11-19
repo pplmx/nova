@@ -68,7 +68,7 @@ namespace cuda::neural::training {
                            int heads,
                            int head_dim,
                            int intermediate_size,
-                           const optimizers::OptimizerConfig& opt_cfg = optimizers::OptimizerConfig{});
+                           const optimizers::OptimizerConfig& opt_cfg = optimizers::OptimizerConfig {});
 
         // Non-copyable/non-movable (owns device buffers + the block stack).
         TransformerTrainer(const TransformerTrainer&) = delete;

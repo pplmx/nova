@@ -79,7 +79,7 @@ namespace nova::error {
 
     cuda_exception::cuda_exception(cudaError_t err, const char* operation, const char* file, int line, int device, void* stream)
         : std::system_error(make_error_code(err, operation, file, line, device, stream), "CUDA error"),
-          info_{} {
+          info_ {} {
         info_.code = err;
         info_.operation = operation;
         info_.file = file;
@@ -89,7 +89,7 @@ namespace nova::error {
     }
 
     cuda_error_guard::cuda_error_guard(const char* operation, int device, void* stream, const char* file, int line) noexcept
-        : info_{} {
+        : info_ {} {
         info_.operation = operation;
         info_.file = file;
         info_.line = line;

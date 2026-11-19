@@ -8,7 +8,7 @@ namespace nova::sparse::test {
     using cuda::memory::Buffer;
 
     template <typename T>
-    bool approx_equal(T a, T b, T tol = T{1e-4}) {
+    bool approx_equal(T a, T b, T tol = T {1e-4}) {
         return std::abs(a - b) < tol;
     }
 

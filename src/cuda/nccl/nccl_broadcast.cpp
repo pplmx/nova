@@ -17,10 +17,10 @@ namespace cuda::nccl {
 
     NcclResult NcclBroadcast::broadcast_async(const void* data, void* recv_data, size_t count, ncclDataType_t dtype, int root_rank, cudaStream_t stream) {
 #ifndef NOVA_NCCL_ENABLED
-        return NcclResult{.code = ncclInternalError, .error_message = "NCCL not enabled"};
+        return NcclResult {.code = ncclInternalError, .error_message = "NCCL not enabled"};
 #else
         if (!has_nccl()) {
-            return NcclResult{.code = ncclInternalError, .error_message = "NCCL context not initialized"};
+            return NcclResult {.code = ncclInternalError, .error_message = "NCCL context not initialized"};
         }
 
         // Broadcast is posted per-rank with the rank's own communicator; `root_rank`
@@ -30,7 +30,7 @@ namespace cuda::nccl {
         try {
             comm = current_comm();
         } catch (const std::exception& e) {
-            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+            return NcclResult {.code = ncclInvalidArgument, .error_message = e.what()};
         }
 
         return safe_nccl_call([&]() { return ncclBroadcast(data, recv_data, count, dtype, root_rank, comm, stream); }, comm, 30000, &ctx_);

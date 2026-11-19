@@ -41,7 +41,7 @@ namespace cuda::device {
         [[nodiscard]] cublasHandle_t get() const { return handle_; }
 
     private:
-        cublasHandle_t handle_{nullptr};
+        cublasHandle_t handle_ {nullptr};
     };
 
 }  // namespace cuda::device

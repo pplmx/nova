@@ -213,7 +213,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, SaveResultsJson) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 1, 64, false, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 64, false, false});
                     auto data = bench.generate_random_data(64);
 
                     bench.benchmark_int8_quantization(data);
@@ -231,7 +231,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkFP8QuantizationProducesResult) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 1, 256, false, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
                     auto data = bench.generate_random_data(256);
 
                     auto result = bench.benchmark_fp8_quantization(data, Precision::FP8_E4M3);
@@ -242,7 +242,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkFP8QuantizationMeasuresThroughput) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 10, 1024, false, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 10, 1024, false, false});
                     auto data = bench.generate_random_data(1024);
 
                     auto result = bench.benchmark_fp8_quantization(data);
@@ -251,7 +251,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkFP8QuantizationTracksRelativeError) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 5, 512, true, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 5, 512, true, false});
                     auto data = bench.generate_random_data(512);
 
                     auto result = bench.benchmark_fp8_quantization(data);
@@ -260,7 +260,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkINT8QuantizationProducesResult) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 1, 256, false, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
                     auto data = bench.generate_random_data(256);
 
                     auto result = bench.benchmark_int8_quantization(data);
@@ -271,7 +271,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkFP8GEMMProducesResult) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 1, 256, false, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
 
                     auto result = bench.benchmark_fp8_gemm(16, 32, 16);
 
@@ -280,7 +280,7 @@ namespace nova {
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkCalibrationProducesResult) {
-                    QuantizationBenchmark bench(QuantizationBenchmark::Config{1, 1, 256, false, false});
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
                     auto data = bench.generate_random_data(256);
 
                     MinMaxCalibrator calibrator;

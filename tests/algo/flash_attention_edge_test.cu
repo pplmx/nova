@@ -29,7 +29,7 @@ namespace cuda::algo::test {
     };
 
     TEST_F(FlashAttentionEdgeCaseTest, ZeroDropoutRate) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
         ASSERT_NE(flash_attn, nullptr);
@@ -48,7 +48,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, FullDropoutRate) {
-        FlashAttentionConfig config{
+        FlashAttentionConfig config {
             .num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.99f, .causal = true, .is_fp16 = false, .dropout_seed = 42};
 
         auto flash_attn = create_flash_attention(config);
@@ -67,7 +67,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, SingleHead) {
-        FlashAttentionConfig config{.num_heads = 1, .num_kv_heads = 1, .head_dim = 64, .seq_len = 32, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 1, .num_kv_heads = 1, .head_dim = 64, .seq_len = 32, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -85,7 +85,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, LargeHeadDim) {
-        FlashAttentionConfig config{.num_heads = 2, .num_kv_heads = 2, .head_dim = 256, .seq_len = 64, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 2, .num_kv_heads = 2, .head_dim = 256, .seq_len = 64, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -103,7 +103,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, SmallSequenceLength) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 4, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 4, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -121,7 +121,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, LargeSequenceLength) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 4096, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 4096, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -146,7 +146,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, BatchSizeGreaterThanOne) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 64, .batch_size = 4, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 64, .batch_size = 4, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -165,7 +165,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, DifferentQKVDimensions) {
-        FlashAttentionConfig config{.num_heads = 8, .num_kv_heads = 2, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = false, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 8, .num_kv_heads = 2, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = false, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -187,7 +187,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, OutputSumToOne) {
-        FlashAttentionConfig config{.num_heads = 2, .num_kv_heads = 2, .head_dim = 32, .seq_len = 16, .batch_size = 1, .dropout_rate = 0.0f, .causal = false, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 2, .num_kv_heads = 2, .head_dim = 32, .seq_len = 16, .batch_size = 1, .dropout_rate = 0.0f, .causal = false, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -219,7 +219,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, SoftmaxLSEOutput) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -245,7 +245,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, BackwardPassGradientShape) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 64, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 64, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -275,7 +275,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, BackwardPassWithDropout) {
-        FlashAttentionConfig config{
+        FlashAttentionConfig config {
             .num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 64, .batch_size = 1, .dropout_rate = 0.1f, .causal = true, .is_fp16 = false, .dropout_seed = 12345};
 
         auto flash_attn = create_flash_attention(config);
@@ -299,7 +299,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, WorkspaceGrowth) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -316,7 +316,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, MultiQueryAttention) {
-        FlashAttentionConfig config{.num_heads = 8, .num_kv_heads = 1, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 8, .num_kv_heads = 1, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -339,7 +339,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, CausalWithLengthOne) {
-        FlashAttentionConfig config{.num_heads = 2, .num_kv_heads = 2, .head_dim = 32, .seq_len = 1, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 2, .num_kv_heads = 2, .head_dim = 32, .seq_len = 1, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
 
         auto flash_attn = create_flash_attention(config);
 
@@ -357,7 +357,7 @@ namespace cuda::algo::test {
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, DeterministicWithSameSeed) {
-        FlashAttentionConfig config{.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.15f, .causal = true, .is_fp16 = false};
+        FlashAttentionConfig config {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.15f, .causal = true, .is_fp16 = false};
 
         auto flash_attn1 = create_flash_attention(config);
         config.dropout_seed = 99999;

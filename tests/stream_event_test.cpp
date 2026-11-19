@@ -98,8 +98,7 @@ TEST_F(StreamTest, QueryAfterAsyncWork) {
     // regardless of what the loop believed. So the assertion here catches a broken copy, not
     // a broken query, and the difference is worth stating instead of implying the case
     // proves more than it does.
-    while (!stream.query()) {
-    }
+    while (!stream.query()) {}
 
     std::vector<int> result(N, 0);
     CUDA_CHECK(cudaMemcpy(result.data(), d_data, N * sizeof(int), cudaMemcpyDeviceToHost));

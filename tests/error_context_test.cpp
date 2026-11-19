@@ -9,7 +9,7 @@ protected:
 TEST_F(ErrorContextTest, OperationContextStoresAllFields) {
     cuda::device::OperationContext ctx;
     ctx.operation_name = "test_op";
-    ctx.dimensions = size_t{1024};
+    ctx.dimensions = size_t {1024};
     ctx.device_id = 0;
     ctx.extra = "test_extra";
 
@@ -22,7 +22,7 @@ TEST_F(ErrorContextTest, OperationContextStoresAllFields) {
 TEST_F(ErrorContextTest, OperationContextWithPairDimensions) {
     cuda::device::OperationContext ctx;
     ctx.operation_name = "matrix_mult";
-    ctx.dimensions = std::pair<size_t, size_t>{1024, 2048};
+    ctx.dimensions = std::pair<size_t, size_t> {1024, 2048};
     ctx.device_id = 0;
 
     auto dims = std::get<std::pair<size_t, size_t>>(ctx.dimensions);
@@ -31,7 +31,7 @@ TEST_F(ErrorContextTest, OperationContextWithPairDimensions) {
 }
 
 TEST_F(ErrorContextTest, CudaExceptionWithContextDerivesFromCudaException) {
-    auto ctx = cuda::device::OperationContext{.operation_name = "test_op", .dimensions = size_t{100}, .device_id = 0};
+    auto ctx = cuda::device::OperationContext {.operation_name = "test_op", .dimensions = size_t {100}, .device_id = 0};
 
     cuda::device::CudaExceptionWithContext ex(cudaErrorInvalidValue, "test_file.cpp", 42, ctx);
 
@@ -41,7 +41,7 @@ TEST_F(ErrorContextTest, CudaExceptionWithContextDerivesFromCudaException) {
 
 TEST_F(ErrorContextTest, CUDA_CONTEXTMacroCreatesCorrectContext) {
     int device = 0;
-    auto ctx = CUDA_CONTEXT(test_operation, size_t{512}, device);
+    auto ctx = CUDA_CONTEXT(test_operation, size_t {512}, device);
 
     EXPECT_STREQ(ctx.operation_name, "test_operation");
     EXPECT_EQ(std::get<size_t>(ctx.dimensions), 512);

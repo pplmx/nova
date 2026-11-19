@@ -37,7 +37,7 @@ namespace cuda::performance::dashboard {
         roofline_models_.clear();
         fusion_recommendations_.clear();
         bandwidth_trackers_.clear();
-        data_ = DashboardData{};
+        data_ = DashboardData {};
     }
 
     bool DashboardExporter::is_empty() const {

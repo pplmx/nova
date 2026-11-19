@@ -82,7 +82,7 @@ namespace nova {
             // std::localtime returns a pointer to a shared static buffer, so two threads
             // logging at once raced on it (ThreadSanitizer flags format_timestamp
             // directly). localtime_r writes into caller-owned storage.
-            std::tm broken_down{};
+            std::tm broken_down {};
 #if defined(_WIN32)
             localtime_s(&broken_down, &time);
 #else

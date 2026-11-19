@@ -52,7 +52,7 @@ namespace cuda::memory {
         std::unordered_map<int64_t, float> importance_weights_;
         std::vector<PrefetchRequest> pending_prefetch_;
         mutable std::mutex prefetch_mutex_;
-        std::atomic<uint64_t> prefetch_id_{0};
+        std::atomic<uint64_t> prefetch_id_ {0};
     };
 
 }  // namespace cuda::memory

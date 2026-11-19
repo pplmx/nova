@@ -62,7 +62,7 @@ namespace cuda::neural::training {
          * @throws std::invalid_argument on non-positive dims (layer ctors reject
          *        non-divisible feature dims when tp > 1)
          */
-        MicroTrainer(::cuda::nccl::NcclContext& ctx, int hidden_dim, int intermediate_size, const optimizers::OptimizerConfig& opt_cfg = optimizers::OptimizerConfig{});
+        MicroTrainer(::cuda::nccl::NcclContext& ctx, int hidden_dim, int intermediate_size, const optimizers::OptimizerConfig& opt_cfg = optimizers::OptimizerConfig {});
 
         // Non-copyable/non-movable (owns device buffers + the layer stack).
         MicroTrainer(const MicroTrainer&) = delete;

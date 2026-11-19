@@ -150,7 +150,7 @@ namespace cuda::sort {
         Key* h_values = static_cast<Key*>(malloc(actual_k * sizeof(Key)));
         for (size_t i = 0; i < actual_k; ++i) {
             const size_t idx = h_indices[i];
-            h_values[i] = (idx < count) ? static_cast<Key>(h_all_values[idx]) : Key{};
+            h_values[i] = (idx < count) ? static_cast<Key>(h_all_values[idx]) : Key {};
         }
         result.values.copy_from(h_values, actual_k);
 

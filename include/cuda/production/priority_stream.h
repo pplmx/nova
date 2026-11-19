@@ -30,8 +30,8 @@ namespace cuda::production {
         [[nodiscard]] explicit operator bool() const { return stream_ != nullptr; }
 
     private:
-        cudaStream_t stream_{nullptr};
-        StreamPriority priority_{StreamPriority::Normal};
+        cudaStream_t stream_ {nullptr};
+        StreamPriority priority_ {StreamPriority::Normal};
     };
 
     /**

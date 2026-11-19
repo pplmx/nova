@@ -26,7 +26,7 @@ namespace cuda::memory {
         );
 
         std::lock_guard<std::mutex> lock(prefetch_mutex_);
-        PrefetchRequest request{.sequence_id = sequence_id, .num_tokens_ahead = prefetch_blocks * allocator_->get_block_size_tokens(), .completed = false};
+        PrefetchRequest request {.sequence_id = sequence_id, .num_tokens_ahead = prefetch_blocks * allocator_->get_block_size_tokens(), .completed = false};
         pending_prefetch_.push_back(request);
     }
 

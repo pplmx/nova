@@ -6,7 +6,7 @@
 namespace nova::sparse::test {
 
     template <typename T>
-    bool approx_equal(T a, T b, T tol = T{1e-5}) {
+    bool approx_equal(T a, T b, T tol = T {1e-5}) {
         return std::abs(a - b) < tol;
     }
 
@@ -114,8 +114,8 @@ namespace nova::sparse::test {
         std::vector<int> h_row_offsets, h_col_indices;
         matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
 
-        EXPECT_EQ(h_row_offsets, (std::vector<int>{0, 1, 2, 3}));
-        EXPECT_EQ(h_col_indices, (std::vector<int>{1, 2, 0}));
+        EXPECT_EQ(h_row_offsets, (std::vector<int> {0, 1, 2, 3}));
+        EXPECT_EQ(h_col_indices, (std::vector<int> {1, 2, 0}));
     }
 
     TEST(SparseMatrixTest, FromEdgeListGroupsOutEdgesPerRow) {
@@ -127,8 +127,8 @@ namespace nova::sparse::test {
         std::vector<int> h_row_offsets, h_col_indices;
         matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
 
-        EXPECT_EQ(h_row_offsets, (std::vector<int>{0, 2, 2, 3}));
-        EXPECT_EQ(h_col_indices, (std::vector<int>{1, 2, 0}));
+        EXPECT_EQ(h_row_offsets, (std::vector<int> {0, 2, 2, 3}));
+        EXPECT_EQ(h_col_indices, (std::vector<int> {1, 2, 0}));
         // A vertex with no out-edges must not inherit its neighbours' rows.
         EXPECT_EQ(h_row_offsets[1], h_row_offsets[2]);
     }
@@ -144,8 +144,8 @@ namespace nova::sparse::test {
         std::vector<int> h_row_offsets, h_col_indices;
         matrix.copy_to_host(h_values, h_row_offsets, h_col_indices);
 
-        EXPECT_EQ(h_row_offsets, (std::vector<int>{0, 1, 3, 3}));
-        EXPECT_EQ(h_col_indices, (std::vector<int>{2, 0, 2}));
+        EXPECT_EQ(h_row_offsets, (std::vector<int> {0, 1, 3, 3}));
+        EXPECT_EQ(h_col_indices, (std::vector<int> {2, 0, 2}));
         EXPECT_FLOAT_EQ(h_values[0], 7.0f);   // row 0 -> col 2
         EXPECT_FLOAT_EQ(h_values[1], -3.0f);  // row 1 -> col 0
         EXPECT_FLOAT_EQ(h_values[2], 0.25f);  // row 1 -> col 2
@@ -228,7 +228,7 @@ namespace nova::sparse::test {
         std::vector<int> h_row_offsets, h_col_indices;
         EXPECT_NO_THROW(matrix.copy_to_host(h_values, h_row_offsets, h_col_indices));
 
-        EXPECT_EQ(h_row_offsets, (std::vector<int>{0}));
+        EXPECT_EQ(h_row_offsets, (std::vector<int> {0}));
         EXPECT_TRUE(h_values.empty());
         EXPECT_TRUE(h_col_indices.empty());
     }

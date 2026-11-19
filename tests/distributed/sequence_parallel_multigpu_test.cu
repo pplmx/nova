@@ -116,7 +116,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AllReduceSequence) {
         cuda::memory::Buffer<float> data(L);
         data.copy_from(rank_input[d].data(), L);
 
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = true,
@@ -180,7 +180,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_GatherKV) {
         local_v.copy_from(rank_v[d].data(), L);
         cuda::memory::Buffer<float> gathered_k(0), gathered_v(0);
 
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = true,
@@ -235,7 +235,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterReduceScatter) {
         cuda::memory::Buffer<float> full_out(sp * L), local_out(L);
         full_out.copy_from(full.data(), sp * L);
 
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = true,
@@ -286,7 +286,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_RejectsMissingHidden
     EXPECT_THROW(run_per_rank(device_count,
                               [&](int d) {
                                   cuda::memory::Buffer<float> q(32), k(32), v(32), out(32);
-                                  SequenceParallelConfig cfg{
+                                  SequenceParallelConfig cfg {
                                       .num_model_parallel_gpus = sp,
                                       .sequence_parallel_size = sp,
                                       .reduce_scatter_output = true,
@@ -395,7 +395,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_RingAttention_MatchesFullSequenceR
         k.copy_from(h_k[d].data(), h_k[d].size());
         v.copy_from(h_v[d].data(), h_v[d].size());
 
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = true,
@@ -445,7 +445,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_ScatterSliceCopy) {
         cuda::memory::Buffer<float> full_out(sp * L), local_out(L);
         full_out.copy_from(full.data(), sp * L);
 
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = false,
@@ -582,7 +582,7 @@ TEST_F(SequenceParallelMultiGpuTest, MultiGpu_AbortedComm_RingThrows_AndRecovers
         q.copy_from(h.data(), elems);
         k.copy_from(h.data(), elems);
         v.copy_from(h.data(), elems);
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = true,
@@ -650,7 +650,7 @@ TEST_F(SequenceParallelMultiGpuTest, BrokenContext_FailsFastBeforeTouchingDeadCo
         cuda::memory::Buffer<float> data(32);
         std::vector<float> h(32, 1.0f);
         data.copy_from(h.data(), 32);
-        SequenceParallelConfig cfg{
+        SequenceParallelConfig cfg {
             .num_model_parallel_gpus = sp,
             .sequence_parallel_size = sp,
             .reduce_scatter_output = true,

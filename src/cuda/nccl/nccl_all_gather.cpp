@@ -20,10 +20,10 @@ namespace cuda::nccl {
 
     NcclResult NcclAllGather::all_gather_async(const void* send_data, void* recv_data, size_t send_count, ncclDataType_t dtype, cudaStream_t stream) {
 #ifndef NOVA_NCCL_ENABLED
-        return NcclResult{.code = ncclInternalError, .error_message = "NCCL not enabled"};
+        return NcclResult {.code = ncclInternalError, .error_message = "NCCL not enabled"};
 #else
         if (!has_nccl()) {
-            return NcclResult{.code = ncclInternalError, .error_message = "NCCL context not initialized"};
+            return NcclResult {.code = ncclInternalError, .error_message = "NCCL context not initialized"};
         }
 
         // Per-rank operation: use the current device's communicator. Resolve it up
@@ -32,7 +32,7 @@ namespace cuda::nccl {
         try {
             comm = current_comm();
         } catch (const std::exception& e) {
-            return NcclResult{.code = ncclInvalidArgument, .error_message = e.what()};
+            return NcclResult {.code = ncclInvalidArgument, .error_message = e.what()};
         }
 
         return safe_nccl_call([&]() { return ncclAllGather(send_data, recv_data, send_count, dtype, comm, stream); }, comm, 30000, &ctx_);

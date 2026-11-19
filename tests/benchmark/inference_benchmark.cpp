@@ -21,7 +21,7 @@ namespace cuda::inference::benchmark {
         CUDA_CHECK(cudaSetDevice(0));
         stream::Stream stream;
 
-        SchedulerConfig config{.max_batch_size = state.range(0), .max_sequence_length = 512, .num_heads = 8, .num_kv_heads = 8, .head_dim = 64, .block_size = 16};
+        SchedulerConfig config {.max_batch_size = state.range(0), .max_sequence_length = 512, .num_heads = 8, .num_kv_heads = 8, .head_dim = 64, .block_size = 16};
 
         auto scheduler = std::make_unique<Scheduler>(config);
 
@@ -51,7 +51,7 @@ namespace cuda::inference::benchmark {
         CUDA_CHECK(cudaSetDevice(0));
         stream::Stream stream;
 
-        SchedulerConfig config{.max_batch_size = state.range(0), .max_sequence_length = 512, .num_heads = 32, .num_kv_heads = 32, .head_dim = 128, .block_size = 16};
+        SchedulerConfig config {.max_batch_size = state.range(0), .max_sequence_length = 512, .num_heads = 32, .num_kv_heads = 32, .head_dim = 128, .block_size = 16};
 
         auto scheduler = std::make_unique<Scheduler>(config);
 
@@ -80,7 +80,7 @@ namespace cuda::inference::benchmark {
         CUDA_CHECK(cudaSetDevice(0));
         stream::Stream stream;
 
-        SchedulerConfig config{.max_batch_size = 1, .max_sequence_length = 512, .num_heads = 8, .num_kv_heads = 8, .head_dim = 64, .block_size = 16};
+        SchedulerConfig config {.max_batch_size = 1, .max_sequence_length = 512, .num_heads = 8, .num_kv_heads = 8, .head_dim = 64, .block_size = 16};
 
         auto scheduler = std::make_unique<Scheduler>(config);
         int64_t seq_id = scheduler->add_request(64);

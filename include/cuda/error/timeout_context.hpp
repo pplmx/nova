@@ -75,7 +75,7 @@ namespace nova::error {
 
     private:
         operation_id id_;
-        timeout_context* parent_{nullptr};
+        timeout_context* parent_ {nullptr};
     };
 
     /**

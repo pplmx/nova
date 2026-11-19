@@ -6,7 +6,7 @@
 namespace cuda::observability {
 
     BandwidthResult BandwidthTracker::measure_transfer(MemoryTransferType type, uint64_t size_bytes, cudaStream_t stream) {
-        BandwidthResult result{};
+        BandwidthResult result {};
         result.type = type;
         result.bytes_transferred = size_bytes;
 
@@ -84,7 +84,7 @@ namespace cuda::observability {
     }
 
     DeviceMemoryBandwidth DeviceMemoryBandwidth::query(int device) {
-        DeviceMemoryBandwidth result{};
+        DeviceMemoryBandwidth result {};
         result.h2d_gbps = 0;
         result.d2h_gbps = 0;
         result.d2d_gbps = 0;

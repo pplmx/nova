@@ -42,16 +42,16 @@ namespace cuda::performance {
         std::unique_ptr<KernelRecord> get_or_create_record(const std::string& kernel_name);
 
         ProfilerCallback callback_;
-        bool enabled_{true};
+        bool enabled_ {true};
         mutable std::mutex mutex_;
         std::map<std::string, std::unique_ptr<KernelRecord>> records_;
     };
 
     struct KernelRecord {
-        cudaEvent_t start_event{nullptr};
-        cudaEvent_t stop_event{nullptr};
-        uint64_t latency_ns{0};
-        bool completed{false};
+        cudaEvent_t start_event {nullptr};
+        cudaEvent_t stop_event {nullptr};
+        uint64_t latency_ns {0};
+        bool completed {false};
     };
 
     class ScopedKernelProfile {
@@ -66,7 +66,7 @@ namespace cuda::performance {
 
     private:
         std::string kernel_name_;
-        cudaStream_t stream_{0};
+        cudaStream_t stream_ {0};
     };
 
     class OccupancyCalculator {

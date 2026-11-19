@@ -247,7 +247,7 @@ namespace cuda::distributed {
             gathered_v = memory::Buffer<float>(total_count);
         }
 
-        auto dtype = detail::to_nccl_dtype(float{});
+        auto dtype = detail::to_nccl_dtype(float {});
         // Route the raw AllGather through the comm-error policy (checked_collective
         // / nccl_recovery.h): a broken comm is aborted and poisons has_nccl() so
         // the self-healing initialize path recovers, instead of the pre-fix
@@ -308,7 +308,7 @@ namespace cuda::distributed {
         }
 
         if (config_.reduce_scatter_output) {
-            auto dtype = detail::to_nccl_dtype(float{});
+            auto dtype = detail::to_nccl_dtype(float {});
             // Comm-error layer routing (see gather_kv for the rationale): a dead
             // comm is aborted + poisons has_nccl() so self-healing can recover.
             detail::checked_collective(
@@ -344,7 +344,7 @@ namespace cuda::distributed {
         }
         detail::check_comm_healthy("SequenceParallelAttention::all_reduce_sequence", config_.comm, config_.nccl_context);
 
-        auto dtype = detail::to_nccl_dtype(float{});
+        auto dtype = detail::to_nccl_dtype(float {});
         // Comm-error layer routing (see gather_kv for the rationale).
         detail::checked_collective(
             "SequenceParallelAttention::all_reduce_sequence",
@@ -384,7 +384,7 @@ namespace cuda::distributed {
         // consecutive point-to-point ops on the communicator and the ring deadlocks
         // (each rank's send blocks on a peer progress that never comes). Next/prev
         // are resolved from config rank / world_size in the constructor.
-        auto dtype = detail::to_nccl_dtype(float{});
+        auto dtype = detail::to_nccl_dtype(float {});
         ncclComm_t comm = static_cast<ncclComm_t>(config_.comm);
         ncclGroupStart();
         const ncclResult_t r = ncclSend(send_k.data(), count, dtype, next_rank_, comm, stream.get());

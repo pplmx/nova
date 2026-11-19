@@ -155,15 +155,15 @@ namespace cuda::detail {
                     device = 0;
                 }
             }
-            block_ = dim3{static_cast<unsigned int>(cuda::performance::get_optimal_block_size(device)), 1, 1};
+            block_ = dim3 {static_cast<unsigned int>(cuda::performance::get_optimal_block_size(device)), 1, 1};
             return *this;
         }
 
     private:
-        dim3 grid_{1, 1, 1};
-        dim3 block_{1, 1, 1};
-        size_t shared_{0};
-        cudaStream_t stream_{nullptr};
+        dim3 grid_ {1, 1, 1};
+        dim3 block_ {1, 1, 1};
+        size_t shared_ {0};
+        cudaStream_t stream_ {nullptr};
     };
 
     /**
@@ -178,7 +178,7 @@ namespace cuda::detail {
         // want the launch to do nothing, not to fail. Clamp to one block and let the kernel's own
         // bound check discard the threads.
         const size_t blocks = (n + block.x - 1) / block.x;
-        return dim3{static_cast<unsigned int>(blocks == 0 ? 1 : blocks), 1, 1};
+        return dim3 {static_cast<unsigned int>(blocks == 0 ? 1 : blocks), 1, 1};
     }
 
     /**
@@ -192,7 +192,7 @@ namespace cuda::detail {
         // Same zero-block problem as calc_grid_1d, on either axis.
         const size_t bx = (w + block.x - 1) / block.x;
         const size_t by = (h + block.y - 1) / block.y;
-        return dim3{static_cast<unsigned int>(bx == 0 ? 1 : bx), static_cast<unsigned int>(by == 0 ? 1 : by), 1};
+        return dim3 {static_cast<unsigned int>(bx == 0 ? 1 : bx), static_cast<unsigned int>(by == 0 ? 1 : by), 1};
     }
 
     /**
@@ -208,13 +208,13 @@ namespace cuda::detail {
         const size_t bx = (x + block.x - 1) / block.x;
         const size_t by = (y + block.y - 1) / block.y;
         const size_t bz = (z + block.z - 1) / block.z;
-        return dim3{static_cast<unsigned int>(bx == 0 ? 1 : bx), static_cast<unsigned int>(by == 0 ? 1 : by), static_cast<unsigned int>(bz == 0 ? 1 : bz)};
+        return dim3 {static_cast<unsigned int>(bx == 0 ? 1 : bx), static_cast<unsigned int>(by == 0 ? 1 : by), static_cast<unsigned int>(bz == 0 ? 1 : bz)};
     }
 
     [[nodiscard]] inline dim3 calc_grid_auto(size_t n, int device_id = 0) {
-        dim3 block{static_cast<unsigned int>(cuda::performance::get_optimal_block_size(device_id)), 1, 1};
+        dim3 block {static_cast<unsigned int>(cuda::performance::get_optimal_block_size(device_id)), 1, 1};
         const size_t blocks = (n + block.x - 1) / block.x;
-        return dim3{static_cast<unsigned int>(blocks == 0 ? 1 : blocks), 1, 1};
+        return dim3 {static_cast<unsigned int>(blocks == 0 ? 1 : blocks), 1, 1};
     }
 
     [[nodiscard]] inline dim3 calc_grid_1d_auto(size_t n, int device_id = 0) {

@@ -131,7 +131,7 @@ namespace nova::sparse::test {
 
         // A 2x2 CSR with two entries: the member function is what used to be
         // uncallable (SparseMatrixCSR was undeclared at that point in the header).
-        SparseMatrixCSR<float> csr(std::vector<float>{1.0f, 2.0f}, std::vector<int>{0, 1, 2}, std::vector<int>{0, 1}, 2, 2);
+        SparseMatrixCSR<float> csr(std::vector<float> {1.0f, 2.0f}, std::vector<int> {0, 1, 2}, std::vector<int> {0, 1}, 2, 2);
 
         EXPECT_DOUBLE_EQ(analyzer.compute_arithmetic_intensity_spmv<float>(csr), spmv_arithmetic_intensity<float>(csr.nnz(), csr.num_rows()));
         EXPECT_GT(analyzer.compute_arithmetic_intensity_spmv<float>(csr), 0.0);

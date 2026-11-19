@@ -26,7 +26,7 @@ namespace cuda::algo::test {
 
         std::unique_ptr<stream::Stream> stream_;
 
-        FlashAttentionConfig default_config_{
+        FlashAttentionConfig default_config_ {
             .num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
     };
 

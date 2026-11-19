@@ -27,13 +27,13 @@ namespace nova {
              */
             struct QuantizationParams {
                 /** @brief Quantization scale */
-                float scale{1.0f};
+                float scale {1.0f};
 
                 /** @brief Zero point for asymmetric quantization */
-                float zero_point{0.0f};
+                float zero_point {0.0f};
 
                 /** @brief Use symmetric quantization (no zero point) */
-                bool symmetric{true};
+                bool symmetric {true};
 
                 /** @brief Default constructor */
                 QuantizationParams() = default;

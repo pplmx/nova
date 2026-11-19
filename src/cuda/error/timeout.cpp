@@ -73,11 +73,11 @@ namespace nova::error {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = operations_.find(id);
         if (it == operations_.end()) {
-            return std::chrono::milliseconds{0};
+            return std::chrono::milliseconds {0};
         }
         const auto now = std::chrono::steady_clock::now();
         if (now >= it->second.deadline) {
-            return std::chrono::milliseconds{0};
+            return std::chrono::milliseconds {0};
         }
         return std::chrono::duration_cast<std::chrono::milliseconds>(it->second.deadline - now);
     }
@@ -151,7 +151,7 @@ namespace nova::error {
             check_timeouts();
             auto interval = std::chrono::milliseconds(watchdog_interval_ms_.load());
             if (interval.count() <= 0) {
-                interval = std::chrono::milliseconds{1};
+                interval = std::chrono::milliseconds {1};
             }
             std::this_thread::sleep_for(interval);
         }

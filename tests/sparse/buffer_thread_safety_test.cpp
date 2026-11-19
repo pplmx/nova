@@ -44,7 +44,7 @@ namespace buffer_thread_safety_test {
 
         // The safe case: each thread owns its own Buffer, so there is no shared state at all.
         constexpr size_t kCount = 1024;
-        std::atomic<int> failures{0};
+        std::atomic<int> failures {0};
 
         auto writer = [&failures] {
             cuda::memory::Buffer<float> local(kCount);
@@ -81,7 +81,7 @@ namespace buffer_thread_safety_test {
         std::vector<float> host(kCount, 2.0F);
         buffer.copy_from(host.data(), kCount);
 
-        std::atomic<int> mismatches{0};
+        std::atomic<int> mismatches {0};
         auto reader = [&buffer, &mismatches] {
             if (buffer.size() != kCount) {
                 mismatches.fetch_add(1);

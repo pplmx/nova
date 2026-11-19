@@ -6,7 +6,7 @@
 namespace cuda::production {
 
     HealthMetrics HealthMonitor::get_health_snapshot() {
-        HealthMetrics metrics{};
+        HealthMetrics metrics {};
         metrics.timestamp_ns = std::chrono::steady_clock::now().time_since_epoch().count();
 
         int device_id = 0;
@@ -35,7 +35,7 @@ namespace cuda::production {
     }
 
     MemorySnapshot HealthMonitor::get_memory_snapshot() {
-        MemorySnapshot snapshot{};
+        MemorySnapshot snapshot {};
 
         size_t free_mem = 0, total_mem = 0;
         if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess) {

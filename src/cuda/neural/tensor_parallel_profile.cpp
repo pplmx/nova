@@ -31,7 +31,8 @@ namespace cuda::neural {
         }
         int max_tp = std::min(tp_degree, device_count);
 
-        return TensorParallelProfile{.weight_shard_bytes = weight_shard, .activation_bytes = activation, .gradient_bytes = gradient, .total_bytes = total, .max_tp_degree = max_tp};
+        return TensorParallelProfile {
+            .weight_shard_bytes = weight_shard, .activation_bytes = activation, .gradient_bytes = gradient, .total_bytes = total, .max_tp_degree = max_tp};
     }
 
     int TensorParallelProfiler::recommend_tp_degree(int batch, int seq, int hidden_dim) {

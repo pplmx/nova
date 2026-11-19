@@ -45,7 +45,7 @@ namespace cuda::algo::sssp {
         // thrust::host_vector: libcu++ shadows std::vector with an incomplete
         // cuda::std::vector in this TU.)
         thrust::host_vector<Weight> h_dist(static_cast<size_t>(num_vertices), static_cast<Weight>(INF));
-        h_dist[source] = Weight{0};
+        h_dist[source] = Weight {0};
 
         RunStats stats;
         for (int iter = 0; iter < num_vertices - 1; ++iter) {
@@ -62,7 +62,7 @@ namespace cuda::algo::sssp {
 
                 for (int i = row_start; i < row_end; ++i) {
                     int v = col_indices[i];
-                    Weight w = graph_weights ? static_cast<Weight>(graph_weights[i]) : Weight{1};
+                    Weight w = graph_weights ? static_cast<Weight>(graph_weights[i]) : Weight {1};
 
                     if (h_dist[u] + w < h_dist[v]) {
                         h_dist[v] = h_dist[u] + w;
@@ -91,7 +91,7 @@ namespace cuda::algo::sssp {
             const int row_end = row_offsets[u + 1];
             for (int i = row_start; i < row_end; ++i) {
                 const int v = col_indices[i];
-                const Weight w = graph_weights ? static_cast<Weight>(graph_weights[i]) : Weight{1};
+                const Weight w = graph_weights ? static_cast<Weight>(graph_weights[i]) : Weight {1};
                 if (h_dist[u] + w < h_dist[v]) {
                     stats.negative_cycle = true;
                     break;

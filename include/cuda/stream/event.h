@@ -77,7 +77,7 @@ namespace cuda::stream {
         }
 
     private:
-        cudaEvent_t event_{nullptr};
+        cudaEvent_t event_ {nullptr};
     };
 
     [[nodiscard]] inline std::unique_ptr<Event> make_event() {

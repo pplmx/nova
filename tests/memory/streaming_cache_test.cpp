@@ -10,7 +10,7 @@ namespace cuda::memory {
     class StreamingCacheTest : public ::testing::Test {
     protected:
         void SetUp() override {
-            KVCacheAllocatorConfig config{
+            KVCacheAllocatorConfig config {
                 .num_heads = 32,
                 .head_dim = 128,
                 .block_size_tokens = 16,
@@ -19,7 +19,7 @@ namespace cuda::memory {
             };
             allocator = std::make_unique<KVCacheAllocator>(config);
 
-            StreamingCacheConfig stream_config{
+            StreamingCacheConfig stream_config {
                 .enable_prefetch = true,
                 .enable_async_eviction = true,
                 .prefetch_ahead_blocks = 2,
@@ -57,7 +57,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, PrefetchAsyncDisabled) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = false,
             .enable_async_eviction = true,
         };
@@ -106,7 +106,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, ShouldEvictAsyncBelowThreshold) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = false,
         };
@@ -116,7 +116,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, ShouldEvictAsyncAboveThreshold) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = true,
         };
@@ -133,7 +133,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, ShouldEvictAsyncNearThreshold) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = true,
         };
@@ -154,7 +154,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, EvictImportanceWeighted) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = true,
             .eviction_policy = 1,
@@ -179,7 +179,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, EvictImportanceWeightedLRU) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = true,
             .eviction_policy = 1,
@@ -217,7 +217,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, EvictImportanceWeightedMixedImportance) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = true,
             .eviction_policy = 1,
@@ -240,7 +240,7 @@ namespace cuda::memory {
     }
 
     TEST_F(StreamingCacheTest, FragmentationMonitoringThreshold) {
-        auto config = StreamingCacheConfig{
+        auto config = StreamingCacheConfig {
             .enable_prefetch = true,
             .enable_async_eviction = true,
             .eviction_policy = 0,

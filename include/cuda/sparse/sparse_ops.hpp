@@ -136,7 +136,7 @@ namespace nova {
             int num_rows = matrix.num_rows();
 
             for (int i = 0; i < num_rows; ++i) {
-                T sum = T{0};
+                T sum = T {0};
                 for (int idx = matrix.row_offsets()[i]; idx < matrix.row_offsets()[i + 1]; ++idx) {
                     int col = matrix.col_indices()[idx];
                     sum += matrix.values()[idx] * x[col];
@@ -151,7 +151,7 @@ namespace nova {
 
             for (int i = 0; i < num_rows; ++i) {
                 for (int j = 0; j < num_cols; ++j) {
-                    T sum = T{0};
+                    T sum = T {0};
                     for (int idx = matrix.row_offsets()[i]; idx < matrix.row_offsets()[i + 1]; ++idx) {
                         int col = matrix.col_indices()[idx];
                         sum += matrix.values()[idx] * B[col * num_cols + j];
@@ -182,7 +182,7 @@ namespace nova {
             int max_nnz = matrix.max_nnz_per_row();
 
             for (int i = 0; i < num_rows; ++i) {
-                T sum = T{0};
+                T sum = T {0};
                 int base = i * max_nnz;
                 for (int j = 0; j < max_nnz; ++j) {
                     int col = matrix.col_indices()[base + j];
@@ -210,7 +210,7 @@ namespace nova {
 
                 for (int local_i = 0; local_i < slice_end_row - slice_start_row; ++local_i) {
                     int global_i = slice_start_row + local_i;
-                    T sum = T{0};
+                    T sum = T {0};
                     int base = slice_base + local_i * slice_nnz;
 
                     for (int j = 0; j < slice_nnz; ++j) {

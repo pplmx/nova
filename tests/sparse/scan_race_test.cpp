@@ -145,7 +145,7 @@ namespace scan_race_test {
 
         // A size the doubling loop cannot divide evenly: the last step is partial, which
         // is exactly where an off-by-one in the offset guard shows up.
-        for (const size_t size : {size_t{5}, size_t{7}, size_t{13}, size_t{31}}) {
+        for (const size_t size : {size_t {5}, size_t {7}, size_t {13}, size_t {31}}) {
             std::vector<int> input(size);
             for (size_t i = 0; i < size; ++i) {
                 input[i] = static_cast<int>((i * 3) % 7) + 1;
@@ -162,7 +162,7 @@ namespace scan_race_test {
 
         // The two implementations use different loops; they must produce the same answer
         // for every size sampled.
-        for (const size_t size : {size_t{1}, size_t{2}, size_t{8}, size_t{64}, size_t{255}}) {
+        for (const size_t size : {size_t {1}, size_t {2}, size_t {8}, size_t {64}, size_t {255}}) {
             std::vector<int> input(size);
             for (size_t i = 0; i < size; ++i) {
                 input[i] = static_cast<int>(i % 5) + 1;

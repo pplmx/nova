@@ -97,7 +97,7 @@ namespace nova::error::test {
     }
 
     TEST(CudaErrorTest, ErrorInfoFormatsOperationFileLineAndDevice) {
-        cuda_error_info info{};
+        cuda_error_info info {};
         info.code = cudaErrorMemoryAllocation;
         info.operation = "cudaMalloc";
         info.file = "memory.cu";
@@ -112,7 +112,7 @@ namespace nova::error::test {
     }
 
     TEST(CudaErrorTest, ErrorInfoOmitsUnsetContext) {
-        cuda_error_info info{};
+        cuda_error_info info {};
         info.code = cudaErrorInvalidValue;
 
         const std::string message = info.message();
@@ -122,7 +122,7 @@ namespace nova::error::test {
     }
 
     TEST(CudaErrorTest, ErrorInfoHintAgreesWithTheCategory) {
-        cuda_error_info info{};
+        cuda_error_info info {};
         info.code = cudaErrorIllegalAddress;
 
         EXPECT_EQ(info.recovery_hint(), hint_for(cudaErrorIllegalAddress));

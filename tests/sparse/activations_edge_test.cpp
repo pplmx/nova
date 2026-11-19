@@ -301,7 +301,7 @@ namespace cuda::neural::test {
 
         // One element exercises the smallest non-empty grid; 300 spans more than one
         // 256-thread block with a partial tail.
-        DeviceArray single_in(std::vector<float>{-1.0f});
+        DeviceArray single_in(std::vector<float> {-1.0f});
         DeviceArray single_out(1);
         relu(single_in.data(), single_out.data(), 1, nullptr);
         ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);

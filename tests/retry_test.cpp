@@ -7,23 +7,23 @@ using namespace nova::error;
 class RetryTest : public ::testing::Test {};
 
 TEST_F(RetryTest, ExponentialBackoffCalculation) {
-    auto delay = calculate_backoff(1, std::chrono::milliseconds{100}, 2.0, std::chrono::seconds{30});
+    auto delay = calculate_backoff(1, std::chrono::milliseconds {100}, 2.0, std::chrono::seconds {30});
     EXPECT_EQ(delay.count(), 100);
 
-    delay = calculate_backoff(2, std::chrono::milliseconds{100}, 2.0, std::chrono::seconds{30});
+    delay = calculate_backoff(2, std::chrono::milliseconds {100}, 2.0, std::chrono::seconds {30});
     EXPECT_EQ(delay.count(), 200);
 
-    delay = calculate_backoff(3, std::chrono::milliseconds{100}, 2.0, std::chrono::seconds{30});
+    delay = calculate_backoff(3, std::chrono::milliseconds {100}, 2.0, std::chrono::seconds {30});
     EXPECT_EQ(delay.count(), 400);
 }
 
 TEST_F(RetryTest, BackoffRespectsMaxDelay) {
-    auto delay = calculate_backoff(10, std::chrono::milliseconds{100}, 2.0, std::chrono::seconds{1});
+    auto delay = calculate_backoff(10, std::chrono::milliseconds {100}, 2.0, std::chrono::seconds {1});
     EXPECT_EQ(delay.count(), 1000);
 }
 
 TEST_F(RetryTest, FullJitterReturnsValueInRange) {
-    auto delay = full_jitter(std::chrono::milliseconds{100});
+    auto delay = full_jitter(std::chrono::milliseconds {100});
     EXPECT_GE(delay.count(), 0);
     EXPECT_LE(delay.count(), 100);
 }
@@ -51,13 +51,13 @@ TEST_F(RetryTest, CircuitBreakerOpensAfterThresholdFailures) {
 TEST_F(RetryTest, CircuitBreakerTransitionsToHalfOpenAfterTimeout) {
     circuit_breaker_config config;
     config.failure_threshold = 1;
-    config.reset_timeout = std::chrono::milliseconds{5};
+    config.reset_timeout = std::chrono::milliseconds {5};
     circuit_breaker cb(config);
 
     cb.record_failure();
     EXPECT_EQ(cb.state(), circuit_state::open);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{15});
+    std::this_thread::sleep_for(std::chrono::milliseconds {15});
     EXPECT_TRUE(cb.allow_request());
     EXPECT_EQ(cb.state(), circuit_state::half_open);
 }
@@ -66,11 +66,11 @@ TEST_F(RetryTest, CircuitBreakerClosesAfterSuccessesInHalfOpen) {
     circuit_breaker_config config;
     config.failure_threshold = 1;
     config.half_open_success_threshold = 2;
-    config.reset_timeout = std::chrono::milliseconds{5};
+    config.reset_timeout = std::chrono::milliseconds {5};
     circuit_breaker cb(config);
 
     cb.record_failure();
-    std::this_thread::sleep_for(std::chrono::milliseconds{15});
+    std::this_thread::sleep_for(std::chrono::milliseconds {15});
     cb.allow_request();
 
     EXPECT_EQ(cb.state(), circuit_state::half_open);
@@ -102,7 +102,7 @@ TEST_F(RetryTest, RetryExecutorRetriesOnFailure) {
     retry_config config;
     config.max_attempts = 3;
     config.jitter_enabled = false;
-    config.base_delay = std::chrono::milliseconds{10};
+    config.base_delay = std::chrono::milliseconds {10};
 
     retry_executor executor(config);
 

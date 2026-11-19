@@ -51,13 +51,13 @@ namespace nova::error {
         cublasStatus_t status;
 
         /** @brief Name of the operation that failed (e.g., "cublasGemm_v2") */
-        const char* operation{nullptr};
+        const char* operation {nullptr};
 
         /** @brief Source file where error occurred */
-        const char* file{nullptr};
+        const char* file {nullptr};
 
         /** @brief Line number in source file */
-        int line{0};
+        int line {0};
 
         /**
          * @brief Get formatted error message
@@ -237,7 +237,7 @@ namespace nova::error {
 
     private:
         cublas_error_info info_;
-        bool ok_{true};
+        bool ok_ {true};
     };
 
 /**
@@ -262,11 +262,11 @@ namespace nova::error {
 // include order silently chose the exception type and message format. This
 // definition now yields to the other one when both are present.
 #ifndef CUBLAS_CHECK
-#define CUBLAS_CHECK(call)                                                                \
-    do {                                                                                  \
-        static_assert(sizeof(#call) > 0, "CUBLAS_CHECK requires a cuBLAS call");          \
-        nova::error::cublas_error_guard nova_cublas_err_guard{#call, __FILE__, __LINE__}; \
-        nova_cublas_err_guard.check(call);                                                \
+#define CUBLAS_CHECK(call)                                                                 \
+    do {                                                                                   \
+        static_assert(sizeof(#call) > 0, "CUBLAS_CHECK requires a cuBLAS call");           \
+        nova::error::cublas_error_guard nova_cublas_err_guard {#call, __FILE__, __LINE__}; \
+        nova_cublas_err_guard.check(call);                                                 \
     } while (0)
 #endif
 
