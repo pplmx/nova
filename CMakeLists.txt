@@ -52,6 +52,29 @@ set(CMAKE_CUDA_ARCHITECTURES 60 70 80 90)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# clangd, .vscode/c_cpp_properties.json and docs/ide-setup.md all look for
+# compile_commands.json at the repository root, but CMake writes it into the
+# binary directory. With more than one build tree (build, build-ninja,
+# build-tidy, build-san, build-release, build-ci) there is no single directory
+# to point an editor at. Symlink the active build tree's database to the root
+# on every configure, so whichever tree was configured last is the one the
+# editor sees. The root file is gitignored.
+if(CMAKE_EXPORT_COMPILE_COMMANDS)
+    set(NOVA_COMPDB_LINK "${CMAKE_SOURCE_DIR}/compile_commands.json")
+    if(EXISTS "${NOVA_COMPDB_LINK}" OR IS_SYMLINK "${NOVA_COMPDB_LINK}")
+        file(REMOVE "${NOVA_COMPDB_LINK}")
+    endif()
+    file(CREATE_LINK
+        "${CMAKE_BINARY_DIR}/compile_commands.json"
+        "${NOVA_COMPDB_LINK}"
+        SYMBOLIC
+        RESULT NOVA_COMPDB_RESULT
+    )
+    if(NOT NOVA_COMPDB_RESULT STREQUAL "0")
+        message(STATUS "Could not link compile_commands.json to the source root: ${NOVA_COMPDB_RESULT}")
+    endif()
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -85,11 +108,26 @@ option(NOVA_USE_CCACHE "Enable ccache compiler launcher for faster rebuilds" OFF
 option(NOVA_COVERAGE "Enable code coverage instrumentation" OFF)
 set(NOVA_COVERAGE_MIN "80" CACHE STRING "Minimum required line coverage percentage")
 
+# The instrumentation flag depends on the compiler, because lcov/gcov (the
+# only consumer scripts/coverage reads) understands gcov data, not LLVM
+# profile data:
+#
+#   - GCC     -> --coverage, emits .gcno/.gcda that lcov reads directly.
+#   - Clang   -> -fprofile-instr-generate -fcoverage-mapping would emit
+#                .profraw, which needs llvm-profdata/llvm-cov and which the
+#                lcov-based scripts cannot consume. Clang does support
+#                --coverage too (it forwards to the same gcov format), so use
+#                that to keep one pipeline.
+#
+# The previous code applied the Clang-only -fprofile-instr-generate to GCC as
+# well, and GCC rejects it outright, so NOVA_COVERAGE=ON never configured with
+# the GCC toolchain the CI uses.
 if(NOVA_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        message(STATUS "Enabling code coverage instrumentation")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-instr-generate -fcoverage-mapping")
-        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=-fprofile-instr-generate,-fcoverage-mapping")
+        message(STATUS "Enabling gcov-compatible coverage instrumentation (${CMAKE_CXX_COMPILER_ID})")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=--coverage")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
     else()
         message(WARNING "Coverage requires Clang or GCC. Coverage disabled.")
         set(NOVA_COVERAGE OFF)

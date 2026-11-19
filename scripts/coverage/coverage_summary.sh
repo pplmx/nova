@@ -32,7 +32,11 @@ echo "## Coverage by Module"
 printf "| Module     | Lines     | Branches  | Functions |\n"
 printf "|------------|-----------|-----------|-----------|\n"
 
-MODULES=("memory" "algo" "neural" "fft" "graph" "raytrace" "stream" "device" "distributed" "nccl" "pipeline" "mesh")
+MODULES=()
+for module_dir in "$PWD"/include/cuda/*/; do
+    [ -d "$module_dir" ] || continue
+    MODULES+=("$(basename "$module_dir")")
+done
 for module in "${MODULES[@]}"; do
     if [ -f "$COVERAGE_DIR/module/${module}.info" ]; then
         lines=$(grep "lines......:" "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
@@ -45,14 +49,17 @@ done
 echo ""
 echo "========================================"
 
-# Check minimum coverage threshold
+# Check minimum coverage threshold.
+#
+# Compares with awk rather than bc: bc is not installed on ubuntu-latest, so
+# the old `| bc -l` piped into a `|| echo 0` fallback, silently reported 0 and
+# failed the job on any non-empty report regardless of the actual number.
 MIN_COVERAGE="${NOVA_COVERAGE_MIN:-80}"
 if [ "$TOTAL_LINES" != "N/A" ]; then
-    PASSING=$(echo "$TOTAL_LINES >= $MIN_COVERAGE" | bc -l 2>/dev/null || echo "0")
-    if [ "$PASSING" = "1" ]; then
-        echo "✓ Coverage ($TOTAL_LINES%) meets minimum ($MIN_COVERAGE%)"
+    if awk -v have="$TOTAL_LINES" -v want="$MIN_COVERAGE" 'BEGIN { exit !(have + 0 >= want + 0) }'; then
+        echo "Coverage ($TOTAL_LINES%) meets minimum ($MIN_COVERAGE%)"
     else
-        echo "✗ Coverage ($TOTAL_LINES%) below minimum ($MIN_COVERAGE%)"
+        echo "Coverage ($TOTAL_LINES%) below minimum ($MIN_COVERAGE%)"
         exit 1
     fi
 fi

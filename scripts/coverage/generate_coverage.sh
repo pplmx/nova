@@ -44,15 +44,24 @@ lcov --remove "$COVERAGE_DIR/lcov/app.info" \
 
 # Extract total coverage
 lcov --extract "$COVERAGE_DIR/lcov/filtered.info" \
-    "$PWD/include/*" \
+    "$PWD/include/cuda/*" \
     --output-file "$COVERAGE_DIR/lcov/total.info" \
     2>/dev/null || true
 
-# Generate per-module coverage
-MODULES=("memory" "algo" "neural" "fft" "graph" "raytrace" "stream")
+# Generate per-module coverage. The module list is derived from the header
+# tree rather than hardcoded: the previous hardcoded list pointed at
+# include/nova/<module>, a path that has never existed here (the headers live
+# under include/cuda), so every lcov --extract below silently produced nothing
+# and the per-module tables in the report were always empty.
+MODULES=()
+for module_dir in "$PWD"/include/cuda/*/; do
+    [ -d "$module_dir" ] || continue
+    MODULES+=("$(basename "$module_dir")")
+done
+
 for module in "${MODULES[@]}"; do
     lcov --extract "$COVERAGE_DIR/lcov/filtered.info" \
-        "$PWD/include/nova/$module/*" \
+        "$PWD/include/cuda/$module/*" \
         --output-file "$COVERAGE_DIR/module/${module}.info" \
         2>/dev/null || true
 done

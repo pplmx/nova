@@ -47,18 +47,22 @@ jobs:
   format-check:
     name: Format Check
     runs-on: ubuntu-latest
+    env:
+      # Pinned: `apt install clang-format` picks whatever the runner image
+      # happens to prefer, so a runner upgrade could change the expected
+      # output without any code change. Delegate the file list and flags to
+      # `make fmt-check` so CI and local runs cannot drift apart.
+      CLANG_FORMAT_VERSION: '18'
     steps:
       - uses: actions/checkout@v4
 
       - name: Install clang-format
         run: |
-          apt-get update
-          apt-get install -y clang-format
+          sudo apt-get update
+          sudo apt-get install -y clang-format-${{ env.CLANG_FORMAT_VERSION }}
 
       - name: Check formatting
-        run: |
-          find src/ include/ tests/ benchmark/ -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.cu' -o -name '*.cuh' \
-            | xargs clang-format --dry-run --Werror --style=file
+        run: make fmt-check
 
   # -------------------------------------------------------------------------
   # Sanitizer Build (ASan + UBSan)
@@ -220,21 +224,21 @@ jobs:
         run: ./scripts/coverage/generate_coverage.sh build-coverage
 
       - name: Check Coverage Threshold
+        env:
+          NOVA_COVERAGE_MIN: ${{ env.MIN_COVERAGE }}
         run: |
+          # coverage_summary.sh prints the per-module table and enforces the
+          # threshold itself (NOVA_COVERAGE_MIN). The explicit bc comparison
+          # that used to follow is gone: bc is not installed on ubuntu-latest,
+          # so it silently evaluated to 0 and failed the job on every report.
           source ./scripts/coverage/coverage_summary.sh build-coverage
-          LINE_COVERAGE=$(grep "lines" build-coverage/coverage/lcov/total.info | tail -1 | awk '{print $2}' | tr -d '%')
-          echo "Line coverage: $LINE_COVERAGE%"
-          if (( $(echo "$LINE_COVERAGE < $MIN_COVERAGE" | bc -l) )); then
-            echo "ERROR: Coverage ($LINE_COVERAGE%) below minimum ($MIN_COVERAGE%)"
-            exit 1
-          fi
-          echo "Coverage meets minimum requirement"
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: coverage-report
-          path: build-coverage/coverage/index.html
+          path: build-coverage/coverage/
           retention-days: 30
 
   # -------------------------------------------------------------------------
