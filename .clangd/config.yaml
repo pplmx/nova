@@ -1,13 +1,30 @@
+# clangd configuration for the CUDA translation units.
+#
+# compile_commands.json is the source of truth: every .cu entry CMake emits
+# already carries `-x cu`, the four -generate-code targets and the
+# NOVA_NCCL_ENABLED / NOVA_MPI_ENABLED definitions. This file only fills the
+# gaps in what the compile database leaves to the driver, so keep it small and
+# do not restate a definition the build already sets.
 CompileFlags:
   Add:
-    - "-xcuda"
+    # Parse device code for one architecture instead of the four the build
+    # targets. A single -cuda-gpu-arch replaces the -generate-code list; sm_80
+    # is the newest target this project supports that still has broad
+    # intrinsic coverage. This only shapes clangd's parser and never reaches a
+    # real build.
     - "--cuda-gpu-arch=sm_80"
     - "-I/usr/local/cuda/include"
-    - "-DNOVA_ENABLE_NCCL=0"
-    - "-DNOVA_ENABLE_MPI=0"
   Remove:
+    # nvcc spellings clangd's driver does not accept.
     - "-gencode*"
+    - "-generate-code*"
     - "--threads*"
+    - "-Xcompiler=*"
+    - "-forward-unknown-to-host-compiler"
+    - "--options-file*"
+# Diagnostics stay on. They were disabled wholesale, which hid real errors in
+# the editor while the build reported them anyway.
 Diagnostics:
-  Clang: Off
-  Unused: Off
+  Unused: Delayed
+  Suppress:
+    - "unused-parameter"

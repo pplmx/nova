@@ -2,9 +2,11 @@
   "clangd.arguments": [
     "--background-index",
     "--compile-commands-dir=${workspaceFolder}",
-    "--header-insertion=never"
+    "--header-insertion=never",
+    "--query-driver=/usr/local/cuda/bin/nvcc,/usr/bin/c++,/usr/bin/g++"
   ],
   "clangd.path": "clangd",
+  "C_Cpp.intelliSenseEngine": "disabled",
   "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
   "files.associations": {
     "*.cu": "cuda",
@@ -14,6 +16,7 @@
   "files.watcherExclude": {
     "**/.git/objects/**": true,
     "**/build/**": true,
-    "**/build-ninja/**": true
+    "**/build-*/**": true,
+    "**/.rumdl_cache/**": true
   }
 }
