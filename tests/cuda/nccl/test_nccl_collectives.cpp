@@ -496,35 +496,35 @@ TEST_F(NcclCollectivesTest, UnifiedOpsDeviceCount) {
 
 namespace cuda::nccl {
 
-TEST(NcclCollectivesTest, AllReduceSum)) {
+TEST(NcclCollectivesTest, AllReduceSum) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, BroadcastFromRoot)) {
+TEST(NcclCollectivesTest, BroadcastFromRoot) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, BarrierSync)) {
+TEST(NcclCollectivesTest, BarrierSync) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, TypeConversion)) {
+TEST(NcclCollectivesTest, TypeConversion) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, AllGatherBasic)) {
+TEST(NcclCollectivesTest, AllGatherBasic) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, ReduceScatterBasic)) {
+TEST(NcclCollectivesTest, ReduceScatterBasic) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, GroupHandleBatched)) {
+TEST(NcclCollectivesTest, GroupHandleBatched) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
-TEST(NcclCollectivesTest, UnifiedOpsHasNccl)) {
+TEST(NcclCollectivesTest, UnifiedOpsHasNccl) {
     GTEST_SKIP() << "NCCL not enabled";
 }
 
