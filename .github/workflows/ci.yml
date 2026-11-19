@@ -22,7 +22,7 @@ jobs:
             # "Path Validation Error: Path(s) specified in the action for
             # caching do(es) not exist" (Jimver/cuda-toolkit#395), which
             # aborted the run before anything was built.
-            -   uses: Jimver/cuda-toolkit@v0.2.29
+            -   uses: Jimver/cuda-toolkit@v0.2.36
                 id: cuda-toolkit
                 with:
                     cuda: '12.6.2'
