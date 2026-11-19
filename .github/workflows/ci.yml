@@ -17,7 +17,12 @@ jobs:
         steps:
             -   uses: actions/checkout@v5
 
-            -   uses: Jimver/cuda-toolkit@v0.2.27
+            # v0.2.29 is the first release that disables the GitHub cache on
+            # Windows. Up to v0.2.27 the action failed at this step with
+            # "Path Validation Error: Path(s) specified in the action for
+            # caching do(es) not exist" (Jimver/cuda-toolkit#395), which
+            # aborted the run before anything was built.
+            -   uses: Jimver/cuda-toolkit@v0.2.29
                 id: cuda-toolkit
                 with:
                     cuda: '12.6.2'

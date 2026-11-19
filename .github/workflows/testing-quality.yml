@@ -7,7 +7,9 @@ on:
     branches: [main]
 
 env:
-  CUDA_VERSION: '12.0'
+  # CUDA_VERSION is not here on purpose: container.image cannot read the env
+  # context (GitHub rejects the whole workflow), so the image tag is written
+  # out in full at each job.
   GCC_VERSION: '13'
   MIN_COVERAGE: '80'
   FUZZ_TIMEOUT: '300'
@@ -19,8 +21,13 @@ jobs:
   static-analysis:
     name: Static Analysis
     runs-on: [self-hosted, gpu]
+    # These jobs need a GPU. No self-hosted runner is registered on this
+    # repository, so they are gated behind a variable and skipped by
+    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
+    # once a runner with the [self-hosted, gpu] labels is online.
+    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
     container:
-      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
       options: --gpus all
     steps:
       - uses: actions/checkout@v4
@@ -70,8 +77,13 @@ jobs:
   sanitizers:
     name: Sanitizers (ASan+UBSan)
     runs-on: [self-hosted, gpu]
+    # These jobs need a GPU. No self-hosted runner is registered on this
+    # repository, so they are gated behind a variable and skipped by
+    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
+    # once a runner with the [self-hosted, gpu] labels is online.
+    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
     container:
-      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
       options: --gpus all
     env:
       ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
@@ -105,8 +117,13 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: [self-hosted, gpu]
+    # These jobs need a GPU. No self-hosted runner is registered on this
+    # repository, so they are gated behind a variable and skipped by
+    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
+    # once a runner with the [self-hosted, gpu] labels is online.
+    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
     container:
-      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
       options: --gpus all
     env:
       # Under the workspace, not $HOME: the job runs inside a container, and
@@ -183,8 +200,13 @@ jobs:
   property-tests:
     name: Property Tests
     runs-on: [self-hosted, gpu]
+    # These jobs need a GPU. No self-hosted runner is registered on this
+    # repository, so they are gated behind a variable and skipped by
+    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
+    # once a runner with the [self-hosted, gpu] labels is online.
+    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
     container:
-      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
       options: --gpus all
     steps:
       - uses: actions/checkout@v4
@@ -212,8 +234,13 @@ jobs:
   fuzz-tests:
     name: Fuzz Tests
     runs-on: [self-hosted, gpu]
+    # These jobs need a GPU. No self-hosted runner is registered on this
+    # repository, so they are gated behind a variable and skipped by
+    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
+    # once a runner with the [self-hosted, gpu] labels is online.
+    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
     container:
-      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
       options: --gpus all
     steps:
       - uses: actions/checkout@v4
@@ -249,8 +276,13 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: [self-hosted, gpu]
+    # These jobs need a GPU. No self-hosted runner is registered on this
+    # repository, so they are gated behind a variable and skipped by
+    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
+    # once a runner with the [self-hosted, gpu] labels is online.
+    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
     container:
-      image: nvidia/cuda:${{ env.CUDA_VERSION }}-devel-ubuntu22.04
+      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
       options: --gpus all
     steps:
       - uses: actions/checkout@v4
@@ -295,7 +327,9 @@ jobs:
   # -------------------------------------------------------------------------
   fuzz-corpus-baseline:
     name: Fuzz Corpus Baseline
-    runs-on: [self-hosted]
+    # Pure file inspection, no GPU, but it ran on a self-hosted runner and
+    # none is registered. ubuntu-latest runs it unchanged.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -346,15 +380,27 @@ jobs:
           echo "| Coverage | ${{ needs.coverage.result }} |"
           echo "| Fuzz Corpus Baseline | ${{ needs.fuzz-corpus-baseline.result }} |"
           echo ""
-          if ${{ needs.static-analysis.result == 'success' }} && \
-             ${{ needs.format-check.result == 'success' }} && \
-             ${{ needs.sanitizers.result == 'success' }} && \
-             ${{ needs.unit-tests.result == 'success' }} && \
-             ${{ needs.property-tests.result == 'success' }} && \
-             ${{ needs.fuzz-tests.result == 'success' }} && \
-             ${{ needs.coverage.result == 'success' }} && \
-             ${{ needs.fuzz-corpus-baseline.result == 'success' }}; then
-            echo "All checks passed! ✅"
+          # A skipped job is not a failure. The GPU jobs are gated behind
+          # vars.ENABLE_GPU_JOBS and skip by default, so demanding 'success'
+          # from every dependency made this job fail on every run regardless
+          # of what actually ran.
+          FAILED=0
+          for result in \
+            "${{ needs.static-analysis.result }}" \
+            "${{ needs.format-check.result }}" \
+            "${{ needs.sanitizers.result }}" \
+            "${{ needs.unit-tests.result }}" \
+            "${{ needs.property-tests.result }}" \
+            "${{ needs.fuzz-tests.result }}" \
+            "${{ needs.coverage.result }}" \
+            "${{ needs.fuzz-corpus-baseline.result }}"; do
+            case "$result" in
+              success|skipped) ;;
+              *) FAILED=1 ;;
+            esac
+          done
+          if [ "$FAILED" -eq 0 ]; then
+            echo "All executed checks passed."
           else
             echo "Some checks failed. Please review the logs."
             exit 1

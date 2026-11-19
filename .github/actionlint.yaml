@@ -1,0 +1,8 @@
+# actionlint configuration.
+#
+# "gpu" is a custom label on the project's self-hosted runners, which
+# actionlint cannot know about. Declaring it keeps the remaining checks
+# meaningful instead of drowning them in unknown-label warnings.
+self-hosted-runner:
+  labels:
+    - gpu

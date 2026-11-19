@@ -21,6 +21,20 @@ repos:
 
   - repo: local
     hooks:
+      # Workflow YAML is not covered by check-yaml alone: the file parses and
+      # GitHub still refuses to run it. That is how this repository ended up
+      # with a testing-quality workflow that never started a single job (the
+      # container image used ${{ env.* }}, which is not available there) and
+      # two tag filters written as regex that never matched a tag. actionlint
+      # catches both.
+      - id: actionlint
+        name: actionlint
+        language: system
+        entry: actionlint
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: true
+        require_serial: true
+
       - id: rumdl
         name: rumdl fmt & check
         language: system

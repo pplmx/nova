@@ -2,8 +2,10 @@ name: Build and Push Docker Image
 
 on:
     push:
+        # Glob, not regex: '^v[0-9]+...$' matched nothing, so this workflow
+        # never ran. See the note in cd.yml.
         tags:
-            - '^v[0-9]+\.[0-9]+\.[0-9]+.*$'
+            - 'v*.*.*'
 
 jobs:
     docker:
