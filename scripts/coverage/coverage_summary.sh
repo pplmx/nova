@@ -15,10 +15,25 @@ if [ ! -f "$COVERAGE_DIR/lcov/total.info" ]; then
     exit 1
 fi
 
-# Extract overall coverage
-TOTAL_LINES=$(grep "lines......:" "$COVERAGE_DIR/lcov/total.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
-TOTAL_BRANCHES=$(grep "branches....:" "$COVERAGE_DIR/lcov/total.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
-TOTAL_FUNCTIONS=$(grep "functions..." "$COVERAGE_DIR/lcov/total.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
+# Extract overall coverage.
+#
+# lcov writes "lines......: 85.0% (85 of 100 lines)", so field 2 already ends
+# in a percent sign. Strip it here and let the printf below add the one this
+# output wants, otherwise the report reads "85.0%%" and the value no longer
+# compares as a plain number.
+percent_field() {
+    local value
+    value=$(grep "$1" "$COVERAGE_DIR/lcov/total.info" 2>/dev/null | tail -1 | awk '{print $2}')
+    if [ -z "$value" ]; then
+        echo "N/A"
+    else
+        echo "${value%\%}"
+    fi
+}
+
+TOTAL_LINES=$(percent_field "lines......:")
+TOTAL_BRANCHES=$(percent_field "branches....:")
+TOTAL_FUNCTIONS=$(percent_field "functions...:")
 
 echo "## Overall Coverage"
 printf "| Metric     | Coverage |\n"
@@ -39,10 +54,10 @@ for module_dir in "$PWD"/include/cuda/*/; do
 done
 for module in "${MODULES[@]}"; do
     if [ -f "$COVERAGE_DIR/module/${module}.info" ]; then
-        lines=$(grep "lines......:" "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
-        branches=$(grep "branches....:" "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
-        funcs=$(grep "functions..." "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' || echo "N/A")
-        printf "| %-10s | %9s | %9s | %9s |\n" "$module" "$lines" "$branches" "$funcs"
+        lines=$(grep "lines......:" "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '%')
+        branches=$(grep "branches....:" "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '%')
+        funcs=$(grep "functions..." "$COVERAGE_DIR/module/${module}.info" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '%')
+        printf "| %-10s | %9s | %9s | %9s |\n" "$module" "${lines:-N/A}" "${branches:-N/A}" "${funcs:-N/A}"
     fi
 done
 
