@@ -15,11 +15,14 @@ cmake --build --preset dev --parallel
 
 Nova includes CMake presets for common build configurations:
 
-| Preset    | Build Type | Purpose                           |
-| --------- | ---------- | --------------------------------- |
-| `dev`     | Debug      | Development with ccache enabled   |
-| `release` | Release    | Optimized build with unity builds |
-| `ci`      | Release    | CI-optimized, no ccache           |
+| Preset    | Build Type | Purpose                                     |
+| --------- | ---------- | ------------------------------------------- |
+| `dev`     | Debug      | Development with unity builds disabled      |
+| `release` | Release    | Optimized build with unity builds           |
+| `ci`      | Release    | CI-optimized, unity builds                  |
+
+Compiler caching and a faster linker are enabled by default for every preset
+(see below), so the table only lists what differs between them.
 
 ### Using Presets
 
@@ -38,9 +41,17 @@ ctest --preset dev
 
 Edit `CMakePresets.json` to add your own presets or modify existing ones.
 
-## ccache
+## Compiler cache
 
-ccache is a compiler cache that speeds up rebuilds by caching previous compilations.
+A compiler cache stores the object files produced by previous compilations and
+replays them when the same input comes back. Nova supports two, and picks
+whichever is installed: **sccache** first, then **ccache**. Both are on by
+default (`NOVA_USE_CCACHE=ON`); with neither installed the build is unchanged
+and configure prints a line saying so.
+
+sccache is preferred when both are present because it is the only one of the
+two that can share its cache across machines, which is what makes it useful in
+CI. Locally the difference does not matter.
 
 ### Installation
 
@@ -50,44 +61,65 @@ sudo apt install ccache
 
 # macOS
 brew install ccache
-
-# Verify installation
-ccache --version
 ```
 
-### Enabling ccache
+sccache ships with `cargo install sccache` or a release binary. Verify either
+with `ccache --version` / `sccache --version`.
 
-#### Option 1: CMake Preset (recommended)
+### Enabling it
+
+It is already on. To turn it off:
 
 ```bash
-cmake --preset dev  # dev preset has ccache enabled by default
+cmake -B build -DNOVA_USE_CCACHE=OFF
 ```
 
-#### Option 2: Manual configuration
+### Verifying it is working
 
 ```bash
-cmake -B build -DNOVA_USE_CCACHE=ON
-cmake --build build
+ccache -s          # or: sccache --show-stats
 ```
 
-### Verifying ccache is Working
+On a clean build tree the second build should show a high hit count. Measured
+on the reference machine for the `nova` target alone: 76.8 s cold cache versus
+30.6 s warm cache (759 hits), about 2.5x.
+
+### Expected performance
+
+- First build: same as normal (cache population)
+- Subsequent builds after `ccache -C` or a fresh build directory: 2-3x faster
+- Editing one file: only that file recompiles, as usual
+
+## Faster linker
+
+Link time is the part a compiler cache cannot help with: cached object files
+still have to be linked. Nova links with **mold** when it is available,
+falling back to **lld** and then to the toolchain default.
+`CMAKE_LINKER_TYPE` is only set after `check_linker_flag` confirms the compiler
+can actually drive that linker, so a missing or unsupported linker keeps the
+default instead of failing at link time.
 
 ```bash
-# After building, check cache stats
-ccache -s
-
-# Example output:
-# cache size: 1.2 GB
-# hits: 156
-# misses: 42
-# hit rate: 78.8%
+# Ubuntu/Debian
+sudo apt install mold
 ```
 
-### Expected Performance
+Configure prints one of `Linker: mold`, `Linker: lld not usable by this
+compiler, keeping the default`, or `Linker: default for this toolchain`.
+Disable with `-DNOVA_USE_MOLD=OFF` and `-DNOVA_USE_LLD=OFF`.
 
-- First build: Same as normal (cache population)
-- Subsequent builds: 50-80% faster
-- Clean builds: Same as normal (cache miss)
+On a CUDA build the device link still runs through nvcc; mold handles the host
+link step, which is where a large static library costs the most.
+
+### What it is worth here
+
+Measured on the reference machine for the `nova` target: relinking with GNU ld
+takes 224 ms, with mold 105 ms. That is a real halving of the link step, but
+the link step is under 0.5% of a full build (50.8 s versus 49.5 s end to end,
+about 2.5%), because Nova is compile-bound, not link-bound. mold is left on
+because it costs nothing and helps more as the number of targets grows, but do
+not expect a full build to get noticeably faster from it. If link time is
+what hurts, look at unity builds and the compiler cache first.
 
 ## Unity Builds
 
@@ -151,11 +183,13 @@ cmake --preset dev -G Ninja
 
 ## Build Performance Tips
 
-1. **Use ccache** - 50-80% faster rebuilds
-2. **Use Ninja** - Better parallelization than Make
-3. **Use unity builds** - 20-40% faster compilation
-4. **Use presets** - Consistent, reproducible builds
-5. **Parallel builds** - Use `-j$(nproc)` for maximum parallelism
+1. **Use a compiler cache** - 2-3x faster rebuilds; on by default
+2. **Use mold** - about halves link time; on by default, but link is a small
+   share of this project's build
+3. **Use Ninja** - Better parallelization than Make
+4. **Use unity builds** - 20-40% faster compilation
+5. **Use presets** - Consistent, reproducible builds
+6. **Parallel builds** - Use `-j$(nproc)` for maximum parallelism
 
 ## Benchmark Results
 
@@ -180,19 +214,35 @@ ctest --preset ci
 
 The `ci` preset:
 
-- Disables ccache (unnecessary in CI)
 - Enables unity builds
+- Keeps the compiler cache on, so a runner that installs sccache reuses it
 - Fails on missing tests
+
+To make the cache actually pay off in CI, give sccache a shared backend so
+runners do not each start cold:
+
+```yaml
+env:
+  SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+  SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+```
+
+Without a backend sccache still caches, but only within a single job.
 
 ## Troubleshooting
 
-### ccache not found
+### No compiler cache found
+
+Configure prints `Compiler cache: none` and the build proceeds unchanged.
+Install one to enable it:
 
 ```bash
-# Install ccache
-sudo apt install ccache
+sudo apt install ccache      # or: cargo install sccache
+```
 
-# Or set NOVA_USE_CCACHE=OFF
+To silence even the detection step:
+
+```bash
 cmake -B build -DNOVA_USE_CCACHE=OFF
 ```
 
@@ -220,5 +270,8 @@ cmake --build build
 ## Further Reading
 
 - [ccache documentation](https://ccache.dev/documentation.html)
+- [sccache documentation](https://github.com/mozilla/sccache)
+- [mold documentation](https://github.com/rui314/mold)
 - [CMake Unity Builds](https://cmake.org/cmake/help/latest/prop_tgt/UNITY_BUILD.html)
+- [CMake CMAKE_LINKER_TYPE](https://cmake.org/cmake/help/latest/variable/CMAKE_LINKER_TYPE.html)
 - [Ninja documentation](https://ninja-build.org/manual.html)
