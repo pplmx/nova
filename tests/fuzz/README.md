@@ -9,7 +9,10 @@ This directory contains fuzzing infrastructure for Nova using libFuzzer.
     - `algorithm/` - Seeds for algorithm fuzzing
     - `matmul/` - Seeds for matmul fuzzing
 - `crashes/` - Crash artifacts (gitignored, for local analysis)
-- `baseline/` - Baseline corpus for CI comparison
+
+The committed corpus is the baseline: CI compares against the base commit
+rather than against a checked-in copy, so there is no `baseline/` directory
+to maintain.
 
 ## Running Fuzz Tests
 
@@ -44,11 +47,16 @@ When `NOVA_BUILD_FUZZ_TESTS=ON`:
 
 ## CI Fuzzing
 
-Fuzz tests run in CI with corpus baseline comparison:
+CI does not run a fuzzer. The only fuzz-related job is a corpus integrity
+check in `testing-quality.yml`, which fails when a pull request deletes a
+committed seed; adding seeds is fine. It compares against the base commit, so
+there is no checked-in baseline to keep in sync.
 
-- Minimum corpus size: 1000 entries
-- Crash detection fails CI
-- Corpus regression fails CI
+Two caveats on the numbers: the committed corpus has a handful of seeds, not
+the 1000 entries an earlier version of this file claimed, and the targets are
+built only when `NOVA_BUILD_FUZZ_TESTS=ON` (see `CMakeFuzz.txt`). What each
+target is actually worth fuzzing is recorded in `README_STATUS.md` — two of
+the three should not be driven at all.
 
 ## Fuzzer Details
 
