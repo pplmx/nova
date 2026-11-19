@@ -9,8 +9,14 @@ on:
 jobs:
     build-and-test:
         strategy:
+            # ubuntu-24.04 rather than the deprecated 22.04 image. Note that
+            # moving is not what supplies CMake 4: every image, 24.04
+            # included, puts 3.31.6 on PATH (the runner-images toolset pins it
+            # there deliberately, actions/runner-images#11926), and the 4.1.2
+            # visible in those images belongs to the Android SDK rather than
+            # to PATH. The step below is what makes this configure.
             matrix:
-                os: [ubuntu-22.04, windows-2022]
+                os: [ubuntu-24.04, windows-2022]
 
         name: ${{ matrix.os }}
         runs-on: ${{ matrix.os }}
@@ -34,10 +40,40 @@ jobs:
                     echo "Cuda install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
                     nvcc -V
 
-            -   name: Build
-                run: make build
-
-            -   name: Test
+            # CMakeLists.txt requires CMake 4.0 and no runner image ships it:
+            # ubuntu-24.04, windows-2022 and windows-2025 all put 3.31.6 on
+            # PATH (the runner-images toolset pins it there deliberately,
+            # actions/runner-images#11926; the 4.1.2 those images also carry
+            # belongs to the Android SDK and is not on PATH). Install the pip
+            # wheel and then assert what `cmake` actually resolves to, rather
+            # than assuming the new binary wins the PATH race: where pip puts
+            # its scripts, and which of them comes first, differs between
+            # Linux and Windows and has changed across runner images.
+            -   name: Ensure CMake 4
                 run: |
-                    make run
-                    make test
+                    python -m pip install --disable-pip-version-check "cmake>=4.0"
+                    cmake --version
+                    cmake_ver=$(cmake --version | head -1 | sed 's/.*version //')
+                    echo "cmake resolves to $cmake_ver"
+                    case "$cmake_ver" in
+                        4.*|5.*|6.*|7.*|8.*|9.*) ;;
+                        *)
+                            echo "::error::cmake $cmake_ver is older than the 4.0 this project requires"
+                            exit 1
+                            ;;
+                    esac
+
+            # Ninja, not make: the Windows image has Ninja on PATH but its
+            # MSYS2 is deliberately not on PATH, so `make build` could not run
+            # there. Ninja also avoids the Make generator's slower configure.
+            -   name: Configure
+                run: cmake -G Ninja -B build -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+
+            -   name: Build
+                run: cmake --build build --parallel
+
+            # No run/test step on purpose. Compiling needs no GPU, but the
+            # demo and the test suite allocate device memory and abort with
+            # "no CUDA-capable device is detected" on a GPU-less runner. A
+            # step that always fails tells you nothing; those checks run
+            # locally instead. See docs/ci.md.

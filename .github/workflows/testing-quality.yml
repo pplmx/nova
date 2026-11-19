@@ -6,48 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  # CUDA_VERSION is not here on purpose: container.image cannot read the env
-  # context (GitHub rejects the whole workflow), so the image tag is written
-  # out in full at each job.
-  GCC_VERSION: '13'
-  MIN_COVERAGE: '80'
-  FUZZ_TIMEOUT: '300'
-
 jobs:
-  # -------------------------------------------------------------------------
-  # Static Analysis (clang-tidy)
-  # -------------------------------------------------------------------------
-  static-analysis:
-    name: Static Analysis
-    runs-on: [self-hosted, gpu]
-    # These jobs need a GPU. No self-hosted runner is registered on this
-    # repository, so they are gated behind a variable and skipped by
-    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
-    # once a runner with the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
-      options: --gpus all
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake ninja-build clang-tidy gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }}
-
-      - name: Configure with clang-tidy
-        run: |
-          cmake -G Ninja -B build-tidy \
-            -DCMAKE_C_COMPILER=gcc-${{ env.GCC_VERSION }} \
-            -DCMAKE_CXX_COMPILER=g++-${{ env.GCC_VERSION }} \
-            -DCMAKE_CXX_CLANG_TIDY="clang-tidy;--config-file=${{ github.workspace }}/.clang-tidy" \
-            -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
-
-      - name: Build (clang-tidy runs during compilation)
-        run: cmake --build build-tidy --parallel
-
   # -------------------------------------------------------------------------
   # Format Check (clang-format)
   # -------------------------------------------------------------------------
@@ -72,257 +31,6 @@ jobs:
         run: make fmt-check
 
   # -------------------------------------------------------------------------
-  # Sanitizer Build (ASan + UBSan)
-  # -------------------------------------------------------------------------
-  sanitizers:
-    name: Sanitizers (ASan+UBSan)
-    runs-on: [self-hosted, gpu]
-    # These jobs need a GPU. No self-hosted runner is registered on this
-    # repository, so they are gated behind a variable and skipped by
-    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
-    # once a runner with the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
-      options: --gpus all
-    env:
-      ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1
-      UBSAN_OPTIONS: print_stacktrace=1
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }}
-
-      - name: Configure with sanitizers
-        run: |
-          cmake -G Ninja -B build-san \
-            -DCMAKE_C_COMPILER=gcc-${{ env.GCC_VERSION }} \
-            -DCMAKE_CXX_COMPILER=g++-${{ env.GCC_VERSION }} \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
-            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
-            -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
-
-      - name: Build
-        run: cmake --build build-san --parallel
-
-      - name: Test with sanitizers
-        run: ctest --test-dir build-san --output-on-failure -j8
-
-  # -------------------------------------------------------------------------
-  # Unit Tests
-  # -------------------------------------------------------------------------
-  unit-tests:
-    name: Unit Tests
-    runs-on: [self-hosted, gpu]
-    # These jobs need a GPU. No self-hosted runner is registered on this
-    # repository, so they are gated behind a variable and skipped by
-    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
-    # once a runner with the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
-      options: --gpus all
-    env:
-      # Under the workspace, not $HOME: the job runs inside a container, and
-      # actions/cache copies files from the host side of the mount, so a path
-      # inside github.workspace is the one both sides agree on.
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-      SCCACHE_CACHE_SIZE: 2G
-      SCCACHE_IDLE_TIMEOUT: 0
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }} python3 python3-pip
-
-      # Restore before configuring: CMakeLists.txt only wires sccache in when
-      # it is already on PATH at configure time.
-      - name: Restore sccache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          # A unique key per run so the post-job save always writes a fresh
-          # snapshot; restore-keys pulls the most recent previous one. Without
-          # the run id in the primary key the entry would be written once and
-          # then never updated, and the cache would stop growing.
-          key: sccache-${{ runner.os }}-gcc${{ env.GCC_VERSION }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-${{ runner.os }}-gcc${{ env.GCC_VERSION }}-
-
-      - name: Install sccache
-        run: |
-          # Pinned version: sccache talks to a versioned cache backend, and the
-          # 0.10.x line predates the current GitHub cache API.
-          SCCACHE_VERSION=v0.17.0
-          curl -fsSL "https://github.com/mozilla/sccache/releases/download/${SCCACHE_VERSION}/sccache-${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-            | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/sccache'
-          sccache --version
-          sccache --start-server
-          sccache --zero-stats
-
-      - name: Configure
-        run: |
-          cmake -G Ninja -B build \
-            -DCMAKE_C_COMPILER=gcc-${{ env.GCC_VERSION }} \
-            -DCMAKE_CXX_COMPILER=g++-${{ env.GCC_VERSION }}
-
-      - name: Build
-        run: cmake --build build --parallel
-
-      - name: Test
-        run: ctest --test-dir build --output-on-failure -j16
-
-      - name: Stop sccache so its directory is complete before saving
-        if: always()
-        run: |
-          sccache --show-stats | tee -a "$GITHUB_STEP_SUMMARY"
-          sccache --stop-server || true
-
-      # Separate restore/save rather than the combined actions/cache action:
-      # that one saves in a post-job step, which is skipped when the job is
-      # cancelled or times out, so a run that hit timeout-minutes would save
-      # nothing and leave the next run just as cold.
-      - name: Save sccache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ runner.os }}-gcc${{ env.GCC_VERSION }}-${{ github.run_id }}
-
-  # -------------------------------------------------------------------------
-  # Property-Based Tests
-  # -------------------------------------------------------------------------
-  property-tests:
-    name: Property Tests
-    runs-on: [self-hosted, gpu]
-    # These jobs need a GPU. No self-hosted runner is registered on this
-    # repository, so they are gated behind a variable and skipped by
-    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
-    # once a runner with the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
-      options: --gpus all
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake ninja-build gcc-${{ env.GCC_VERSION }} g++-${{ env.GCC_VERSION }}
-
-      - name: Configure
-        run: cmake -G Ninja -B build -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
-
-      - name: Build
-        run: cmake --build build --parallel --target property_mathematical property_algorithmic property_numerical
-
-      - name: Run Tests
-        run: |
-          ./build/bin/property_mathematical
-          ./build/bin/property_algorithmic
-          ./build/bin/property_numerical
-
-  # -------------------------------------------------------------------------
-  # Fuzz Tests
-  # -------------------------------------------------------------------------
-  fuzz-tests:
-    name: Fuzz Tests
-    runs-on: [self-hosted, gpu]
-    # These jobs need a GPU. No self-hosted runner is registered on this
-    # repository, so they are gated behind a variable and skipped by
-    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
-    # once a runner with the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
-      options: --gpus all
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake ninja-build clang libfuzzer-dev
-
-      - name: Configure
-        run: cmake -G Ninja -B build -DNOVA_BUILD_FUZZ_TESTS=ON -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
-
-      - name: Build Fuzz Targets
-        run: cmake --build build --parallel --target memory_pool_fuzz algorithm_fuzz matmul_fuzz
-
-      - name: Check Corpus Size
-        run: |
-          MEMORY_CORPUS=$(find tests/fuzz/corpus/memory_pool -type f | wc -l)
-          ALGO_CORPUS=$(find tests/fuzz/corpus/algorithm -type f | wc -l)
-          MATMUL_CORPUS=$(find tests/fuzz/corpus/matmul -type f | wc -l)
-          echo "Corpus sizes: memory=$MEMORY_CORPUS algo=$ALGO_CORPUS matmul=$MATMUL_CORPUS"
-
-      - name: Run Fuzz Tests
-        run: |
-          echo "Running fuzz tests (limited time in CI)..."
-          timeout ${{ env.FUZZ_TIMEOUT }} ./build/bin/memory_pool_fuzz tests/fuzz/corpus/memory_pool -max_total_time=60 || true
-          timeout ${{ env.FUZZ_TIMEOUT }} ./build/bin/algorithm_fuzz tests/fuzz/corpus/algorithm -max_total_time=60 || true
-          timeout ${{ env.FUZZ_TIMEOUT }} ./build/bin/matmul_fuzz tests/fuzz/corpus/matmul -max_total_time=60 || true
-
-  # -------------------------------------------------------------------------
-  # Code Coverage
-  # -------------------------------------------------------------------------
-  coverage:
-    name: Code Coverage
-    runs-on: [self-hosted, gpu]
-    # These jobs need a GPU. No self-hosted runner is registered on this
-    # repository, so they are gated behind a variable and skipped by
-    # default. Set the repository variable ENABLE_GPU_JOBS to 'true'
-    # once a runner with the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-    container:
-      image: nvidia/cuda:12.0.0-devel-ubuntu22.04
-      options: --gpus all
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y cmake ninja-build clang lcov python3 python3-pip
-
-      - name: Configure with Coverage
-        run: cmake -G Ninja -B build-coverage -DNOVA_COVERAGE=ON -DNOVA_COVERAGE_MIN=${{ env.MIN_COVERAGE }}
-
-      - name: Build
-        run: cmake --build build-coverage --parallel
-
-      - name: Test
-        run: ctest --test-dir build-coverage -j16 || true
-
-      - name: Generate Coverage Report
-        run: ./scripts/coverage/generate_coverage.sh build-coverage
-
-      - name: Check Coverage Threshold
-        env:
-          NOVA_COVERAGE_MIN: ${{ env.MIN_COVERAGE }}
-        run: |
-          # coverage_summary.sh prints the per-module table and enforces the
-          # threshold itself (NOVA_COVERAGE_MIN). The explicit bc comparison
-          # that used to follow is gone: bc is not installed on ubuntu-latest,
-          # so it silently evaluated to 0 and failed the job on every report.
-          source ./scripts/coverage/coverage_summary.sh build-coverage
-
-      - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: build-coverage/coverage/
-          retention-days: 30
-
-  # -------------------------------------------------------------------------
   # Fuzz Corpus Baseline Check
   # -------------------------------------------------------------------------
   fuzz-corpus-baseline:
@@ -331,38 +39,69 @@ jobs:
     # none is registered. ubuntu-latest runs it unchanged.
     runs-on: ubuntu-latest
     steps:
+      # Full history: the check below diffs against the base commit, and
+      # actions/checkout defaults to a shallow single-commit clone where that
+      # commit is absent. `git diff` against a missing object exits non-zero,
+      # and with `|| true` the deletion check would have silently passed —
+      # the same kind of gate that cannot fail as the one being replaced.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check Baseline Exists
+      # This job used to compare the corpus against a baseline directory it
+      # created from that same corpus a step earlier, then filter the copied
+      # files by "*<corpus>*" — but the copies are named seed1.bin,
+      # seed_reduce.bin and so on, so that filter matched nothing, BASELINE_SIZE
+      # was always 0 and the threshold was always 0. The job could not fail no
+      # matter what happened to the corpus. Compare against git instead: the
+      # committed corpus is the baseline, and the diff against the base commit
+      # names the seeds a change deletes.
+      - name: Compare Corpus To The Committed Baseline
         run: |
-          if [ ! -d "tests/fuzz/baseline" ]; then
-            echo "No baseline corpus found - creating baseline"
-            mkdir -p tests/fuzz/baseline
-            cp tests/fuzz/corpus/memory_pool/* tests/fuzz/baseline/ 2>/dev/null || true
-            cp tests/fuzz/corpus/algorithm/* tests/fuzz/baseline/ 2>/dev/null || true
-            cp tests/fuzz/corpus/matmul/* tests/fuzz/baseline/ 2>/dev/null || true
+          # The base commit is what the pull request targets, or the previous
+          # push on main. For a first push the `before` field is all zeroes.
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              base="$(git rev-parse HEAD^)"
+              echo "no base commit in the event payload; using HEAD^ ($base)"
+              ;;
+          esac
+          echo "comparing corpus against $base"
+
+          # Fail loudly if the base commit is not in the clone, rather than
+          # letting an empty diff read as "nothing was deleted".
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "::error::base commit $base is not present in this clone; cannot verify the corpus"
+            exit 1
           fi
 
-      - name: Compare Corpus Sizes
-        run: |
+          # Seeds that were committed and are now gone are a real regression:
+          # libFuzzer loses the coverage those inputs reached. Added seeds are
+          # fine, so only deletions are fatal.
+          deleted=$(git diff --name-only --diff-filter=D "$base" HEAD -- 'tests/fuzz/corpus')
+          if [ -n "$deleted" ]; then
+            echo "::error::fuzz seeds were deleted from the corpus:"
+            echo "$deleted"
+            exit 1
+          fi
+
           for corpus in memory_pool algorithm matmul; do
-            CORPUS_SIZE=$(find tests/fuzz/corpus/$corpus -type f | wc -l)
-            BASELINE_SIZE=$(find tests/fuzz/baseline -name "*$corpus*" -type f | wc -l)
-            MIN_SIZE=$((BASELINE_SIZE * 90 / 100))
-            echo "$corpus: corpus=$CORPUS_SIZE baseline=$BASELINE_SIZE min_allowed=$MIN_SIZE"
-            if [ $CORPUS_SIZE -lt $MIN_SIZE ]; then
-              echo "ERROR: Corpus size regression detected for $corpus"
+            count=$(find "tests/fuzz/corpus/$corpus" -type f | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::corpus directory 'tests/fuzz/corpus/$corpus' is empty or missing"
               exit 1
             fi
+            echo "$corpus: $count seed(s)"
           done
-          echo "Corpus sizes meet baseline requirements"
+          echo "Fuzz corpus is intact"
 
   # -------------------------------------------------------------------------
   # Integration Summary
   # -------------------------------------------------------------------------
   summary:
     name: Integration Summary
-    needs: [static-analysis, format-check, sanitizers, unit-tests, property-tests, fuzz-tests, coverage, fuzz-corpus-baseline]
+    needs: [format-check, fuzz-corpus-baseline]
     runs-on: ubuntu-latest
     steps:
       - name: Summary
@@ -371,28 +110,18 @@ jobs:
           echo ""
           echo "| Job | Status |"
           echo "|-----|--------|"
-          echo "| Static Analysis (clang-tidy) | ${{ needs.static-analysis.result }} |"
           echo "| Format Check (clang-format) | ${{ needs.format-check.result }} |"
-          echo "| Sanitizers (ASan+UBSan) | ${{ needs.sanitizers.result }} |"
-          echo "| Unit Tests | ${{ needs.unit-tests.result }} |"
-          echo "| Property Tests | ${{ needs.property-tests.result }} |"
-          echo "| Fuzz Tests | ${{ needs.fuzz-tests.result }} |"
-          echo "| Coverage | ${{ needs.coverage.result }} |"
           echo "| Fuzz Corpus Baseline | ${{ needs.fuzz-corpus-baseline.result }} |"
           echo ""
-          # A skipped job is not a failure. The GPU jobs are gated behind
-          # vars.ENABLE_GPU_JOBS and skip by default, so demanding 'success'
-          # from every dependency made this job fail on every run regardless
-          # of what actually ran.
+          # Only jobs that can actually run on a GitHub-hosted runner are
+          # listed here. Everything that needs a GPU (clang-tidy, sanitizers,
+          # unit/property/fuzz tests, coverage) was removed from this workflow
+          # because the project has no self-hosted runner and GitHub-hosted
+          # runners have none. Those checks are run locally; see
+          # docs/ci.md.
           FAILED=0
           for result in \
-            "${{ needs.static-analysis.result }}" \
             "${{ needs.format-check.result }}" \
-            "${{ needs.sanitizers.result }}" \
-            "${{ needs.unit-tests.result }}" \
-            "${{ needs.property-tests.result }}" \
-            "${{ needs.fuzz-tests.result }}" \
-            "${{ needs.coverage.result }}" \
             "${{ needs.fuzz-corpus-baseline.result }}"; do
             case "$result" in
               success|skipped) ;;

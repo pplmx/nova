@@ -11,87 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  benchmark:
-    name: Benchmark Regression
-    runs-on: [self-hosted, gpu]
-    # Needs a GPU. No self-hosted runner is registered on this repository, so
-    # without this gate the run sits queued forever and never reports. Enable
-    # by setting the repository variable ENABLE_GPU_JOBS to 'true' once a
-    # runner carrying the [self-hosted, gpu] labels is online.
-    if: ${{ vars.ENABLE_GPU_JOBS == 'true' }}
-
-    env:
-      BUILD_DIR: build
-      RESULTS_DIR: results
-      TOLERANCE: 10.0
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure CMake
-        run: |
-          cmake -G Ninja -B ${{ env.BUILD_DIR }} \
-            -DNOVA_ENABLE_NCCL=OFF \
-            -DNOVA_ENABLE_MPI=OFF
-
-      - name: Build benchmarks
-        run: cmake --build ${{ env.BUILD_DIR }} --target nova_benchmarks --parallel
-
-      - name: Get device info
-        run: |
-          nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
-          echo "CUDA_VERSION=$(nvcc --version | grep release | awk '{print $5}' | tr -d ',')" >> $GITHUB_ENV
-
-      - name: Run benchmarks
-        run: |
-          mkdir -p ${{ env.RESULTS_DIR }}
-          python scripts/benchmark/run_benchmarks.py \
-            --all \
-            --build-dir ${{ env.BUILD_DIR }}/bin \
-            --output-dir ${{ env.RESULTS_DIR }} \
-            --tolerance ${{ env.TOLERANCE }} \
-            --verbose
-
-      - name: Check baseline
-        id: baseline-check
-        run: |
-          if [ -d "scripts/benchmark/baselines/main" ]; then
-            echo "has_baseline=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_baseline=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Compare against baseline
-        if: steps.baseline-check.outputs.has_baseline == 'true'
-        run: |
-          python scripts/benchmark/run_benchmarks.py \
-            --all \
-            --baseline main \
-            --build-dir ${{ env.BUILD_DIR }}/bin \
-            --output-dir ${{ env.RESULTS_DIR }} \
-            --tolerance ${{ env.TOLERANCE }}
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: benchmark-results-${{ github.run_number }}
-          path: |
-            ${{ env.RESULTS_DIR }}/*.json
-            ${{ env.BUILD_DIR }}/bin/benchmark_results*.json
-          retention-days: 30
-
-      - name: Update baseline
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          python scripts/benchmark/update_baseline.py \
-            --results ${{ env.RESULTS_DIR }} \
-            --version main
-
-      - name: Check baseline freshness
-        run: python scripts/benchmark/check_baseline_freshness.py --max-age 30
-
   benchmark-quick:
     name: Quick Benchmarks (CPU-only validation)
     runs-on: ubuntu-latest
@@ -101,17 +20,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Two of this job's assertions could never pass, so it failed on every
+      # pull request:
+      #
+      # 1. `test -d scripts/benchmark/baselines` asserted on a directory that
+      #    is not in the repository and never was; update_baseline.py creates
+      #    it at run time. Asserting its presence inverted the contract: a
+      #    fresh clone is exactly the state where it is legitimately absent.
+      # 2. The cmake configure step ran a project whose `project(... LANGUAGES
+      #    CXX CUDA)` line needs nvcc. This runner has no CUDA toolkit, so
+      #    configure stopped at "No CMAKE_CUDA_COMPILER could be found", and it
+      #    would also have failed on CMake 3.31.6 against a 4.0 minimum.
+      #
+      # What is left is what a GPU-less runner can honestly check: that the
+      # harness and the benchmark sources parse, and that the benchmark
+      # directory is wired into the build. Compiling and running them needs a
+      # device and stays local (see docs/ci.md).
       - name: Check benchmark files exist
         run: |
           test -f scripts/benchmark/run_benchmarks.py
           test -f benchmark/benchmark_kernels.cu
-          test -d scripts/benchmark/baselines
+          test -f benchmark/CMakeLists.txt
+          test -f scripts/benchmark/update_baseline.py
+          test -f scripts/benchmark/check_baseline_freshness.py
 
       - name: Validate Python syntax
-        run: python -m py_compile scripts/benchmark/run_benchmarks.py
-
-      - name: Validate CMakeLists
         run: |
-          cmake --version
-          cmake -B build-check -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
-          test -f build-check/CMakeCache.txt
+          for script in scripts/benchmark/*.py; do
+            python -m py_compile "$script"
+          done
+          echo "benchmark scripts parse"
+
+      # No `cmake -B` here: see the note above. Checking the benchmark CMake
+      # file by parsing the top-level build for its add_subdirectory call is
+      # the part that needs no toolchain.
+      - name: Check the benchmark target is wired into the build
+        run: |
+          grep -Eq '^[[:space:]]*add_subdirectory\(benchmark\)' CMakeLists.txt
+          grep -Eq 'add_executable\(nova_benchmarks' benchmark/CMakeLists.txt
+          echo "benchmark target is wired in"
