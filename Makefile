@@ -116,9 +116,19 @@ help:
 	@echo ""
 
 # Run clang-tidy static analysis
+#
+# The config path is absolute on purpose: CMAKE_CXX_CLANG_TIDY is a command line,
+# and clang-tidy resolves --config-file relative to the COMPILER WORKING DIRECTORY,
+# which for a Ninja build is the build directory. A relative ".clang-tidy" made
+# every translation unit fail with
+#
+#     Error: can't read config-file '.clang-tidy': No such file or directory
+#
+# so the target never reached the project's checks. $(CURDIR) is the Makefile's
+# directory, which is where .clang-tidy actually lives.
 lint:
 	@cmake -G Ninja -B build-tidy \
-		-DCMAKE_CXX_CLANG_TIDY="clang-tidy;--config-file=.clang-tidy" \
+		-DCMAKE_CXX_CLANG_TIDY="clang-tidy;--config-file=$(CURDIR)/.clang-tidy" \
 		-DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
 	@cmake --build build-tidy --parallel
 
