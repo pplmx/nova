@@ -137,6 +137,45 @@ option(NOVA_USE_CCACHE "Enable ccache (or sccache) compiler launcher for faster 
 option(NOVA_USE_MOLD "Link with mold when it is available" ON)
 option(NOVA_USE_LLD "Link with lld when it is available (used only without mold)" ON)
 
+# Compiler warnings.
+#
+# The build enabled none, so the compiler reported nothing: no -Wall, no -Wextra, no
+# -Werror anywhere in CMakeLists.txt or cmake/. Two defects found by inspection in
+# earlier rounds -- a narrowing conversion to a launch parameter and an unused variable
+# standing in for a wrong unit conversion -- would both have been reported by the
+# compiler for free.
+#
+# The option defaults on. Turning it into -Werror is left to the caller
+# (-DNOVA_WARNINGS_AS_ERRORS=ON) rather than being the default, because the two
+# exemptions below are real and permanent for this tree: unused parameters are
+# unavoidable in the NCCL stubs compiled when NOVA_ENABLE_NCCL=OFF, and the CUDA
+# runtime still marks the shared-memory bank config calls deprecated even though a
+# guard legitimately saves and restores them.
+option(NOVA_ENABLE_WARNINGS "Enable compiler warnings for host code" ON)
+option(NOVA_WARNINGS_AS_ERRORS "Treat the enabled warnings as errors" OFF)
+
+if(NOVA_ENABLE_WARNINGS AND (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU"))
+    set(NOVA_CXX_WARNING_FLAGS
+        -Wall
+        -Wextra
+        # Deliberate: NCCL is off by default and its files are then stubs whose
+        # parameters exist only to match the enabled signature.
+        -Wno-unused-parameter
+        # cudaDeviceGet/SetSharedMemConfig: inert since Maxwell, still deprecated.
+        -Wno-deprecated-declarations
+    )
+    if(NOVA_WARNINGS_AS_ERRORS)
+        list(APPEND NOVA_CXX_WARNING_FLAGS -Werror)
+    endif()
+    # One flag per generator expression entry: a $<COMPILE_LANGUAGE:CXX> wrapping the
+    # list expands to a single semicolon-joined argument and the compiler sees
+    # "-Werror>" as one token.
+    foreach(warning_flag IN LISTS NOVA_CXX_WARNING_FLAGS)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${warning_flag}>)
+    endforeach()
+    message(STATUS "Compiler warnings: ${NOVA_CXX_WARNING_FLAGS}")
+endif()
+
 
 # Code coverage support
 option(NOVA_COVERAGE "Enable code coverage instrumentation" OFF)
