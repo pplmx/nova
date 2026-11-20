@@ -219,6 +219,23 @@ namespace cuda::topology {
 
         num_nodes_ = static_cast<int>(node_group.size());
 
+        // local and cross describe the communicator split for THIS rank: how many ranks
+        // share its host, and how many are elsewhere. Both were set to 1 in the
+        // constructor and never assigned again, so they reported 1 for every topology --
+        // a value the only existing assertion (>= 1) could not distinguish from a real
+        // answer. Classify the same way classify_path does: same hostname is local.
+        int local = 0;
+        int cross = 0;
+        for (const auto& node : all_nodes) {
+            if (node.hostname == local_topology_.hostname) {
+                ++local;
+            } else {
+                ++cross;
+            }
+        }
+        intra_node_count_ = local;
+        inter_node_count_ = cross;
+
         return configs;
     }
 

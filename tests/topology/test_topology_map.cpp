@@ -261,4 +261,38 @@ namespace cuda::topology {
         EXPECT_TRUE(configs[0].require_rdma);
     }
 
+    // get_local_comm_size() and get_cross_node_comm_size() returned members that were set
+    // to 1 in the constructor and never assigned again, so both reported 1 for every
+    // topology. The existing case asserted >= 1, which a constant satisfies -- that is how
+    // the stubs survived.
+    //
+    // What the two are supposed to mean: a communicator that splits across hosts needs to
+    // know how many ranks stay inside one host (local) and how many are elsewhere (cross).
+    // After compute_communicator_configs() has been told about every node, those counts are
+    // determined by the hostnames.
+    TEST_F(NcclTopologyContextTest, CommSizesReflectTheTopologyThatWasComputed) {
+        NcclTopologyContext ctx(local_map_);
+
+        // The rank asking the question is itself in the list, so the fixture's own hostname
+        // must appear among the nodes -- leaving it out made local 0, which the first
+        // version of this case tripped over. Three ranks on node0, one on another host.
+        std::vector<TopologyMap> nodes(4);
+        nodes[0].hostname = local_map_.hostname;
+        nodes[1].hostname = local_map_.hostname;
+        nodes[2].hostname = local_map_.hostname;
+        nodes[3].hostname = "elsewhere";
+
+        const auto configs = ctx.compute_communicator_configs(nodes);
+        ASSERT_EQ(configs.size(), 4u);
+
+        EXPECT_EQ(ctx.get_num_nodes(), 2) << "two distinct hostnames";
+        // The local communicator covers this rank's own host; with the constructor's
+        // local_topology_ being nodes' host we cannot know which, so assert the property
+        // that must hold either way: local + cross == total ranks, and neither is the
+        // hardcoded 1 unless the topology really is one rank per host.
+        EXPECT_EQ(ctx.get_local_comm_size() + ctx.get_cross_node_comm_size(), 4) << "every rank is either local or cross-node";
+        EXPECT_EQ(ctx.get_local_comm_size(), 3) << "three ranks share this host";
+        EXPECT_EQ(ctx.get_cross_node_comm_size(), 1) << "one rank is elsewhere";
+    }
+
 }  // namespace cuda::topology
