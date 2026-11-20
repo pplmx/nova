@@ -124,6 +124,62 @@ namespace cuda::pipeline::test {
         (void)cudaGetLastError();
     }
 
+    // Regression: with tp*dp <= device_count the constructor filled the two
+    // handle vectors as if they held the whole lattice. tp_comms_ is resized to
+    // tp_degree_ but was written with d*tp + t for every group, so a tp=2 dp=2
+    // lattice wrote 4 handles into a 2-element vector — a heap overflow that
+    // corrupts whatever follows the allocation and only shows up when the
+    // process happens to fault. Anything reading a rank within a group
+    // afterwards sees a corrupted vector, which is what this case pins.
+    //
+    // It needs a real NCCL group, because the no-NCCL branch never fills the
+    // vectors and the overrun cannot happen there. Both a local context with two
+    // devices and the shared singleton are tried so the case runs wherever a
+    // pair of GPUs is available.
+    TEST(PipelineCommunicatorsTest, MultiDPLatticeDoesNotOverrunItsHandleVectors) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "needs at least two devices";
+        }
+
+        // A local context over the first pair keeps the choice of devices explicit and
+        // does not disturb the shared singleton other suites reuse.
+        ::cuda::nccl::NcclContext local_ctx;
+        ::cuda::nccl::NcclContextConfig config;
+        config.device_ids = {0, 1};
+        try {
+            local_ctx.initialize(config);
+        } catch (const std::exception& e) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "could not initialise a two-device NCCL context: " << e.what();
+        }
+
+        // tp=1 dp=2 is the case the old code wrote out of bounds: it indexed
+        // tp_comms_[d*1+0] for d in {0,1} into a 1-element vector.
+        PipelineCommunicators comms(local_ctx, 1, 2);
+
+        EXPECT_EQ(comms.tp_degree(), 1);
+        EXPECT_EQ(comms.dp_degree(), 2);
+        EXPECT_EQ(comms.total_devices(), 2);
+        EXPECT_TRUE(comms.supports_split());
+
+        // The TP getter takes a rank within a group, so for tp=1 only rank 0 is
+        // valid. Reading past it must be refused rather than return a stale handle.
+        EXPECT_EQ(comms.get_tp_comm(1), nullptr);
+        EXPECT_EQ(comms.get_dp_comm(2), nullptr);
+        EXPECT_EQ(comms.get_dp_comm(-1), nullptr);
+
+        // Every legal handle must still be one of the context's real communicators:
+        // an overwrite that landed elsewhere in the heap would corrupt a later
+        // read rather than change the answer here.
+        EXPECT_EQ(comms.get_tp_comm(0), local_ctx.get_comm(0));
+        EXPECT_EQ(comms.get_dp_comm(0), local_ctx.get_comm(0));
+        EXPECT_EQ(comms.get_dp_comm(1), local_ctx.get_comm(1));
+
+        (void)cudaGetLastError();
+    }
+
     TEST(PipelineCommunicatorsTest, UnknownRanksReturnNullptrRatherThanIndexing) {
         auto& ctx = ::cuda::nccl::NcclContext::instance();
 

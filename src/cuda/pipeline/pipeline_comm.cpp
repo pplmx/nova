@@ -46,13 +46,19 @@ namespace cuda::pipeline {
         //   DP group of tp_rank t  -> devices {t, t + tp, t + 2tp, ...}
         // The old code addressed both by position, which for tp_degree == 1 or
         // dp_degree == 1 happened to coincide with the device ids and hid the bug.
+        //
+        // The accessors below take a rank WITHIN a group and so address one vector
+        // entry each; these vectors therefore hold one group's handles, not the
+        // whole tp*dp lattice. Filling them with every device of the lattice wrote
+        // dp_degree_*tp_degree_ entries into a tp_degree_-sized vector whenever
+        // dp_degree_ > 1. Exposed here: the TP handles of DP group 0 and the DP
+        // handles of TP rank 0. A caller working in another group cannot be served
+        // by an accessor that has no group argument, and must not read these.
         for (int t = 0; t < tp_degree_; ++t) {
-            dp_comms_[static_cast<size_t>(t)] = ctx.get_comm(t);
+            tp_comms_[static_cast<size_t>(t)] = ctx.get_comm(t);
         }
         for (int d = 0; d < dp_degree_; ++d) {
-            for (int t = 0; t < tp_degree_; ++t) {
-                tp_comms_[static_cast<size_t>(d * tp_degree_ + t)] = ctx.get_comm(d * tp_degree_ + t);
-            }
+            dp_comms_[static_cast<size_t>(d)] = ctx.get_comm(d * tp_degree_);
         }
 
         supports_split_ = true;
@@ -69,7 +75,14 @@ namespace cuda::pipeline {
     ncclComm_t PipelineCommunicators::get_tp_comm(int tp_rank) const {
         // tp_rank is the rank WITHIN a TP group (0..tp_degree-1); every group shares
         // the same communicator layout, so rank t maps to the t-th handle.
-        if (tp_rank >= 0 && tp_rank < tp_degree_) {
+        //
+        // Bounded by the vector, not by tp_degree_: the two agree only on the NCCL
+        // path, and this getter is reachable on the no-NCCL path where tp_comms_ is
+        // empty and tp_degree_ is whatever the caller asked for. Once that was
+        // checked against tp_degree_ instead, get_tp_comm(0) on such a build indexed
+        // an empty vector and segfaulted (tests/sparse/pipeline_comm_test.cpp,
+        // OverSubscribedLatticeIsRejectedOrReported).
+        if (tp_rank >= 0 && tp_rank < static_cast<int>(tp_comms_.size())) {
             return tp_comms_[static_cast<size_t>(tp_rank)];
         }
         return nullptr;
