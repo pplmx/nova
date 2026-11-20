@@ -55,6 +55,17 @@ namespace cuda::observability {
 
         cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&analysis.active_blocks_per_sm, kernel_func, block_size, dynamic_smem_bytes);
 
+        // Consume the error this query may have raised. cudaOccupancyMax... leaves it in the
+        // thread's error state, and cudaGetLastError() is the only thing that clears it:
+        // measured, a call with a non-kernel pointer returns cudaErrorInvalidResourceHandle
+        // and the NEXT unrelated CUDA call in the process then reads that same 400. In the
+        // full single-process run it surfaced as an unrelated test's cudaMemset failing with
+        // "invalid resource handle" two suites later.
+        //
+        // This function already reports the failure through analysis.active_blocks_per_sm
+        // == 0, so the error state is not part of its contract with the caller.
+        (void)cudaGetLastError();
+
         if (err == cudaSuccess) {
             analysis.max_blocks_per_sm = analysis.active_blocks_per_sm;
             int threads_per_block = block_size;
@@ -96,6 +107,9 @@ namespace cuda::observability {
         size_t dynamic_smem = dynamic_smem_bytes;
 
         cudaError_t err = cudaOccupancyMaxPotentialBlockSize(&num_blocks, &rec.recommended_block_size, kernel_func, dynamic_smem, block_size_hint);
+        // Same reason as analyze(): the query's error must not be left for the next
+        // unrelated CUDA call in the process to read.
+        (void)cudaGetLastError();
 
         if (err == cudaSuccess) {
             rec.recommended_grid_size = num_blocks * sm_count_;
