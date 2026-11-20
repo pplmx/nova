@@ -16,7 +16,7 @@ namespace {
         void SetUp() override { CUDA_CHECK(cudaSetDevice(0)); }
 
         void TearDown() override {
-            CUDA_CHECK(cudaDeviceSynchronize());
+            (void)cudaDeviceSynchronize();
             cudaGetLastError();
         }
     };

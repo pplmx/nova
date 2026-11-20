@@ -11,7 +11,7 @@ using namespace nova::error;
 class TimeoutTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        cudaDeviceReset();
+        (void)cudaDeviceSynchronize();
         // The manager is a process-wide singleton. Reset it before each test
         // so operations/callback state leaked by another case (e.g. cancelled
         // or un-ended operations) never leaks into, and breaks, this one.

@@ -6,7 +6,16 @@
 
 class ThroughputTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    // cudaDeviceReset() tears down the ENTIRE process context, including the handles
+    // cached in process-wide singletons (MeshStreams, NcclContext, CusparseContext...).
+    // Their next use -- or their destructor -- then passes a stale handle to the driver,
+    // and cuEventDestroy on such a handle segfaults inside libcuda rather than returning
+    // an error. Measured: event created, cudaDeviceReset(), then cudaEventDestroy, with
+    // no cupti or sanitizer involved.
+    //
+    // The intent here was only to make sure no work from a previous case is still in
+    // flight, which synchronize() does without invalidating anything.
+    void SetUp() override { CUDA_CHECK(cudaDeviceSynchronize()); }
 };
 
 TEST_F(ThroughputTest, MemoryCopyThroughputInGBps) {

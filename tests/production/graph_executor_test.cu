@@ -10,7 +10,7 @@
 namespace {
 
     void reset() {
-        cudaDeviceReset();
+        (void)cudaDeviceSynchronize();
     }
 
 }  // namespace

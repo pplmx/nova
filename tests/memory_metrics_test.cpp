@@ -3,7 +3,7 @@
 
 class MemoryMetricsTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 // Compares two separate device-wide snapshots, so it lives in a ...SerialTest suite
@@ -13,7 +13,7 @@ protected:
 // "metrics.used_bytes: 3570991104 vs used(): 3573088256" under -j4 and passed alone.
 class MemoryMetricsSerialTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 TEST_F(MemoryMetricsTest, UsedReturnsNonNegativeValue) {

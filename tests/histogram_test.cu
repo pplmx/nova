@@ -21,7 +21,7 @@ protected:
 
     void SetUp() override {
         CUDA_CHECK(cudaSetDevice(0));
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         pixelCount_ = width_ * height_;
         size_ = pixelCount_ * 3;

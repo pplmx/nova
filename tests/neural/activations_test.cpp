@@ -11,7 +11,7 @@ using namespace cuda::neural;
 
 class ActivationTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 TEST_F(ActivationTest, ReLUPositiveValues) {

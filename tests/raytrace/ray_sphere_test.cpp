@@ -5,7 +5,7 @@ using namespace cuda::raytrace;
 
 class RaySphereTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 
     Sphere create_unit_sphere() { return Sphere(Vec3(0, 0, 0), 1.0f); }
 };

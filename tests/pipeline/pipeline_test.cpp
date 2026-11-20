@@ -10,7 +10,7 @@ using namespace cuda::pipeline;
 
 class PipelineTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 TEST_F(PipelineTest, BubbleOverheadSingleStage) {

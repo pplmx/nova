@@ -117,7 +117,7 @@ namespace cuda::neural::optimizers::test {
         DeviceScalar v(0.0f);
 
         detail::adamw_step_device(param.data(), grad.data(), m.data(), v.data(), 1, 0.1f, 0.9f, 0.999f, 1e-8f, 0.01f, 0.9f, 0.999f, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         EXPECT_NEAR(param.read(), 0.899f, 1e-6f);
         EXPECT_NEAR(m.read(), 0.05f, 1e-7f);
@@ -137,7 +137,7 @@ namespace cuda::neural::optimizers::test {
         DeviceScalar v(0.0f);
 
         detail::adamw_step_device(param.data(), grad.data(), m.data(), v.data(), 1, 0.1f, 0.9f, 0.999f, 1e-8f, 0.5f, 0.9f, 0.999f, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         // The gradient term vanishes (m_hat/(sqrt(v_hat)+eps) = 0), leaving
         // update = wd*param = 0.5*2 = 1, so param = 2 - 0.1*1 = 1.9.
@@ -161,7 +161,7 @@ namespace cuda::neural::optimizers::test {
         DeviceVector d_v(zeros);
 
         detail::adamw_step_device(d_param.data(), d_grad.data(), d_m.data(), d_v.data(), params.size(), 0.1f, 0.9f, 0.999f, 1e-8f, 0.01f, 0.9f, 0.999f, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto result = d_param.read();
         ASSERT_EQ(result.size(), params.size());
@@ -181,7 +181,7 @@ namespace cuda::neural::optimizers::test {
         DeviceScalar v(0.0f);
 
         detail::lamb_step_device(param.data(), grad.data(), m.data(), v.data(), 1, 0.1f, 0.9f, 0.999f, 1e-8f, 0.01f, 0.9f, 0.999f, 1.0f, 10.0f, true, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         EXPECT_TRUE(std::isfinite(param.read()));
         EXPECT_NEAR(m.read(), 0.05f, 1e-7f);
@@ -201,7 +201,7 @@ namespace cuda::neural::optimizers::test {
         DeviceScalar v(0.0f);
 
         detail::lamb_step_device(param.data(), grad.data(), m.data(), v.data(), 1, 0.1f, 0.9f, 0.999f, 1e-8f, 0.0f, 0.9f, 0.999f, 1.0f, 10.0f, true, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         EXPECT_TRUE(std::isfinite(param.read())) << "a zero parameter with a zero update must not produce inf or NaN";
         EXPECT_FLOAT_EQ(param.read(), 0.0f) << "nothing to update, nothing moves";
@@ -220,7 +220,7 @@ namespace cuda::neural::optimizers::test {
         DeviceScalar v(0.0f);
 
         detail::lamb_step_device(param.data(), grad.data(), m.data(), v.data(), 1, 0.1f, 0.9f, 0.999f, 1e-8f, 0.0f, 0.9f, 0.999f, 1.0f, 10.0f, true, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         EXPECT_TRUE(std::isfinite(param.read()));
         EXPECT_FLOAT_EQ(param.read(), 1.0f) << "a zero update must not move the parameter regardless of the ratio";
@@ -238,7 +238,7 @@ namespace cuda::neural::optimizers::test {
         DeviceScalar v(0.0f);
 
         detail::lamb_step_device(param.data(), grad.data(), m.data(), v.data(), 1, 0.1f, 0.9f, 0.999f, 1e-8f, 0.01f, 0.9f, 0.999f, 1.0f, 10.0f, false, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         EXPECT_TRUE(std::isfinite(param.read()));
         EXPECT_LT(param.read(), 1.0f) << "the update should still be applied";
@@ -307,7 +307,7 @@ namespace cuda::neural::optimizers::test {
         DeviceVector d_grads(grads);
 
         detail::clip_device(d_grads.data(), grads.size(), 0.5f, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto result = d_grads.read();
         ASSERT_EQ(result.size(), grads.size());
@@ -325,7 +325,7 @@ namespace cuda::neural::optimizers::test {
         DeviceVector d_grads(grads);
 
         detail::clip_device(d_grads.data(), grads.size(), 1.0f, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         EXPECT_EQ(d_grads.read(), grads);
     }

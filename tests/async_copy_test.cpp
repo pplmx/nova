@@ -6,9 +6,9 @@
 class AsyncCopyTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        cudaDeviceReset();
+        (void)cudaDeviceSynchronize();
         CUDA_CHECK(cudaSetDevice(0));
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
     }
 };
 

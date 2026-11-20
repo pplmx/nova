@@ -22,7 +22,7 @@ namespace cuda::inference::test {
 
         void TearDown() override {
             stream_.reset();
-            CUDA_CHECK(cudaDeviceReset());
+            CUDA_CHECK(cudaDeviceSynchronize());
         }
 
         std::unique_ptr<stream::Stream> stream_;

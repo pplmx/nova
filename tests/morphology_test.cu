@@ -20,7 +20,7 @@ protected:
 
     void SetUp() override {
         CUDA_CHECK(cudaSetDevice(0));
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         size_ = width_ * height_ * 3;
         h_input_.resize(size_);

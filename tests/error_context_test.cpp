@@ -3,7 +3,7 @@
 
 class ErrorContextTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { CUDA_CHECK(cudaDeviceSynchronize()); }
 };
 
 TEST_F(ErrorContextTest, OperationContextStoresAllFields) {

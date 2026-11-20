@@ -11,7 +11,7 @@ using namespace nova::error;
 
 class ErrorHandlingIntegrationTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {

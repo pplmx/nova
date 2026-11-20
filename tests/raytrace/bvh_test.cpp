@@ -8,7 +8,7 @@ using namespace cuda::raytrace;
 
 class BVHTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 
     static constexpr size_t MAX_NODES = 256;
     static constexpr size_t MAX_PRIMS = 64;

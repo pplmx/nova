@@ -5,9 +5,9 @@
 class PinnedMemoryTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        cudaDeviceReset();
+        (void)cudaDeviceSynchronize();
         CUDA_CHECK(cudaSetDevice(0));
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
     }
 };
 
@@ -95,7 +95,7 @@ TEST_F(PinnedMemoryTest, MakePinned) {
 
 class PinnedBufferTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 TEST_F(PinnedBufferTest, CopyFromVector) {

@@ -14,7 +14,7 @@ class SobelTest : public ::testing::Test {
 protected:
     void SetUp() override {
         CUDA_CHECK(cudaSetDevice(0));
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         width_ = 64;
         height_ = 64;

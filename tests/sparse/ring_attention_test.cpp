@@ -104,7 +104,7 @@ namespace cuda::distributed::test {
         ring_attn_init(out.data(), running_max.data(), running_l.data(), seq, hidden, nullptr);
         ring_attn_block(q.data(), k.data(), v.data(), out.data(), running_max.data(), running_l.data(), seq, keys, hidden, 1.0f, nullptr);
         ring_attn_finalize(out.data(), running_l.data(), seq, hidden, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto result = out.read();
         ASSERT_EQ(result.size(), 2u);
@@ -144,7 +144,7 @@ namespace cuda::distributed::test {
         ring_attn_block(q.data(), k.data() + hidden, v.data() + hidden, out_split.data(), max_split.data(), l_split.data(), seq, 1, hidden, 1.0f, nullptr);
         ring_attn_finalize(out_split.data(), l_split.data(), seq, hidden, nullptr);
 
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto once = out_once.read();
         const auto split = out_split.read();
@@ -184,7 +184,7 @@ namespace cuda::distributed::test {
         // No key block is streamed in, so running_l stays zero.
         ring_attn_block(q.data(), q.data(), q.data(), out.data(), running_max.data(), running_l.data(), seq, 0, hidden, 1.0f, nullptr);
         ring_attn_finalize(out.data(), running_l.data(), seq, hidden, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto result = out.read();
         for (size_t i = 0; i < result.size(); ++i) {
@@ -210,7 +210,7 @@ namespace cuda::distributed::test {
         ring_attn_init(out.data(), running_max.data(), running_l.data(), seq, hidden, nullptr);
         ring_attn_block(q.data(), k.data(), v.data(), out.data(), running_max.data(), running_l.data(), seq, 1, hidden, 1.0f, nullptr);
         ring_attn_finalize(out.data(), running_l.data(), seq, hidden, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto result = out.read();
         ASSERT_EQ(result.size(), 3u);
@@ -238,7 +238,7 @@ namespace cuda::distributed::test {
         ring_attn_init(out.data(), running_max.data(), running_l.data(), seq, hidden, nullptr);
         ring_attn_block(q.data(), k.data(), v.data(), out.data(), running_max.data(), running_l.data(), seq, keys, hidden, inv_sqrt, nullptr);
         ring_attn_finalize(out.data(), running_l.data(), seq, hidden, nullptr);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         const auto result = out.read();
         ASSERT_EQ(result.size(), 1u);

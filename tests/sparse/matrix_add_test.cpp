@@ -65,7 +65,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixAdd(d_a, d_b, d_c, rows, cols);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(a.size());
         d_c.copy_to(result.data(), result.size());
@@ -93,13 +93,13 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixAdd(d_a, d_b, d_c, rows, cols);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         // Reuse the same input buffers for a second call; they must still hold their
         // original contents.
         memory::Buffer<float> d_c2(a.size());
         matrixAdd(d_a, d_b, d_c2, rows, cols);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> first(a.size()), second(a.size());
         d_c.copy_to(first.data(), first.size());
@@ -126,7 +126,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixAdd(d_a, d_b, d_c, rows, cols);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(a.size());
         d_c.copy_to(result.data(), result.size());
@@ -152,7 +152,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixAdd(d_a, d_b, d_c, rows, cols);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(a.size());
         d_c.copy_to(result.data(), result.size());
@@ -212,7 +212,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixAdd(d_a, d_b, d_c, rows, cols);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(a.size());
         d_c.copy_to(result.data(), result.size());

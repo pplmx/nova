@@ -7,7 +7,12 @@
 namespace {
 
     void reset() {
-        cudaDeviceReset();
+        // Was cudaDeviceReset(): that tears down the whole process context and leaves
+        // every singleton's cached handles stale, which libcuda dereferences rather than
+        // reporting when they are used again (measured: cuEventDestroy on a handle created
+        // before the reset segfaults). Synchronising gives these fixtures what they
+        // actually want -- no work still in flight from the previous case.
+        (void)cudaDeviceSynchronize();
     }
 
 }  // namespace

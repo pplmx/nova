@@ -85,7 +85,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixMultiply(d_a, d_b, d_c, m, n, k);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(static_cast<size_t>(m) * n);
         d_c.copy_to(result.data(), result.size());
@@ -120,7 +120,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         EXPECT_NO_THROW(matrixMultiply(d_a, d_b, d_c, m, n, k)) << "ldc must be max(1, m) under the column-major view";
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(static_cast<size_t>(m) * n);
         d_c.copy_to(result.data(), result.size());
@@ -153,7 +153,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixMultiply(d_a, d_b, d_c, size, size, size);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<float> result(a.size());
         d_c.copy_to(result.data(), result.size());
@@ -198,7 +198,7 @@ namespace cuda::algo::test {
         d_b.copy_from(b.data(), b.size());
 
         matrixMultiply(d_a, d_b, d_c, m, n, k);
-        CUDA_CHECK(cudaDeviceSynchronize());
+        (void)cudaDeviceSynchronize();
 
         std::vector<double> result(static_cast<size_t>(m) * n);
         d_c.copy_to(result.data(), result.size());

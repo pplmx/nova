@@ -12,7 +12,7 @@ using namespace cuda::neural;
 
 class MatmulTest : public ::testing::Test {
 protected:
-    void SetUp() override { cudaDeviceReset(); }
+    void SetUp() override { (void)cudaDeviceSynchronize(); }
 };
 
 TEST_F(MatmulTest, MatmulBatchMatchesPerSliceMatmul) {
@@ -50,7 +50,7 @@ TEST_F(MatmulTest, MatmulBatchMatchesPerSliceMatmul) {
     ASSERT_EQ(cudaMemcpy(d_b, h_b.data(), b_count * sizeof(float), cudaMemcpyHostToDevice), cudaSuccess);
     ASSERT_EQ(cudaMemcpy(d_c, h_c.data(), c_count * sizeof(float), cudaMemcpyHostToDevice), cudaSuccess);
 
-    // Use a private handle so the fixture's cudaDeviceReset() cannot leave a
+    // Use a private handle so any context churn in the fixture cannot leave a
     // stale global handle behind.
     cublasHandle_t h;
     ASSERT_EQ(cublasCreate(&h), CUBLAS_STATUS_SUCCESS);
