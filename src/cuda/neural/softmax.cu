@@ -129,6 +129,14 @@ namespace cuda::neural {
     }
 
     void softmax_stable(const float* input, float* output, int outer_dim, int inner_dim, cudaStream_t stream) {
+        // softmax() next door already returned early for this; this entry point launched
+        // <<<outer_dim, ...>>> regardless, and a grid dimension of zero or less is an
+        // invalid configuration -- reported by CUDA_CHECK as cudaErrorInvalidConfiguration
+        // from a line that does not say which argument was wrong. Measured.
+        if (outer_dim <= 0 || inner_dim <= 0) {
+            return;
+        }
+
         int block_size = 256;
         int shared_mem = block_size * sizeof(float) * 2;
 
@@ -137,6 +145,12 @@ namespace cuda::neural {
     }
 
     void log_softmax(const float* input, float* output, int outer_dim, int inner_dim, cudaStream_t stream) {
+        // Same missing guard as softmax_stable above: grid_size comes straight from
+        // outer_dim, so a non-positive value is an invalid launch.
+        if (outer_dim <= 0 || inner_dim <= 0) {
+            return;
+        }
+
         int grid_size = outer_dim;
         int block_size = 256;
 

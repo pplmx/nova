@@ -260,4 +260,34 @@ namespace cuda::neural::test {
         EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "an empty softmax must not leave a launch error behind";
     }
 
+    // softmax_stable() and log_softmax() had no dimension guard, while softmax() beside them
+    // did. Both launch with the row count as the grid dimension:
+    //
+    //     softmax_stable_kernel<<<outer_dim, block_size, shared_mem, stream>>>(...)
+    //
+    // so outer_dim <= 0 is an invalid launch configuration. Measured directly: a launch with
+    // a zero grid dimension returns cudaErrorInvalidConfiguration (9). A caller that passed
+    // an empty batch got that error surfaced as an exception from CUDA_CHECK, at a line that
+    // says nothing about which argument was wrong.
+    TEST(SoftmaxKernelTest, AZeroRowCountIsANoOp) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        std::vector<float> buffer(4, 1.0f);
+        DeviceArray d(buffer);
+
+        // Every entry point must accept "no rows" as nothing to do.
+        EXPECT_NO_THROW(softmax(d.data(), d.data(), 0, 4, nullptr));
+        EXPECT_NO_THROW(softmax_stable(d.data(), d.data(), 0, 4, nullptr));
+        EXPECT_NO_THROW(log_softmax(d.data(), d.data(), 0, 4, nullptr));
+
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "a computed empty input must not leave an error behind";
+
+        // Negative dimensions are caller errors, and must not be launched either.
+        EXPECT_NO_THROW(softmax_stable(d.data(), d.data(), -1, 4, nullptr));
+        EXPECT_NO_THROW(log_softmax(d.data(), d.data(), -1, 4, nullptr));
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess);
+    }
+
 }  // namespace cuda::neural::test
