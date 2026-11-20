@@ -150,4 +150,41 @@ namespace nova::sparse::test {
         EXPECT_EQ(analyzer.classify(ridge * 100.0, peaks.fp32_peak_gflops), PerformanceBound::COMPUTE_BOUND);
     }
 
+    // Regression: roofline.hpp computed the FP64 peak at half the real rate for every
+    // architecture from sm_75 through sm_90, and had no test to notice.
+    //
+    //     case 90/86/89/80/75:  fp64 = SMs * ghz * 16 * 2
+    //
+    // An A100 (sm_80, 108 SMs, 1.41 GHz) has 32 FP64 cores per SM at 2 flops per FMA:
+    //
+    //     108 * 32 * 2 * 1.41 = 9.75 TFLOPS   (NVIDIA publishes 9.7)
+    //
+    // so the table reported 4.87 TFLOPS. The FP32 line in the same case was already right
+    // (108 * 128 * 1.41 = 19.5 TFLOPS, matching the published figure), which is how a
+    // half-rate FP64 slipped through: one line of a table is easy to check by eye and the
+    // line under it is not.
+    TEST(RooflinePeaksTest, Fp64PeakIsHalfTheFp32Peak) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cudaDeviceProp prop {};
+        ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
+
+        const auto peaks = nova::sparse::get_device_peaks(0);
+        ASSERT_GT(peaks.fp32_peak_gflops, 0.0) << "peak table did not match this architecture";
+
+        // On every architecture this table covers, FP64 vector throughput is exactly half of
+        // FP32: the FP64 cores run at the same clock and issue one FMA each, and there are
+        // half as many of them. A ratio of 1/4 means the FP64 row used half the core count.
+        const double ratio = peaks.fp64_peak_gflops / peaks.fp32_peak_gflops;
+        EXPECT_NEAR(ratio, 0.5, 0.05) << "fp64/fp32 = " << ratio << " (" << peaks.fp64_peak_gflops << " vs " << peaks.fp32_peak_gflops << " GFLOPS) on " << prop.name;
+
+        // And the absolute FP64 figure matches the device it queried.
+        const double clock_ghz = static_cast<double>(prop.clockRate) / 1e6;
+        const double expected = static_cast<double>(prop.multiProcessorCount) * 32.0 * 2.0 * clock_ghz;
+        EXPECT_NEAR(peaks.fp64_peak_gflops, expected, 0.2 * expected);
+    }
+
 }  // namespace nova::sparse::test

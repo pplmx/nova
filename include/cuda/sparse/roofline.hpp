@@ -93,15 +93,23 @@ namespace nova {
 
             double clock_ghz = static_cast<double>(device_prop.clockRate) / 1e6;
 
-            double ops_per_sm_per_clock = 2.0;
-
+            // nullptr below unless a case sets it; the switch used to declare an unused
+            // ops_per_sm_per_clock that the cases then ignored, hard-coding the same
+            // factor instead.
+            //
+            // The FP64 factor for sm_75..sm_90 was 16 cores * 2 FMA, half the real rate:
+            // an A100 (sm_80, 108 SMs, 1.41 GHz) has 32 FP64 cores per SM, giving
+            // 108 * 32 * 2 * 1.41 = 9.75 TFLOPS against the published 9.7. The formula
+            // here reported 4.87 TFLOPS. The FP32 figure in the same case was already
+            // correct (108 * 128 * 1.41 = 19.5 TFLOPS), which is why the error survived:
+            // one line in a table is easy to check and the next one is not.
             switch (cc) {
                 case 90:
                 case 86:
                 case 89:
                 case 80:
                 case 75:
-                    peaks.fp64_peak_gflops = peaks.multiprocessor_count * clock_ghz * 16 * 2;
+                    peaks.fp64_peak_gflops = peaks.multiprocessor_count * clock_ghz * 32 * 2;
                     peaks.fp32_peak_gflops = peaks.multiprocessor_count * clock_ghz * 128;
                     peaks.fp16_peak_gflops = peaks.multiprocessor_count * clock_ghz * 512;
                     break;
