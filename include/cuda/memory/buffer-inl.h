@@ -113,6 +113,13 @@ namespace cuda::memory {
     }
 
     template <>
+    /// Untyped byte buffer.
+    ///
+    /// Unlike `Buffer<T>`, everything here is measured in BYTES: the constructor takes a
+    /// byte count, size() returns one, and copy_from()/copy_to() transfer the number of
+    /// bytes given. `Buffer<T>` takes an element count in all the same places, so the two
+    /// look interchangeable and are not -- forward_bf16() passed element counts to these
+    /// and silently copied half of every buffer.
     class Buffer<void> {
     public:
         explicit Buffer(size_t size)
