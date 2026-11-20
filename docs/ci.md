@@ -113,6 +113,45 @@ shape, so it is used only for release notes and never written back over that
 file. The previous `release.yml` would have replaced it and pushed the result
 to `main`.
 
+## Windows
+
+`ci.yml` builds on `windows-2022` as well as `ubuntu-24.04`, and it compiles
+with MSVC. That job never reached a compiler: its only recorded build failure
+was `CMake 4.0 or higher is required. You are running version 3.31.6`
+(run 44473381489), the same CMake pin `ubuntu-24.04` has. With CMake installed
+from pip it can configure, so the platform-specific code had to be made to
+compile before that job could be anything but red.
+
+MSVC has no `<unistd.h>`, `<fcntl.h>`, `<dirent.h>` or `<sys/statfs.h>`, and no
+`/tmp`. Four headers and six tests used them. Each is now either guarded or
+routed through a portable call:
+
+| File                                | Was                                 | Now                                                                 |
+| ----------------------------------- | ----------------------------------- | ------------------------------------------------------------------- |
+| `observability/timeline.h`          | `<unistd.h>` + `::getpid()`         | `<process.h>`/`_getpid()` behind `_WIN32`                           |
+| `topology/topology_map.cpp`         | `<unistd.h>`, `setenv`, Linux sysfs | `winsock2.h`, `_putenv_s`, sysfs enumeration Linux-only             |
+| `nccl/nccl_validation.cpp`          | `<sys/statfs.h>` unconditionally    | guarded; no-statfs platforms report "not checked"                   |
+| `preemption/preemption_handler.cpp` | `sigaction` + `pipe` + `SIGUSR1`    | `signal()` + event; `SIGBREAK`/`SIGINT` on Windows                  |
+| six tests                           | `<unistd.h>`, `::getpid()`, `/tmp`  | `tests/test_temp_paths.h`, `std::filesystem::temp_directory_path()` |
+
+The preemption handler is the one with a behavioural difference rather than a
+mechanical one. POSIX needs a self-pipe because a handler may only call
+async-signal-safe functions; Windows has no such contract and no `pipe()`, so
+the handler sets a manual-reset event and a dispatcher thread waits on it. Both
+platforms run the callback from that thread, so what callers observe is the
+same.
+
+Verified here: each changed translation unit cross-compiles to a Windows target
+with the POSIX headers replaced by failing stubs, which proves they are not
+reached on `_WIN32`; the Linux build still compiles (full tree) and the
+topology, timeline, logger, and signal-handler suites pass (the pre-existing
+failures are the `no CUDA-capable device is detected` ones on this GPU-less
+machine, and `ProfilingIntegrationTest.MemorySafetyWithTimeline` was confirmed
+to fail identically at the previous commit). Not verified: an actual MSVC
+build. Cross-compiling with mingw finds portability mistakes but is not the
+same compiler, and no MSVC or Windows machine was available here. Until a
+`windows-2022` run is green, treat that matrix entry as unproven.
+
 ## Adding a GPU runner later
 
 If a machine with the `[self-hosted, gpu]` labels is ever registered, the
