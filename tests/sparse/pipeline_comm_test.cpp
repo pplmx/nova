@@ -137,6 +137,13 @@ namespace cuda::pipeline::test {
     // devices and the shared singleton are tried so the case runs wherever a
     // pair of GPUs is available.
     TEST(PipelineCommunicatorsTest, MultiDPLatticeDoesNotOverrunItsHandleVectors) {
+        // The overrun only exists on the NCCL path: without NCCL the constructor
+        // never fills the vectors at all, and supports_split() is false by design.
+        // Asserting the handles there would be asserting a branch that does not run.
+#if !NOVA_NCCL_ENABLED
+        GTEST_SKIP() << "the handle vectors are only filled when NCCL is compiled in";
+#endif
+
         int device_count = 0;
         if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
             (void)cudaGetLastError();
