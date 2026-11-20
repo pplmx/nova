@@ -26,6 +26,8 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -55,6 +57,19 @@ namespace nova {
             /// Returns false when the read itself fails.
             bool read_tag(void* ptr, unsigned char& out) {
                 return cudaMemcpy(&out, ptr, sizeof(out), cudaMemcpyDeviceToHost) == cudaSuccess;
+            }
+
+            /// Report a broken invariant.
+            ///
+            /// This aborts rather than returning a non-zero value. libFuzzer IGNORES the
+            /// return value of LLVMFuzzerTestOneInput -- that function is documented to
+            /// always return 0, and only a signal or an explicit abort counts as a
+            /// finding. The original harness ended every failed check with `return 1`
+            /// and a comment saying "Crash on error", which was simply wrong: a crashed
+            /// invariant was silently counted as a successful run.
+            [[noreturn]] void fail(const char* what) {
+                std::fprintf(stderr, "memory_pool_fuzz: invariant violated: %s\n", what);
+                std::abort();
             }
 
         }  // namespace
@@ -87,26 +102,40 @@ namespace nova {
                 const bool do_alloc = provider.ConsumeIntegralInRange<int>(0, 1) == 1;
 
                 if (do_alloc || live.empty()) {
-                    // An allocation of 0 bytes is a legitimate edge case; the pool must
-                    // reject it or return something usable, not corrupt itself.
                     const size_t bytes = provider.ConsumeIntegralInRange<size_t>(0, 4096);
-                    void* ptr = pool.allocate(bytes <= 0 ? 1 : bytes);
+
+                    // A zero-byte allocation is a documented contract, not an input to
+                    // round away: MemoryPool::allocate(0) returns nullptr without
+                    // consuming a block. The first version of this harness mapped 0 to 1
+                    // and so never tested the path, which is the same shape of gap as
+                    // fuzzing a size cap that is never exceeded.
+                    void* ptr = pool.allocate(bytes);
                     if (ptr == nullptr) {
-                        continue;  // exhausted: a valid outcome
+                        if (bytes == 0) {
+                            // Correct for a zero-size request; it must not have counted
+                            // as an allocation either.
+                            if (pool.num_allocations() != live.size()) {
+                                fail("a rejected zero-size allocation was recorded as live");
+                            }
+                        }
+                        continue;  // zero-size, or exhausted: both are valid outcomes
+                    }
+                    if (bytes == 0) {
+                        fail("allocate(0) handed out a block");
                     }
 
                     // Every live block must have distinct storage. If the pool hands out
                     // a pointer that is already live, tagging it would be overwritten on
                     // the next read and the check below catches it.
                     if (live.count(ptr) != 0) {
-                        return 1;  // the same block was handed out twice without a free
+                        fail("the same block was handed out twice without a free");
                     }
 
                     if (!tag_block(ptr, bytes, next_tag)) {
                         (void)cudaGetLastError();
-                        return 1;  // the block we were given is not writable
+                        fail("the block allocated is not writable");
                     }
-                    live.emplace(ptr, std::make_pair(bytes <= 0 ? 1 : bytes, next_tag));
+                    live.emplace(ptr, std::make_pair(bytes, next_tag));
                     ++next_tag;
                     if (next_tag == 0) {
                         next_tag = 1;
@@ -128,21 +157,21 @@ namespace nova {
                     unsigned char got = 0;
                     if (!read_tag(ptr, got)) {
                         (void)cudaGetLastError();
-                        return 1;
+                        fail("a live block could not be read back");
                     }
                     if (got != info.second) {
-                        return 1;  // a live block's contents changed: overlapping storage
+                        fail("a live block's contents changed: overlapping storage");
                     }
                 }
 
                 // Metrics must not report more live allocations than the pool made.
                 const auto metrics = pool.get_metrics();
                 if (metrics.peak_allocated_bytes == 0 && !live.empty()) {
-                    return 1;  // live blocks but no recorded peak
+                    fail("live blocks exist but the pool reports a zero peak");
                 }
                 if (pool.num_allocations() > 0 && live.empty()) {
                     // The harness freed everything; the pool still thinks it holds blocks.
-                    return 1;
+                    fail("the pool was not empty after freeing everything");
                 }
             }
 
@@ -154,10 +183,10 @@ namespace nova {
                 unsigned char got = 0;
                 if (!read_tag(ptr, got)) {
                     (void)cudaGetLastError();
-                    return 1;
+                    fail("the pool reported live blocks the harness had freed");
                 }
                 if (got != info.second) {
-                    return 1;  // defragment lost or overwrote a live block
+                    fail("defragment lost or overwrote a live block");
                 }
             }
 
@@ -168,7 +197,7 @@ namespace nova {
             }
             live.clear();
             if (pool.num_allocations() != 0) {
-                return 1;  // blocks remain after every allocation was freed
+                fail("blocks remain after every allocation was freed");
             }
 
             (void)cudaGetLastError();
