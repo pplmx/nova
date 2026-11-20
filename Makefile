@@ -148,12 +148,26 @@ prek:
 	@prek run --all-files
 
 # Build and test with AddressSanitizer + UndefinedBehaviorSanitizer
+#
+# protect_shadow_gap=0 is required on CUDA hosts. ASan reserves a large shadow
+# region by default, and the driver's context setup cannot find room for it:
+# cudaGetDeviceCount returns cudaErrorMemoryAllocation, so every test that touches
+# a device either skips itself (reading as a green run that checked nothing) or
+# fails at the first cudaMalloc with "out of memory". Measured here with
+# ASAN_OPTIONS=detect_leaks=1 only: BufferTest.ConstructionWithSize failed at
+# buffer-inl.h:43, and 9 of 9 DeviceInfoTest cases failed. With the flag added,
+# the same binary reports a device and the suite runs; see docs/ci.md.
+#
+# NOVA_SANITIZE_ASAN_OPTIONS is overridable so a host that does not need the
+# workaround can drop it without editing the target.
+NOVA_SANITIZE_ASAN_OPTIONS ?= protect_shadow_gap=0:detect_leaks=1:detect_stack_use_after_return=1
+
 sanitize:
 	@cmake -G Ninja -B build-san \
 		-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
 		-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
 		-DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
 	@cmake --build build-san --parallel
-	@ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+	@ASAN_OPTIONS=$(NOVA_SANITIZE_ASAN_OPTIONS) \
 		UBSAN_OPTIONS=print_stacktrace=1 \
 		ctest --test-dir build-san --output-on-failure -j8
