@@ -125,8 +125,11 @@ namespace cuda::mesh {
                 info.global_memory_bytes = prop.totalGlobalMem;
                 info.compute_capability_major = prop.major;
                 info.compute_capability_minor = prop.minor;
-                std::strncpy(info.name, prop.name, sizeof(info.name) - 1);
-                info.name[sizeof(info.name) - 1] = '\0';
+                // snprintf rather than strncpy: the strncpy form is correct (it copies
+                // sizeof-1 and terminates explicitly) but GCC cannot tell that the
+                // destination is truncated on purpose and warns, masking real truncation
+                // warnings elsewhere in the tree.
+                std::snprintf(info.name, sizeof(info.name), "%s", prop.name);
             } else {
                 // Fallback for failed queries
                 info.global_memory_bytes = 0;

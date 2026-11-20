@@ -172,6 +172,11 @@ if(NOVA_ENABLE_WARNINGS AND (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX
     # "-Werror>" as one token.
     foreach(warning_flag IN LISTS NOVA_CXX_WARNING_FLAGS)
         add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${warning_flag}>)
+        # CUDA translation units compile host code through nvcc, which only forwards
+        # flags to the host compiler via -Xcompiler. Without this the .cu files were the
+        # one part of the tree the warnings never reached -- measured: enabling them
+        # surfaced six more, all unused-result.
+        add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${warning_flag}>)
     endforeach()
     message(STATUS "Compiler warnings: ${NOVA_CXX_WARNING_FLAGS}")
 endif()

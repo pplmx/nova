@@ -86,7 +86,7 @@ TEST_F(GraphExecutorTest, CaptureAndLaunch) {
     // synchronize during a thread-local capture of another stream.
     cudaMemsetAsync(d_data, 0, sizeof(int), stream.get());
 
-    executor.end_capture();
+    (void)executor.end_capture();
     executor.instantiate();
 
     EXPECT_TRUE(executor.is_instantiated());
@@ -169,7 +169,7 @@ TEST_F(GraphExecutorTest, Reset) {
     cuda::stream::Stream stream;
 
     executor.begin_capture(stream);
-    executor.end_capture();
+    (void)executor.end_capture();
     executor.instantiate();
 
     EXPECT_TRUE(executor.is_instantiated());
@@ -186,7 +186,7 @@ TEST_F(GraphExecutorTest, ReuseAfterReset) {
     cuda::stream::Stream stream;
 
     executor.begin_capture(stream);
-    executor.end_capture();
+    (void)executor.end_capture();
     executor.instantiate();
     executor.reset();
 
@@ -258,8 +258,9 @@ TEST_F(MemoryNodeTest, TotalAllocatedTracking) {
     // End the capture once and add both allocations to the same graph. Calling
     // end_capture() a second time throws (the executor is no longer capturing).
     cudaGraph_t graph = executor.end_capture();
-    manager.add_device_allocation(executor, graph, 1024);
-    manager.add_device_allocation(executor, graph, 2048);
+    // Called for the side effect; the assertions below read the manager's totals.
+    (void)manager.add_device_allocation(executor, graph, 1024);
+    (void)manager.add_device_allocation(executor, graph, 2048);
 
     EXPECT_GE(manager.total_allocated(), 1024u + 2048u);
 
@@ -272,7 +273,7 @@ TEST_F(MemoryNodeTest, Cleanup) {
 
     {
         executor.begin_capture();
-        manager.add_device_allocation(executor, executor.end_capture(), 1024);
+        (void)manager.add_device_allocation(executor, executor.end_capture(), 1024);
     }
 
     EXPECT_EQ(manager.allocation_count(), 1u);

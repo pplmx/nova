@@ -125,8 +125,6 @@ namespace cuda::algo::segmented {
         CUDA_CHECK(cudaMemcpy(d_segments_original.get(), segment_ids, count * sizeof(int), cudaMemcpyHostToDevice));
 
         thrust::device_ptr<int> indices_ptr(d_indices.get());
-        thrust::sequence(indices_ptr, indices_ptr + count);
-
         thrust::device_ptr<Key> keys_ptr(d_keys.get());
         thrust::device_ptr<Value> values_ptr(d_values.get());
 
@@ -134,6 +132,7 @@ namespace cuda::algo::segmented {
         CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
         const auto policy = thrust::cuda::par.on(stream);
+        thrust::sequence(policy, indices_ptr, indices_ptr + count);
 
         size_t begin = 0;
         while (begin < count) {
@@ -147,24 +146,23 @@ namespace cuda::algo::segmented {
                 auto value_begin = values_ptr + begin;
                 auto idx_begin = indices_ptr + begin;
                 if (g_config.stable) {
-                    thrust::stable_sort_by_key(seg_begin, seg_end, idx_begin);
+                    thrust::stable_sort_by_key(policy, seg_begin, seg_end, idx_begin);
                 } else {
-                    thrust::sort_by_key(seg_begin, seg_end, idx_begin);
+                    thrust::sort_by_key(policy, seg_begin, seg_end, idx_begin);
                 }
                 // Carry the payload through the same permutation.
                 cuda::memory::unique_ptr<Value> sorted_values(end - begin);
-                thrust::gather(idx_begin, idx_begin + (end - begin), value_begin, thrust::device_ptr<Value>(sorted_values.get()));
-                CUDA_CHECK(cudaMemcpy(value_begin.get(), sorted_values.get(), (end - begin) * sizeof(Value), cudaMemcpyDeviceToDevice));
+                thrust::gather(policy, idx_begin, idx_begin + (end - begin), value_begin, thrust::device_ptr<Value>(sorted_values.get()));
+                CUDA_CHECK(cudaMemcpyAsync(value_begin.get(), sorted_values.get(), (end - begin) * sizeof(Value), cudaMemcpyDeviceToDevice, stream));
             }
             begin = end;
         }
         delete[] host_segments;
         (void)num_segments;
-        (void)stream;
 
-        thrust::gather(indices_ptr, indices_ptr + count, thrust::device_ptr<const Key>(d_keys_original.get()), thrust::device_ptr<Key>(out_keys));
-        thrust::gather(indices_ptr, indices_ptr + count, thrust::device_ptr<const Value>(d_values_original.get()), thrust::device_ptr<Value>(out_values));
-        thrust::gather(indices_ptr, indices_ptr + count, thrust::device_ptr<const int>(d_segments_original.get()), thrust::device_ptr<int>(out_segments));
+        thrust::gather(policy, indices_ptr, indices_ptr + count, thrust::device_ptr<const Key>(d_keys_original.get()), thrust::device_ptr<Key>(out_keys));
+        thrust::gather(policy, indices_ptr, indices_ptr + count, thrust::device_ptr<const Value>(d_values_original.get()), thrust::device_ptr<Value>(out_values));
+        thrust::gather(policy, indices_ptr, indices_ptr + count, thrust::device_ptr<const int>(d_segments_original.get()), thrust::device_ptr<int>(out_segments));
     }
 
     template <typename T>

@@ -16,13 +16,15 @@ namespace cuda::raytrace {
     };
 
     struct SAHPartition {
-        int dim;
-        float pos;
-        AABB left_bounds;
-        AABB right_bounds;
-        int left_count;
-        int right_count;
-        float cost;
+        // dim = -1 means "no SAH split"; the default is what the caller tests before
+        // using the rest of the fields, so it has to be the safe value.
+        int dim = -1;
+        float pos = 0.0f;
+        AABB left_bounds {};
+        AABB right_bounds {};
+        int left_count = 0;
+        int right_count = 0;
+        float cost = 0.0f;
     };
 
     int get_leaf_prim_count(const BVHNode& node) {
@@ -192,6 +194,11 @@ namespace cuda::raytrace {
                 return next_node;
             }
 
+            // Default-construct with dim = -1, the value the branch below reads as "no SAH
+            // split available". Leaving SAHPartition uninitialised meant that with
+            // options.use_sah == false the code fell through to `partition.dim < 0` on
+            // indeterminate memory: usually a stray non-negative integer, which sent it
+            // down the SAH path with an uninitialised split position and left count.
             SAHPartition partition;
             if (options.use_sah) {
                 partition = find_best_sah_partition(prim_bounds, prim_indices, start, end, options);

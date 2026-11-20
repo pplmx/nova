@@ -148,7 +148,7 @@ namespace cuda::algo::test {
         // reduce to the all-ones vector and can never differ.
         std::vector<float> h_value(total_elements, 0.0f);
         for (int s = 0; s < config.seq_len; ++s) {
-            for (size_t x = 0; x < config.num_heads * config.head_dim; ++x) {
+            for (size_t x = 0; x < static_cast<size_t>(config.num_heads * config.head_dim); ++x) {
                 h_value[static_cast<size_t>(s) * config.num_heads * config.head_dim + x] = static_cast<float>(s);
             }
         }
