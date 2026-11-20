@@ -191,9 +191,13 @@ int main(int argc, char** argv) {
             printf("PageRank converged in %d iterations (final delta %g)\n",
                    result.iterations, result.final_delta);
             printf("Top %d pages: ", k);
+            // Rank magnitude depends on the node count: on a 10000-node graph every
+            // rank is near 1/10000, so a fixed %.3f printed the whole top-5 list as
+            // "0.000" -- the line meant to show the ranking conveyed nothing. Print
+            // enough significant digits to distinguish the entries instead.
             for (int i = 0; i < k; ++i) {
-                printf("%d(%.3f) ", top[static_cast<size_t>(i)],
-                       result.rank_at(top[static_cast<size_t>(i)]));
+                const float rank = result.rank_at(top[static_cast<size_t>(i)]);
+                printf("%d(%.3g) ", top[static_cast<size_t>(i)], static_cast<double>(rank));
             }
             printf("\n");
         }
