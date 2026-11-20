@@ -118,6 +118,30 @@ namespace nova::checkpoint::test {
 
             size_t blob_count() const { return files_.size(); }
 
+            /// Drop the last `bytes` bytes of a blob, keeping its length prefix. A
+            /// backend that hands out short reads is how a partially written
+            /// checkpoint looks to the loader.
+            void truncate(const std::string& path, size_t bytes) {
+                auto& blob = files_.at(path);
+                if (bytes >= blob.size()) {
+                    blob.clear();
+                    return;
+                }
+                blob.resize(blob.size() - bytes);
+            }
+
+            /// Overwrite an 8-byte length field inside a blob. This builds a stream
+            /// whose own prefix is consistent with the buffer while a length INSIDE it
+            /// is not -- what a corrupted-but-not-truncated file looks like, and the
+            /// only shape that reaches the decoder's bounds checks.
+            void overwrite_length(const std::string& path, size_t offset, size_t value) {
+                auto& blob = files_.at(path);
+                if (offset > blob.size() || sizeof(value) > blob.size() - offset) {
+                    throw std::out_of_range("blob offset past the end: " + path);
+                }
+                std::memcpy(blob.data() + offset, &value, sizeof(value));
+            }
+
         private:
             std::map<std::string, std::vector<char>> files_;
             std::set<std::string> directories_;
@@ -270,6 +294,132 @@ namespace nova::checkpoint::test {
         EXPECT_THROW(backend.resolve_path("../escape"), std::invalid_argument) << "traversal escapes the base directory";
 
         std::filesystem::remove_all(path);
+    }
+
+    // Regression: read() treated a short file as success. `!ifs && !ifs.eof()` let a
+    // stream that ended early pass, so the caller's buffer kept whatever it held
+    // beyond the bytes the file actually provided, and the loader decoded it as
+    // though it were real data.
+    TEST(FileStorageBackendTest, ShortReadIsRejected) {
+        const auto path = std::filesystem::temp_directory_path() / "nova_ckpt_short_read_test";
+        std::filesystem::remove_all(path);
+        FileStorageBackend backend(path.string());
+
+        const std::string payload = "0123456789";
+        backend.write("short.bin", payload.data(), payload.size());
+
+        std::vector<char> buffer(payload.size(), '\x7f');
+        EXPECT_NO_THROW(backend.read("short.bin", buffer.data(), payload.size()));
+
+        // Ask for more than the file holds: the tail of the buffer must not be
+        // silently accepted as file content.
+        std::vector<char> oversized(payload.size() + 8, '\x7f');
+        EXPECT_THROW(backend.read("short.bin", oversized.data(), oversized.size()), std::runtime_error);
+
+        std::filesystem::remove_all(path);
+    }
+
+    // Regression: checkpoints are directories, and fs::remove() throws
+    // "Directory not empty" on a non-empty one. The rotation path therefore threw
+    // the moment a save exceeded max_checkpoints_to_keep and left every checkpoint
+    // on disk. A probe against the old code: saving steps 0..5 with a keep of 3
+    // threw at step 3 and reported six checkpoints still present.
+    TEST(CheckpointManagerTest, RotationKeepsTheNewestAndDeletesTheRest) {
+        const auto path = std::filesystem::temp_directory_path() / "nova_ckpt_rotation_test";
+        std::filesystem::remove_all(path);
+
+        auto& manager = CheckpointManager::instance();
+        manager.initialize(std::make_shared<FileStorageBackend>(path.string()), nullptr);
+        manager.set_max_checkpoints_to_keep(3);
+
+        const auto model = sample_tensors();
+        const auto optimizer = sample_tensors();
+
+        for (int step = 0; step <= 5; ++step) {
+            EXPECT_NO_THROW(manager.save_checkpoint(step, model, optimizer)) << "saving step " << step << " must not throw";
+        }
+
+        const std::vector<int> remaining = manager.available_checkpoints();
+        std::vector<int> expected = {3, 4, 5};
+        EXPECT_EQ(remaining, expected) << "the three newest checkpoints must survive rotation";
+
+        // The survivors must still load: deleting the right directories is only half
+        // the contract, and a recursive remove of the wrong one would leave
+        // directories that exist but cannot be read.
+        std::map<std::string, std::vector<float>> loaded_model;
+        std::map<std::string, std::vector<float>> loaded_optimizer;
+        EXPECT_TRUE(manager.load_checkpoint("ckpt_5", loaded_model, loaded_optimizer));
+        EXPECT_EQ(loaded_model.size(), model.size());
+
+        manager.set_max_checkpoints_to_keep(3);
+        std::filesystem::remove_all(path);
+    }
+
+    // Regression: the loader read lengths out of the blob and memcpy'd straight past
+    // the end of the buffer. A truncated blob is caught by the backend (a short read
+    // throws) and reported as "cannot load". This case covers the other shape: a
+    // blob whose own prefix agrees with the buffer while a length INSIDE it does
+    // not, which is what a corrupted file looks like and what used to run off the
+    // end of the allocation.
+    TEST(CheckpointManagerTest, InconsistentInnerLengthIsRejectedInsteadOfOverRead) {
+        auto& manager = CheckpointManager::instance();
+        auto backend = std::make_shared<InMemoryBackend>();
+        manager.initialize(backend, nullptr);
+        manager.set_max_checkpoints_to_keep(100);
+
+        manager.save_checkpoint(1, sample_tensors(), sample_tensors());
+
+        // Layout: [8-byte payload length][8-byte first name length][name...]. Claim a
+        // name longer than the whole blob; the decoder must refuse rather than
+        // construct a string from bytes that are not there.
+        backend->overwrite_length("ckpt_1/model.bin", sizeof(size_t), 1u << 20);
+
+        std::map<std::string, std::vector<float>> loaded_model;
+        std::map<std::string, std::vector<float>> loaded_optimizer;
+        EXPECT_FALSE(manager.load_checkpoint("ckpt_1", loaded_model, loaded_optimizer));
+        EXPECT_TRUE(loaded_model.empty()) << "a rejected load must not leave partial tensors in the caller's map";
+    }
+
+    // The outer length prefix claiming more payload than the blob holds: caught by the
+    // decoder's first check, before any field is read.
+    TEST(CheckpointManagerTest, InconsistentPayloadLengthIsRejected) {
+        auto& manager = CheckpointManager::instance();
+        auto backend = std::make_shared<InMemoryBackend>();
+        manager.initialize(backend, nullptr);
+        manager.set_max_checkpoints_to_keep(100);
+
+        manager.save_checkpoint(2, sample_tensors(), sample_tensors());
+        backend->overwrite_length("ckpt_2/model.bin", 0, 1u << 20);
+
+        std::map<std::string, std::vector<float>> loaded_model;
+        std::map<std::string, std::vector<float>> loaded_optimizer;
+        EXPECT_FALSE(manager.load_checkpoint("ckpt_2", loaded_model, loaded_optimizer));
+    }
+
+    // A truncated blob must be reported as unloadable, not thrown out of a function
+    // whose contract is a bool, and it must not leave a half-decoded model behind.
+    TEST(CheckpointManagerTest, TruncatedBlobIsReportedAsUnloadable) {
+        auto& manager = CheckpointManager::instance();
+        auto backend = std::make_shared<InMemoryBackend>();
+        manager.initialize(backend, nullptr);
+        manager.set_max_checkpoints_to_keep(100);
+
+        std::map<std::string, std::vector<float>> model;
+        for (int i = 0; i < 8; ++i) {
+            model["w" + std::to_string(i)] = std::vector<float>(4, static_cast<float>(i));
+        }
+        model["big"] = std::vector<float>(256, 7.0f);
+        manager.save_checkpoint(3, model, sample_tensors());
+
+        backend->truncate("ckpt_3/model.bin", 16);
+
+        std::map<std::string, std::vector<float>> loaded_model;
+        std::map<std::string, std::vector<float>> loaded_optimizer;
+        bool loaded = true;
+        EXPECT_NO_THROW(loaded = manager.load_checkpoint("ckpt_3", loaded_model, loaded_optimizer));
+        EXPECT_FALSE(loaded) << "a truncated checkpoint must be rejected, not half-decoded";
+        EXPECT_TRUE(loaded_model.empty()) << "a rejected load must not leave partial tensors in the caller's map";
+        EXPECT_TRUE(loaded_optimizer.empty()) << "a rejected load must not touch the optimizer map either";
     }
 
 }  // namespace nova::checkpoint::test

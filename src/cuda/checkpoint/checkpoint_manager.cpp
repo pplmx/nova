@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
+#include <limits>
+#include <map>
 #include <openssl/sha.h>
 
 namespace nova::checkpoint {
@@ -75,8 +77,17 @@ namespace nova::checkpoint {
             throw std::runtime_error("Failed to open file for reading: " + full_path);
         }
         ifs.read(static_cast<char*>(data), static_cast<std::streamsize>(size));
+        // A short read is a failure, not an end of file to be tolerated. `!ifs &&
+        // !ifs.eof()` let a file shorter than the caller asked for return
+        // successfully with the tail of `data` untouched, so a truncated blob
+        // reached the decoder looking like a complete one. Both failure modes now
+        // throw: reading less than was promised means the caller's buffer is not
+        // what the file says it should be.
         if (!ifs && !ifs.eof()) {
             throw std::runtime_error("Failed to read file: " + full_path);
+        }
+        if (ifs.eof() && size > 0 && static_cast<size_t>(ifs.gcount()) < size) {
+            throw std::runtime_error("Short read from " + full_path + ": wanted " + std::to_string(size) + " bytes, got " + std::to_string(static_cast<size_t>(ifs.gcount())));
         }
     }
 
@@ -85,7 +96,18 @@ namespace nova::checkpoint {
     }
 
     void FileStorageBackend::remove(const std::string& path) {
-        fs::remove(impl_->resolve_path(path));
+        // Checkpoints are DIRECTORIES holding model.bin, optimizer.bin and
+        // manifest.txt. fs::remove() on a non-empty directory throws
+        // ("Directory not empty"), so the rotate-old-checkpoints path could never
+        // remove one: saving past max_checkpoints_to_keep threw and left every
+        // checkpoint on disk. remove() is the backend's recursive delete, which is
+        // what a checkpoint directory needs.
+        auto full_path = impl_->resolve_path(path);
+        std::error_code ec;
+        fs::remove_all(full_path, ec);
+        if (ec) {
+            throw std::runtime_error("Failed to remove " + full_path + ": " + ec.message());
+        }
     }
 
     std::vector<std::string> FileStorageBackend::list(const std::string& dir) const {
@@ -288,6 +310,119 @@ namespace nova::checkpoint {
         cleanup_old_checkpoints();
     }
 
+    namespace {
+
+        /// True when `count` bytes at `offset` are inside `blob`.
+        bool in_bounds(const std::vector<char>& blob, size_t offset, size_t count) {
+            return offset <= blob.size() && count <= blob.size() - offset;
+        }
+
+        /**
+         * Decode the tensor stream written by save_checkpoint() into `out`.
+         *
+         * Every field is a length or a count taken from the file, so each one is a
+         * promise the file makes about bytes that follow. This validated each read
+         * against the buffer. It did not before: a blob truncated mid-tensor — a
+         * killed process, a full disk, a partial copy — had its lengths read and
+         * then `memcpy`'d straight past the end of the buffer. AddressSanitizer on a
+         * checkpoint truncated to half its length reports
+         *
+         *     READ of size 4 ... heap-buffer-overflow
+         *     checkpoint_manager.cpp:349 in CheckpointManager::load_checkpoint
+         *
+         * and on a shorter truncation the same code silently returned true with a
+         * tensor built from whatever followed the allocation. A checkpoint that
+         * cannot be decoded must be rejected, not half-applied.
+         *
+         * @return true when the whole stream decoded, false when it is malformed.
+         */
+        bool decode_tensor_stream(const std::vector<char>& blob, std::map<std::string, std::vector<float>>& out) {
+            if (blob.size() < sizeof(size_t)) {
+                return false;
+            }
+
+            size_t data_size = 0;
+            std::memcpy(&data_size, blob.data(), sizeof(size_t));
+            // The prefix is what save_checkpoint() wrote as the payload length, so a
+            // stream claiming more bytes than the blob holds is inconsistent even
+            // before the first field is read.
+            if (!in_bounds(blob, sizeof(size_t), data_size)) {
+                return false;
+            }
+
+            size_t offset = sizeof(size_t);
+            const size_t end = sizeof(size_t) + data_size;
+
+            while (offset < end) {
+                size_t name_size = 0;
+                if (!in_bounds(blob, offset, sizeof(size_t))) {
+                    return false;
+                }
+                std::memcpy(&name_size, blob.data() + offset, sizeof(size_t));
+                offset += sizeof(size_t);
+                if (!in_bounds(blob, offset, name_size)) {
+                    return false;
+                }
+                std::string name(blob.data() + offset, name_size);
+                offset += name_size;
+
+                size_t shape_size = 0;
+                if (!in_bounds(blob, offset, sizeof(size_t))) {
+                    return false;
+                }
+                std::memcpy(&shape_size, blob.data() + offset, sizeof(size_t));
+                offset += sizeof(size_t);
+                if (shape_size % sizeof(int64_t) != 0 || !in_bounds(blob, offset, shape_size)) {
+                    return false;
+                }
+                std::vector<int64_t> shape(shape_size / sizeof(int64_t));
+                if (shape_size > 0) {
+                    std::memcpy(shape.data(), blob.data() + offset, shape_size);
+                }
+                offset += shape_size;
+
+                int dtype = 0;
+                if (!in_bounds(blob, offset, sizeof(int))) {
+                    return false;
+                }
+                std::memcpy(&dtype, blob.data() + offset, sizeof(int));
+                offset += sizeof(int);
+
+                // The element count is a product of dimensions read from the file, so
+                // it can overflow before it is ever compared against the buffer. Detect
+                // the wrap rather than computing a small count from a huge shape.
+                size_t elements = 1;
+                for (const auto dim : shape) {
+                    if (dim < 0) {
+                        return false;
+                    }
+                    const auto udim = static_cast<size_t>(dim);
+                    if (udim != 0 && elements > std::numeric_limits<size_t>::max() / udim) {
+                        return false;
+                    }
+                    elements *= udim;
+                }
+                if (elements > std::numeric_limits<size_t>::max() / sizeof(float)) {
+                    return false;
+                }
+                const size_t bytes = elements * sizeof(float);
+                if (!in_bounds(blob, offset, bytes)) {
+                    return false;
+                }
+                std::vector<float> data(elements);
+                if (bytes > 0) {
+                    std::memcpy(data.data(), blob.data() + offset, bytes);
+                }
+                offset += bytes;
+
+                out[name] = std::move(data);
+            }
+
+            return offset == end;
+        }
+
+    }  // namespace
+
     bool CheckpointManager::load_checkpoint(const std::string& path,
                                             std::map<std::string, std::vector<float>>& model_params,
                                             std::map<std::string, std::vector<float>>& optimizer_states) {
@@ -302,104 +437,42 @@ namespace nova::checkpoint {
         // than the local filesystem. Bypassing it here meant anything saved to a
         // non-file backend could never be loaded.
         std::vector<char> model_file;
-        {
+        std::vector<char> optimizer_file;
+        try {
             // The backend owns the blobs; ask it how big they are by reading the
             // 8-byte length prefix, then read the whole thing. Probing with a raw
             // std::ifstream made every non-filesystem backend unloadable.
+            //
+            // The backend throws on a short or unreadable blob, which for a
+            // checkpoint that exists but is damaged is the same answer as a malformed
+            // stream: it cannot be loaded. Turning that into `false` here keeps the
+            // documented contract of this function (a bool) instead of letting a
+            // backend-specific exception escape into the caller's training loop.
             size_t model_size = 0;
             impl.backend->read(path + "/model.bin", &model_size, sizeof(size_t));
             model_file.resize(sizeof(size_t) + model_size);
             impl.backend->read(path + "/model.bin", model_file.data(), model_file.size());
-        }
 
-        if (model_file.size() < sizeof(size_t)) {
-            return false;
-        }
-
-        size_t data_size;
-        std::memcpy(&data_size, model_file.data(), sizeof(size_t));
-        size_t offset = sizeof(size_t);
-        size_t model_end = sizeof(size_t) + data_size;
-        while (offset < model_end) {
-            size_t name_size;
-            std::memcpy(&name_size, model_file.data() + offset, sizeof(size_t));
-            offset += sizeof(size_t);
-
-            std::string name(model_file.data() + offset, name_size);
-            offset += name_size;
-
-            size_t shape_size;
-            std::memcpy(&shape_size, model_file.data() + offset, sizeof(size_t));
-            offset += sizeof(size_t);
-
-            std::vector<int64_t> shape(shape_size / sizeof(int64_t));
-            std::memcpy(shape.data(), model_file.data() + offset, shape_size);
-            offset += shape_size;
-
-            int dtype;
-            std::memcpy(&dtype, model_file.data() + offset, sizeof(int));
-            offset += sizeof(int);
-
-            size_t tensor_size = 1;
-            for (auto dim : shape) {
-                tensor_size *= dim;
-            }
-
-            std::vector<float> data(tensor_size);
-            std::memcpy(data.data(), model_file.data() + offset, tensor_size * sizeof(float));
-            offset += tensor_size * sizeof(float);
-
-            model_params[name] = std::move(data);
-        }
-
-        std::vector<char> optimizer_file;
-        {
             size_t optimizer_size = 0;
             impl.backend->read(path + "/optimizer.bin", &optimizer_size, sizeof(size_t));
             optimizer_file.resize(sizeof(size_t) + optimizer_size);
             impl.backend->read(path + "/optimizer.bin", optimizer_file.data(), optimizer_file.size());
-        }
-
-        if (optimizer_file.size() < sizeof(size_t)) {
+        } catch (const std::exception&) {
             return false;
         }
 
-        size_t opt_data_size;
-        std::memcpy(&opt_data_size, optimizer_file.data(), sizeof(size_t));
-        offset = sizeof(size_t);
-        size_t opt_end = sizeof(size_t) + opt_data_size;
-        while (offset < opt_end) {
-            size_t name_size;
-            std::memcpy(&name_size, optimizer_file.data() + offset, sizeof(size_t));
-            offset += sizeof(size_t);
-
-            std::string name(optimizer_file.data() + offset, name_size);
-            offset += name_size;
-
-            size_t shape_size;
-            std::memcpy(&shape_size, optimizer_file.data() + offset, sizeof(size_t));
-            offset += sizeof(size_t);
-
-            std::vector<int64_t> shape(shape_size / sizeof(int64_t));
-            std::memcpy(shape.data(), optimizer_file.data() + offset, shape_size);
-            offset += shape_size;
-
-            int dtype;
-            std::memcpy(&dtype, optimizer_file.data() + offset, sizeof(int));
-            offset += sizeof(int);
-
-            size_t tensor_size = 1;
-            for (auto dim : shape) {
-                tensor_size *= dim;
-            }
-
-            std::vector<float> data(tensor_size);
-            std::memcpy(data.data(), optimizer_file.data() + offset, tensor_size * sizeof(float));
-            offset += tensor_size * sizeof(float);
-
-            optimizer_states[name] = std::move(data);
+        // Decode into temporaries and only then move them into the caller's maps. A
+        // checkpoint that fails half way through used to leave the model half
+        // replaced and the optimizer untouched, which looks like a successful load
+        // that silently lost tensors.
+        std::map<std::string, std::vector<float>> decoded_model;
+        std::map<std::string, std::vector<float>> decoded_optimizer;
+        if (!decode_tensor_stream(model_file, decoded_model) || !decode_tensor_stream(optimizer_file, decoded_optimizer)) {
+            return false;
         }
 
+        model_params = std::move(decoded_model);
+        optimizer_states = std::move(decoded_optimizer);
         return true;
     }
 
