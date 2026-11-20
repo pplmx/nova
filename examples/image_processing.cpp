@@ -83,6 +83,32 @@ bool save_pgm(const std::string& path, const PGMImage& img) {
     return out.good();
 }
 
+// Write a synthetic test image. The README documented `--generate` but no such
+// option existed, so the quick-start command failed with "cannot open input.pgm"
+// and the example could not be tried end to end without hand-writing a PGM.
+// A checks-and-gradients pattern is used because it produces strong edges, which
+// makes a Sobel output visibly different from the input.
+bool write_test_pattern(const std::string& path, size_t width, size_t height) {
+    PGMImage img;
+    img.width = width;
+    img.height = height;
+    img.data.resize(width * height);
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            const bool checker = (((x / 8) + (y / 8)) % 2) == 0;
+            const unsigned char base = checker ? 200 : 40;
+            // A diagonal ramp so the image is not only high-frequency.
+            const auto ramp = static_cast<unsigned char>((x * 255) / (width > 1 ? width - 1 : 1));
+            img.data[y * width + x] = static_cast<unsigned char>((base + ramp) / 2);
+        }
+    }
+    if (!save_pgm(path, img)) {
+        return false;
+    }
+    printf("Wrote %zux%zu test pattern to %s\n", width, height, path.c_str());
+    return true;
+}
+
 void print_usage(const char* prog) {
     printf("Usage: %s [options]\n", prog);
     printf("Options:\n");
@@ -91,11 +117,13 @@ void print_usage(const char* prog) {
     printf("  --output <file>    Output image (PGM)\n");
     printf("  --kernel <name>    Kernel: sobel, blur, morphology\n");
     printf("  --iterations <n>   Number of iterations (positive int)\n");
+    printf("  --generate <WxH>   Write a synthetic test pattern to --input and exit\n");
 }
 
 // Returns 1 on --help (exit 0), 0 on success, -1 on error (exit 1).
 int parse_args(int argc, char** argv, std::string& input, std::string& output,
-               std::string& kernel, int& iterations) {
+               std::string& kernel, int& iterations, int& gen_width,
+               int& gen_height) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
@@ -107,6 +135,20 @@ int parse_args(int argc, char** argv, std::string& input, std::string& output,
             output = argv[++i];
         } else if (strcmp(argv[i], "--kernel") == 0 && i + 1 < argc) {
             kernel = argv[++i];
+        } else if (strcmp(argv[i], "--generate") == 0 && i + 1 < argc) {
+            const char* spec = argv[++i];
+            int w = 0;
+            int h = 0;
+            char trailing = 0;
+            if (sscanf(spec, "%dx%d%c", &w, &h, &trailing) != 2 || w <= 0 || h <= 0 ||
+                w > 8192 || h > 8192) {
+                fprintf(stderr,
+                        "Error: --generate expects <width>x<height> with both in "
+                        "1..8192, got '%s'\n", spec);
+                return -1;
+            }
+            gen_width = w;
+            gen_height = h;
         } else if (strcmp(argv[i], "--iterations") == 0 && i + 1 < argc) {
             char* end = nullptr;
             const long v = strtol(argv[++i], &end, 10);
@@ -139,10 +181,20 @@ int main(int argc, char** argv) {
     std::string output = "output.pgm";
     std::string kernel = "sobel";
     int iterations = 1;
+    int gen_width = 0;
+    int gen_height = 0;
 
-    const int parse = parse_args(argc, argv, input, output, kernel, iterations);
+    const int parse = parse_args(argc, argv, input, output, kernel, iterations,
+                                 gen_width, gen_height);
     if (parse < 0) return 1;
     if (parse > 0) return 0;
+
+    // Writing the pattern is the whole job when --generate is given; processing it
+    // in the same invocation would hide which half failed.
+    if (gen_width > 0 && gen_height > 0) {
+        return write_test_pattern(input, static_cast<size_t>(gen_width),
+                                  static_cast<size_t>(gen_height)) ? 0 : 1;
+    }
 
     PGMImage in_img;
     if (!load_pgm(input, in_img)) return 1;

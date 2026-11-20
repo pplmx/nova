@@ -45,13 +45,16 @@ Demonstrates CUDA image kernels with embedded PGM (P5 binary) IO:
 - Morphological dilation (`dilateImage`)
 
 ```bash
-# Process an existing PGM:
+# Write a synthetic test pattern first -- there is no bundled input image:
+./build/bin/image_processing --generate 64x48 --input in.pgm
+
+# Then process it:
 ./build/bin/image_processing --input in.pgm --output out.pgm --kernel sobel
 ./build/bin/image_processing --input in.pgm --output out.pgm --kernel blur --iterations 2
 ```
 
 Options: `--kernel sobel|blur|morphology`, `--input`, `--output`, `--iterations`,
-`--help`. An unknown `--kernel` is rejected before any device work (the old
+`--generate <WIDTH>x<HEIGHT>`, `--help`. An unknown `--kernel` is rejected before any device work (the old
 example silently no-op'ed and saved garbage). The example embeds its own
 minimal PGM (P5 binary) reader/writer.
 
@@ -126,7 +129,8 @@ Ensure `CUDA_VISIBLE_DEVICES` is set to a device that is actually free:
 
 ```bash
 nvidia-smi                                # pick a free device
-CUDA_VISIBLE_DEVICES=1 ./build/bin/image_processing --generate ...
+CUDA_VISIBLE_DEVICES=1 ./build/bin/image_processing --generate 64x48 --input in.pgm
+CUDA_VISIBLE_DEVICES=1 ./build/bin/image_processing --input in.pgm --output out.pgm --kernel sobel
 ```
 
 ### The distributed example exits with an NCCL error
