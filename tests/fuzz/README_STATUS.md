@@ -14,32 +14,37 @@ APIs change. This round checked each one and fixed what was broken.
 
 All three now compile.
 
-## Compiles, not registered
+## Fuzz targets: build state
 
-| File                              | Entry point              |
-| --------------------------------- | ------------------------ |
-| `tests/fuzz/algorithm_fuzz.cpp`   | `LLVMFuzzerTestOneInput` |
-| `tests/fuzz/matmul_fuzz.cpp`      | `LLVMFuzzerTestOneInput` |
-| `tests/fuzz/memory_pool_fuzz.cpp` | `LLVMFuzzerTestOneInput` |
+All three build and run under `-DNOVA_BUILD_FUZZ_TESTS=ON` with a Clang toolchain, driven
+by libFuzzer. That was not true before round 5: the option silently skipped the targets on
+any compiler without Clang, the runtime check searched for a file name no distribution
+ships, and the targets never linked the sanitizer runtime. The details are in the commit
+that fixed them.
 
-"Compiles" is the whole claim — see the Fuzz targets section below for what each one does when
-it runs, which is not the same thing.
+"Builds and runs" is not the same as "tests the library". See below for what each one
+actually does.
 
 The three property tests are registered now: each has its own `main` and is built as its own
 executable with its own ctest entry (`property_algorithmic`, `property_mathematical`,
 `property_numerical`).
 
-## Fuzz targets
+## Fuzz targets: what each one tests
 
-Only one of the three is worth a driver.
+Two of the three are worth a driver.
 
-| File                              | State                                                                                                                            |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/fuzz/algorithm_fuzz.cpp`   | Calls the library (`cuda::algo::reduce_sum`, scan, sort). Needs a libFuzzer driver.                                              |
-| `tests/fuzz/matmul_fuzz.cpp`      | Calls nothing from nova — it multiplies with its own triple loop and checks that loop's output. Fuzzing it fuzzes this file.     |
-| `tests/fuzz/memory_pool_fuzz.cpp` | Broken: `memset()` on a `cudaMalloc` pointer from the host. Would crash the harness, not the pool. Also never uses `MemoryPool`. |
+| File                              | State                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/fuzz/algorithm_fuzz.cpp`   | Calls the library (`cuda::algo::reduce_sum`, scan, sort) and checks each result.                                                                              |
+| `tests/fuzz/matmul_fuzz.cpp`      | Calls nothing from nova — it multiplies with its own triple loop and checks that loop's output. Fuzzing it fuzzes this file.                                  |
+| `tests/fuzz/memory_pool_fuzz.cpp` | Calls `MemoryPool` (`allocate` / `deallocate` / `defragment` / `get_metrics`) over a fuzzed sequence of operations, and checks its invariants after each one. |
 
-Each of the two has a note at the top of the file saying the same thing.
+`matmul_fuzz.cpp` carries a note at the top saying the same thing.
+
+`algorithm_fuzz.cpp` caps its input at 1024 elements, which is exactly `MAX_SCAN_SIZE`:
+raising it would only make the scan branch reject, and bitonicSort's own 1024-element limit
+was raised in round 5 by changing its launch shape. The cap is a property of the harness, not
+of the three operations (reduce and bitonic sort both accept more).
 
 ## Dead
 
@@ -48,6 +53,5 @@ Each of the two has a note at the top of the file saying the same thing.
 | `tests/test_matrix.cpp` | two of its four cases call `addMatricesOnGPU`, removed from the tree; its multiply cases do match the current `multiplyMatricesOnGPU` |
 | `tests/test_my_lib.cpp` | includes `my_lib.h`, which is not in the tree; a gtest tutorial template                                                              |
 
-All four files carry a note at the top saying so. Removing them, and giving
-`algorithm_fuzz.cpp` a driver, are decisions for the maintainer. This file records the state
-rather than making those choices silently.
+All four files carry a note at the top saying so. Removing them is a decision for the
+maintainer. This file records the state rather than making those choices silently.
