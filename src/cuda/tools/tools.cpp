@@ -84,6 +84,13 @@ namespace cuda::tools {
     }
 
     int SharedMemoryAnalyzer::suggest_padding(int data_type_size, int num_elements) {
+        // The switch actually gates the suggestion. enable_padding_hints() used to store
+        // the flag and nothing read it, so a caller who turned hints off still got a
+        // padding figure back and had no way to tell the setting had not taken.
+        if (!padding_hints_enabled_) {
+            return 0;
+        }
+
         int num_banks = 32;
         int stride = num_banks;
         int padding = 0;

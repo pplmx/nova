@@ -36,8 +36,13 @@ namespace cuda::tools {
 
         int suggest_padding(int data_type_size, int num_elements);
 
+        /// Turn padding suggestions on or off.
+        ///
+        /// When disabled, suggest_padding() returns 0 rather than computing a figure the
+        /// caller asked not to receive.
         void enable_padding_hints(bool enable);
-        bool is_padding_hints_enabled() const { return padding_hints_enabled_; }
+
+        [[nodiscard]] bool is_padding_hints_enabled() const { return padding_hints_enabled_; }
 
     private:
         SharedMemoryAnalyzer() = default;

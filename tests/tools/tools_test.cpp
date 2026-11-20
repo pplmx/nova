@@ -184,4 +184,22 @@ namespace cuda::tools::test {
         EXPECT_EQ(traces.size(), 2);
     }
 
+    // The existing hint case only checked that enable_padding_hints() and
+    // is_padding_hints_enabled() agree with each other, which they always did: the flag was
+    // stored and read by its own accessor and by nothing else. suggest_padding() is the
+    // function that produces a padding hint, and it never consulted the switch.
+    TEST_F(ToolsTest, DisablingPaddingHintsStopsSuggestPaddingFromSuggesting) {
+        SharedMemoryAnalyzer& analyzer = SharedMemoryAnalyzer::instance();
+
+        analyzer.enable_padding_hints(true);
+        const int with_hints = analyzer.suggest_padding(4, 1024);
+        EXPECT_GT(with_hints, 0) << "a layout that conflicts should get a non-zero suggestion";
+
+        analyzer.enable_padding_hints(false);
+        EXPECT_EQ(analyzer.suggest_padding(4, 1024), 0) << "hints are disabled, so no padding should be suggested";
+
+        // Restore, since this is a singleton and other cases use it.
+        analyzer.enable_padding_hints(true);
+    }
+
 }  // namespace cuda::tools::test
