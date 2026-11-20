@@ -76,6 +76,36 @@ ctest --test-dir build-coverage -j16
 bash ./scripts/coverage/coverage_summary.sh build-coverage
 ```
 
+## Reading a failing local run
+
+A parallel `ctest` run on a machine with other GPU work reports failures that
+say nothing about the code. Measured on this host, 2506 tests:
+
+| Run                                    | Failures |
+| -------------------------------------- | -------- |
+| `-j32`, four GPUs, all shared          | 30       |
+| `-j6`, three GPUs with no other tenant | 10       |
+| those 10, alone on one GPU             | 0        |
+
+The ten are all in three inference suites (`ChunkedPrefillTest`,
+`LongPromptIntegrationTest`, `BeamSpeculativeIntegrationTest`), and they pass
+17/17 when nothing else is allocating on the device. Their assertion output is
+a `cudaMalloc` failure from `include/cuda/memory/buffer-inl.h`, not a wrong
+value. Before treating a failure as a defect, re-run that one case alone:
+
+```bash
+CUDA_VISIBLE_DEVICES=N ./bin/nova-tests --gtest_filter='Suite.Case'
+```
+
+Cases that compare device-wide memory across time cannot be made reliable this
+way, so they are excluded from the parallel discovery set and registered with
+`RUN_SERIAL` instead: `RobustnessProfileSerialTest`, `TensorParallelSerialTest`,
+`BufferSerialTest`, `UniquePtrSerialTest`, `MemoryMetricsSerialTest`. They still
+need a device with no other tenant, because `cudaMemGetInfo` aggregates every
+process; a neighbour moving free memory between two samples is indistinguishable
+from a leak. Nothing in the build can detect that condition, so if one of them
+fails, check what else is on the device before reading anything into it.
+
 ## Release workflows
 
 Three workflows respond to a version tag, and all three were dead until the
