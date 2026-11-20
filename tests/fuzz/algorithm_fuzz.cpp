@@ -6,9 +6,25 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace nova {
     namespace fuzz {
+
+        namespace {
+            /// Report a violated invariant.
+            ///
+            /// libFuzzer ignores LLVMFuzzerTestOneInput's return value: only a signal or
+            /// an explicit abort is a finding. Every check below used to `return 1` with
+            /// a comment saying "Crash on error", so a disagreement between the library
+            /// and its own definition was counted as a successful run. Same defect as
+            /// memory_pool_fuzz.cpp had.
+            [[noreturn]] void fail(const char* what) {
+                std::fprintf(stderr, "algorithm_fuzz: invariant violated: %s\n", what);
+                std::abort();
+            }
+        }  // namespace
 
         extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             FuzzedDataProvider provider(data, size);
@@ -43,7 +59,7 @@ namespace nova {
                         const float result = cuda::algo::reduce_sum(d_input.data(), count);
                         (void)result;
                     } catch (...) {
-                        return 1;  // Crash on error
+                        fail("the library threw on fuzzed input");
                     }
                     break;
                 }
@@ -75,10 +91,10 @@ namespace nova {
                             return 0;
                         }
                         if (std::fabs(scanned[count - 1] - expected) > 1e-3F * std::max(1.0F, std::fabs(expected))) {
-                            return 1;  // Inclusive scan disagrees with the total
+                            fail("inclusive scan disagrees with the total");
                         }
                     } catch (...) {
-                        return 1;
+                        fail("the library threw on fuzzed input");
                     }
                     break;
                 }
@@ -94,13 +110,38 @@ namespace nova {
 
                         std::vector<float> sorted(count);
                         d_out.copy_to(sorted.data(), count);
+
+                        // Ordered is not sufficient. A sort that writes nothing leaves
+                        // the output buffer as it allocated it -- zeroed -- and an
+                        // all-zero vector is ordered, so the check below passed a
+                        // bitonicSort whose final copy had been deleted (measured:
+                        // sorted[0] stayed 0.0 for a descending 9-element input). Two
+                        // properties together are what "sorted" means:
+                        //
+                        //   ordered, and a permutation of the input.
+                        //
+                        // NaN defeats both comparisons, so an input containing one is
+                        // skipped rather than reported: the library's NaN policy is a
+                        // separate contract, not this target's subject.
+                        for (const float v : input) {
+                            if (!std::isfinite(v)) {
+                                return 0;
+                            }
+                        }
                         for (size_t i = 1; i < count; ++i) {
                             if (sorted[i] < sorted[i - 1]) {
-                                return 1;  // Not sorted
+                                fail("bitonicSort output is not ordered");
+                            }
+                        }
+                        std::vector<float> want = input;
+                        std::sort(want.begin(), want.end());
+                        for (size_t i = 0; i < count; ++i) {
+                            if (sorted[i] != want[i]) {
+                                fail("bitonicSort output is not a permutation of its input");
                             }
                         }
                     } catch (...) {
-                        return 1;
+                        fail("the library threw on fuzzed input");
                     }
                     break;
                 }
