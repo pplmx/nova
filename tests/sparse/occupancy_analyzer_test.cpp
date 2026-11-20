@@ -49,14 +49,15 @@ namespace cuda::observability::test {
 
         /// A plain host function used as an opaque kernel handle.
         ///
-        /// This file is a .cpp, so it cannot define a __global__ function. It used to
-        /// pass this to the occupancy API on the reasoning that "the API returns an error
-        /// for a non-kernel pointer" and that error was harmless. Measured: the error is
-        /// cudaErrorInvalidResourceHandle and it is left in the thread's error state, so
-        /// the next unrelated CUDA call reads it -- in the full single-process run that was
-        /// HistogramBinsTest.Explicit256IsAccepted two suites later. The analyser now
-        /// clears the error it provokes (see OccupancyAnalyzer::analyze), which is what
-        /// makes this handle safe to use.
+        /// This file is a .cpp, so it cannot define a __global__ function, and the CUDA
+        /// occupancy API returns cudaErrorInvalidResourceHandle for a non-kernel pointer.
+        /// That is fine for what these tests check -- the device queries, the range walk,
+        /// the degradation on a bad device, and that the caller's device is restored --
+        /// because the error is a plain return value: measured, it does NOT survive into
+        /// the next CUDA call (a following cudaMalloc reports success). An earlier revision
+        /// of this comment blamed this handle for an unrelated failure two suites later;
+        /// that attribution was wrong, which was confirmed by reverting the probe and
+        /// finding the failure unchanged.
         void occupancy_probe_target() {}
 
     }  // namespace
