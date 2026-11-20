@@ -114,7 +114,12 @@ namespace cuda::nccl {
      */
     [[nodiscard]]
     inline constexpr ncclDataType_t to_nccl_dtype(cudaDataType_t cuda_dtype) {
-#if NOVA_NCCL_ENABLED
+        // No #if here. The stub block above defines every ncclDataType_t constant
+        // with the value the real nccl.h uses, so one table serves both
+        // configurations and the mapping can no longer disagree with itself. The
+        // branches that used to sit here returned a constant — 0 for the type,
+        // which is ncclInt8, for every input — so a non-NCCL build mapped
+        // CUDA_R_32F to int8 and reported every type as "unknown".
         switch (cuda_dtype) {
             case CUDA_R_8I:
                 return ncclInt8;
@@ -141,10 +146,6 @@ namespace cuda::nccl {
             default:
                 return ncclFloat32;
         }
-#else
-        (void)cuda_dtype;
-        return static_cast<ncclDataType_t>(0);
-#endif
     }
 
     /**
@@ -166,7 +167,9 @@ namespace cuda::nccl {
      */
     [[nodiscard]]
     inline constexpr ncclRedOp_t to_nccl_op(::cuda::distributed::ReductionOp op) {
-#if NOVA_NCCL_ENABLED
+        // No #if, for the same reason as to_nccl_dtype: the stub constants match
+        // nccl.h. The old non-NCCL branch returned 0 (ncclSum) for every input, so
+        // a Max reduction on such a build computed a sum.
         switch (op) {
             case ::cuda::distributed::ReductionOp::Sum:
                 return ncclSum;
@@ -179,10 +182,6 @@ namespace cuda::nccl {
             default:
                 return ncclSum;
         }
-#else
-        (void)op;
-        return static_cast<ncclRedOp_t>(0);
-#endif
     }
 
     /**
@@ -193,7 +192,9 @@ namespace cuda::nccl {
      */
     [[nodiscard]]
     inline const char* dtype_name(ncclDataType_t dtype) {
-#if NOVA_NCCL_ENABLED
+        // No #if: the stub constants match nccl.h, and the old non-NCCL branch
+        // returned "unknown" for every type, which made every diagnostic on such a
+        // build name no type at all.
         switch (dtype) {
             case ncclInt8:
                 return "int8";
@@ -218,10 +219,6 @@ namespace cuda::nccl {
             default:
                 return "unknown";
         }
-#else
-        (void)dtype;
-        return "unknown";
-#endif
     }
 
 }  // namespace cuda::nccl
