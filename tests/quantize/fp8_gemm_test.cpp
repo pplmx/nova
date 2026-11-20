@@ -149,7 +149,22 @@ namespace nova {
                 cudaFree(d_c);
             }
 
-            TEST_F(FP8GEMMTest, DISABLED_RandomMatrices) {
+            // Random inputs exercise the whole quantize-then-multiply path. The
+            // reference is built from the QUANTIZED inputs, not the originals.
+            //
+            // The two differ, and by a lot: E4M3 keeps 3 mantissa bits, so each
+            // operand is rounded by up to ~3% and the relative error of a
+            // k=16 dot product is heavy-tailed near cancellation -- measured
+            // worst case over 20000 random pairs, 553. It is bounded only by
+            // |sum| >= 1e-4, the guard below. Comparing against the unquantized
+            // product therefore cannot be made to pass with any tolerance that
+            // still means something, which is why this case sat DISABLED_ and
+            // reported a "2.12 > 2" failure when run.
+            //
+            // Against the quantized reference the kernel is exact: measured max
+            // relative error 0.000000, i.e. the GEMM computes sum(q(a)*q(b)) in
+            // fp32 with no drift of its own.
+            TEST_F(FP8GEMMTest, RandomMatrices) {
                 int m = 16, k = 16, n = 16;
 
                 std::vector<float> a(m * k), b(k * n), c_ref(m * n);
@@ -157,10 +172,20 @@ namespace nova {
                 fill_random_fp32(a, 1.0f);
                 fill_random_fp32(b, 1.0f);
 
-                reference_gemm(a.data(), b.data(), c_ref.data(), m, k, n);
-
                 auto a_fp8 = convert_to_fp8e4m3(a);
                 auto b_fp8 = convert_to_fp8e4m3(b);
+
+                // The GEMM never sees a[] and b[]; it sees their FP8 encodings. The
+                // reference has to start from the same values or it is comparing the
+                // kernel against a different problem.
+                std::vector<float> a_q(a.size()), b_q(b.size());
+                for (size_t i = 0; i < a.size(); ++i) {
+                    a_q[i] = static_cast<float>(a_fp8[i]);
+                }
+                for (size_t i = 0; i < b.size(); ++i) {
+                    b_q[i] = static_cast<float>(b_fp8[i]);
+                }
+                reference_gemm(a_q.data(), b_q.data(), c_ref.data(), m, k, n);
 
                 std::vector<float> c_gpu(m * n, 0.0f);
 
@@ -187,7 +212,9 @@ namespace nova {
                     max_rel_err = std::max(max_rel_err, rel_err);
                 }
 
-                EXPECT_LE(max_rel_err, 2.0f) << "Max relative error: " << max_rel_err;
+                // The measured value is 0 against this reference; 1e-5 leaves room for
+                // fp32 accumulation order without accepting a real deviation.
+                EXPECT_LE(max_rel_err, 1e-5f) << "Max relative error: " << max_rel_err;
 
                 cudaFree(d_a);
                 cudaFree(d_b);
