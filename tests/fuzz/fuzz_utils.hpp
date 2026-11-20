@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 
 namespace nova {
     namespace fuzz {
@@ -19,7 +20,19 @@ namespace nova {
                 if (remaining() < sizeof(T)) {
                     return T {};
                 }
-                T value = *reinterpret_cast<const T*>(data_ + offset_);
+                // memcpy, not a reinterpret_cast: offset_ advances by whatever the
+                // preceding ConsumeX() calls consumed, so data_ + offset_ carries no
+                // alignment guarantee. Dereferencing a T* there is undefined behaviour and
+                // UBSan reports it on every call --
+                //
+                //   runtime error: load of misaligned address ... for type
+                //   'const long unsigned int', which requires 8 byte alignment
+                //
+                // which is harmless on x86 and a fault on the strict-alignment targets this
+                // library also supports. memcpy of sizeof(T) bytes is defined for any
+                // alignment and compiles to the same single load.
+                T value {};
+                std::memcpy(&value, data_ + offset_, sizeof(T));
                 offset_ += sizeof(T);
                 return value;
             }
