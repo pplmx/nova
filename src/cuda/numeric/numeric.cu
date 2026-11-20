@@ -296,6 +296,21 @@ namespace cuda::numeric {
         result.y = memory::Buffer<float>(n);
         result.coeffs = memory::Buffer<float>(n * 4);
 
+        // Fewer than two points describe no segment. Without this the loop below runs
+        // `i < n - 1` with n == 0, i.e. i < SIZE_MAX, reading x[1..] past the end of the
+        // caller's arrays, and the closing write targets h_coeffs[4 * SIZE_MAX + i] on a
+        // malloc(0) block. Measured before the guard: the process dumped core.
+        //
+        // linear_interpolation next door already returns an empty coefficient buffer for
+        // n < 2; this mirrors it.
+        if (n < 2) {
+            if (n > 0) {
+                CUDA_CHECK(cudaMemcpy(result.x.data(), x, n * sizeof(float), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpy(result.y.data(), y, n * sizeof(float), cudaMemcpyHostToDevice));
+            }
+            return result;
+        }
+
         CUDA_CHECK(cudaMemcpy(result.x.data(), x, n * sizeof(float), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(result.y.data(), y, n * sizeof(float), cudaMemcpyHostToDevice));
 

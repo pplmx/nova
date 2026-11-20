@@ -197,4 +197,46 @@ namespace cuda::numeric::test {
         EXPECT_NEAR(coeffs[3], -1.0f, 1e-5f) << "intercept of the second segment";
     }
 
+    // Regression: cubic_spline_interpolation had no n < 2 guard, so n == 0 walked off
+    // the end of both input arrays and wrote the coefficients block at a wild offset.
+    //
+    //     for (size_t i = 0; i < n - 1; ++i)      // n == 0 -> n - 1 == SIZE_MAX
+    //
+    // The loop condition is not the only casualty:
+    //
+    //     h_coeffs[(n - 1) * 4 + i] = 0.0f;       // writes 4 * SIZE_MAX floats past a
+    //                                             // malloc(0) block
+    //
+    // linear_interpolation beside it already refused n < 2 (its underflow was fixed in an
+    // earlier round); the cubic path was never given the same treatment and had no test.
+    TEST(CubicSplineTest, FewerThanTwoPointsDescribeNoSegment) {
+        // Two points is the smallest input that describes a segment; below that there is
+        // nothing to interpolate and the call must say so rather than index past the input.
+        std::vector<float> x = {0.0f, 1.0f};
+        std::vector<float> y = {0.0f, 1.0f};
+
+        for (size_t n : {size_t {0}, size_t {1}}) {
+            auto result = cuda::numeric::cubic_spline_interpolation(x.data(), y.data(), n);
+            EXPECT_EQ(result.n, n);
+            EXPECT_EQ(result.coeffs.size(), n * 4) << "the coefficient buffer must match the requested size for n = " << n;
+        }
+    }
+
+    TEST(CubicSplineTest, InterpolatesTwoPointsAsAStraightLine) {
+        std::vector<float> x = {0.0f, 1.0f};
+        std::vector<float> y = {1.0f, 3.0f};
+
+        auto result = cuda::numeric::cubic_spline_interpolation(x.data(), y.data(), 2);
+        ASSERT_EQ(result.n, 2u);
+        ASSERT_EQ(result.coeffs.size(), 8u);
+
+        std::vector<float> coeffs(8);
+        result.coeffs.copy_to(coeffs.data(), 8);
+
+        // With a single segment the routine builds the linear form: slope (y1-y0)/h and
+        // intercept y0 in the first four slots.
+        EXPECT_NEAR(coeffs[2], 2.0f, 1e-5f) << "slope";
+        EXPECT_NEAR(coeffs[3], 1.0f, 1e-5f) << "intercept";
+    }
+
 }  // namespace cuda::numeric::test
