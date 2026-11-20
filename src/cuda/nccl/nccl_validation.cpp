@@ -139,20 +139,31 @@ namespace cuda::nccl {
         ValidationResult result;
         result.valid = true;
 
-        // Check version
+        // Both checks always run, and both contribute their warnings. Returning the
+        // first failing result discarded the other check's warnings entirely: a host
+        // that fails the version check also got no shared-memory advice, including
+        // the two "Docker users: ..." hints that are the actionable part of a
+        // /dev/shm failure. The caller then had to run validate_shared_memory()
+        // itself to find out it was also short on shared memory.
         auto version_result = validate_version();
-        if (!version_result) {
-            return version_result;
-        }
-        result.warnings.insert(result.warnings.end(), version_result.warnings.begin(), version_result.warnings.end());
-
-        // Check shared memory
         auto shm_result = validate_shared_memory();
-        if (!shm_result) {
-            return shm_result;
-        }
+
+        // A failure is reported with the message of the check that failed first, so
+        // the reason is unchanged from before; what is new is that the warnings from
+        // both checks survive.
+        const bool version_ok = static_cast<bool>(version_result);
+        const bool shm_ok = static_cast<bool>(shm_result);
+
+        result.warnings.insert(result.warnings.end(), version_result.warnings.begin(), version_result.warnings.end());
         result.warnings.insert(result.warnings.end(), shm_result.warnings.begin(), shm_result.warnings.end());
 
+        if (!version_ok || !shm_ok) {
+            result.valid = false;
+            result.message = !version_ok ? version_result.message : shm_result.message;
+            return result;
+        }
+
+        result.valid = true;
         result.message = "All NCCL prerequisites validated";
         return result;
     }
