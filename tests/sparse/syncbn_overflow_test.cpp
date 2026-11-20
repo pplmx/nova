@@ -51,12 +51,18 @@ namespace syncbn_overflow_test {
         // the size comes from the call arguments: 2 * 2 * 2^30 = 2^32, past INT_MAX.
         cuda::neural::SyncBatchNorm norm(/*num_features=*/2);
 
+        // Real one-element buffers rather than null pointers. The guard this case exercises
+        // runs before any launch, but backward() now rejects null buffers outright, and a
+        // null-pointer call is exactly what used to poison the context for every later case
+        // in the same process (see the file comment). Small buffers keep the case honest
+        // without depending on the fault path at all.
+        float placeholder = 0.0f;
         auto call = [&] {
-            norm.backward(nullptr,
-                          nullptr,
-                          nullptr,
-                          nullptr,
-                          nullptr,
+            norm.backward(&placeholder,
+                          &placeholder,
+                          &placeholder,
+                          &placeholder,
+                          &placeholder,
                           /*batch_size=*/2,
                           /*spatial_size=*/1073741824);
         };
@@ -71,16 +77,25 @@ namespace syncbn_overflow_test {
     }
 
     TEST_F(SyncBnOverflowTest, ACountInsideIntIsNotReportedAsAnOverflow) {
-        // 2 * 2 * 4 = 16. The guard must not fire here; whatever happens next is the null-buffer
-        // fault this file deliberately does not provoke, so only the message is inspected.
+        // 2 * 2 * 4 = 16 elements, which does not overflow. This case only checks that the
+        // overflow message is not raised; it says nothing about the launch that follows,
+        // and must not reach one -- see the file comment on why a null-buffer call here
+        // was the thing that broke every later case in the process.
         cuda::neural::SyncBatchNorm norm(/*num_features=*/2);
 
+        // A 16-element scratch buffer on the device, so a launch that does happen reads and
+        // writes real memory instead of address zero.
+        constexpr int kElements = 16;
+        float* d_scratch = nullptr;
+        ASSERT_EQ(cudaMalloc(&d_scratch, kElements * sizeof(float)), cudaSuccess);
+        ASSERT_EQ(cudaMemset(d_scratch, 0, kElements * sizeof(float)), cudaSuccess);
+
         auto call = [&] {
-            norm.backward(nullptr,
-                          nullptr,
-                          nullptr,
-                          nullptr,
-                          nullptr,
+            norm.backward(d_scratch,
+                          d_scratch,
+                          d_scratch,
+                          d_scratch,
+                          d_scratch,
                           /*batch_size=*/2,
                           /*spatial_size=*/4);
         };
@@ -93,6 +108,10 @@ namespace syncbn_overflow_test {
         }
         EXPECT_FALSE(reported_overflow) << "16 elements do not overflow int";
         (void)cudaGetLastError();
+
+        EXPECT_EQ(cudaDeviceSynchronize(), cudaSuccess) << "the launch must not fault: a sticky illegal access here would break every "
+                                                           "later case in this process";
+        EXPECT_EQ(cudaFree(d_scratch), cudaSuccess);
     }
 
 }  // namespace syncbn_overflow_test

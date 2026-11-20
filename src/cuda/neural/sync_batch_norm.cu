@@ -445,6 +445,21 @@ namespace cuda::neural {
                 + ::std::to_string(batch_size) + " spatial_size=" + ::std::to_string(spatial_size));
         }
 
+        // The buffers are not this function's to allocate, so a null one is caller error --
+        // but it was accepted and passed straight into the kernels below, which dereference
+        // it. On the device that is an illegal memory access, which is a STICKY error: the
+        // context never recovers for the rest of the process, so one such call makes every
+        // later test in the same process fail with "an illegal memory access was
+        // encountered" at whatever unrelated allocation it happens to reach first.
+        // Measured: this is how SyncBnOverflowTest.ACountInsideIntIsNotReportedAsAnOverflow
+        // (which passes six null pointers and expects only a message check) left the
+        // context poisoned for the cases that followed it.
+        if (input == nullptr || d_output == nullptr || d_input == nullptr || d_gamma == nullptr || d_beta == nullptr) {
+            throw ::std::invalid_argument(
+                "SyncBatchNorm::backward: input, d_output, d_input, d_gamma and d_beta must "
+                "all be non-null");
+        }
+
         // The element count below is an int product. This is the one failure mode here that would
         // not announce itself: an overflow makes n negative, every kernel's `if (idx >= n) return;`
         // then fires immediately, and the launch succeeds while doing nothing.

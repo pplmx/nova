@@ -53,7 +53,15 @@ namespace cuda::parallel::test {
         /// Owns a device buffer.
         class DeviceBuffer {
         public:
-            explicit DeviceBuffer(size_t bytes) { cudaMalloc(&ptr_, bytes); }
+            explicit DeviceBuffer(size_t bytes) {
+                // Checked: an unchecked cudaMalloc that fails leaves ptr_ null, and the
+                // next cudaMemset on it reports "invalid resource handle" from a line that
+                // has nothing to do with allocation.
+                const cudaError_t err = cudaMalloc(&ptr_, bytes);
+                if (err != cudaSuccess) {
+                    throw std::runtime_error(std::string("DeviceBuffer: cudaMalloc failed: ") + cudaGetErrorString(err));
+                }
+            }
 
             ~DeviceBuffer() {
                 if (ptr_ != nullptr) {
