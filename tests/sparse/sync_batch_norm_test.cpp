@@ -22,6 +22,7 @@
 
 #include <cuda/device/error.h>
 #include <cuda/neural/sync_batch_norm.h>
+#include <cuda/mesh/device_mesh.h>
 
 #include <gtest/gtest.h>
 
@@ -125,7 +126,31 @@ namespace cuda::neural::test {
     // below keep to invariants (centring, mirror symmetry, finiteness) that a
     // different reduction path cannot legitimately flip.
 
-    TEST(SyncBatchNormTrainingTest, NormalisesAConstantInputToZero) {
+    /// Fixture for the single-rank semantics below.
+    ///
+    /// forward() takes the distributed path whenever the process-wide mesh reports more
+    /// than one device, and that path is a COLLECTIVE: every rank must be in it at once. On
+    /// a multi-device host with communicators left initialised by an earlier NCCL test, a
+    /// single-threaded call does not merely produce a different answer -- it blocks
+    /// forever. Measured: the full NCCL-enabled single-process run reached 2095 cases and
+    /// hung here (killed at the timeout, exit 137).
+    ///
+    /// The paragraph above already described this hazard; the fixture enforces it. The
+    /// collective path has its own coverage in sync_batch_norm_test.cu, which drives it
+    /// with run_per_rank.
+    class SyncBatchNormTrainingTest : public ::testing::Test {
+    protected:
+        void SetUp() override {
+            auto& mesh = cuda::mesh::DeviceMesh::instance();
+            mesh.initialize();
+            if (mesh.device_count() > 1) {
+                GTEST_SKIP() << "single-rank semantics; the collective path needs one thread "
+                                "per rank and is covered by SyncBatchNormTest.MultiGpu_*";
+            }
+        }
+    };
+
+    TEST_F(SyncBatchNormTrainingTest, NormalisesAConstantInputToZero) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -149,7 +174,7 @@ namespace cuda::neural::test {
         }
     }
 
-    TEST(SyncBatchNormTrainingTest, NormalisesToZeroMeanAndUnitVariance) {
+    TEST_F(SyncBatchNormTrainingTest, NormalisesToZeroMeanAndUnitVariance) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -179,7 +204,7 @@ namespace cuda::neural::test {
         EXPECT_NEAR(sum_sq / 4.0f, 1.0f, 1e-4f) << "output variance";
     }
 
-    TEST(SyncBatchNormTrainingTest, FeatureStatisticsAreIndependent) {
+    TEST_F(SyncBatchNormTrainingTest, FeatureStatisticsAreIndependent) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -230,7 +255,7 @@ namespace cuda::neural::test {
         EXPECT_NEAR(output[1], 2.0f * inv_std, 1e-2f);
     }
 
-    TEST(SyncBatchNormTrainingTest, TrainingModeIsTheDefault) {
+    TEST_F(SyncBatchNormTrainingTest, TrainingModeIsTheDefault) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }

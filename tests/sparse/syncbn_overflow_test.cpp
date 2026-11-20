@@ -21,6 +21,7 @@
  */
 
 #include <cuda/neural/sync_batch_norm.h>
+#include <cuda/mesh/device_mesh.h>
 
 #include <gtest/gtest.h>
 
@@ -41,6 +42,26 @@ namespace syncbn_overflow_test {
 
     class SyncBnOverflowTest : public ::testing::Test {
     protected:
+        // backward() takes the distributed path whenever the process-wide mesh reports
+        // more than one device, and that path is a COLLECTIVE: every rank has to be in it
+        // at the same time. A single-threaded call blocks forever once an earlier NCCL
+        // test has left communicators initialised for the whole process -- measured: with
+        // NCCL_TESTS_AVAILABLE=1 and a preceding TensorParallelMultiGpuTest case, this
+        // suite hangs at ACountInsideIntIsNotReportedAsAnOverflow (exit 124); without the
+        // variable, or on one device, it passes.
+        //
+        // The cases here exercise single-rank behaviour, so they run only when the mesh
+        // reports one device. The collective path has its own coverage in
+        // sync_batch_norm_test.cu, which drives it with run_per_rank.
+        void SetUp() override {
+            auto& mesh = cuda::mesh::DeviceMesh::instance();
+            mesh.initialize();
+            if (mesh.device_count() > 1) {
+                GTEST_SKIP() << "single-rank semantics; the collective path needs one thread per "
+                                "rank and is covered by SyncBatchNormTest.MultiGpu_*";
+            }
+        }
+
         // Anything that touches the driver in a case is cleared here so it cannot leak into the
         // next one. The cases are written not to fault, and this is the belt to that braces.
         void TearDown() override { (void)cudaGetLastError(); }
