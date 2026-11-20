@@ -101,20 +101,18 @@ include/cuda/
 ├── memory/               # Layer 0: Memory Foundation
 │   ├── buffer.h         # cuda::memory::Buffer<T>
 │   ├── unique_ptr.h     # cuda::memory::unique_ptr<T>
-│   ├── memory_pool.h    # MemoryPool for allocation
-│   └── allocator.h      # Allocator concepts
+│   └── memory_pool.h    # MemoryPool for allocation
 ├── device/              # Layer 1: Device Kernels
 │   ├── reduce_kernels.h
-│   ├── scan_kernels.h
 │   └── device_utils.h   # CUDA_CHECK, warp_reduce
-├── algo/                 # Layer 2: Algorithm Wrappers
+├── algo/                # Layer 2: Algorithm Wrappers
 │   ├── reduce.h
-│   ├── scan.h
 │   └── sort.h
-└── api/                  # Layer 3: High-Level API
-    ├── device_vector.h   # STL-style device container
-    ├── stream.h          # Stream and Event wrappers
-    └── config.h          # Algorithm configuration objects
+└── stream/              # Layer 3: Stream and event wrappers
+    ├── stream.h
+    └── event.h
+
+include/parallel/        # cuda::parallel: scan.h and sort.h
 
 include/
 ├── image/               # Image processing
@@ -147,12 +145,12 @@ src/
 
 ### Layer Responsibilities
 
-| Layer       | Namespace      | Purpose                          | Dependencies   |
-| ----------- | -------------- | -------------------------------- | -------------- |
-| **Layer 0** | `cuda::memory` | Memory allocation, RAII, pooling | CUDA runtime   |
-| **Layer 1** | `cuda::device` | Pure device kernels              | Layer 0        |
-| **Layer 2** | `cuda::algo`   | Memory management, algorithms    | Layers 0, 1    |
-| **Layer 3** | `cuda::api`    | STL-style containers             | Layers 0, 1, 2 |
+| Layer       | Namespace                      | Purpose                               | Dependencies   |
+| ----------- | ------------------------------ | ------------------------------------- | -------------- |
+| **Layer 0** | `cuda::memory`                 | Memory allocation, RAII, pooling      | CUDA runtime   |
+| **Layer 1** | `cuda::device`                 | Pure device kernels                   | Layer 0        |
+| **Layer 2** | `cuda::algo`                   | Memory management, algorithms         | Layers 0, 1    |
+| **Layer 3** | `cuda::stream`, `cuda::memory` | Stream/event wrappers; device buffers | Layers 0, 1, 2 |
 
 ## Building from Source
 
@@ -241,22 +239,26 @@ int max = cuda::algo::reduce_max(d_input, N);
 ### Layer 3: High-Level API
 
 ```cpp
-#include "cuda/api/device_vector.h"
-#include "cuda/api/stream.h"
-#include "cuda/api/config.h"
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
+#include "cuda/stream/stream.h"
+#include "cuda/algo/reduce.h"
 
-// DeviceVector - STL-style container
-cuda::api::DeviceVector<int> d_vec(N);
-d_vec.copy_from(input);
-int sum = cuda::algo::reduce_sum(d_vec.data(), d_vec.size());
+// Device buffer - the container Layer 3 exposes. There is no DeviceVector in this
+// tree; cuda::memory::Buffer is what every module uses.
+cuda::memory::Buffer<float> d_vec(N);
+d_vec.copy_from(input);                       // host -> device
+float sum = cuda::algo::reduce_sum(d_vec.data(), d_vec.size());
+float max = cuda::algo::reduce_max(d_vec.data(), d_vec.size());
 
 // Stream - RAII async operations
-cuda::api::Stream stream;
+cuda::stream::Stream stream;
 stream.synchronize();
-
-// Config - algorithm configuration
-auto config = cuda::api::ReduceConfig::optimized_config();
 ```
+
+There is no algorithm-configuration type: `reduce_sum` and `reduce_max` take a pointer
+and a length, and the "optimized" variants are separate functions
+(`reduce_sum_optimized`).
 
 ## Module Reference
 
