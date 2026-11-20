@@ -20,6 +20,7 @@
  */
 
 #include <cuda/numeric/numeric.h>
+#include <cuda/sparse/solver_workspace.hpp>
 
 #include <gtest/gtest.h>
 
@@ -237,6 +238,54 @@ namespace cuda::numeric::test {
         // intercept y0 in the first four slots.
         EXPECT_NEAR(coeffs[2], 2.0f, 1e-5f) << "slope";
         EXPECT_NEAR(coeffs[3], 1.0f, 1e-5f) << "intercept";
+    }
+
+    // Regression: SolverWorkspace::resize() published size_ before resizing the containers,
+    // and accepted negative sizes.
+    //
+    //     void resize(int size) {
+    //         ...
+    //         size_ = size;          // first
+    //         r_.resize(size);       // then, and this can throw
+    //
+    // std::vector::resize takes size_t, so a negative `size` converts to a value near
+    // SIZE_MAX and the call throws length_error or attempts an exabyte allocation. Either
+    // way size_ had already been assigned: the object then reported the new size while the
+    // vectors still held the old one, and the `size == size_` early return meant no later
+    // resize() repaired it. Measured on the old ordering: a throwing resize left size_ at
+    // the requested value and every container empty.
+    TEST(SolverWorkspaceTest, ResizeIsAllOrNothing) {
+        nova::sparse::SolverWorkspace<double> ws(4);
+        ASSERT_EQ(ws.size(), 4);
+        ASSERT_EQ(ws.r().size(), 4u);
+
+        // A negative size is caller error, and it must not leave the object altered.
+        EXPECT_THROW(ws.resize(-1), std::invalid_argument);
+        EXPECT_EQ(ws.size(), 4) << "a refused resize must not change the reported size";
+        EXPECT_EQ(ws.r().size(), 4u) << "and must not change the containers";
+        EXPECT_EQ(ws.t().size(), 4u);
+
+        // A normal resize still works and keeps everything in step.
+        ws.resize(8);
+        EXPECT_EQ(ws.size(), 8);
+        for (const auto* v : {&ws.r(), &ws.p(), &ws.Ap(), &ws.r_tilde(), &ws.p_hat(), &ws.s(), &ws.t()}) {
+            EXPECT_EQ(v->size(), 8u) << "every workspace vector tracks size()";
+        }
+    }
+
+    TEST(SolverWorkspaceTest, ResetZeroesEveryBuffer) {
+        nova::sparse::SolverWorkspace<double> ws(3);
+        std::fill(ws.r().begin(), ws.r().end(), 5.0);
+        std::fill(ws.t().begin(), ws.t().end(), 7.0);
+
+        ws.reset();
+
+        for (double v : ws.r()) {
+            EXPECT_EQ(v, 0.0);
+        }
+        for (double v : ws.t()) {
+            EXPECT_EQ(v, 0.0);
+        }
     }
 
 }  // namespace cuda::numeric::test

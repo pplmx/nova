@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <stdexcept>
+#include <vector>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -53,18 +55,31 @@ namespace nova {
              * @param size Problem size
              */
             void resize(int size) {
+                // A negative size is not a request for zero storage: std::vector::resize
+                // takes size_t, so it converts to a value near SIZE_MAX and the call
+                // either throws length_error or attempts an exabyte allocation. Rejecting
+                // it here keeps the message about the caller's input.
+                if (size < 0) {
+                    throw std::invalid_argument("SolverWorkspace::resize: size must not be negative");
+                }
                 if (size == size_) {
                     return;
                 }
 
+                // Publish size_ only after every container has the new length. The
+                // assignment used to come first, so a throw part-way through left size_
+                // reporting the new size while most of the vectors still held the old
+                // one -- an object whose accessors disagree with each other and which no
+                // later resize() would repair, because the early return above then
+                // matched size_ == size.
+                r_.resize(static_cast<size_t>(size));
+                p_.resize(static_cast<size_t>(size));
+                Ap_.resize(static_cast<size_t>(size));
+                r_tilde_.resize(static_cast<size_t>(size));
+                p_hat_.resize(static_cast<size_t>(size));
+                s_.resize(static_cast<size_t>(size));
+                t_.resize(static_cast<size_t>(size));
                 size_ = size;
-                r_.resize(size);
-                p_.resize(size);
-                Ap_.resize(size);
-                r_tilde_.resize(size);
-                p_hat_.resize(size);
-                s_.resize(size);
-                t_.resize(size);
             }
 
             void reset() {
