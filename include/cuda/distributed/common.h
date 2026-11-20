@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace cuda::distributed {
@@ -37,7 +38,12 @@ namespace cuda::distributed {
      * This class maintains a vector of streams, one per device, along with
      * pre-allocated events for synchronization.
      *
-     * @note Thread-safe singleton pattern using Meyer's singleton.
+     * @note The singleton itself is Meyer's, and every accessor that reads or
+     *       writes the per-device arrays takes mutex_. Without that the note here
+     *       claimed a thread-safety the class did not have: initialize() resizes the
+     *       vectors and then fills them device by device, so a concurrent
+     *       get_stream() could observe a resized-but-unfilled vector and return a
+     *       null handle, or read initialized_ before the streams existed.
      */
     class MeshStreams {
     public:
@@ -98,7 +104,10 @@ namespace cuda::distributed {
          * @brief Returns the number of devices
          * @return Device count
          */
-        int device_count() const { return device_count_; }
+        int device_count() const {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return device_count_;
+        }
 
         /**
          * @brief Initialize streams and events for all devices
@@ -107,14 +116,31 @@ namespace cuda::distributed {
         void initialize(int device_count);
 
         /**
+         * @brief Release every stream and event and return to the uninitialised state
+         *
+         * initialize() is a one-shot: a second call returns early, so a process that
+         * has once built the mesh can never exercise the cold path again. That made the
+         * class's claimed thread-safety untestable -- the window that matters is
+         * initialize() filling the arrays, and it can only be entered once. reset()
+         * exists so tests (and the singleton-reset registry) can return to that state.
+         *
+         * Not for concurrent use with readers: it destroys the handles they may hold.
+         */
+        void reset();
+
+        /**
          * @brief Check if initialized
          * @return true if streams have been created
          */
-        bool initialized() const { return initialized_; }
+        bool initialized() const {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return initialized_;
+        }
 
     private:
         MeshStreams() = default;
 
+        mutable std::mutex mutex_;
         int device_count_ = 0;
         std::vector<cudaStream_t> streams_;
         std::vector<cudaEvent_t> events_;

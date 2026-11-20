@@ -29,6 +29,7 @@ namespace cuda::distributed {
     }
 
     MeshStreams::~MeshStreams() {
+        std::lock_guard<std::mutex> lock(mutex_);
         // Destroy events first
         for (auto event : events_) {
             if (event) {
@@ -48,7 +49,35 @@ namespace cuda::distributed {
         initialized_ = false;
     }
 
+    void MeshStreams::reset() {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        for (auto event : events_) {
+            if (event) {
+                (void)cudaEventDestroy(event);
+            }
+        }
+        events_.clear();
+
+        for (auto stream : streams_) {
+            if (stream) {
+                (void)cudaStreamDestroy(stream);
+            }
+        }
+        streams_.clear();
+
+        device_count_ = 0;
+        initialized_ = false;
+        (void)cudaGetLastError();
+    }
+
     void MeshStreams::initialize(int device_count) {
+        // Held for the whole call, not just the check. Releasing it between the resize
+        // and the fill would let a concurrent get_stream() observe a vector of null
+        // handles, and letting two threads past `initialized_` would create two sets of
+        // streams and leak one.
+        std::lock_guard<std::mutex> lock(mutex_);
+
         if (initialized_) {
             return;
         }
@@ -57,9 +86,11 @@ namespace cuda::distributed {
             throw std::invalid_argument("Device count must be positive");
         }
 
+        // Publish the count only once the arrays exist, and only after they are filled:
+        // initialized_ is the flag every reader gates on, so it is set last.
+        streams_.resize(static_cast<size_t>(device_count));
+        events_.resize(static_cast<size_t>(device_count));
         device_count_ = device_count;
-        streams_.resize(device_count);
-        events_.resize(device_count);
 
         // The two CUDA_CHECKs per iteration throw, and a failure part-way through used to leave
         // every stream and event created before it unreferenced: the vectors held them, but
@@ -94,6 +125,7 @@ namespace cuda::distributed {
     }
 
     cudaStream_t MeshStreams::get_stream(int device) {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_) {
             throw std::runtime_error("MeshStreams not initialized");
         }
@@ -104,6 +136,7 @@ namespace cuda::distributed {
     }
 
     cudaEvent_t MeshStreams::get_event(int device) {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_) {
             throw std::runtime_error("MeshStreams not initialized");
         }
@@ -114,28 +147,43 @@ namespace cuda::distributed {
     }
 
     void MeshStreams::synchronize_all() {
-        if (!initialized_) {
-            return;
+        // Copy the handles under the lock and drive CUDA outside it: cudaStreamSynchronize
+        // can block for a long time, and holding the mutex across it would block every
+        // get_stream() in the process. The copy is safe because initialize() is the only
+        // writer and it publishes under the same lock.
+        std::vector<cudaStream_t> streams;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!initialized_) {
+                return;
+            }
+            streams = streams_;
         }
 
-        for (int i = 0; i < device_count_; ++i) {
-            CUDA_CHECK(cudaSetDevice(i));
-            CUDA_CHECK(cudaStreamSynchronize(streams_[i]));
+        for (size_t i = 0; i < streams.size(); ++i) {
+            CUDA_CHECK(cudaSetDevice(static_cast<int>(i)));
+            CUDA_CHECK(cudaStreamSynchronize(streams[i]));
         }
     }
 
     void MeshStreams::wait_event(int dst_device, int src_device, cudaEvent_t event) {
-        if (!initialized_) {
-            throw std::runtime_error("MeshStreams not initialized");
+        cudaStream_t dst_stream = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!initialized_) {
+                throw std::runtime_error("MeshStreams not initialized");
+            }
+
+            if (dst_device < 0 || dst_device >= device_count_ || src_device < 0 || src_device >= device_count_) {
+                throw std::out_of_range("Device index out of range");
+            }
+            dst_stream = streams_[static_cast<size_t>(dst_device)];
         }
 
-        if (dst_device < 0 || dst_device >= device_count_ || src_device < 0 || src_device >= device_count_) {
-            throw std::out_of_range("Device index out of range");
-        }
-
-        // Set destination device and make it wait on source device's event
+        // Set destination device and make it wait on source device's event. Outside the
+        // lock: cudaStreamWaitEvent is a driver call and must not block other readers.
         CUDA_CHECK(cudaSetDevice(dst_device));
-        CUDA_CHECK(cudaStreamWaitEvent(streams_[dst_device], event, 0));
+        CUDA_CHECK(cudaStreamWaitEvent(dst_stream, event, 0));
     }
 
 }  // namespace cuda::distributed

@@ -74,4 +74,31 @@ namespace mesh_streams_partial_init_test {
         EXPECT_EQ(streams.get_stream(0), first) << "the existing stream must be reused";
     }
 
+    // reset() returns the one-shot singleton to its uninitialised state. Without it the
+    // cost of initialize() being one-shot is that nothing can observe a second build --
+    // which is why the class's threading claim could not be tested at all.
+    TEST(MeshStreamsPartialInitTest, ResetReturnsToTheUninitialisedState) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        auto& streams = cuda::distributed::MeshStreams::instance();
+        streams.initialize(1);
+        ASSERT_TRUE(streams.initialized());
+        const cudaStream_t first = streams.get_stream(0);
+        ASSERT_NE(first, nullptr);
+
+        streams.reset();
+        EXPECT_FALSE(streams.initialized());
+        EXPECT_EQ(streams.device_count(), 0);
+        // Reading through the torn-down state is refused rather than returning a
+        // destroyed handle.
+        EXPECT_THROW(streams.get_stream(0), std::runtime_error);
+
+        // And it can be brought up again, which is the whole point.
+        streams.initialize(1);
+        EXPECT_TRUE(streams.initialized());
+        EXPECT_NE(streams.get_stream(0), nullptr);
+    }
+
 }  // namespace mesh_streams_partial_init_test
