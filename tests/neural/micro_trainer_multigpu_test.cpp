@@ -244,7 +244,10 @@ TEST_F(MicroTrainerMultiGpuTest, MultiGpu_MicroTrainer_MatchesHostFullWeight) {
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
 
-    const int m = 16, h = 8, inter = 16;
+    const int m = 16, h = 8;
+    // Same constraint as the other multi-GPU cases: inter / device_count is the shard
+    // size, so inter must be divisible by the device count.
+    const int inter = 8 * device_count;
     const int K = 10;  // a full run, not a single-step spot-check
 
     // Learnable task: gaussian inputs, a fixed random "teacher" label matrix.

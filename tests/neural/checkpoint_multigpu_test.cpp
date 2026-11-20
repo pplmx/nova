@@ -156,7 +156,10 @@ TEST_F(CheckpointMultiGpuTest, MultiGpu_MicroTrainer_RankLocalCheckpoint) {
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
 
-    const int m = 16, h = 8, inter = 16, K = 5, extra = 2;
+    const int m = 16, h = 8, K = 5, extra = 2;
+    // inter / device_count is the shard size, so inter must be divisible by the device
+    // count. A flat 16 only holds on device counts that divide it.
+    const int inter = 8 * device_count;
     OptimizerConfig opt_cfg;
     opt_cfg.learning_rate = 0.01f;
 

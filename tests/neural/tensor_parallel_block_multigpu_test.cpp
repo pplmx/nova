@@ -127,6 +127,11 @@ namespace {
         }
         auto& ctx = cuda::nccl::NcclContext::instance();
 
+        // inter is sharded by the TP degree, so the device count must divide it. Skip
+        // rather than fail a shape check the case is not about.
+        if (device_count > 1 && 16 % device_count != 0) {
+            GTEST_SKIP() << "this case pins a 16-wide MLP, which the " << device_count << " visible devices cannot shard";
+        }
         const int m = 12, hidden = 8, heads = 4, hd = 2, inter = 16, K = 12;
         const int blocks = 3;
         const int qkv = hidden;  // heads * hd == hidden

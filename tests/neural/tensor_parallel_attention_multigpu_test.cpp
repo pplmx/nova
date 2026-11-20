@@ -292,6 +292,16 @@ TEST_F(TensorParallelAttentionMultiGpuTest, MultiGpu_AttentionForwardMatchesRefe
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
 
+    // heads, hd and hidden are the model being tested, not free parameters: the
+    // reference implementation in this file is written for this shape. The layer
+    // requires both qkv (heads*hd) and num_heads to divide evenly by the TP degree,
+    // which is the visible device count, so a machine whose count does not divide
+    // them cannot run this case at all. Skip with the reason rather than report a
+    // constructor exception as a test failure.
+    if (4 % device_count != 0 || (4 * 2) % device_count != 0 || 8 % device_count != 0) {
+        GTEST_SKIP() << "this case pins heads=4, hd=2, hidden=8, which the " << device_count << " visible devices cannot shard evenly";
+    }
+
     const int m = 4, heads = 4, hd = 2, hidden = 8;  // heads divisible by tp
     std::vector<float> h_X(m * hidden);
     std::vector<float> h_Wq(hidden * heads * hd), h_Wk(hidden * heads * hd), h_Wv(hidden * heads * hd), h_Wo(heads * hd * hidden);
@@ -334,6 +344,12 @@ TEST_F(TensorParallelAttentionMultiGpuTest, MultiGpu_AttentionBackwardMatchesRef
         GTEST_SKIP() << "NCCL not enabled / no >= 2 GPUs (set NCCL_TESTS_AVAILABLE=1)";
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
+
+    // Same pinned shape and the same divisibility requirement as the forward case
+    // above: skip with the reason when the visible device count cannot shard it.
+    if (4 % device_count != 0 || (4 * 2) % device_count != 0 || 8 % device_count != 0) {
+        GTEST_SKIP() << "this case pins heads=4, hd=2, hidden=8, which the " << device_count << " visible devices cannot shard evenly";
+    }
 
     const int m = 4, heads = 4, hd = 2, hidden = 8;
     const int qkv = heads * hd;
@@ -431,6 +447,17 @@ TEST_F(TensorParallelAttentionMultiGpuTest, MultiGpu_MiniTransformer_MatchesSing
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
 
+    // heads and hd describe the attention being tested, and inter is the MLP width;
+    // all three are sharded by the TP degree, so the device count has to divide them.
+    // The values above are a 4-head, hd=2 attention with a 16-wide MLP, which is what
+    // the reference implementation in this file expects -- they cannot simply be
+    // rescaled to whatever GPUs are present. Skip instead of failing a shape check the
+    // case is not about.
+    if (device_count > 1 && ((4 * 2) % device_count != 0 || 16 % device_count != 0)) {
+        GTEST_SKIP() << "this case pins a 4-head/hd=2 attention and a 16-wide MLP, neither of "
+                        "which the "
+                     << device_count << " visible devices can shard evenly";
+    }
     const int m = 12, hidden = 8, heads = 4, hd = 2, inter = 16, K = 12;
     const int qkv = heads * hd;  // == hidden
 

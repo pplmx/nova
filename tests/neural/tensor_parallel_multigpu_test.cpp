@@ -1038,7 +1038,13 @@ TEST_F(TensorParallelMultiGpuTest, MultiGpu_TrainingStep_MatchesHostFullWeight) 
     }
     auto& ctx = cuda::nccl::NcclContext::instance();
 
-    const int m = 8, h = 16, inter = 32;
+    const int m = 8, h = 16;
+    // inter is sharded by the TP degree, which is the device count, so it must be
+    // divisible by it. A flat 32 only holds on device counts that divide 32: with
+    // three visible devices the layer constructor rejected the shape and the
+    // comparison this case exists for never ran. The neighbouring multi-GPU cases in
+    // this file already derive the dimension from the device count.
+    const int inter = 8 * device_count;
     const int K = 3;  // a few identical AdamW steps
     std::vector<float> X(static_cast<size_t>(m) * h);
     std::vector<int> targets(m);
