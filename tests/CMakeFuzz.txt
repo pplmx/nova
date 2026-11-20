@@ -7,7 +7,7 @@ if(NOT NOVA_BUILD_FUZZ_TESTS)
     return()
 endif()
 
-# Check for libFuzzer (typically provided by compiler)
+# Check for libFuzzer (provided by the Clang driver's resource directory)
 set(FUZZER_LIB "")
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(FUZZER_LIB "Fuzzer")
@@ -18,16 +18,39 @@ elseif(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
     endif()
 endif()
 
+# Failing here rather than returning quietly is deliberate. -DNOVA_BUILD_FUZZ_TESTS=ON
+# is an explicit request; a configure that answers it with a STATUS line and exit 0
+# looks identical to a successful run that built nothing, so a CI step or a developer
+# checking "did the fuzzers build?" got a green answer either way. Configure on this
+# machine with the option on and GCC as the compiler:
+#
+#     $ cmake -DNOVA_BUILD_FUZZ_TESTS=ON ...
+#     -- Fuzz testing requires Clang/LLVM. Skipping fuzz targets.
+#     $ echo $?
+#     0
 if(NOT FUZZER_LIB)
-    message(STATUS "Fuzz testing requires Clang/LLVM. Skipping fuzz targets.")
-    return()
+    message(FATAL_ERROR
+        "NOVA_BUILD_FUZZ_TESTS=ON requires a Clang toolchain, because libFuzzer is "
+        "compile-time instrumentation. This configure is using "
+        "${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER}). Configure with "
+        "-DCMAKE_CXX_COMPILER=clang++ (and a matching CUDA host compiler) to build the "
+        "fuzz targets, or configure without the option.")
 endif()
 
-find_library(FUZZER_LIBRARY ${FUZZER_LIB} PATHS /usr/lib /usr/local/lib)
-if(NOT FUZZER_LIBRARY)
-    message(STATUS "libFuzzer not found. Install with: apt install libfuzzer-dev")
-    return()
-endif()
+# No find_library here. This used to search for a library literally named `Fuzzer`
+# under /usr/lib and /usr/local/lib, which is not where any distribution puts it:
+# LLVM ships the runtime as a Clang resource, libclang_rt.fuzzer-<arch>.a, invoked by
+# the driver through -fsanitize=fuzzer. On a host that has a working libFuzzer, the
+# search failed anyway and the configure said the runtime was missing:
+#
+#     $ cmake -DNOVA_BUILD_FUZZ_TESTS=ON -DCMAKE_CXX_COMPILER=clang++-18 ...
+#     CMake Error: needs the libFuzzer runtime (Fuzzer), which was not found
+#     $ ls /usr/lib/llvm-18/lib/clang/18/lib/linux/libclang_rt.fuzzer-x86_64.a
+#     ...exists
+#
+# The check was also not load-bearing: the targets below link with
+# -fsanitize=fuzzer, and the driver resolves its own runtime. Let the compiler decide
+# -- a Clang toolchain either has the resource or the link fails with a real message.
 
 message(STATUS "Building fuzz testing targets with libFuzzer")
 
@@ -38,13 +61,25 @@ add_executable(memory_pool_fuzz
 target_link_libraries(memory_pool_fuzz PRIVATE
     cuda_impl
     CUDA::cudart
-    ${FUZZER_LIBRARY}
 )
 target_include_directories(memory_pool_fuzz PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/tests/fuzz
 )
 target_compile_options(memory_pool_fuzz PRIVATE -fsanitize=fuzzer)
+# The link side needs the flag too. -fsanitize=fuzzer is compile-time instrumentation
+# that emits references to the libFuzzer runtime (__sanitizer_cov_*), and the driver
+# only adds that runtime when the flag is present while LINKING. It was set on compile
+# only, so linking failed with:
+#
+#   mold: error: undefined symbol: __sanitizer_cov_pcs_init
+#   mold: error: undefined symbol: __sanitizer_cov_trace_const_cmp4
+#
+# ${FUZZER_LIBRARY} used to sit in the link list for this purpose, but it was only
+# ever set by a find_library that searched for a file named libFuzzer.a, which no
+# distribution ships -- LLVM's runtime is a Clang resource, libclang_rt.fuzzer-*.a.
+# It was therefore always empty, which is why the gap survived.
+target_link_options(memory_pool_fuzz PRIVATE -fsanitize=fuzzer)
 
 add_custom_target(fuzz_memory_pool
     COMMAND memory_pool_fuzz $<TARGET_FILE:memory_pool_fuzz> ${CMAKE_SOURCE_DIR}/tests/fuzz/corpus/memory_pool -max_total_time=60
@@ -60,13 +95,13 @@ add_executable(algorithm_fuzz
 target_link_libraries(algorithm_fuzz PRIVATE
     cuda_impl
     CUDA::cudart
-    ${FUZZER_LIBRARY}
 )
 target_include_directories(algorithm_fuzz PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/tests/fuzz
 )
 target_compile_options(algorithm_fuzz PRIVATE -fsanitize=fuzzer)
+target_link_options(algorithm_fuzz PRIVATE -fsanitize=fuzzer)
 
 add_custom_target(fuzz_algorithms
     COMMAND algorithm_fuzz $<TARGET_FILE:algorithm_fuzz> ${CMAKE_SOURCE_DIR}/tests/fuzz/corpus/algorithm -max_total_time=60
@@ -82,13 +117,13 @@ add_executable(matmul_fuzz
 target_link_libraries(matmul_fuzz PRIVATE
     cuda_impl
     CUDA::cudart
-    ${FUZZER_LIBRARY}
 )
 target_include_directories(matmul_fuzz PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/tests/fuzz
 )
 target_compile_options(matmul_fuzz PRIVATE -fsanitize=fuzzer)
+target_link_options(matmul_fuzz PRIVATE -fsanitize=fuzzer)
 
 add_custom_target(fuzz_matmul
     COMMAND matmul_fuzz $<TARGET_FILE:matmul_fuzz> ${CMAKE_SOURCE_DIR}/tests/fuzz/corpus/matmul -max_total_time=60

@@ -45,12 +45,29 @@ namespace nova {
             cudaError_t err = cudaMalloc(&ptr, alloc_size);
 
             if (err == cudaSuccess && ptr != nullptr) {
-                // Touch the memory to ensure it's accessible
-                memset(ptr, 0x42, std::min(alloc_size, size_t {256}));
+                // Touch the memory to ensure it's accessible. It has to be cudaMemset:
+                // this is a DEVICE pointer, and the host memset() that used to be here
+                // dereferences a device address from the CPU. It does not always fault
+                // -- measured on this driver it segfaults with a managed-memory style
+                // address, and the fuzzer reported it as
+                //
+                //   UndefinedBehaviorSanitizer: SEGV
+                //   #0 __memset_avx2_unaligned_erms
+                //   #1 LLVMFuzzerTestOneInput memory_pool_fuzz.cpp
+                //
+                // on every input, including the empty one, so no fuzzing got past the
+                // first iteration.
+                cudaError_t touch = cudaMemset(ptr, 0x42, std::min(alloc_size, size_t {256}));
+                if (touch != cudaSuccess) {
+                    (void)cudaGetLastError();
+                    (void)cudaFree(ptr);
+                    return 0;  // an allocation that cannot be written is not a library bug
+                }
 
                 err = cudaFree(ptr);
                 if (err != cudaSuccess) {
-                    return 1;  // Crash on free error
+                    (void)cudaGetLastError();
+                    return 0;
                 }
             }
 
