@@ -188,9 +188,13 @@ Replace CUB includes:
 
 ## Testing
 
+This section records how the v2.7 release was built. `NOVA_BUILD_TESTS` no longer
+exists: tests and benchmarks are built by default and disabled together with
+`-DNOVA_BUILD_TESTS_AND_BENCHMARKS=OFF`.
+
 ```bash
-# Build with tests
-cmake -B build -DNOVA_BUILD_TESTS=ON
+# Build with tests (v2.7: -DNOVA_BUILD_TESTS=ON; current trees need no flag)
+cmake -B build
 cmake --build build
 
 # Run observability tests

@@ -78,10 +78,14 @@ std::cout << "Memory bandwidth: " << bandwidth << " GB/s\n";
 
 ## NVTX Profiling
 
-Enable NVTX annotations for detailed timeline analysis:
+NVTX annotations are controlled by the compile definition `NOVA_NVTX_ENABLED`, not by
+a CMake option -- there is no `-DNOVA_ENABLE_NVTX`. It defaults to off, and with it off
+the annotation calls compile to nothing (see the header's own note in
+`include/cuda/benchmark/nvtx.h`). The header needs `nvtx3/nvtx3.hpp`, which ships with
+the CUDA toolkit's Nsight Compute or with a standalone NVTX3 package.
 
 ```bash
-cmake -B build -DNOVA_ENABLE_NVTX=ON
+cmake -B build -DCMAKE_CXX_FLAGS="-DNOVA_NVTX_ENABLED=1"
 cmake --build build
 
 # Profile with ncu (NVIDIA Nsight Compute)
