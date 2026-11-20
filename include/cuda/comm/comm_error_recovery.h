@@ -84,6 +84,38 @@ namespace nova::comm {
             bool use_jitter = true;
         };
 
+        struct State {
+            RetryConfig config;
+            std::atomic<int> consecutive_failures {0};
+            std::atomic<bool> circuit_open {false};
+            std::chrono::steady_clock::time_point circuit_opened_at;
+            std::chrono::seconds circuit_breaker_window {60};
+            std::default_random_engine rng {std::random_device {}()};
+
+            void record_success() { consecutive_failures.store(0); }
+
+            void record_failure() {
+                consecutive_failures.fetch_add(1);
+                if (consecutive_failures.load() >= 5) {
+                    circuit_open.store(true);
+                    circuit_opened_at = std::chrono::steady_clock::now();
+                }
+            }
+
+            int get_retry_delay_ms(int attempt) {
+                auto base_delay = static_cast<int>(config.initial_delay.count());
+                auto delay = static_cast<int>(base_delay * std::pow(config.backoff_multiplier, attempt - 1));
+                delay = std::min(delay, static_cast<int>(config.max_delay.count()));
+
+                if (config.use_jitter) {
+                    std::uniform_int_distribution<int> dist(0, delay / 2);
+                    delay += dist(rng);
+                }
+
+                return delay;
+            }
+        };
+
         void set_config(const RetryConfig& config);
         RetryConfig get_config() const;
 
@@ -117,43 +149,10 @@ namespace nova::comm {
         bool is_circuit_open() const;
 
     private:
-        // Defined after the class because it needs RetryConfig, which is nested.
-        struct State;
+        // State is complete before the template above, so the template can use it.
         RetryHandler() = default;
 
         std::unique_ptr<State> impl_;
-    };
-
-    struct RetryHandler::State {
-        RetryHandler::RetryConfig config;
-        std::atomic<int> consecutive_failures {0};
-        std::atomic<bool> circuit_open {false};
-        std::chrono::steady_clock::time_point circuit_opened_at;
-        std::chrono::seconds circuit_breaker_window {60};
-        std::default_random_engine rng {std::random_device {}()};
-
-        void record_success() { consecutive_failures.store(0); }
-
-        void record_failure() {
-            consecutive_failures.fetch_add(1);
-            if (consecutive_failures.load() >= 5) {
-                circuit_open.store(true);
-                circuit_opened_at = std::chrono::steady_clock::now();
-            }
-        }
-
-        int get_retry_delay_ms(int attempt) {
-            auto base_delay = static_cast<int>(config.initial_delay.count());
-            auto delay = static_cast<int>(base_delay * std::pow(config.backoff_multiplier, attempt - 1));
-            delay = std::min(delay, static_cast<int>(config.max_delay.count()));
-
-            if (config.use_jitter) {
-                std::uniform_int_distribution<int> dist(0, delay / 2);
-                delay += dist(rng);
-            }
-
-            return delay;
-        }
     };
 
     class ErrorClassifier {

@@ -40,10 +40,12 @@ namespace nova::comm {
         // impl_ is a unique_ptr that nothing allocated: the constructor is
         // `= default`, so the first member call dereferenced a null pointer.
         static HealthMonitor monitor;
-        static const bool initialized = [&monitor] {
-            monitor.impl_ = std::make_unique<HealthMonitor::Impl>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<HealthMonitor::Impl>();
             return true;
-        }();
+        }(monitor);
         (void)initialized;
         return monitor;
     }
@@ -163,10 +165,12 @@ namespace nova::comm {
 
     RetryHandler& RetryHandler::instance() {
         static RetryHandler handler;
-        static const bool initialized = [&handler] {
-            handler.impl_ = std::make_unique<RetryHandler::State>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<RetryHandler::State>();
             return true;
-        }();
+        }(handler);
         (void)initialized;
         return handler;
     }
@@ -313,10 +317,12 @@ namespace nova::comm {
 
     CommErrorRecovery& CommErrorRecovery::instance() {
         static CommErrorRecovery recovery;
-        static const bool initialized = [&recovery] {
-            recovery.impl_ = std::make_unique<CommErrorRecovery::Impl>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<CommErrorRecovery::Impl>();
             return true;
-        }();
+        }(recovery);
         (void)initialized;
         return recovery;
     }

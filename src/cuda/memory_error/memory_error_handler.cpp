@@ -27,10 +27,12 @@ namespace nova::memory {
         // through any of them crashed. Allocate it here, where the singleton is
         // created and the lifetime is unambiguous.
         static DeviceHealthMonitor monitor;
-        static const bool initialized = [&monitor] {
-            monitor.impl_ = std::make_unique<DeviceHealthMonitor::Impl>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<DeviceHealthMonitor::Impl>();
             return true;
-        }();
+        }(monitor);
         (void)initialized;
         return monitor;
     }
@@ -167,10 +169,12 @@ namespace nova::memory {
 
     MemoryErrorHandler& MemoryErrorHandler::instance() {
         static MemoryErrorHandler handler;
-        static const bool initialized = [&handler] {
-            handler.impl_ = std::make_unique<MemoryErrorHandler::Impl>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<MemoryErrorHandler::Impl>();
             return true;
-        }();
+        }(handler);
         (void)initialized;
         return handler;
     }
@@ -365,10 +369,12 @@ namespace nova::memory {
 
     DegradationManager& DegradationManager::instance() {
         static DegradationManager manager;
-        static const bool initialized = [&manager] {
-            manager.impl_ = std::make_unique<DegradationManager::Impl>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<DegradationManager::Impl>();
             return true;
-        }();
+        }(manager);
         (void)initialized;
         return manager;
     }

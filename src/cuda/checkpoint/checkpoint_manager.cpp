@@ -148,10 +148,12 @@ namespace nova::checkpoint {
         // set_checkpoint_interval) dereferenced a null pointer and killed the
         // process.
         static CheckpointManager manager;
-        static const bool initialized = [&manager] {
-            manager.impl_ = std::make_unique<CheckpointManager::Impl>();
+        // A lambda cannot capture a function-local static by reference, so the
+        // object is passed in explicitly instead.
+        static const bool initialized = [](auto& instance) {
+            instance.impl_ = std::make_unique<CheckpointManager::Impl>();
             return true;
-        }();
+        }(manager);
         (void)initialized;
         return manager;
     }
