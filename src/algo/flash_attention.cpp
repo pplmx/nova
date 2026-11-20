@@ -259,10 +259,14 @@ namespace cuda::algo {
             return;
         }
 
+        // Buffer<void>'s copy_to/copy_from take BYTES; Buffer<T>'s take element counts.
+        // These three passed element counts, so only half of each bf16 buffer was copied
+        // and the other half stayed the uninitialised memory cudaMalloc returned -- which
+        // the upcast loop below then treated as data.
         std::vector<__nv_bfloat16> h_qb(qe), h_kb(kve), h_vb(kve), h_ob(qe);
-        query.copy_to(h_qb.data(), qe);
-        key.copy_to(h_kb.data(), kve);
-        value.copy_to(h_vb.data(), kve);
+        query.copy_to(h_qb.data(), qe * sizeof(__nv_bfloat16));
+        key.copy_to(h_kb.data(), kve * sizeof(__nv_bfloat16));
+        value.copy_to(h_vb.data(), kve * sizeof(__nv_bfloat16));
 
         std::vector<float> h_q(qe), h_k(kve), h_v(kve), h_o(qe);
         for (size_t i = 0; i < qe; ++i) {
@@ -284,7 +288,10 @@ namespace cuda::algo {
         for (size_t i = 0; i < qe; ++i) {
             h_ob[i] = __float2bfloat16(h_o[i]);
         }
-        output.copy_from(h_ob.data(), qe);
+        // Same byte/element distinction on the way out: output is Buffer<void>.
+        output.copy_from(h_ob.data(), qe * sizeof(__nv_bfloat16));
+        // Both sides here are Buffer<float>, so this one is an element count. The min()
+        // mixes the lengths to avoid overrunning a caller-sized lse buffer.
         lse_f.copy_to(softmax_lse.data(), std::min(softmax_lse.size(), lse_f.size()));
     }
 

@@ -7,6 +7,7 @@
 #include <cuda/stream/stream.h>
 #include <cuda/device/error.h>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 #include <random>
 
@@ -268,6 +269,93 @@ namespace cuda::algo::test {
         memory::Buffer<float> softmax_lse(4);
 
         EXPECT_NO_THROW(flash_attn->forward_bf16(output, softmax_lse, query, key, value, *stream_));
+    }
+
+    // Regression: forward_bf16() passed ELEMENT counts to Buffer<void>::copy_to/from,
+    // which take BYTES.
+    //
+    //     query.copy_to(h_qb.data(), qe);    // qe is an element count
+    //
+    // Buffer<float>::copy_to takes an element count and Buffer<void>::copy_to takes bytes;
+    // the two sit next to each other in the same function. The bf16 calls therefore copied
+    // half of each buffer -- qe elements of __nv_bfloat16 is 2*qe bytes -- and because h_qb
+    // is a value-initialised std::vector the untouched half then read as 0.0, so half of
+    // every bf16 input was silently treated as zero.
+    //
+    // Measured directly rather than inferred: a byte-counted copy of n bytes into n bf16
+    // slots leaves slots n/2..n-1 at their prior contents (verified with a sentinel fill in
+    // a standalone program). The contract this case pins is the one the fix relies on, and
+    // it is testable without relying on attention numerics being sensitive to the missing
+    // half -- which they are not, because softmax renormalises and O = P*V stays in V's
+    // range regardless of how the query was mangled. Two earlier versions of this test tried
+    // to see the bug through forward_bf16's output and both passed with the bug re-injected.
+    TEST_F(FlashAttentionTest, VoidBufferCopiesCountBytesNotElements) {
+        constexpr size_t kElements = 256;
+        constexpr size_t kBytes = kElements * sizeof(__nv_bfloat16);
+
+        memory::Buffer<void> buf(kBytes);
+        ASSERT_EQ(buf.size(), kBytes) << "Buffer<void> is sized in bytes";
+
+        // Poison the whole buffer, then copy only the first half as BYTES, which is exactly
+        // what passing an element count did.
+        std::vector<__nv_bfloat16> poison(kElements, __float2bfloat16(7.0f));
+        buf.copy_from(poison.data(), kBytes);
+
+        std::vector<__nv_bfloat16> half(kElements / 2, __float2bfloat16(0.5f));
+        buf.copy_from(half.data(), kBytes / 2);
+
+        std::vector<__nv_bfloat16> back(kElements, __float2bfloat16(-1.0f));
+        buf.copy_to(back.data(), kBytes);
+
+        // First half written, second half untouched.
+        EXPECT_FLOAT_EQ(__bfloat162float(back[0]), 0.5f);
+        EXPECT_FLOAT_EQ(__bfloat162float(back[kElements / 4]), 0.5f);
+        EXPECT_FLOAT_EQ(__bfloat162float(back[kElements / 2]), 7.0f) << "a byte-counted copy of half the buffer must leave the rest alone";
+        EXPECT_FLOAT_EQ(__bfloat162float(back[kElements - 1]), 7.0f);
+
+        // And the full-length call the fix uses writes all of it.
+        buf.copy_from(half.data(), kBytes / 2);
+        std::vector<__nv_bfloat16> full(kElements, __float2bfloat16(0.5f));
+        buf.copy_from(full.data(), kBytes);
+        buf.copy_to(back.data(), kBytes);
+        EXPECT_FLOAT_EQ(__bfloat162float(back[kElements - 1]), 0.5f) << "a byte count of kBytes must fill every element";
+    }
+
+    // forward_bf16 end-to-end, at a geometry the buffers actually fit. The earlier
+    // BF16Support case allocated 64-byte buffers against a geometry needing thousands of
+    // elements, so forward_bf16 returned at its size check and only EXPECT_NO_THROW was
+    // exercised -- it never ran the code it was named for.
+    TEST_F(FlashAttentionTest, BF16RunsTheFullPathAtAMatchingGeometry) {
+        auto config = default_config_;
+        config.is_fp16 = false;
+        config.dropout_rate = 0.0f;
+        auto flash_attn = create_flash_attention(config);
+
+        const size_t q_elements = config.batch_size * config.seq_len * config.num_heads * config.head_dim;
+        const size_t kv_elements = config.batch_size * config.seq_len * config.num_kv_heads * config.head_dim;
+
+        memory::Buffer<void> query(q_elements * sizeof(__nv_bfloat16));
+        memory::Buffer<void> key(kv_elements * sizeof(__nv_bfloat16));
+        memory::Buffer<void> value(kv_elements * sizeof(__nv_bfloat16));
+        memory::Buffer<void> output(q_elements * sizeof(__nv_bfloat16));
+        memory::Buffer<float> softmax_lse(config.batch_size * config.num_heads);
+
+        std::vector<__nv_bfloat16> h_q(q_elements, __float2bfloat16(0.5f));
+        std::vector<__nv_bfloat16> h_kv(kv_elements, __float2bfloat16(0.5f));
+        query.copy_from(h_q.data(), q_elements * sizeof(__nv_bfloat16));
+        key.copy_from(h_kv.data(), kv_elements * sizeof(__nv_bfloat16));
+        value.copy_from(h_kv.data(), kv_elements * sizeof(__nv_bfloat16));
+
+        EXPECT_NO_THROW(flash_attn->forward_bf16(output, softmax_lse, query, key, value, *stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        // O = P*V with V constant is that constant, so this is a whole-buffer sanity check
+        // rather than a truncation detector, which is what the case above is for.
+        std::vector<__nv_bfloat16> h_out(q_elements, __float2bfloat16(-12345.0f));
+        output.copy_to(h_out.data(), q_elements * sizeof(__nv_bfloat16));
+        for (size_t i = 0; i < q_elements; ++i) {
+            ASSERT_NEAR(__bfloat162float(h_out[i]), 0.5f, 0.02f) << "output[" << i << "]";
+        }
     }
 
     // Regression: forward() indexed the output as o[i * H * D + d], omitting the
