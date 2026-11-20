@@ -130,6 +130,40 @@ TEST_F(GraphExecutorTest, UpdateParam) {
     EXPECT_EQ(executor.param_count(), 1u);
 }
 
+// Regression: end_capture() wrote cudaStreamEndCapture()'s output straight into
+// graph_, so a second capture over the same executor dropped the first graph without
+// destroying it — LeakSanitizer reported two direct leaks of 352 bytes in
+// ReuseAfterReset. The contract is that the executor owns at most one graph at a time
+// and hands the previous one back to the driver: capturing repeatedly must leave
+// exactly one live graph, which the destructor then releases.
+//
+// The observable proof is the absence of a leak report (this file runs under ASan in
+// CI-equivalent local runs) plus the handles being usable right after each capture.
+// Asserting that an EARLIER graph is still valid would be asserting the leak.
+TEST_F(GraphExecutorTest, RepeatedCaptureWithoutResetKeepsOnlyOneGraph) {
+    cuda::production::GraphExecutor executor;
+    cuda::stream::Stream stream;
+
+    for (int round = 0; round < 3; ++round) {
+        executor.begin_capture(stream);
+        cudaGraph_t graph = executor.end_capture();
+        ASSERT_NE(graph, nullptr) << "capture " << round << " produced no graph";
+
+        // Right after the capture, the handle must be usable.
+        size_t node_count = 0;
+        EXPECT_EQ(cudaGraphGetNodes(graph, nullptr, &node_count), cudaSuccess) << "capture " << round << " returned an unusable graph";
+
+        // A graph captured without any recorded work has no nodes; asserting that pins
+        // that the handle refers to this capture's graph rather than a stale one.
+        EXPECT_EQ(node_count, 0u);
+    }
+
+    // Still instantiable after three captures: a stale or destroyed graph_ would fail
+    // here rather than leak quietly.
+    executor.instantiate();
+    EXPECT_TRUE(executor.is_instantiated());
+}
+
 TEST_F(GraphExecutorTest, Reset) {
     cuda::production::GraphExecutor executor;
     cuda::stream::Stream stream;

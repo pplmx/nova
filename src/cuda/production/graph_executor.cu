@@ -75,9 +75,21 @@ namespace cuda::production {
             throw device::CudaException(cudaErrorInvalidValue, __FILE__, __LINE__);
         }
 
-        CUDA_CHECK(cudaStreamEndCapture(capture_stream_, &graph_));
+        // Release the graph this executor was holding before overwriting graph_.
+        // cudaStreamEndCapture() writes a NEW graph into graph_, so on a second
+        // capture over the same executor (reset() creates one, and capturing twice
+        // without reset() does too) the previous graph was simply dropped: the
+        // destructor then destroyed only the newest one. LeakSanitizer on
+        // GraphExecutorTest.ReuseAfterReset reports it as two direct leaks of 352
+        // bytes, one from the constructor and one from reset().
+        cudaGraph_t captured = nullptr;
+        CUDA_CHECK(cudaStreamEndCapture(capture_stream_, &captured));
         capturing_ = false;
 
+        cleanup_exec();
+        cleanup_graph();
+
+        graph_ = captured;
         return graph_;
     }
 
