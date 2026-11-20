@@ -56,9 +56,22 @@ ctest --test-dir build --output-on-failure -j16
 # Static analysis
 make lint
 
+# Compiler warnings, as errors
+cmake -G Ninja -B build -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF \
+    -DNOVA_WARNINGS_AS_ERRORS=ON
+cmake --build build --parallel
+
 # ASan + UBSan
 make sanitize
 ```
+
+`NOVA_ENABLE_WARNINGS` defaults on and applies `-Wall -Wextra` to host code and, through
+`-Xcompiler`, to CUDA translation units as well. Two warnings are exempt for reasons
+that are permanent here: unused parameters, because the NCCL sources compile to stubs
+when `NOVA_ENABLE_NCCL=OFF`, and deprecated declarations, because the CUDA runtime still
+marks the shared-memory bank-size calls deprecated although a test guard legitimately
+saves and restores them. `NOVA_WARNINGS_AS_ERRORS=ON` turns the rest into errors; the
+whole tree builds clean with it.
 
 Under ASan, `protect_shadow_gap=0` is required. Without it no CUDA context can
 be created on this host: `cudaGetDeviceCount` returns

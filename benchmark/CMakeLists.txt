@@ -16,8 +16,21 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/google/benchmark.git
   GIT_TAG v1.9.1
 )
+# BENCHMARK_ENABLE_GTEST_TESTS is not the switch that stops benchmark building its own
+# test executables -- BENCHMARK_ENABLE_TESTING is, and it defaults to ON. Setting only the
+# former left googlebenchmark-build/test/ in the tree, and under a sanitizer build one of
+# those tests fails to compile:
+#
+#   googlebenchmark-build/test/.../output_test_helper.cc.o
+#   error: ... std_function.h:405: 'may be used uninitialized'
+#            [-Werror=maybe-uninitialized]
+#
+# which is a diagnostic inside libstdc++ against a third-party test this project never
+# runs. With both off, the build no longer depends on code we do not execute.
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googlebenchmark)
 
 set(BENCHMARK_SOURCES
