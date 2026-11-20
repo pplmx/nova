@@ -156,4 +156,22 @@ namespace cuda::performance::bandwidth::test {
         }
     }
 
+    // Regression: BandwidthAnalysis's peak setters stored into members that nothing read.
+    //
+    // set_roofline_peak_flops() wrote peak_fp64_/peak_fp32_/peak_fp16_ and
+    // set_roofline_peak_bandwidth() wrote peak_bandwidth_, but get_report() and
+    // generate_roofline_json() both read roofline_->peaks(), which those members were
+    // never copied into. A caller that configured device peaks before asking for a report
+    // got the RooflineModel's own defaults and no indication the call did nothing.
+    TEST(BandwidthAnalysisTest, ConfiguredPeaksReachTheReport) {
+        BandwidthAnalysis analysis;
+        analysis.set_roofline_peak_flops(/*fp64=*/1000.0, /*fp32=*/2000.0, /*fp16=*/4000.0);
+        analysis.set_roofline_peak_bandwidth(/*hbm_gbs=*/3500.0);
+
+        const std::string report = analysis.get_report();
+        EXPECT_NE(report.find("1000.0"), std::string::npos) << "fp64 peak missing from report";
+        EXPECT_NE(report.find("2000.0"), std::string::npos) << "fp32 peak missing from report";
+        EXPECT_NE(report.find("3500.0"), std::string::npos) << "bandwidth peak missing from report";
+    }
+
 }  // namespace cuda::performance::bandwidth::test

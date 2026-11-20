@@ -39,6 +39,15 @@ namespace cuda::performance::bandwidth {
         [[nodiscard]] double compute_arithmetic_intensity(uint64_t flops, size_t bytes) const;
         [[nodiscard]] double compute_performance_gflops(uint64_t flops, uint64_t elapsed_ns) const;
 
+        /// Override the peaks query() found at construction.
+        ///
+        /// The constructor calls DevicePeaks::query(), which reports what the driver
+        /// says the device can do. A caller that measures its own hardware, or targets
+        /// a device other than the one the process is bound to, needs to say so; the
+        /// arithmetic-intensity classification and the ridge point are computed from
+        /// these values, so replacing them changes the answers.
+        void set_peaks(const DevicePeaks& peaks) { peaks_ = peaks; }
+
         [[nodiscard]] const DevicePeaks& peaks() const { return peaks_; }
         [[nodiscard]] double ridge_point() const;
 

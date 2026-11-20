@@ -90,13 +90,35 @@ namespace cuda::performance::bandwidth {
     BandwidthAnalysis::~BandwidthAnalysis() = default;
 
     void BandwidthAnalysis::set_roofline_peak_flops(double fp64, double fp32, double fp16) {
-        peak_fp64_ = fp64;
-        peak_fp32_ = fp32;
-        peak_fp16_ = fp16;
+        // Push the values into the model that actually produces the numbers. These two
+        // setters used to write peak_fp64_/peak_fp32_/peak_fp16_/peak_bandwidth_ members
+        // that nothing ever read: get_report() and generate_roofline_json() both go
+        // through roofline_->peaks(), which kept whatever DevicePeaks::query() returned
+        // at construction. Configuring a device peak therefore had no effect on any
+        // output, and nothing said so. The shadow members are gone rather than kept in
+        // sync: a field that looks like state but feeds nothing is how the bug was
+        // possible.
+        if (roofline_) {
+            DevicePeaks peaks = roofline_->peaks();
+            peaks.fp64_gflops = fp64;
+            peaks.fp32_gflops = fp32;
+            peaks.fp16_gflops = fp16;
+            roofline_->set_peaks(peaks);
+        }
     }
 
     void BandwidthAnalysis::set_roofline_peak_bandwidth(double hbm_gbs) {
-        peak_bandwidth_ = hbm_gbs;
+        if (roofline_) {
+            DevicePeaks peaks = roofline_->peaks();
+            peaks.hbm_bandwidth_gbs = hbm_gbs;
+            roofline_->set_peaks(peaks);
+        }
+        if (tracker_) {
+            // The tracker derives utilization from the peaks; leaving it at the 900 GB/s
+            // default while the model reported something else made the two halves of a
+            // single report describe different devices.
+            tracker_->set_peak_bandwidth(hbm_gbs, hbm_gbs, hbm_gbs);
+        }
     }
 
     void BandwidthAnalysis::add_kernel_sample(const std::string& name, uint64_t flops, size_t bytes, uint64_t elapsed_ns) {

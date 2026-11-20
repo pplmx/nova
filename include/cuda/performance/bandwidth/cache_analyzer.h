@@ -53,11 +53,8 @@ namespace cuda::performance::bandwidth {
         [[nodiscard]] std::string get_report() const;
 
     private:
-        double peak_fp64_ {0.0};
-        double peak_fp32_ {0.0};
-        double peak_fp16_ {0.0};
-        double peak_bandwidth_ {0.0};
-
+        // No peak members here: the peaks live in the RooflineModel and the tracker,
+        // which are what produce every reported number.
         std::unique_ptr<RooflineModel> roofline_;
         std::unique_ptr<BandwidthUtilizationTracker> tracker_;
     };
