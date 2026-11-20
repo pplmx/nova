@@ -61,6 +61,20 @@ namespace cuda::pipeline::test {
     }  // namespace
 
     TEST(P2PSendRecvTest, ExposesTheDevicePairItWasBuiltFor) {
+        // Constructing the pair needs both devices to exist, independently of whether
+        // they can reach each other. The case was missing this guard while every other
+        // case in the file has one, so running with a single visible device failed with
+        // "invalid device ordinal" from the constructor instead of skipping:
+        //
+        //   CUDA_VISIBLE_DEVICES=5 ./bin/nova-tests
+        //     --gtest_filter=P2PSendRecvTest.ExposesTheDevicePairItWasBuiltFor
+        //   p2p_primitives.cpp:36 - CUDA error: invalid device ordinal
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "needs two visible devices, found " << device_count;
+        }
+
         P2PSendRecv p2p(kSrcDevice, kDstDevice);
 
         EXPECT_EQ(p2p.src_device(), kSrcDevice);
