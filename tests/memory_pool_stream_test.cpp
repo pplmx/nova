@@ -108,7 +108,15 @@ TEST_F(MemoryPoolStreamTest, NumActiveStreamsTracked) {
 
     auto metrics = pool.get_metrics();
 
-    EXPECT_GE(metrics.num_active_streams, 1);
+    // Three distinct stream ids were used, so the pool must report three. The first
+    // version asserted >= 1, which a metric that counted only the first stream -- or
+    // counted blocks rather than distinct streams -- would also satisfy.
+    EXPECT_EQ(metrics.num_active_streams, 3) << "three distinct stream ids were used";
+    const auto by_stream = pool.get_allocations_by_stream();
+    EXPECT_EQ(by_stream.size(), 3u) << "one entry per stream id";
+    for (int id : {1, 2, 3}) {
+        EXPECT_EQ(by_stream.count(id), 1u) << "stream " << id << " missing";
+    }
 }
 
 TEST_F(MemoryPoolStreamTest, DeallocateUpdatesStreamTracking) {
