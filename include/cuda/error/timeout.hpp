@@ -194,6 +194,18 @@ namespace nova::error {
         bool cancelled {false};
 
         /**
+         * @brief Whether the timeout callback has already reported this operation
+         *
+         * The watchdog re-examines every tracked operation on each tick, so an
+         * expired operation that is never ended stayed expired and was reported
+         * again on the next pass: one 30 ms operation over a 20 ms watchdog produced
+         * 13 callbacks in 300 ms. A "timeout notification" that arrives
+         * repeatedly is not a notification, so this marks the report and the
+         * watchdog skips it afterwards.
+         */
+        bool notified {false};
+
+        /**
          * @brief Check if deadline has passed
          * @return true if current time exceeds deadline
          */

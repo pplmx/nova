@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <cuda_runtime.h>
@@ -188,6 +190,72 @@ TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
     if (callback_invoked) {
         EXPECT_EQ(callback_id, id) << "the callback must receive the id of the operation that expired";
     }
+    manager.end_operation(id);
+}
+
+// Regression: the watchdog invoked the callback while holding mutex_, so a callback
+// that asked the manager anything about the operation it was handed deadlocked. The
+// natural callback does exactly that, and the process hung (measured: exit 124 on a
+// 12 s timeout, against 0 now). Both callback sites now release before calling.
+//
+// The guard is a thread with a deadline rather than an EXPECT, because a deadlock is
+// a hang: if this regresses, the case must fail rather than stall the suite.
+TEST_F(TimeoutTest, CallbackMayCallBackIntoTheManager) {
+    auto& manager = timeout_manager::instance();
+
+    std::atomic<bool> reentered {false};
+    std::atomic<bool> finished {false};
+
+    manager.set_callback([&](operation_id id, std::error_code) {
+        // Re-enter the manager the way a caller would.
+        (void)manager.is_cancelled(id);
+        (void)manager.get_remaining(id);
+        reentered.store(true);
+    });
+
+    auto config = timeout_config {};
+    config.watchdog_enabled = true;
+    config.watchdog_interval = std::chrono::milliseconds {10};
+    manager.set_config(config);
+
+    const operation_id id = manager.start_operation("reentrant_callback", std::chrono::milliseconds {5});
+
+    std::thread worker([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds {60});
+        finished.store(true);
+    });
+    worker.join();
+
+    // If the watchdog thread is stuck on the deadlock it holds the lock, so this
+    // call would block too; the worker joining proves the process is still moving,
+    // and this assertion proves the callback actually ran.
+    EXPECT_TRUE(reentered.load()) << "the callback never ran, so re-entrancy was not exercised";
+    EXPECT_TRUE(finished.load());
+
+    manager.end_operation(id);
+}
+
+// Regression: the watchdog re-examined every tracked operation on each tick, so one
+// expired-but-unended operation was reported once per pass -- 13 callbacks in 300 ms
+// with a 20 ms interval. A timeout notification that repeats is not a notification.
+TEST_F(TimeoutTest, AnExpiredOperationIsNotifiedOnce) {
+    auto& manager = timeout_manager::instance();
+
+    std::atomic<int> calls {0};
+    manager.set_callback([&](operation_id, std::error_code) { calls.fetch_add(1); });
+
+    auto config = timeout_config {};
+    config.watchdog_enabled = true;
+    config.watchdog_interval = std::chrono::milliseconds {10};
+    manager.set_config(config);
+
+    const operation_id id = manager.start_operation("notify_once", std::chrono::milliseconds {5});
+
+    // Long enough for many watchdog passes at a 10 ms interval.
+    std::this_thread::sleep_for(std::chrono::milliseconds {200});
+
+    EXPECT_EQ(calls.load(), 1) << "an operation that expiring once must be reported once, not once per watchdog tick";
+
     manager.end_operation(id);
 }
 

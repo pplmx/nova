@@ -54,13 +54,25 @@ namespace nova::error {
     }
 
     void timeout_manager::cancel_operation(operation_id id) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = operations_.find(id);
-        if (it != operations_.end()) {
-            it->second.cancelled = true;
-            if (callback_) {
-                callback_(id, make_timeout_error(timeout_error_code::timeout_cancelled));
+        // Invoke the callback OUTSIDE the lock. A callback describing a timeout
+        // naturally asks the manager about the operation it was given
+        // (is_cancelled, get_remaining, ...), and every one of those takes mutex_.
+        // Calling into user code while holding a lock that user code re-enters is a
+        // deadlock: measured on the old code, a callback that called is_cancelled()
+        // hung the process (exit 124 on a 12s timeout). Copy what is needed, release,
+        // then call.
+        timeout_callback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = operations_.find(id);
+            if (it == operations_.end()) {
+                return;
             }
+            it->second.cancelled = true;
+            callback = callback_;
+        }
+        if (callback) {
+            callback(id, make_timeout_error(timeout_error_code::timeout_cancelled));
         }
     }
 
@@ -158,20 +170,32 @@ namespace nova::error {
     }
 
     void timeout_manager::check_timeouts() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto now = std::chrono::steady_clock::now();
-
+        // Same rule as cancel_operation: collect what expired under the lock, then
+        // release it before calling back. The callback is user code and may look up
+        // the very operation it is being told about.
         std::vector<operation_id> expired;
-        for (const auto& [id, ctx] : operations_) {
-            if (!ctx.cancelled && now > ctx.deadline) {
-                expired.push_back(id);
+        timeout_callback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto now = std::chrono::steady_clock::now();
+
+            for (const auto& [id, ctx] : operations_) {
+                if (!ctx.cancelled && !ctx.notified && now > ctx.deadline) {
+                    expired.push_back(id);
+                }
             }
+            // Mark before releasing: a second watchdog pass must not re-collect them.
+            for (const auto& id : expired) {
+                operations_.at(id).notified = true;
+            }
+            callback = callback_;
         }
 
+        if (!callback) {
+            return;
+        }
         for (const auto& id : expired) {
-            if (callback_) {
-                callback_(id, make_timeout_error(timeout_error_code::operation_timed_out));
-            }
+            callback(id, make_timeout_error(timeout_error_code::operation_timed_out));
         }
     }
 
