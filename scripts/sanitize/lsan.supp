@@ -1,0 +1,9 @@
+# LeakSanitizer suppressions for third-party allocations that this project cannot
+# free. Applied through LSAN_OPTIONS=suppressions=<this file>; see docs/ci.md.
+#
+# libnccl.so allocates bookkeeping with calloc during communicator setup and does
+# not release it at process exit. 480 bytes in 3 allocations, entirely inside the
+# library (no nova frame in the stack), reported by every process that touches an
+# NCCL communicator. Suppressing it keeps the sanitizer run's failures meaning
+# "something nova did", which is the point of running it.
+leak:libnccl.so

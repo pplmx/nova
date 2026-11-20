@@ -69,6 +69,13 @@ first `cudaMalloc` with "out of memory" — measured on a fresh sanitizer binary
 `NOVA_SANITIZE_ASAN_OPTIONS`, so the target works as written; override that
 variable on a host that does not need the workaround.
 
+`make sanitize` also applies `scripts/sanitize/lsan.supp`. `libnccl.so` keeps
+480 bytes of calloc'd bookkeeping per communicator until process exit, with no
+nova frame in the stack, so without the suppression every process that touches a
+communicator fails the run on a leak this project cannot release. The suppression
+file states the reason; keep it to third-party libraries only, or the run stops
+meaning "something nova did".
+
 ```bash
 # Coverage
 cmake -G Ninja -B build-coverage -DNOVA_COVERAGE=ON

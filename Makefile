@@ -162,6 +162,12 @@ prek:
 # workaround can drop it without editing the target.
 NOVA_SANITIZE_ASAN_OPTIONS ?= protect_shadow_gap=0:detect_leaks=1:detect_stack_use_after_return=1
 
+# Third-party allocations this project cannot free. libnccl.so keeps 480 bytes of
+# calloc'd bookkeeping per communicator until process exit, with no nova frame in
+# the stack; without the suppression every NCCL test process fails on it and the
+# run's failures stop meaning "something nova did".
+NOVA_SANITIZE_LSAN_OPTIONS ?= suppressions=$(CURDIR)/scripts/sanitize/lsan.supp
+
 sanitize:
 	@cmake -G Ninja -B build-san \
 		-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
@@ -169,5 +175,6 @@ sanitize:
 		-DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
 	@cmake --build build-san --parallel
 	@ASAN_OPTIONS=$(NOVA_SANITIZE_ASAN_OPTIONS) \
+		LSAN_OPTIONS=$(NOVA_SANITIZE_LSAN_OPTIONS) \
 		UBSAN_OPTIONS=print_stacktrace=1 \
 		ctest --test-dir build-san --output-on-failure -j8
