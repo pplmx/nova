@@ -116,6 +116,18 @@ namespace cuda::memory {
 
         void merge_prefix_blocks(int64_t sequence_id);
 
+        /**
+         * @brief Hash the contents of a token block for prefix sharing
+         *
+         * @param tokens Buffer of `num_tokens * config.num_heads * config.head_dim`
+         *        floats. Each token carries one head_dim vector per head, so passing a
+         *        buffer sized from `num_tokens` alone under-sizes it by a factor of
+         *        num_heads * head_dim.
+         * @param num_tokens Number of tokens in the buffer (not the float count)
+         * @return 64-bit content hash; empty or null input yields the fixed seed value
+         *
+         * @note Reads at most 1024 floats of the buffer, at a stride of 4.
+         */
         uint64_t compute_content_hash(const void* tokens, int num_tokens) const;
 
         std::vector<int64_t> find_sequences_with_prefix(int64_t reference_sequence_id) const;
@@ -581,11 +593,29 @@ namespace cuda::memory {
 
         uint64_t hash = 0xcbf29ce484222325ULL;
 
-        const float* data = static_cast<const float*>(tokens);
-        const int num_floats = num_tokens * config_.num_heads * config_.head_dim;
+        if (tokens == nullptr || num_tokens <= 0) {
+            return hash ^ p2;
+        }
 
-        for (int i = 0; i < num_floats && i < 1024; i += 4) {
-            uint32_t bits = std::bit_cast<uint32_t>(data[i]);
+        // num_tokens counts TOKENS. The buffer holds num_tokens * num_heads * head_dim
+        // floats, because every token carries a head_dim vector per head; the sampling
+        // below reads at most 1024 of them, at a stride of 4. The loop bound is
+        // expressed in that same unit so it can never exceed what the contract says the
+        // buffer contains.
+        //
+        // The previous loop was `i < num_floats && i < 1024` over data[i], with
+        // num_floats computed from the config: it kept the LOOP under 1024 but said
+        // nothing about the BUFFER, so a caller that sized its buffer from num_tokens
+        // alone (as one test did: 512 floats for 32 tokens at 32 heads/128 dim) was read
+        // 256x past its end. AddressSanitizer reported it as a heap-buffer-overflow at
+        // this function.
+        constexpr size_t kMaxHashFloats = 1024;
+        const size_t num_floats = static_cast<size_t>(num_tokens) * static_cast<size_t>(config_.num_heads) * static_cast<size_t>(config_.head_dim);
+        const size_t limit = std::min(num_floats, kMaxHashFloats);
+
+        const float* data = static_cast<const float*>(tokens);
+        for (size_t i = 0; i + 3 < limit; i += 4) {
+            const uint32_t bits = std::bit_cast<uint32_t>(data[i]);
             hash ^= static_cast<uint64_t>(bits) + p1 + (hash << 6) + (hash >> 2);
         }
 
@@ -676,6 +706,24 @@ namespace cuda::memory {
 
         std::sort(allocated_blocks.begin(), allocated_blocks.end());
 
+        // The compaction loop below rewrites allocated_blocks[i] as it moves blocks, so
+        // the vector no longer answers "where did block N go?" by the time the sequence
+        // maps are remapped. Keep the original (old -> new) mapping instead.
+        //
+        // Reading the mutated vector was worse than stale: a block that had already been
+        // rewritten (or any block not present, such as one belonging to a freed
+        // sequence) made std::find return end(), and end() - begin() == size() then
+        // indexed one past the end. AddressSanitizer, 15 lines against the public API:
+        //
+        //   alloc.allocate(1, 32); alloc.allocate(2, 32); alloc.free(1);
+        //   alloc.compact();
+        //   -> READ of size 4 ... heap-buffer-overflow at kv_cache_allocator.h:696
+        std::unordered_map<int, int> old_to_new;
+        old_to_new.reserve(allocated_blocks.size());
+        for (size_t i = 0; i < allocated_blocks.size(); ++i) {
+            old_to_new.emplace(allocated_blocks[i], static_cast<int>(i));
+        }
+
         for (size_t i = 0; i < allocated_blocks.size(); ++i) {
             const int src_idx = allocated_blocks[i];
             const int dst_idx = static_cast<int>(i);
@@ -687,13 +735,18 @@ namespace cuda::memory {
                 std::swap(blocks_[src_idx].ref_count, blocks_[dst_idx].ref_count);
                 blocks_[src_idx].block_id = src_idx;
                 blocks_[dst_idx].block_id = dst_idx;
-                allocated_blocks[i] = dst_idx;
             }
         }
 
         for (auto& [seq_id, blocks] : sequence_blocks_) {
             for (int& block_idx : blocks) {
-                block_idx = allocated_blocks[std::find(allocated_blocks.begin(), allocated_blocks.end(), block_idx) - allocated_blocks.begin()];
+                // A block with no mapping belongs to a sequence that has since been
+                // freed; dropping it is correct, inventing an index for it is not.
+                const auto it = old_to_new.find(block_idx);
+                if (it == old_to_new.end()) {
+                    continue;
+                }
+                block_idx = it->second;
             }
             new_sequence_blocks[seq_id] = blocks;
         }

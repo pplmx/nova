@@ -14,10 +14,12 @@ namespace cuda::memory {
                 .num_layers = 32,
                 .enable_prefix_caching = true,
             };
+            config_ = config;
             allocator = std::make_unique<KVCacheAllocator>(config);
         }
 
         std::unique_ptr<KVCacheAllocator> allocator;
+        KVCacheAllocatorConfig config_;
     };
 
     TEST_F(PrefixSharingTest, ForkPrefixBlocks) {
@@ -56,8 +58,16 @@ namespace cuda::memory {
         EXPECT_EQ(sharing[0], 2);
     }
 
+    // compute_content_hash reads num_tokens * num_heads * head_dim floats, because
+    // num_tokens counts tokens and each token carries a full head_dim vector per head.
+    // These two cases passed a flat 512 floats against a fixture configured for
+    // 32 heads x 128 head_dim, i.e. 131072 floats for 32 tokens: a 256x over-read.
+    // AddressSanitizer caught it as "READ of size 4 ... heap-buffer-overflow" inside
+    // compute_content_hash. The buffers are now sized from the same formula the
+    // function documents.
     TEST_F(PrefixSharingTest, ContentHashConsistency) {
-        std::vector<float> tokens(512, 1.0f);
+        const auto& cfg = config_;
+        std::vector<float> tokens(static_cast<size_t>(32) * cfg.num_heads * cfg.head_dim, 1.0f);
 
         uint64_t hash1 = allocator->compute_content_hash(tokens.data(), 32);
         uint64_t hash2 = allocator->compute_content_hash(tokens.data(), 32);
@@ -66,8 +76,10 @@ namespace cuda::memory {
     }
 
     TEST_F(PrefixSharingTest, ContentHashDifferentForDifferentTokens) {
-        std::vector<float> tokens1(512, 1.0f);
-        std::vector<float> tokens2(512, 2.0f);
+        const auto& cfg = config_;
+        const size_t floats = static_cast<size_t>(32) * cfg.num_heads * cfg.head_dim;
+        std::vector<float> tokens1(floats, 1.0f);
+        std::vector<float> tokens2(floats, 2.0f);
 
         uint64_t hash1 = allocator->compute_content_hash(tokens1.data(), 32);
         uint64_t hash2 = allocator->compute_content_hash(tokens2.data(), 32);
