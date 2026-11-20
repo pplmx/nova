@@ -14,7 +14,7 @@ Nova provides `CheckpointManager` for saving:
 ## Basic Usage
 
 ```cpp
-#include <cuda/checkpoint/checkpoint_manager.hpp>
+#include <cuda/checkpoint/checkpoint_manager.h>
 
 // Create checkpoint manager
 nova::checkpoint::CheckpointManager manager;
@@ -54,9 +54,9 @@ TrainingState state = deserialize_from_bytes<TrainingState>(bytes);
 ## Complete Training Loop Example
 
 ```cpp
-#include <cuda/checkpoint/checkpoint_manager.hpp>
-#include <cuda/algo/reduce.hpp>
-#include <cuda/memory/buffer.hpp>
+#include <cuda/checkpoint/checkpoint_manager.h>
+#include <cuda/algo/reduce.h>
+#include <cuda/memory/buffer.h>
 #include <iostream>
 
 class Trainer {
@@ -96,7 +96,7 @@ private:
 ## File Storage Backend
 
 ```cpp
-#include <cuda/checkpoint/file_storage.hpp>
+#include <cuda/checkpoint/checkpoint_manager.h>  // FileStorageBackend lives here
 
 // Use file-based storage
 auto backend = std::make_unique<nova::checkpoint::FileStorageBackend>();

@@ -32,8 +32,8 @@ Create `hello_nova.cpp`:
 
 ```cpp
 #include <cuda/error/cuda_error.hpp>
-#include <cuda/memory/buffer.hpp>
-#include <cuda/algo/reduce.hpp>
+#include <cuda/memory/buffer.h>
+#include <cuda/algo/reduce.h>
 #include <stdio.h>
 
 int main() {

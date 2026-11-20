@@ -7,8 +7,8 @@ How to use Nova's DeviceMesh for multi-GPU CUDA programming.
 Nova provides `DeviceMesh` for easy multi-GPU coordination:
 
 ```cpp
-#include <cuda/mesh/device_mesh.hpp>
-#include <cuda/distributed/reduce.hpp>
+#include <cuda/mesh/device_mesh.h>
+#include <cuda/distributed/reduce.h>
 ```
 
 ## Prerequisites
@@ -19,7 +19,7 @@ Nova provides `DeviceMesh` for easy multi-GPU coordination:
 ## Basic Multi-GPU Setup
 
 ```cpp
-#include <cuda/mesh/device_mesh.hpp>
+#include <cuda/mesh/device_mesh.h>
 
 int main() {
     // Initialize device mesh
@@ -43,7 +43,7 @@ int main() {
 ## Multi-GPU Reduction
 
 ```cpp
-#include <cuda/distributed/reduce.hpp>
+#include <cuda/distributed/reduce.h>
 
 // Each GPU has partial data
 nova::memory::Buffer<float> local_data(size);
@@ -81,7 +81,7 @@ if (mesh.can_access_peer(src_device, dst_device)) {
 ## Multi-GPU Matmul
 
 ```cpp
-#include <cuda/distributed/matmul.hpp>
+#include <cuda/distributed/matmul.h>
 
 // Split matrix across GPUs by rows
 int rows_per_gpu = matrix_height / device_count;
@@ -104,9 +104,9 @@ matmul.execute(local_A, local_B, local_C);
 ## Complete Example
 
 ```cpp
-#include <cuda/mesh/device_mesh.hpp>
-#include <cuda/distributed/reduce.hpp>
-#include <cuda/algo/reduce.hpp>
+#include <cuda/mesh/device_mesh.h>
+#include <cuda/distributed/reduce.h>
+#include <cuda/algo/reduce.h>
 #include <stdio.h>
 
 int main() {
