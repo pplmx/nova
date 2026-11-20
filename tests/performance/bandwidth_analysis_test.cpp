@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cuda_runtime.h>
 #include <cuda/performance/bandwidth/roofline_model.h>
 #include <cuda/performance/bandwidth/cache_analyzer.h>
 
@@ -172,6 +173,87 @@ namespace cuda::performance::bandwidth::test {
         EXPECT_NE(report.find("1000.0"), std::string::npos) << "fp64 peak missing from report";
         EXPECT_NE(report.find("2000.0"), std::string::npos) << "fp32 peak missing from report";
         EXPECT_NE(report.find("3500.0"), std::string::npos) << "bandwidth peak missing from report";
+    }
+
+    // Regression: DevicePeaks::query() reported an FP64 peak eight times too low for
+    // Ampere.
+    //
+    // The table it used was "8 FP64 cores per SM for major >= 7, 32 for major >= 9", with
+    // one flop per core per clock. An A100 (sm_80, 108 SMs, 1.41 GHz) has 32 FP64 cores per
+    // SM and two flops per FMA, so the real peak is
+    //
+    //     108 * 32 * 2 * 1.41e9 = 9.75 TFLOPS   (NVIDIA's published FP64 figure is 9.7)
+    //
+    // and query() produced 108 * 8 * 1.41e9 = 1.22 TFLOPS. Because the roofline's ridge
+    // point and its memory-bound/compute-bound split are derived from this number, every
+    // classification was made against a device roughly 8x weaker than the real one.
+    //
+    // The old assertion was EXPECT_GE(peaks.fp64_gflops, 0.0), which any value satisfies.
+    TEST(BandwidthAnalysisTest, Fp64PeakMatchesTheDeviceItQueried) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cudaDeviceProp prop {};
+        ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
+
+        const auto peaks = DevicePeaks::query(0);
+
+        // One FP64 FMA per core per clock is two floating-point operations. The per-SM core
+        // count is 32 for every datacenter part from Volta through Hopper and 2 for the
+        // consumer dies; this device is a datacenter A100, so use 32.
+        const double expected = static_cast<double>(prop.multiProcessorCount) * 32.0 * 2.0 * static_cast<double>(prop.clockRate) * 1e3 / 1e9;
+
+        // Within 20%: the coefficient is an architectural constant, and clockRate is a boost
+        // figure, so exact equality is not the claim. Being 8x off is.
+        EXPECT_NEAR(peaks.fp64_gflops, expected, 0.2 * expected) << "reported " << peaks.fp64_gflops << " GFLOPS, expected about " << expected << " for " << prop.name;
+
+        // The FP32 rate is twice FP64 on every part this code supports.
+        EXPECT_NEAR(peaks.fp32_gflops, peaks.fp64_gflops * 2.0, 1e-6 * peaks.fp32_gflops);
+    }
+
+    // Regression: the peaks were FLOP/s stored in fields named *_gflops.
+    //
+    //     peaks.fp64_gflops = SMs * cores * 2.0 * prop.clockRate * 1e3;
+    //
+    // clockRate is in kHz, so clockRate * 1e3 is Hz, and the expression is FLOP per second.
+    // Assigning it to a field the whole class treats as GFLOPS made every peak 1e9 times
+    // too large, and everything derived from it too:
+    //
+    //     ridge_point() == fp64_gflops / hbm_bandwidth_gbs
+    //
+    // came out around 1e12 FLOP/Byte. Real arithmetic intensities are 0.1 to 100, so no
+    // point could ever reach the ridge and get_compute_bound_points() returned empty for
+    // every workload -- the model classified everything as memory-bound.
+    //
+    // This checks the consequence, which is what a user of the class sees, rather than the
+    // unit of one field.
+    TEST(BandwidthAnalysisTest, AComputeHeavyKernelIsClassifiedAsComputeBound) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        RooflineModel model;
+
+        // Two points with unmistakable arithmetic intensities: a classic memory-bound stream
+        // (1 FLOP/Byte) and a compute-heavy GEMM-like kernel (64 FLOP/Byte).
+        model.add_point("stream", /*flops=*/1000, /*bytes=*/1000, /*elapsed_ns=*/1000);
+        model.add_point("gemm", /*flops=*/6400, /*bytes=*/100, /*elapsed_ns=*/1000);
+
+        const auto memory_bound = model.get_memory_bound_points();
+        const auto compute_bound = model.get_compute_bound_points();
+
+        EXPECT_EQ(memory_bound.size() + compute_bound.size(), 2u) << "every point must land on one side of the ridge";
+        EXPECT_EQ(compute_bound.size(), 1u) << "a 64 FLOP/Byte kernel must be compute-bound on any real device; ridge = " << model.ridge_point();
+        ASSERT_EQ(compute_bound.size(), 1u);
+        EXPECT_EQ(compute_bound.front().kernel_name, "gemm");
+
+        // The ridge point is FLOP/Byte, so it has to be a number a kernel could reach: on
+        // every GPU built it is between roughly 1 and 1000.
+        EXPECT_GT(model.ridge_point(), 0.1) << "ridge point is not a plausible arithmetic intensity";
+        EXPECT_LT(model.ridge_point(), 1e6) << "ridge point is orders of magnitude too large";
     }
 
 }  // namespace cuda::performance::bandwidth::test

@@ -16,22 +16,42 @@ namespace cuda::performance::bandwidth {
 
         peaks.hbm_bandwidth_gbs = static_cast<double>(prop.memoryClockRate) * 1e3 * static_cast<double>(prop.memoryBusWidth) / 8.0 / 1e9;
 
-        int major = prop.major;
-        int minor = prop.minor;
-
-        if (major >= 9) {
-            peaks.fp64_gflops = static_cast<double>(prop.multiProcessorCount) * 32.0 * prop.clockRate * 1e3;
-            peaks.fp32_gflops = peaks.fp64_gflops * 2.0;
-            peaks.fp16_gflops = peaks.fp64_gflops * 2.0;
-        } else if (major >= 7) {
-            peaks.fp64_gflops = static_cast<double>(prop.multiProcessorCount) * 8.0 * prop.clockRate * 1e3;
-            peaks.fp32_gflops = peaks.fp64_gflops * 2.0;
-            peaks.fp16_gflops = peaks.fp64_gflops * 2.0;
-        } else {
-            peaks.fp64_gflops = static_cast<double>(prop.multiProcessorCount) * 64.0 * prop.clockRate * 1e3;
-            peaks.fp32_gflops = peaks.fp64_gflops * 2.0;
-            peaks.fp16_gflops = peaks.fp64_gflops * 2.0;
+        // Peak FP64 in GFLOPS = SMs * (FP64 cores per SM) * 2 * clock.
+        //
+        // The factor 2 is the FMA: each core retires one multiply-add, i.e. two
+        // floating-point operations, per clock. The previous table omitted it and used
+        // core counts that did not match the hardware --
+        //
+        //     major >= 9: 32      (Hopper H100: 64)
+        //     major >= 7:  8      (Volta V100: 32, Ampere A100: 32, Ada consumer: 2)
+        //     otherwise:  64      (Pascal P100: 32)
+        //
+        // so an A100 reported 108 * 8 * 1.41e9 = 1.22 TFLOPS against a published 9.7 --
+        // 8x low, measured on this host. Every ridge-point and memory-bound/compute-bound
+        // classification was made against that wrong number.
+        //
+        // The counts below are the datacenter parts' published FP64 cores per SM. Parts
+        // whose FP64 is cut down (consumer Ada/Ampere, 2 per SM) will still be
+        // overestimated: cudaDeviceProp carries no core-count field, so this table is the
+        // best available from the device properties alone, and it is documented as such
+        // rather than presented as exact.
+        double fp64_cores_per_sm = 32.0;
+        if (prop.major >= 9) {
+            fp64_cores_per_sm = 64.0;  // Hopper / Blackwell datacenter
+        } else if (prop.major == 6) {
+            fp64_cores_per_sm = 32.0;  // Pascal P100
         }
+
+        // Divide by 1e9 on purpose. prop.clockRate is in kHz, so clockRate * 1e3 is Hz and
+        // the product below is FLOP per second. The field is named *_gflops and
+        // ridge_point() divides it by a GB/s bandwidth to get FLOP/Byte, so it has to be
+        // GFLOPS. Without this division every peak was 1e9 too large and the ridge point
+        // came out around 9.5e9 FLOP/Byte, which no kernel can reach -- measured, and it
+        // made get_compute_bound_points() return empty for every workload.
+        const double clock_hz = static_cast<double>(prop.clockRate) * 1e3;
+        peaks.fp64_gflops = static_cast<double>(prop.multiProcessorCount) * fp64_cores_per_sm * 2.0 * clock_hz / 1e9;
+        peaks.fp32_gflops = peaks.fp64_gflops * 2.0;
+        peaks.fp16_gflops = peaks.fp64_gflops * 2.0;
 
         return peaks;
     }
