@@ -108,17 +108,21 @@ auto result = nova::sparse::gmres(A, b, x, {
 Improve convergence with preconditioners:
 
 ```cpp
-// Jacobi (diagonal) preconditioner - simplest, good for diagonal-dominant
-nova::sparse::JacobiPreconditioner<float> jacobi(A);
-jacobi.compute();
+// Jacobi (diagonal) preconditioner - simplest, good for diagonal-dominant.
+// The constructor takes the damping factor (default 1.0); setup() is the call that
+// factorises. There is no compute() method.
+nova::sparse::JacobiPreconditioner<float> jacobi;
+jacobi.setup(A);
 
 auto result = nova::sparse::gmres(A, b, x, config, &jacobi);
 
-// ILU(0) - more aggressive, better for general matrices
-nova::sparse::ILU0Preconditioner<float> ilu(A);
-ilu.compute();
-
-auto result2 = nova::sparse::gmres(A, b, x, config, &ilu);
+// There is no ILU(0) preconditioner to use here. nova::sparse::ILUPreconditioner
+// exists, but its setup() and apply() both throw PreconditionerError stating that
+// the ILU(0) factorization and triangular solve are not implemented -- the class
+// throws rather than returning an unfactorized buffer, which is the honest
+// behaviour, but it is not usable as a preconditioner yet. Use
+// JacobiPreconditioner above, or drive the cuSPARSE csrsm2 path behind the
+// Preconditioner interface directly.
 ```
 
 ## Performance Tips

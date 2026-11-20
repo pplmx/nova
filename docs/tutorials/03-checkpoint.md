@@ -118,11 +118,9 @@ manager.set_atomic_writes(true);
 
 ### Compression
 
-Support for ZSTD/LZ4 compression:
-
-```cpp
-manager.enable_compression(nova::checkpoint::CompressionType::ZSTD);
-```
+Not available. CheckpointManager writes the tensor blobs uncompressed, and there is no
+enable_compression() method or CompressionType enum in this tree. Compressing a
+checkpoint directory means compressing the files it writes, outside the manager.
 
 ### Async Saves
 

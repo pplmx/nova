@@ -10,8 +10,8 @@
  *
  * Example usage:
  * @code
- * JacobiPreconditioner<float> jacobi(A);
- * jacobi.compute();
+ * JacobiPreconditioner<float> jacobi;        // omega defaults to 1.0
+ * jacobi.setup(A);                           // factorise; there is no compute()
  * auto result = gmres(A, b, x, config, &jacobi);
  * @endcode
  *

@@ -38,10 +38,15 @@ std::cout << "Range: [" << result.min_val << ", " << result.max_val << "]\n";
 More robust to outliers:
 
 ```cpp
-nova::quantize::PercentileCalibrator calibrator({.percentile = 99.99f});
-calibrator.collect_data(data.data(), data.size());
-auto result = calibrator.compute();
+// There is no PercentileCalibrator: HistogramCalibrator takes the percentile as a
+// constructor argument. calibrate() returns the result; it does not accumulate first.
+nova::quantize::HistogramCalibrator calibrator(
+    /*num_bins=*/2048, /*percentile=*/99.99f, /*symmetric=*/true);
+auto result = calibrator.calibrate(data.data(), data.size(), /*stream=*/0);
 ```
+
+The calibrators this tree provides are `MinMaxCalibrator`, `HistogramCalibrator`,
+`MSECalibrator` and `PerChannelCalibrator`, all deriving from `Calibrator`.
 
 ## INT8 Quantization
 
@@ -123,13 +128,12 @@ QAT simulates quantization effects during training for better accuracy.
 ```cpp
 #include "cuda/quantize/qat.hpp"
 
-// Fake quantization simulation
-nova::quantize::FakeQuantize fq{
-    .num_bits = 8,
-    .quant_scheme = nova::quantize::QuantScheme::SYMMETRIC
-};
-
-auto quantized = fq.simulate(weights, calibration_range);
+// Fake quantization simulation. FakeQuantize takes a Config; there is no
+// QuantScheme enum and no num_bits/quant_scheme aggregate initialiser.
+nova::quantize::FakeQuantize::Config cfg;
+cfg.precision = nova::quantize::Precision::INT8;
+cfg.quant_bits = 8;
+nova::quantize::FakeQuantize fq(cfg);
 ```
 
 ## Best Practices
