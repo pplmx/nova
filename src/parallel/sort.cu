@@ -129,11 +129,23 @@ namespace cuda::parallel {
             launcher.synchronize();
         }
 
+        // One thread per element, but in blocks of at most kMaxThreadsPerBlock rather
+        // than a single block of paddedSize. A block cannot exceed 1024 threads, so
+        // the old launch ({paddedSize, 1, 1}) was rejected for any input above 1024:
+        //
+        //   SortTest.SortsMoreElementsThanABlockCanHold (4096 elements)
+        //   kernel_launcher.h:100 - CUDA error: invalid configuration argument
+        //
+        // The kernel already indexes with blockIdx.x * blockDim.x + threadIdx.x, so
+        // only the launch shape had to change. Every synchronize() between phases is
+        // still required: a pass compares against elements another block may have
+        // swapped, so removing the barrier would race.
+        constexpr size_t kMaxThreadsPerBlock = 256;
         for (int k = 2; k <= static_cast<int>(paddedSize); k *= 2) {
             for (int j = k / 2; j > 0; j /= 2) {
                 detail::KernelLauncher launcher;
-                launcher.block({paddedSize, 1, 1});
-                launcher.grid({1, 1, 1});
+                launcher.block({kMaxThreadsPerBlock, 1, 1});
+                launcher.grid(detail::calc_grid_1d(paddedSize, {kMaxThreadsPerBlock, 1, 1}));
                 launcher.launch(bitonicSortKernel<T>, d_data.data(), paddedSize, k, j);
                 launcher.synchronize();
             }

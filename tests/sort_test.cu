@@ -117,6 +117,39 @@ TEST_F(SortTest, LargeArray) {
     EXPECT_TRUE(isPermutation(h_input_, h_output_));
 }
 
+// bitonicSort launches one thread per element:
+//
+//     launcher.block({paddedSize, 1, 1});
+//     launcher.grid({1, 1, 1});
+//
+// where paddedSize is the input rounded up to a power of two. A block cannot have
+// more than 1024 threads, so any input above 1024 either fails to launch or is
+// silently clamped depending on the launch path. Every case in this file used 1024
+// or fewer -- exactly the boundary that hides it -- and the fuzz target caps its
+// input at 1024 for the same reason.
+//
+// 2048 is the smallest power of two above the limit, so it exercises the failure
+// with the smallest allocation.
+TEST_F(SortTest, SortsMoreElementsThanABlockCanHold) {
+    const size_t size = 4096;  // smallest input that pads above the 1024-thread limit
+    h_input_.resize(size);
+    h_output_.resize(size);
+    d_input_ = cuda::memory::Buffer<int>(size);
+    d_output_ = cuda::memory::Buffer<int>(size);
+
+    for (size_t i = 0; i < size; ++i) {
+        // A permutation, so a partially sorted result cannot pass by accident.
+        h_input_[i] = static_cast<int>((i * 7919u) % size);
+    }
+
+    runSort(size);
+
+    for (size_t i = 1; i < size; ++i) {
+        ASSERT_LE(h_output_[i - 1], h_output_[i]) << "first inversion at index " << i;
+    }
+    EXPECT_TRUE(isPermutation(h_input_, h_output_));
+}
+
 TEST_F(SortTest, AllSame) {
     size_t size = 100;
     h_input_.resize(size);
