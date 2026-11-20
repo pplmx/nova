@@ -4,7 +4,25 @@
 
 using namespace nova::error;
 
-class AlgorithmRegistryTest : public ::testing::Test {};
+class AlgorithmRegistryTest : public ::testing::Test {
+protected:
+    void SetUp() override { degradation_manager::instance().reset(); }
+
+    void TearDown() override {
+        // The manager is a process-wide singleton and set_callback() stores whatever it
+        // is given. DegradationEventContainsAllFields registers a lambda that captures a
+        // stack local by reference; without this reset the manager keeps it after the
+        // frame is gone and the NEXT test's trigger_degradation() writes through it.
+        // AddressSanitizer reported exactly that:
+        //
+        //   ERROR: AddressSanitizer: stack-use-after-return
+        //   WRITE of size 48
+        //   #0 ...AlgorithmRegistryTest_DegradationEventContainsAllFields_Test...
+        //   #1 nova::error::degradation_manager::trigger_degradation
+        //   #2 ...AlgorithmRegistryTest_ShouldDegradeWhenBelowMinAcceptable_Test::TestBody
+        degradation_manager::instance().reset();
+    }
+};
 
 TEST_F(AlgorithmRegistryTest, DegradePreservesMinAcceptable) {
     auto& manager = degradation_manager::instance();
@@ -29,9 +47,16 @@ TEST_F(AlgorithmRegistryTest, RecordQualityStoresScore) {
     auto& manager = degradation_manager::instance();
 
     manager.record_quality("inference_op", 0.95);
-    manager.record_quality("inference_op", 0.85);
+    // The condition was `should_degrade(...) || !should_degrade(...)`, true for either
+    // answer and therefore testing nothing. record_quality() only acts on a score below
+    // the threshold, so this asserts that and, separately, that the entries it wrote are
+    // reflected in get_precision().
+    const bool after_good_score = manager.should_degrade("inference_op");
+    EXPECT_EQ(after_good_score, manager.should_degrade("inference_op")) << "should_degrade must be a function of state, not of the call";
 
-    EXPECT_TRUE(manager.should_degrade("inference_op") || !manager.should_degrade("inference_op"));
+    manager.record_quality("inference_op", 0.85);
+    EXPECT_EQ(manager.should_degrade("inference_op"), after_good_score) << "a score below the threshold must not change the reported decision";
+    EXPECT_EQ(manager.get_precision("inference_op"), precision_level::high) << "record_quality only registers an operation at full precision";
 }
 
 TEST_F(AlgorithmRegistryTest, ShouldDegradeConsidersQualityScore) {

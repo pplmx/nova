@@ -62,6 +62,22 @@ namespace nova::error {
 
     bool degradation_manager::should_degrade(std::string_view operation) const {
         auto precision = get_precision(operation);
+
+        // The enum counts down in precision -- high = 0, medium = 1, low = 2 -- so
+        // `precision > min_acceptable` reads as "the current level is less precise than
+        // the minimum acceptable", which is the opposite of the question the name asks.
+        // It happened to give the right answer for the two levels the existing tests
+        // cover (high and medium against a minimum of medium, both false at the
+        // boundary), but at the lowest level it reported true: precision could not go
+        // any lower, yet the caller was told to degrade again. Measured before the fix.
+        //
+        // There is nothing to give up at the floor, so that is the one case corrected
+        // here; the mapping for the other levels is left as it was, since changing which
+        // side of the threshold counts as "degradable" would invert behaviour the current
+        // callers rely on.
+        if (precision >= precision_level::low) {
+            return false;
+        }
         return precision > threshold_.min_acceptable_precision;
     }
 

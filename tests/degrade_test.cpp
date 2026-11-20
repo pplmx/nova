@@ -83,6 +83,32 @@ TEST_F(DegradationTest, ShouldDegradeWhenBelowMinAcceptable) {
     EXPECT_FALSE(manager.should_degrade("test"));
 }
 
+// should_degrade() compared precision_level values with `>`, but the enum counts down
+// in precision: high = 0, medium = 1, low = 2. So a larger value means LESS precision,
+// and the comparison asked "is the current precision worse than the minimum acceptable"
+// -- then answered it with the name "should degrade".
+//
+// Concretely, with min_acceptable_precision = medium:
+//
+//     current high   (0) -> 0 > 1 = false    "no degradation needed"   -- right
+//     current medium (1) -> 1 > 1 = false    "no degradation needed"   -- right
+//     current low    (2) -> 2 > 1 = TRUE     "should degrade"          -- but it is
+//                                            already at the lowest level
+//
+// Both existing cases stop at medium, which is why this went unnoticed.
+TEST_F(DegradationTest, DoesNotAskToDegradeWhenAlreadyAtTheLowestLevel) {
+    auto& manager = degradation_manager::instance();
+
+    quality_threshold threshold;
+    threshold.min_acceptable_precision = precision_level::medium;
+    manager.set_threshold(threshold);
+
+    manager.trigger_degradation("lowest", precision_level::low, "floor");
+    ASSERT_EQ(manager.get_precision("lowest"), precision_level::low);
+
+    EXPECT_FALSE(manager.should_degrade("lowest")) << "precision is already at the lowest level, so there is nothing left to degrade";
+}
+
 TEST_F(DegradationTest, RecordQualityStoresScore) {
     auto& manager = degradation_manager::instance();
 
