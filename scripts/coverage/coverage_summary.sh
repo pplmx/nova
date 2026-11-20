@@ -69,7 +69,19 @@ echo "========================================"
 # Compares with awk rather than bc: bc is not installed on ubuntu-latest, so
 # the old `| bc -l` piped into a `|| echo 0` fallback, silently reported 0 and
 # failed the job on any non-empty report regardless of the actual number.
-MIN_COVERAGE="${NOVA_COVERAGE_MIN:-80}"
+#
+# The threshold is read from the build's CMake cache first. -DNOVA_COVERAGE_MIN=90
+# sets a CMake CACHE variable; it was never exported to this process, so the
+# shell fallback of 80 always applied and the documented option had no effect:
+# measured with 85% coverage and -DNOVA_COVERAGE_MIN=90, the report said
+# "Coverage (85.0%) meets minimum (80%)". Reading the cache makes the value the
+# build was configured with the value that is enforced. An explicit environment
+# variable still wins, for a one-off run.
+MIN_COVERAGE="${NOVA_COVERAGE_MIN:-}"
+if [ -z "$MIN_COVERAGE" ]; then
+    MIN_COVERAGE=$(sed -n 's/^NOVA_COVERAGE_MIN:[A-Z]*=\(.*\)$/\1/p' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -1)
+fi
+MIN_COVERAGE="${MIN_COVERAGE:-80}"
 if [ "$TOTAL_LINES" != "N/A" ]; then
     if awk -v have="$TOTAL_LINES" -v want="$MIN_COVERAGE" 'BEGIN { exit !(have + 0 >= want + 0) }'; then
         echo "Coverage ($TOTAL_LINES%) meets minimum ($MIN_COVERAGE%)"

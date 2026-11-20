@@ -13,7 +13,7 @@ cmake --build build-coverage
 ctest --test-dir build-coverage
 
 # Generate coverage report
-./scripts/generate_coverage.sh build-coverage
+./scripts/coverage/generate_coverage.sh build-coverage
 # Output: build-coverage/coverage/index.html
 ```
 
@@ -50,11 +50,11 @@ build/coverage/
 
 ## Requirements
 
-| ID      | Requirement           | Status |
-| ------- | --------------------- | ------ |
-| COVR-01 | HTML coverage report  | ✅     |
-| COVR-02 | Coverage gap analysis | ✅     |
-| COVR-03 | Per-module breakdown  | ✅     |
+| ID      | Requirement           | Provided by                                    |
+| ------- | --------------------- | ---------------------------------------------- |
+| COVR-01 | HTML coverage report  | `generate_coverage.sh` (genhtml)               |
+| COVR-02 | Coverage gap analysis | `coverage_gaps.sh`                             |
+| COVR-03 | Per-module breakdown  | `generate_coverage.sh` + `coverage_summary.sh` |
 
 ## Dependencies
 
@@ -62,6 +62,26 @@ build/coverage/
 - genhtml (part of lcov)
 - Clang or GCC with coverage support
 
-## CI Integration
+## Threshold
 
-See Phase 43 for CI coverage gates.
+`coverage_summary.sh` exits non-zero when line coverage is below the minimum, so
+it can be the gate in a script. The minimum comes from, in order: an exported
+`NOVA_COVERAGE_MIN`, the `NOVA_COVERAGE_MIN` value in the build's CMakeCache.txt
+(what `-DNOVA_COVERAGE_MIN=90` writes), then a default of 80.
+
+The cache lookup matters: the option is a CMake CACHE variable and is never
+exported, so the script used to enforce 80 no matter what the build was
+configured with.
+
+```bash
+cmake -B build-coverage -DNOVA_COVERAGE=ON -DNOVA_COVERAGE_MIN=90
+# ... build and run tests ...
+./scripts/coverage/generate_coverage.sh build-coverage
+bash ./scripts/coverage/coverage_summary.sh build-coverage   # fails below 90%
+```
+
+## CI
+
+Coverage does not run in CI: it needs a GPU to execute the suite, and the project
+has no self-hosted runner. See the "What does NOT run in CI" section of
+[docs/ci.md](../../docs/ci.md) for the local command sequence.
