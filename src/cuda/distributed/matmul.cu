@@ -46,16 +46,47 @@ namespace cuda::distributed {
          * cache lookups and appends are serialized. Handles are created under a
          * ScopedDevice, binding each to its own device's context.
          */
+        /**
+         * @brief Process-lifetime cache of one cuBLAS handle per device
+         *
+         * Same purpose as before -- rank threads ask for the same device's handle
+         * concurrently on the multi-GPU path -- but the vectors are now owned by an
+         * object whose destructor destroys them. As three function-local statics they
+         * were simply never released: LeakSanitizer reported the handles created here
+         * as a direct leak of 204144 bytes in 48 allocations, reached from
+         * matmul_multi_gpu().
+         *
+         * Destruction runs at static-teardown time, which is after every use in
+         * normal execution; a handle that outlived its device context is not destroyed
+         * here, because cublasDestroy on a torn-down context is worse than the leak.
+         */
+        struct CublasHandleCache {
+            std::vector<cublasHandle_t> handles;
+            std::vector<int> devices;
+            std::mutex mutex;
+
+            ~CublasHandleCache() {
+                for (size_t i = 0; i < handles.size(); ++i) {
+                    if (handles[i] == nullptr) {
+                        continue;
+                    }
+                    // Best effort: static teardown may run after the CUDA context has
+                    // gone, and a failure here must not escape a destructor.
+                    (void)cudaSetDevice(devices[i]);
+                    (void)cublasDestroy(handles[i]);
+                }
+                (void)cudaGetLastError();
+            }
+        };
+
         cublasHandle_t get_cublas_handle_for_device(int device) {
-            static std::vector<cublasHandle_t> handles;
-            static std::vector<int> handle_devices;
-            static std::mutex handle_mutex;
+            static CublasHandleCache cache;
 
             {
-                std::lock_guard<std::mutex> lock(handle_mutex);
-                for (size_t i = 0; i < handle_devices.size(); ++i) {
-                    if (handle_devices[i] == device) {
-                        return handles[i];
+                std::lock_guard<std::mutex> lock(cache.mutex);
+                for (size_t i = 0; i < cache.devices.size(); ++i) {
+                    if (cache.devices[i] == device) {
+                        return cache.handles[i];
                     }
                 }
             }
@@ -65,16 +96,16 @@ namespace cuda::distributed {
             CUBLAS_CHECK(cublasCreate(&handle));
 
             {
-                std::lock_guard<std::mutex> lock(handle_mutex);
-                for (size_t i = 0; i < handle_devices.size(); ++i) {
-                    if (handle_devices[i] == device) {
+                std::lock_guard<std::mutex> lock(cache.mutex);
+                for (size_t i = 0; i < cache.devices.size(); ++i) {
+                    if (cache.devices[i] == device) {
                         // Another thread created it while we were out of the lock.
                         cublasDestroy(handle);
-                        return handles[i];
+                        return cache.handles[i];
                     }
                 }
-                handles.push_back(handle);
-                handle_devices.push_back(device);
+                cache.handles.push_back(handle);
+                cache.devices.push_back(device);
                 return handle;
             }
         }
