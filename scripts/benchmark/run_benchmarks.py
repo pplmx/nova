@@ -7,13 +7,20 @@ Runs CUDA benchmarks and collects results for regression testing.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_BUILD_DIR = Path(__file__).parent.parent / "build"
-DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "results"
+# This file lives in scripts/benchmark/, so the repository root is three levels up,
+# not two. Resolving two levels up pointed at scripts/, and the harness then reported
+# "No benchmark binaries found in .../scripts/build" on a tree where build/bin had
+# just been built. The baseline scripts beside this one deliberately use one level
+# (their baselines/ directory really is next to them); build/ and results/ are not.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_BUILD_DIR = REPO_ROOT / "build"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "results"
 
 
 def get_args():
@@ -88,6 +95,12 @@ def get_benchmark_binaries(build_dir: Path) -> list[Path]:
     if not build_dir.exists():
         return []
 
+    # Absolute, because these paths are later handed to subprocess together with
+    # cwd=binary.parent: a relative path resolved against that cwd points one level
+    # too deep ("build-ninja/bin/build-ninja/bin/nova_benchmarks"), which is why every
+    # run reported "No such file or directory" for a binary that had just been found.
+    build_dir = build_dir.resolve()
+
     binaries = []
     for bin_dir in ["bin", "tests"]:
         bin_path = build_dir / bin_dir
@@ -133,14 +146,22 @@ def run_benchmark(
     if not binary.exists():
         return None
 
+    # Device selection is done through CUDA_VISIBLE_DEVICES below, not a command-line
+    # flag: Google Benchmark has no --cuda_device, and passing it made every binary
+    # exit with "unrecognized command-line flag", so the harness collected nothing at
+    # all on any machine.
+    results_path = binary.parent / "benchmark_results.json"
     args = [
         str(binary),
         f"--benchmark_filter={filter_pattern}",
-        f"--benchmark_format=json",
-        f"--benchmark_out_format=json",
-        f"--benchmark_out={binary.parent / 'benchmark_results.json'}",
-        f"--cuda_device={gpu}",
+        "--benchmark_format=json",
+        "--benchmark_out_format=json",
+        f"--benchmark_out={results_path}",
     ]
+
+    env = dict(os.environ)
+    if gpu is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
     if verbose:
         print(f"Running: {' '.join(args)}")
@@ -152,6 +173,7 @@ def run_benchmark(
             text=True,
             timeout=600,
             cwd=binary.parent,
+            env=env,
         )
 
         if result.stdout:

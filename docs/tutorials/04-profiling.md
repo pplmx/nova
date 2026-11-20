@@ -14,32 +14,37 @@ Nova includes comprehensive benchmarks for:
 ## Running Benchmarks
 
 ```bash
-# Build benchmarks
-cmake -G Ninja -B build -DNOVA_BUILD_BENCHMARKS=ON
+# Build benchmarks. There is no separate NOVA_BUILD_BENCHMARKS option: benchmarks
+# are part of NOVA_BUILD_TESTS_AND_BENCHMARKS, which is ON by default.
+cmake -G Ninja -B build
 cmake --build build
 
 # Run all benchmarks
-./build/bin/benchmark_nova
+./build/bin/nova_benchmarks
 
 # Run specific benchmark
-./build/bin/benchmark_nova --benchmark_filter=Memory
+./build/bin/nova_benchmarks --benchmark_filter=Memory
 
 # Run with timing output
-./build/bin/benchmark_nova --benchmark_format=csv > results.csv
+./build/bin/nova_benchmarks --benchmark_format=csv > results.csv
 ```
 
 ## Python Benchmark Harness
 
 ```bash
-# Run with Python harness
-python scripts/benchmark/run_benchmarks.py \
-    --output results.json \
-    --baseline baseline.json \
-    --regression_threshold 0.05
+# Run with Python harness. It writes a timestamped JSON file into --output-dir
+# (default results/ at the repository root), not to a single file named by the flag.
+python scripts/benchmark/run_benchmarks.py --build-dir build --output-dir results
 
-# View results
-python scripts/benchmark/view_results.py results.json
+# Compare a run against a recorded baseline version, with a percentage tolerance
+python scripts/benchmark/run_benchmarks.py --build-dir build --baseline v2.14 --tolerance 5
+
+# Render a dashboard from a results directory
+python scripts/benchmark/generate_dashboard.py --results results --output reports
 ```
+
+`--gpu N` selects the device by setting `CUDA_VISIBLE_DEVICES` for the child
+process; Google Benchmark itself has no device flag.
 
 ## Key Metrics
 
@@ -80,7 +85,7 @@ cmake -B build -DNOVA_ENABLE_NVTX=ON
 cmake --build build
 
 # Profile with ncu (NVIDIA Nsight Compute)
-ncu --set full ./build/bin/benchmark_nova --benchmark_filter=Reduce
+ncu --set full ./build/bin/nova_benchmarks --benchmark_filter=Reduce
 ```
 
 ## Comparing Against Baseline

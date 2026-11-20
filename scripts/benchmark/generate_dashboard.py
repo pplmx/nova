@@ -23,7 +23,7 @@ def get_args():
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).parent.parent / "reports",
+        default=Path(__file__).resolve().parent.parent.parent / "reports",
         help="Output directory for dashboard",
     )
     parser.add_argument(
