@@ -27,6 +27,8 @@
 
 #include <cuda_runtime.h>
 
+#include <string>
+
 #include <stdexcept>
 #include <vector>
 
@@ -232,6 +234,58 @@ namespace cuda::pipeline::test {
             ASSERT_NE(connection, nullptr);
             EXPECT_LT(connection->src_device(), connection->dst_device()) << "create_p2p_connections only builds the i < j direction";
         }
+    }
+
+    // Regression: recv_async() recorded the destination buffer's size in bytes_ and
+    // nothing ever read it. send_async() copies however many bytes its caller passes, so a
+    // send larger than the buffer the receiver registered ran past the end of that buffer
+    // -- the receiver had declared the limit, the transfer ignored it.
+    //
+    // bytes_ was write-only (a scan for members assigned but never read found it), which
+    // is the same shape as the BandwidthAnalysis setters: state that looks like a
+    // safeguard and enforces nothing.
+    TEST(P2PSendRecvTest, SendLargerThanTheRegisteredReceiveBufferIsRefused) {
+        if (!peer_pair_available()) {
+            GTEST_SKIP() << "no peer access between the test devices";
+        }
+
+        const int original = current_device();
+        const size_t bytes = 64 * sizeof(float);
+
+        void* source = nullptr;
+        void* destination = nullptr;
+        ASSERT_EQ(cudaSetDevice(kSrcDevice), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&source, 4 * bytes), cudaSuccess);  // source is big enough
+        ASSERT_EQ(cudaMemset(source, 0, 4 * bytes), cudaSuccess) << "must memset on the owner device";
+        ASSERT_EQ(cudaSetDevice(kDstDevice), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&destination, bytes), cudaSuccess);  // destination is not
+
+        P2PSendRecv p2p(kSrcDevice, kDstDevice);
+        ASSERT_EQ(cudaSetDevice(kDstDevice), cudaSuccess);
+        p2p.recv_async(destination, bytes, nullptr);
+
+        // Four times what the receiver said it could hold. The MESSAGE is asserted, not
+        // just the exception type: without that, an unrelated failure inside the copy (a
+        // peer-copy error, say) satisfies EXPECT_THROW and the test passes with the size
+        // check removed -- measured exactly that while probing this case.
+        try {
+            p2p.send_async(source, 4 * bytes, nullptr);
+            ADD_FAILURE() << "a send larger than the registered receive buffer was accepted";
+        } catch (const std::runtime_error& e) {
+            const std::string what = e.what();
+            EXPECT_NE(what.find("exceeds the registered receive buffer"), std::string::npos) << "refused for a reason other than the size limit: " << what;
+        }
+
+        // The matching size still works, so the check is a limit and not a block.
+        EXPECT_NO_THROW(p2p.send_async(source, bytes, nullptr));
+        p2p.wait_send();
+        p2p.wait_recv();
+
+        ASSERT_EQ(cudaSetDevice(kDstDevice), cudaSuccess);
+        cudaFree(destination);
+        ASSERT_EQ(cudaSetDevice(kSrcDevice), cudaSuccess);
+        cudaFree(source);
+        EXPECT_EQ(cudaSetDevice(original), cudaSuccess);
     }
 
 }  // namespace cuda::pipeline::test

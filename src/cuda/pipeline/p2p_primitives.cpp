@@ -98,6 +98,14 @@ namespace cuda::pipeline {
                 "P2PSendRecv::send_async: no destination registered; call "
                 "recv_async() with the destination buffer before sending");
         }
+        // recv_async() records the size of the buffer it was given. Enforce it: the
+        // copy below writes `bytes` into that buffer, so a larger send runs past the
+        // end of the receiver's allocation. bytes_ was written and never read, so the
+        // limit the receiver declared was recorded and then ignored.
+        if (bytes_ != 0 && bytes > bytes_) {
+            throw std::runtime_error("P2PSendRecv::send_async: send size " + std::to_string(bytes) + " exceeds the registered receive buffer of " + std::to_string(bytes_)
+                                     + " bytes");
+        }
 
         int previous_device = -1;
         const bool had_previous = cudaGetDevice(&previous_device) == cudaSuccess;
