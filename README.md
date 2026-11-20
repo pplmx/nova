@@ -185,6 +185,33 @@ cd build-ninja
 ctest -j16        # Parallel tests (GPU memory limited to 16)
 ```
 
+### Use from Another Project
+
+Install the library and consume it with `find_package(nova)`:
+
+```sh
+cmake --install build-ninja --prefix /path/to/prefix
+```
+
+```cmake
+cmake_minimum_required(VERSION 4.0)
+project(app LANGUAGES CXX CUDA)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CUDA_STANDARD 20)
+
+find_package(nova REQUIRED)
+add_executable(app main.cpp)
+target_link_libraries(app PRIVATE Nova::cuda_impl)
+
+# Required: the library is built with CUDA_SEPARABLE_COMPILATION, so a consumer
+# linking its static archives has to device-link as well. Omitting this fails at
+# link time with undefined `__cudaRegisterLinkedBinary_*` symbols.
+set_target_properties(app PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+```
+
+Configure with `-DCMAKE_PREFIX_PATH=/path/to/prefix`. The package config pulls in
+CUDAToolkit, OpenSSL and Threads itself.
+
 ## Usage Examples
 
 ### Layer 0: Memory Foundation

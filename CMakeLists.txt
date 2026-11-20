@@ -666,8 +666,9 @@ set(ALL_CUDA_SOURCES
 
 add_library(cuda_nccl STATIC ${NCCL_SOURCES})
 target_include_directories(cuda_nccl PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_NCCL_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_NCCL_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_nccl PUBLIC
         CUDA::cudart
@@ -700,8 +701,9 @@ endif()
 
 add_library(cuda_mpi STATIC ${MPI_SOURCES})
 target_include_directories(cuda_mpi PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_MPI_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_MPI_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_mpi PUBLIC CUDA::cudart)
 if(MPI_FOUND AND TARGET MPI::MPI_CXX)
@@ -713,8 +715,9 @@ endif()
 
 add_library(cuda_topology STATIC ${TOPOLOGY_SOURCES})
 target_include_directories(cuda_topology PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_TOPOLOGY_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_TOPOLOGY_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_topology PUBLIC CUDA::cudart)
 if(NCCL_FOUND AND TARGET NCCL::nccl)
@@ -723,15 +726,17 @@ endif()
 
 add_library(cuda_multinode STATIC ${MULTINODE_SOURCES})
 target_include_directories(cuda_multinode PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_MULTINODE_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_MULTINODE_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_multinode PUBLIC CUDA::cudart cuda_nccl)
 
 add_library(cuda_checkpoint STATIC ${CHECKPOINT_SOURCES})
 target_include_directories(cuda_checkpoint PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_CHECKPOINT_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_CHECKPOINT_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_checkpoint PUBLIC
         CUDA::cudart
@@ -740,8 +745,9 @@ target_link_libraries(cuda_checkpoint PUBLIC
 
 add_library(cuda_comm STATIC ${COMM_SOURCES})
 target_include_directories(cuda_comm PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_COMM_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_COMM_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_comm PUBLIC
         CUDA::cudart
@@ -755,8 +761,9 @@ target_link_libraries(cuda_comm PUBLIC
 
 add_library(cuda_memory_error STATIC ${MEMORY_ERROR_SOURCES})
 target_include_directories(cuda_memory_error PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_MEMORY_ERROR_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_MEMORY_ERROR_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_memory_error PUBLIC
         CUDA::cudart
@@ -765,8 +772,9 @@ target_link_libraries(cuda_memory_error PUBLIC
 
 add_library(cuda_preemption STATIC ${PREEMPTION_SOURCES})
 target_include_directories(cuda_preemption PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_PREEMPTION_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_PREEMPTION_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_preemption PUBLIC
         CUDA::cudart
@@ -774,16 +782,24 @@ target_link_libraries(cuda_preemption PUBLIC
 )
 
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
+# BUILD_INTERFACE for the source-tree paths, INSTALL_INTERFACE for the installed
+# tree. Without the split, exporting the target fails with "INTERFACE_INCLUDE_
+# DIRECTORIES property contains path ... which is prefixed in the source
+# directory", which is why the export was hand-written in the first place.
+#
+# The sub-directories under include/cuda are listed for the build tree only: the
+# install copies include/ wholesale, so a consumer includes "cuda/..." there.
 target_include_directories(cuda_impl PUBLIC
-        ${CMAKE_SOURCE_DIR}/include
-        ${CUDA_DEVICE_DIR}
-        ${CUDA_ALGO_DIR}
-        ${CUDA_LINALG_DIR}
-        ${CUDA_NUMERIC_DIR}
-        ${CUDA_SIGNAL_DIR}
-        ${CUDA_MEMORY_DIR}
-        ${CUDA_ERROR_DIR}
-        ${CUDA_SPARSE_DIR}
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CUDA_DEVICE_DIR}>
+        $<BUILD_INTERFACE:${CUDA_ALGO_DIR}>
+        $<BUILD_INTERFACE:${CUDA_LINALG_DIR}>
+        $<BUILD_INTERFACE:${CUDA_NUMERIC_DIR}>
+        $<BUILD_INTERFACE:${CUDA_SIGNAL_DIR}>
+        $<BUILD_INTERFACE:${CUDA_MEMORY_DIR}>
+        $<BUILD_INTERFACE:${CUDA_ERROR_DIR}>
+        $<BUILD_INTERFACE:${CUDA_SPARSE_DIR}>
+        $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(cuda_impl PUBLIC
         cuda_device
@@ -858,39 +874,47 @@ message(STATUS "For faster builds, use: cmake -G Ninja -B build-ninja && cmake -
 
 include(CMakePackageConfigHelpers)
 
-# Create NovaTargets.cmake manually for the install tree
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/NovaTargets.cmake.in "
-# NovaTargets.cmake - CMake targets for Nova library
-# This file is generated by Nova's build system
+# The exported target file used to be written by hand into the build tree, and it
+# described artifacts the install never placed:
+#
+#   add_library(Nova::cuda_impl STATIC IMPORTED)
+#   set_target_properties(... IMPORTED_LOCATION "@CMAKE_INSTALL_PREFIX@/lib/libcuda_impl.a")
+#
+# but nothing installed libcuda_impl.a or include/, so `cmake --install` produced
+# only GoogleTest and a package config that pointed into an empty prefix. A consumer
+# doing find_package(nova) then failed at link time with a missing library.
+#
+# The library, its public headers and the targets are installed and exported here,
+# so the config file refers to files that the same install writes.
+install(TARGETS cuda_impl cuda_api cuda_device cuda_algo cuda_nccl cuda_memory
+        cuda_checkpoint cuda_comm cuda_memory_error cuda_mpi cuda_multinode
+        cuda_preemption cuda_topology
+        EXPORT NovaTargets
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+        RUNTIME DESTINATION bin
+        INCLUDES DESTINATION include)
 
-if(TARGET Nova::cuda_impl)
-    return()
+install(DIRECTORY include/ DESTINATION include)
+
+install(EXPORT NovaTargets
+        FILE NovaTargets.cmake
+        NAMESPACE Nova::
+        DESTINATION lib/cmake/nova)
+
+# What the installed package config should report. Derived from the same facts the
+# build uses, recorded as a variable because the compile definitions above are
+# target properties and invisible to configure_file().
+set(NOVA_NCCL_ENABLED_AT_CONFIGURE OFF)
+if(NOVA_ENABLE_NCCL)
+    if((NCCL_FOUND AND TARGET NCCL::nccl) OR NCCL_LIB)
+        set(NOVA_NCCL_ENABLED_AT_CONFIGURE ON)
+    endif()
 endif()
-
-add_library(Nova::cuda_impl STATIC IMPORTED)
-set_target_properties(Nova::cuda_impl PROPERTIES
-    IMPORTED_LOCATION \"@CMAKE_INSTALL_PREFIX@/lib/libcuda_impl.a\"
-    INTERFACE_INCLUDE_DIRECTORIES \"@CMAKE_INSTALL_PREFIX@/include\"
-)
-
-add_library(Nova::cuda_device INTERFACE IMPORTED)
-set_target_properties(Nova::cuda_device PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES \"@CMAKE_INSTALL_PREFIX@/include\"
-)
-add_dependencies(Nova::cuda_impl Nova::cuda_device)
-
-add_library(Nova::cuda_algo INTERFACE IMPORTED)
-set_target_properties(Nova::cuda_algo PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES \"@CMAKE_INSTALL_PREFIX@/include\"
-)
-add_dependencies(Nova::cuda_impl Nova::cuda_algo)
-")
-
-configure_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/NovaTargets.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/NovaTargets.cmake
-    @ONLY
-)
+set(NOVA_MPI_ENABLED_AT_CONFIGURE OFF)
+if(NOVA_ENABLE_MPI AND MPI_CXX_FOUND)
+    set(NOVA_MPI_ENABLED_AT_CONFIGURE ON)
+endif()
 
 configure_package_config_file(
     ${CMAKE_SOURCE_DIR}/cmake/NovaConfig.cmake.in
@@ -903,11 +927,14 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion
 )
 
+# NovaTargets.cmake is written by install(EXPORT ...) above; only the config and
+# version files are listed here. Listing the generated target file too made
+# `cmake --install` fail at the last step with "file INSTALL cannot find
+# .../NovaTargets.cmake", after everything else had already been copied.
 install(
     FILES
         ${CMAKE_CURRENT_BINARY_DIR}/novaConfig.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/NovaConfigVersion.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/NovaTargets.cmake
     DESTINATION lib/cmake/nova
 )
 

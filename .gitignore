@@ -165,3 +165,7 @@ tests/fuzz/crashes/
 # Core dumps
 core.*
 *.core
+
+# Python bytecode from the helper scripts under scripts/
+__pycache__/
+*.pyc
