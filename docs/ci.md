@@ -60,12 +60,14 @@ make lint
 make sanitize
 ```
 
-Under ASan, set `ASAN_OPTIONS=protect_shadow_gap=0`. Without it no CUDA context
-can be created on this host: `cudaGetDeviceCount` returns
-`cudaErrorMemoryAllocation` and every CUDA test skips itself, which reads as a
-green sanitizer run that exercised nothing. `make sanitize` passes its own
-`ASAN_OPTIONS` to `ctest` and does not include this flag, so a run that reports
-only skips is a run that did not check the device code.
+Under ASan, `protect_shadow_gap=0` is required. Without it no CUDA context can
+be created on this host: `cudaGetDeviceCount` returns
+`cudaErrorMemoryAllocation`, so a device test either skips itself or fails at its
+first `cudaMalloc` with "out of memory" — measured on a fresh sanitizer binary,
+`BufferTest.ConstructionWithSize` failed at `buffer-inl.h:43` and all 9
+`DeviceInfoTest` cases failed. `make sanitize` now sets the flag itself through
+`NOVA_SANITIZE_ASAN_OPTIONS`, so the target works as written; override that
+variable on a host that does not need the workaround.
 
 ```bash
 # Coverage
