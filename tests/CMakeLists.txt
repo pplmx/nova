@@ -460,7 +460,7 @@ if(TARGET cuda_nccl)
 endif()
 
 gtest_discover_tests(nova-tests
-    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*"
+    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*:BufferSerialTest.*:UniquePtrSerialTest.*:MemoryMetricsSerialTest.*"
     PROPERTIES ENVIRONMENT "${NOVA_NCCL_TESTS_ENV}"
 )
 
@@ -471,6 +471,21 @@ set_tests_properties(robustness_profile_serial PROPERTIES RUN_SERIAL TRUE)
 add_test(NAME tensor_parallel_serial
          COMMAND nova-tests --gtest_filter=TensorParallelSerialTest.*)
 set_tests_properties(tensor_parallel_serial PROPERTIES RUN_SERIAL TRUE)
+
+# Three more suites that compare device-wide free-memory snapshots, for the same
+# reason as RobustnessProfileSerialTest above: cudaMemGetInfo aggregates every process
+# on the device, so a concurrent test's allocation is indistinguishable from the leak
+# or disagreement the case is looking for. They now fail deterministically in a
+# parallel run -- BufferTest.DestructorFrees reported 80764141568 vs 81396432896 under
+# -j32 and passed alone, and MemoryMetricsSerialTest reported used() inconsistent with
+# itself under -j4 -- which is a green-or-red signal that depends on scheduling rather
+# than on the code. RUN_SERIAL runs each with no other test in flight.
+foreach(device_memory_suite BufferSerialTest UniquePtrSerialTest MemoryMetricsSerialTest)
+    string(TOLOWER "${device_memory_suite}" _suite_lower)
+    add_test(NAME ${_suite_lower}
+             COMMAND nova-tests --gtest_filter=${device_memory_suite}.*)
+    set_tests_properties(${_suite_lower} PROPERTIES RUN_SERIAL TRUE ENVIRONMENT "${NOVA_NCCL_TESTS_ENV}")
+endforeach()
 
 # Fuzz Testing
 include(CMakeFuzz.txt)

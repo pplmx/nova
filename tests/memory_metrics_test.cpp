@@ -6,6 +6,16 @@ protected:
     void SetUp() override { cudaDeviceReset(); }
 };
 
+// Compares two separate device-wide snapshots, so it lives in a ...SerialTest suite
+// and CMake registers it with RUN_SERIAL. get_metrics() and used() each call
+// cudaMemGetInfo, and another process allocating between the two calls is
+// indistinguishable from the function disagreeing with itself: the case failed with
+// "metrics.used_bytes: 3570991104 vs used(): 3573088256" under -j4 and passed alone.
+class MemoryMetricsSerialTest : public ::testing::Test {
+protected:
+    void SetUp() override { cudaDeviceReset(); }
+};
+
 TEST_F(MemoryMetricsTest, UsedReturnsNonNegativeValue) {
     size_t used = cuda::memory::used();
     EXPECT_GE(used, 0);
@@ -35,7 +45,7 @@ TEST_F(MemoryMetricsTest, GetMetricsReturnsValidUtilization) {
     EXPECT_EQ(metrics.used_bytes, metrics.total_bytes - metrics.available_bytes);
 }
 
-TEST_F(MemoryMetricsTest, GetMetricsMatchesIndividualFunctions) {
+TEST_F(MemoryMetricsSerialTest, GetMetricsMatchesIndividualFunctions) {
     auto metrics = cuda::memory::get_metrics();
 
     EXPECT_EQ(metrics.used_bytes, cuda::memory::used());

@@ -20,6 +20,15 @@ protected:
     void SetUp() override { reset(); }
 };
 
+// The device-wide-memory cases live in ...SerialTest suites so CMake can exclude them
+// from the parallel discovery set and register them with RUN_SERIAL. cudaMemGetInfo
+// aggregates every process, so these can only mean anything when nothing else is
+// allocating on the device.
+class BufferSerialTest : public ::testing::Test {
+protected:
+    void SetUp() override { reset(); }
+};
+
 TEST_F(BufferTest, DefaultConstruction) {
     cuda::memory::Buffer<int> buffer;
     EXPECT_EQ(buffer.data(), nullptr);
@@ -115,11 +124,33 @@ TEST_F(BufferTest, Release) {
     cudaFree(released);
 }
 
-TEST_F(BufferTest, DestructorFrees) {
+TEST_F(BufferSerialTest, DestructorFrees) {
     // Verify the destructor releases device memory via cudaMemGetInfo accounting
     // instead of dereferencing the freed pointer. Reading through a freed device
     // pointer is undefined behaviour; on some drivers it even leaves the CUDA
     // context in a faulted state that breaks later thrust/cub dispatch.
+    //
+    // cudaMemGetInfo aggregates EVERY process on the device, so the case lives in a
+    // ...SerialTest suite and CMake registers it with RUN_SERIAL: another process
+    // allocating between the two reads is indistinguishable from this buffer not
+    // being freed.
+    //
+    // Serialising is necessary but not sufficient. The driver's allocator keeps a
+    // 64 KiB pool from the FIRST cudaMalloc and never returns it, so measured on a
+    // fresh context the "after" snapshot is 65536 bytes below the "before" one even
+    // though the buffer was freed correctly. Probe, repeated per allocation size:
+    //
+    //     400 bytes: net retained = 65536
+    //   65536 bytes: net retained = 65536
+    //   1 MiB      : net retained = 131072
+    //  64 MiB      : net retained = 65536
+    //
+    // One warm-up allocation therefore happens before the baseline is taken, so the
+    // only thing measured is the buffer under test.
+    void* warmup = nullptr;
+    ASSERT_EQ(cudaMalloc(&warmup, 4096), cudaSuccess);
+    ASSERT_EQ(cudaFree(warmup), cudaSuccess);
+
     size_t free_before = 0, total = 0;
     ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
 
@@ -393,6 +424,11 @@ protected:
     void SetUp() override { reset(); }
 };
 
+class UniquePtrSerialTest : public ::testing::Test {
+protected:
+    void SetUp() override { reset(); }
+};
+
 TEST_F(UniquePtrTest, DefaultConstruction) {
     cuda::memory::unique_ptr<int> ptr;
     EXPECT_EQ(ptr.get(), nullptr);
@@ -463,9 +499,18 @@ TEST_F(UniquePtrTest, BoolOperator) {
     EXPECT_TRUE(valid);
 }
 
-TEST_F(UniquePtrTest, DestructorFrees) {
+TEST_F(UniquePtrSerialTest, DestructorFrees) {
     // Verify the destructor releases device memory via cudaMemGetInfo accounting
     // instead of dereferencing the freed pointer (UB that can fault the driver).
+    //
+    // The warm-up and the RUN_SERIAL registration are both required, for the reasons
+    // spelled out on BufferSerialTest.DestructorFrees above: the driver retains a
+    // 64 KiB pool from the first cudaMalloc, and cudaMemGetInfo aggregates every
+    // process on the device.
+    void* warmup = nullptr;
+    ASSERT_EQ(cudaMalloc(&warmup, 4096), cudaSuccess);
+    ASSERT_EQ(cudaFree(warmup), cudaSuccess);
+
     size_t free_before = 0, total = 0;
     ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
 
