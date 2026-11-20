@@ -182,7 +182,10 @@ namespace cuda::production {
 
     ScopedCapture::~ScopedCapture() {
         try {
-            executor_.end_capture();
+            // end_capture() hands back the captured graph for the caller to use; here it is
+            // released into the executor's own state and the handle has no consumer, which
+            // is why it is discarded explicitly rather than left to -Wunused-result.
+            [[maybe_unused]] cudaGraph_t captured = executor_.end_capture();
             executor_.instantiate();
         } catch (...) {
             // Destructors are implicitly noexcept; letting end_capture's failure escape would

@@ -281,7 +281,6 @@ namespace {
         });
 
         // Assemble each block's shards and compare with the single-GPU ref.
-        float worst = 1e30f;
         for (int b = 0; b < blocks; ++b) {
             std::vector<float> aWq(hidden * qkv), aWk(hidden * qkv), aWv(hidden * qkv), aWo(qkv * hidden), aWg(hidden * inter), aWu(hidden * inter), aWd(inter * hidden);
             std::vector<float> a_l1g(hidden), a_l1b(hidden), a_l2g(hidden), a_l2b(hidden);

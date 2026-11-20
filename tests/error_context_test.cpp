@@ -31,7 +31,7 @@ TEST_F(ErrorContextTest, OperationContextWithPairDimensions) {
 }
 
 TEST_F(ErrorContextTest, CudaExceptionWithContextDerivesFromCudaException) {
-    auto ctx = cuda::device::OperationContext {.operation_name = "test_op", .dimensions = size_t {100}, .device_id = 0};
+    auto ctx = cuda::device::OperationContext {.operation_name = "test_op", .dimensions = size_t {100}, .device_id = 0, .extra = {}};
 
     cuda::device::CudaExceptionWithContext ex(cudaErrorInvalidValue, "test_file.cpp", 42, ctx);
 

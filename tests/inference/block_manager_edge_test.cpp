@@ -922,11 +922,13 @@ namespace cuda::inference::test {
 
         auto manager = std::make_unique<BlockManager>(config);
 
-        auto* main_seq = manager->create_sequence(1, 1024);
-        auto* beam1 = manager->create_sequence(2, 1024);
-        auto* beam2 = manager->create_sequence(3, 1024);
-        auto* draft1 = manager->create_sequence(4, 128);
-        auto* draft2 = manager->create_sequence(5, 128);
+        // Created for their side effect (the manager now owns sequences 1..5); the
+        // pointers are not needed here.
+        [[maybe_unused]] auto* main_seq = manager->create_sequence(1, 1024);
+        [[maybe_unused]] auto* beam1 = manager->create_sequence(2, 1024);
+        [[maybe_unused]] auto* beam2 = manager->create_sequence(3, 1024);
+        [[maybe_unused]] auto* draft1 = manager->create_sequence(4, 128);
+        [[maybe_unused]] auto* draft2 = manager->create_sequence(5, 128);
 
         manager->append_tokens(1, 64);
         manager->append_tokens(2, 32);

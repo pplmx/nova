@@ -6,8 +6,8 @@
  * normalisation. Five of its twenty-five functions had any test reference, and
  * the constructor accepted configuration that makes the layer produce NaN:
  *
- *   SyncBatchNorm bn(C, /*eps=* /0.0f);    // constructed happily
- *   SyncBatchNorm bn(C, /*eps=* /-1e-5f);  // constructed happily
+ *   SyncBatchNorm bn(C, eps = 0.0f);    // constructed happily
+ *   SyncBatchNorm bn(C, eps = -1e-5f);  // constructed happily
  *
  * eps exists precisely to keep sqrt(variance + eps) away from zero. With a
  * constant input (variance 0) both values produced NaN in every output element,

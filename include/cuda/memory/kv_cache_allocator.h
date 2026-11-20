@@ -673,7 +673,9 @@ namespace cuda::memory {
         int total_free = 0;
         report.largest_free_block_size = 0.0f;
 
-        for (const int block_idx : free_list_) {
+        // Every block in the free list is the same size, so only the count matters; the
+        // index the loop used to bind was never read.
+        for (size_t i = 0; i < free_list_.size(); ++i) {
             total_free += config_.block_size_tokens;
             report.largest_free_block_size = std::max(report.largest_free_block_size, static_cast<float>(config_.block_size_tokens));
         }

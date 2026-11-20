@@ -10,7 +10,16 @@ TEST_F(BenchmarkTest, WarmupRunsExecuteBeforeMeasurement) {
     int warmup_count = 0;
     int measurement_count = 0;
 
-    auto kernel = [&]() { warmup_count++; };
+    // Count warm-up and measured calls separately: the case is named for the ordering,
+    // and counting only the total cannot distinguish it. The first warmup_iterations
+    // calls are warm-up by definition of the option.
+    auto kernel = [&]() {
+        if (warmup_count < 5) {
+            warmup_count++;
+        } else {
+            measurement_count++;
+        }
+    };
 
     cuda::benchmark::BenchmarkOptions options;
     options.warmup_iterations = 5;
@@ -19,7 +28,8 @@ TEST_F(BenchmarkTest, WarmupRunsExecuteBeforeMeasurement) {
     cuda::benchmark::Benchmark bench("warmup_test", options);
     bench.run(kernel);
 
-    EXPECT_GE(warmup_count, 5);
+    EXPECT_EQ(warmup_count, 5) << "exactly the configured warm-up iterations";
+    EXPECT_EQ(measurement_count, 1) << "exactly the configured measurement iterations";
 }
 
 TEST_F(BenchmarkTest, ResultsIncludeMeanAndStddev) {

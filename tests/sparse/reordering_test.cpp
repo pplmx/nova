@@ -107,7 +107,8 @@ namespace nova {
             };
 
             TEST_F(RCMReordererTest, DefaultConstructor) {
-                RCMReorderer<double> reorderer;
+                // Constructing it is the whole test; the object is deliberately unused.
+                [[maybe_unused]] RCMReorderer<double> reorderer;
             }
 
             TEST_F(RCMReordererTest, BandwidthTridiagonalMatrix) {

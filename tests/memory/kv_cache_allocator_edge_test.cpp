@@ -431,7 +431,7 @@ namespace cuda::memory::test {
 
         EXPECT_EQ(block_ids.size(), sorted_ids.size());
 
-        for (int i = 0; i < sorted_ids.size() - 1; ++i) {
+        for (size_t i = 0; i + 1 < sorted_ids.size(); ++i) {
             EXPECT_GE(sorted_ids[i + 1] - sorted_ids[i], 0);
         }
     }

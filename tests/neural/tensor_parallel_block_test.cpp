@@ -199,8 +199,6 @@ namespace {
         };
         for (int b = 0; b < m; ++b) {
             for (int h = 0; h < heads; ++h) {
-                const float* q_row = q.data() + (b * heads + h) * hd;
-                const float* k_base = k.data() + h * hd;
                 const float* v_base = v.data() + h * hd;
                 float* att_row = att.data() + (b * heads + h) * hd;
                 auto p = probs_for(b, h);

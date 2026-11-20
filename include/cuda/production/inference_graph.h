@@ -40,7 +40,9 @@ namespace cuda::production {
 
         CUDA_CHECK(cudaStreamSynchronize(capture_stream.get()));
 
-        end_capture();
+        // The captured graph is owned by the executor after this call; the handle has no
+        // consumer here, so it is discarded explicitly rather than left to -Wunused-result.
+        [[maybe_unused]] cudaGraph_t captured = end_capture();
 
         graph_captured_ = true;
         current_batch_size_ = static_cast<int>(sequence_ids.size());

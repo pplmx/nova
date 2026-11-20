@@ -73,8 +73,9 @@ TEST_F(ErrorInjectionTest, CountTracking) {
 
     injector.inject_always(cuda::production::ErrorTarget::Allocation, cudaErrorMemoryAllocation);
 
-    injector.should_inject(cuda::production::ErrorTarget::Allocation);
-    injector.should_inject(cuda::production::ErrorTarget::Allocation);
+    // Called for the side effect (each query bumps injection_count), not for the answer.
+    (void)injector.should_inject(cuda::production::ErrorTarget::Allocation);
+    (void)injector.should_inject(cuda::production::ErrorTarget::Allocation);
 
     EXPECT_GE(injector.injection_count(cuda::production::ErrorTarget::Allocation), 1u);
 }
@@ -109,14 +110,14 @@ TEST_F(MemoryPressureTest, IsUnderPressure) {
 
     EXPECT_FALSE(pressure.is_under_pressure());
 
-    pressure.allocate(900);
+    EXPECT_TRUE(pressure.allocate(900)) << "the allocation fits under the limit";
     EXPECT_TRUE(pressure.is_under_pressure());
 }
 
 TEST_F(MemoryPressureTest, Release) {
     cuda::production::MemoryPressureTest pressure(1024);
 
-    pressure.allocate(512);
+    EXPECT_TRUE(pressure.allocate(512));
     EXPECT_EQ(pressure.remaining(), 512u);
 
     pressure.release();
@@ -126,7 +127,7 @@ TEST_F(MemoryPressureTest, Release) {
 TEST_F(MemoryPressureTest, SetLimit) {
     cuda::production::MemoryPressureTest pressure(1024);
 
-    pressure.allocate(512);
+    EXPECT_TRUE(pressure.allocate(512));
     EXPECT_EQ(pressure.remaining(), 512u);
 
     pressure.set_limit(2048);

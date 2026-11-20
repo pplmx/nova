@@ -50,6 +50,15 @@ TEST_F(DeviceInfoTest, SetAndGetDeviceRoundTrip) {
     auto current = cuda::performance::get_current_device();
     ASSERT_TRUE(current.has_value());
     EXPECT_EQ(current.value(), 0);
+
+    // Put the caller back where it started. The value was captured for this and then
+    // never used, so the case left the thread on device 0 regardless of where it began.
+    if (orig.has_value()) {
+        cuda::performance::set_device(original_device);
+        auto restored = cuda::performance::get_current_device();
+        ASSERT_TRUE(restored.has_value());
+        EXPECT_EQ(restored.value(), original_device) << "set_device must round-trip";
+    }
 }
 
 TEST_F(DeviceInfoTest, GetDeviceCountReturnsPositive) {

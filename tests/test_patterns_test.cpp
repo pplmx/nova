@@ -82,13 +82,13 @@ TEST_F(TestPatternsTest, GradientMonotonic) {
     std::vector<unsigned char> buffer(MEDIUM * MEDIUM * 3, 0);
     generateGradient(buffer.data(), MEDIUM, MEDIUM);
 
-    for (int x = 1; x < MEDIUM - 1; ++x) {
+    for (size_t x = 1; x + 1 < static_cast<size_t>(MEDIUM); ++x) {
         size_t idx0 = x * 3;
         size_t idx1 = (x + 1) * 3;
         EXPECT_GE(buffer[idx1], buffer[idx0]) << "R not monotonic at x=" << x;
     }
 
-    for (int y = 1; y < MEDIUM - 1; ++y) {
+    for (size_t y = 1; y + 1 < static_cast<size_t>(MEDIUM); ++y) {
         size_t idx0 = (y - 1) * MEDIUM * 3;
         size_t idx1 = y * MEDIUM * 3 + 1;
         EXPECT_GE(buffer[idx1], buffer[idx0]) << "G not monotonic at y=" << y;

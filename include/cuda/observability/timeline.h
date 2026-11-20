@@ -119,8 +119,9 @@ namespace cuda::observability {
         }
 
         ~ScopedTimelineEvent() {
-            auto end_time = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time_).count();
+            // start_time_ is recorded so the class documents its own lifetime, but the
+            // duration is measured inside end_event() from its own timestamp -- computing
+            // it here as well produced a value that was then discarded.
             TimelineExporter::instance().end_event(name_, category_);
         }
 

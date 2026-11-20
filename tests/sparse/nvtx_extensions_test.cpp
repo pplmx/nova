@@ -79,8 +79,20 @@ namespace cuda::observability::test {
         // usable in a constant comparison and `make sanitize` failed to compile
         // this file at all. Distinctness is checked at runtime by
         // EveryDomainIsDistinct above, which is where that property belongs.
-        static_assert(NVTXDomains::Memory == NVTXDomains::Memory);
-        static_assert(NVTXDomains::Algo == NVTXDomains::Algo);
+        // The property under test is that these constants are usable in a CONSTANT
+        // expression. That is checked by initialising a constexpr variable from them: if
+        // they were not constant expressions, this file would not compile.
+        //
+        // Two earlier spellings were worse. `static_assert(A == A)` was a tautology that
+        // GCC rejects (-Wtautological-compare) and asserted nothing while it lasted; a
+        // boolean trick around it was still a tautology and tripped -Waddress. Comparing
+        // two DIFFERENT tags here is not available either: UBSan instruments the objects,
+        // so their addresses stop being usable in a constant comparison. Distinctness of
+        // the values is checked at runtime by EveryDomainIsDistinct above.
+        constexpr auto memory_domain = NVTXDomains::Memory;
+        constexpr auto algo_domain = NVTXDomains::Algo;
+        (void)memory_domain;
+        (void)algo_domain;
         SUCCEED();
     }
 

@@ -83,7 +83,16 @@ TEST_F(BufferTest, MoveAssignment) {
 
 TEST_F(BufferTest, MoveToSelf) {
     cuda::memory::Buffer<int> buffer(10);
+    // Deliberately self-moving: the case exists to prove the move-assignment operator's
+    // self-check works. GCC diagnoses this unconditionally, hence the suppression.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wself-move"
+#endif
     buffer = std::move(buffer);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     EXPECT_NE(buffer.data(), nullptr);
     EXPECT_EQ(buffer.size(), 10);
 }
@@ -252,11 +261,15 @@ TEST_F(MemoryPoolTest, DeallocateReturnsMemory) {
     EXPECT_EQ(pool.total_available(), 4096);
 
     void* ptr = pool.allocate(100);
-    size_t available_before = pool.total_available();
+    const size_t available_before = pool.total_available();
 
     pool.deallocate(ptr, 100);
 
     EXPECT_EQ(pool.total_allocated(), 0);
+    // The case is named DeallocateReturnsMemory, so the memory coming back is the thing
+    // to assert; available_before was collected and never compared.
+    EXPECT_EQ(pool.total_available(), 4096) << "deallocating the only allocation must restore the full block";
+    EXPECT_EQ(pool.total_available(), available_before + 100);
 }
 
 TEST_F(MemoryPoolTest, FirstFitAllocation) {

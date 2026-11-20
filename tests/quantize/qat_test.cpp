@@ -169,8 +169,11 @@ namespace nova {
                 analyzer.analyze_layer("boundary", activations.data(), activations.size(), gradients.data(), gradients.size());
 
                 auto sensitivity = analyzer.get_sensitivity("boundary");
-                float threshold = 10.0f;
+                // The layer was analysed with real activations, so its gradient magnitude
+                // must have been measured rather than left at the default.
                 EXPECT_GE(sensitivity.gradient_magnitude, 0.0f);
+                EXPECT_GT(sensitivity.gradient_magnitude, 0.0f) << "activations and gradients were supplied, so the magnitude cannot be"
+                                                                   " the untouched default";
             }
 
             TEST_F(QATTest, SensitivityAnalyzerMissingLayerReturnsDefault) {

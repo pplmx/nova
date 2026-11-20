@@ -92,17 +92,20 @@ namespace cuda::device {
         OperationContext context_;
     };
 
+// extra is listed explicitly: the aggregate had a default member initialiser, but
+// -Wmissing-field-initializers still fires for every field left off the list, and the
+// macro is used throughout the tests.
 #define CUDA_CONTEXT(op, dims, device) \
     ::cuda::device::OperationContext { \
-        #op, dims, device              \
+        #op, dims, device, {}          \
     }
 
-#define CUDA_VALIDATE_SIZE(size, max_size, operation)                                                                                     \
-    do {                                                                                                                                  \
-        if ((size) > (max_size)) {                                                                                                        \
-            throw ::cuda::device::CudaExceptionWithContext(                                                                               \
-                cudaErrorLaunchFailure, __FILE__, __LINE__, ::cuda::device::OperationContext {#operation, static_cast<size_t>(size), 0}); \
-        }                                                                                                                                 \
+#define CUDA_VALIDATE_SIZE(size, max_size, operation)                                                                                         \
+    do {                                                                                                                                      \
+        if ((size) > (max_size)) {                                                                                                            \
+            throw ::cuda::device::CudaExceptionWithContext(                                                                                   \
+                cudaErrorLaunchFailure, __FILE__, __LINE__, ::cuda::device::OperationContext {#operation, static_cast<size_t>(size), 0, {}}); \
+        }                                                                                                                                     \
     } while (0)
 
 #ifndef CUDA_CHECK

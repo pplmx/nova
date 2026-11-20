@@ -118,7 +118,6 @@ namespace cuda::observability {
             CUDA_CHECK(cudaSetDevice(device));
         }
 
-        int num_blocks = 0;
         int active_blocks_per_sm = 0;
         size_t dynamic_smem = dynamic_smem_bytes;
 

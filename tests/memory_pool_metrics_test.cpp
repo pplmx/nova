@@ -68,6 +68,10 @@ TEST_F(MemoryPoolMetricsTest, ClearResetsMetrics) {
     pool.deallocate(ptr, 256);
 
     auto metrics_before_clear = pool.get_metrics();
+    // Without this the case cannot tell "clear() reset the counters" from "they were
+    // never set": the value was collected and then discarded, which the compiler reports
+    // as -Wunused-but-set-variable.
+    EXPECT_GT(metrics_before_clear.misses, 0u) << "a cold pool must record at least one miss before clear() is meaningful";
 
     pool.clear();
 

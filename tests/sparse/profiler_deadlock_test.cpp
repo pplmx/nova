@@ -43,7 +43,9 @@ namespace profiler_deadlock_test {
                 (void)cudaGetLastError();
                 return false;
             }
-            return count == count;  // never reached with a bad count, kept explicit
+            // count == count is a tautology the compiler rejects; the intent is simply
+            // that a successfully queried device count is usable.
+            return count > 0;
         }
 
     }  // namespace

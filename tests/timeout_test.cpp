@@ -21,7 +21,11 @@ protected:
 
 TEST_F(TimeoutTest, TimeoutManagerSingletonIsAccessible) {
     auto& manager = timeout_manager::instance();
-    EXPECT_TRUE(manager.active_count() == 0 || manager.active_count() >= 0);
+    // The second half of the original condition was ">= 0" on an unsigned count, which is
+    // always true, so the whole assertion could not fail -- the compiler says so
+    // (-Wtype-limits). What a fresh singleton can actually promise is that it starts with
+    // nothing in flight.
+    EXPECT_EQ(manager.active_count(), 0u);
 }
 
 TEST_F(TimeoutTest, StartOperationReturnsValidId) {

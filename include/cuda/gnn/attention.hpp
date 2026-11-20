@@ -87,7 +87,6 @@ namespace nova {
 
             for (int i = 0; i < num_nodes; ++i) {
                 float sum = 0.0f;
-                int degree = graph.row_offsets()[i + 1] - graph.row_offsets()[i];
 
                 for (int idx = graph.row_offsets()[i]; idx < graph.row_offsets()[i + 1]; ++idx) {
                     int neighbor = graph.col_indices()[idx];

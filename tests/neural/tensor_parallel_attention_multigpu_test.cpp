@@ -166,8 +166,6 @@ namespace {
         };
         for (int b = 0; b < m; ++b) {
             for (int h = 0; h < heads; ++h) {
-                const float* q_row = q.data() + (b * heads + h) * hd;
-                const float* k_base = k.data() + h * hd;
                 const float* v_base = v.data() + h * hd;
                 float* att_row = att.data() + (b * heads + h) * hd;
                 auto p = probs_for(b, h);
@@ -353,7 +351,6 @@ TEST_F(TensorParallelAttentionMultiGpuTest, MultiGpu_AttentionBackwardMatchesRef
 
     const int m = 4, heads = 4, hd = 2, hidden = 8;
     const int qkv = heads * hd;
-    const int stride = qkv;  // position-major stride for k/v
     std::vector<float> h_X(m * hidden);
     std::vector<float> h_Wq(hidden * qkv), h_Wk(hidden * qkv), h_Wv(hidden * qkv), h_Wo(qkv * hidden);
     std::vector<float> h_dout(m * hidden);

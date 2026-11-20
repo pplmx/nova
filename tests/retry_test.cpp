@@ -71,7 +71,9 @@ TEST_F(RetryTest, CircuitBreakerClosesAfterSuccessesInHalfOpen) {
 
     cb.record_failure();
     std::this_thread::sleep_for(std::chrono::milliseconds {15});
-    cb.allow_request();
+    // allow_request() returns the decision; discarding it left the half-open probe
+    // unchecked (-Wunused-result on the [[nodiscard]] method).
+    EXPECT_TRUE(cb.allow_request()) << "a half-open breaker must allow a probe request";
 
     EXPECT_EQ(cb.state(), circuit_state::half_open);
     cb.record_success();

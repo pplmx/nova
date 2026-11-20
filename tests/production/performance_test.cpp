@@ -133,6 +133,9 @@ TEST_F(PriorityStreamTest, Cleanup) {
     cuda::production::PriorityStreamPool pool(4);
 
     auto stream = pool.acquire(cuda::production::StreamPriority::Normal);
+    // The case is named Cleanup: the acquired stream is the thing cleanup() has to
+    // reclaim, so assert it came back before looking at the pool's counters.
+    ASSERT_TRUE(static_cast<bool>(stream)) << "acquire must hand out a stream";
 
     pool.cleanup();
 
