@@ -4,6 +4,8 @@
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
 #include <thrust/gather.h>
+#include <thrust/sequence.h>
+#include <thrust/system/cuda/execution_policy.h>
 #include <thrust/functional.h>
 
 #include "cuda/memory/unique_ptr.h"
@@ -31,12 +33,19 @@ namespace cuda::algo::segmented {
         cuda::memory::unique_ptr<int> d_segments_original(count);
         cuda::memory::unique_ptr<int> d_indices(count);
 
-        CUDA_CHECK(cudaMemcpy(d_keys_original.get(), keys, count * sizeof(T), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_segments_original.get(), segment_ids, count * sizeof(int), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_keys_sorted.get(), keys, count * sizeof(T), cudaMemcpyHostToDevice));
+        // Uploads go on the caller's stream, not the default one.
+        CUDA_CHECK(cudaMemcpyAsync(d_keys_original.get(), keys, count * sizeof(T), cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_segments_original.get(), segment_ids, count * sizeof(int), cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_keys_sorted.get(), keys, count * sizeof(T), cudaMemcpyHostToDevice, stream));
+
+        // Every thrust call below runs on the caller's stream. Before this they ran on
+        // the default stream (no execution policy) while the API advertised a stream
+        // parameter it discarded, so a caller's queued work was not ordered against the
+        // sort.
+        const auto policy = thrust::cuda::par.on(stream);
 
         thrust::device_ptr<int> d_indices_ptr(d_indices.get());
-        thrust::sequence(d_indices_ptr, d_indices_ptr + count);
+        thrust::sequence(policy, d_indices_ptr, d_indices_ptr + count);
 
         thrust::device_ptr<T> d_keys_sorted_ptr(d_keys_sorted.get());
 
@@ -54,7 +63,12 @@ namespace cuda::algo::segmented {
             // translation unit; a plain array keeps the host-side scan independent
             // of the standard library configuration.
             int* host_segments = new int[count];
-            CUDA_CHECK(cudaMemcpy(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost));
+            // The segment scan is host-side, so it has to see the device data. Order the
+            // copy on the caller's stream and wait for it, rather than issuing it on the
+            // default stream where it would be unordered with respect to work the caller
+            // queued on `stream`.
+            CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaStreamSynchronize(stream));
 
             size_t begin = 0;
             while (begin < count) {
@@ -69,9 +83,9 @@ namespace cuda::algo::segmented {
                     auto seg_end = d_keys_sorted_ptr + end;
                     auto idx_begin = d_indices_ptr + begin;
                     if (g_config.stable) {
-                        thrust::stable_sort_by_key(seg_begin, seg_end, idx_begin);
+                        thrust::stable_sort_by_key(policy, seg_begin, seg_end, idx_begin);
                     } else {
-                        thrust::sort_by_key(seg_begin, seg_end, idx_begin);
+                        thrust::sort_by_key(policy, seg_begin, seg_end, idx_begin);
                     }
                 }
                 begin = end;
@@ -81,8 +95,8 @@ namespace cuda::algo::segmented {
 
         thrust::device_ptr<T> d_out_keys_ptr(out_keys);
         thrust::device_ptr<int> d_out_segments_ptr(out_segments);
-        thrust::gather(d_indices_ptr, d_indices_ptr + count, thrust::device_ptr<const T>(d_keys_original.get()), d_out_keys_ptr);
-        thrust::gather(d_indices_ptr, d_indices_ptr + count, thrust::device_ptr<const int>(d_segments_original.get()), d_out_segments_ptr);
+        thrust::gather(policy, d_indices_ptr, d_indices_ptr + count, thrust::device_ptr<const T>(d_keys_original.get()), d_out_keys_ptr);
+        thrust::gather(policy, d_indices_ptr, d_indices_ptr + count, thrust::device_ptr<const int>(d_segments_original.get()), d_out_segments_ptr);
     }
 
     template <typename Key, typename Value>
@@ -117,7 +131,9 @@ namespace cuda::algo::segmented {
         thrust::device_ptr<Value> values_ptr(d_values.get());
 
         int* host_segments = new int[count];
-        CUDA_CHECK(cudaMemcpy(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        const auto policy = thrust::cuda::par.on(stream);
 
         size_t begin = 0;
         while (begin < count) {
@@ -153,6 +169,8 @@ namespace cuda::algo::segmented {
 
     template <typename T>
     void sort_by_key_inplace(T* keys, int* segment_ids, size_t count, size_t num_segments, cudaStream_t stream) {
+        // stream is honoured: the segment scan is ordered on it and every thrust call
+        // below runs through a policy bound to it. See the note in sort_by_key.
         if (count == 0) {
             return;
         }
@@ -166,7 +184,11 @@ namespace cuda::algo::segmented {
         thrust::device_ptr<int> d_segments(segment_ids);
 
         int* host_segments = new int[count];
-        CUDA_CHECK(cudaMemcpy(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost));
+        // The scan is host-side, so it must wait for the device data -- on the caller's
+        // stream, not the default one.
+        CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        const auto policy = thrust::cuda::par.on(stream);
 
         size_t begin = 0;
         while (begin < count) {
@@ -178,9 +200,9 @@ namespace cuda::algo::segmented {
                 auto seg_begin = d_keys + begin;
                 auto seg_end = d_keys + end;
                 if (g_config.stable) {
-                    thrust::stable_sort(seg_begin, seg_end);
+                    thrust::stable_sort(policy, seg_begin, seg_end);
                 } else {
-                    thrust::sort(seg_begin, seg_end);
+                    thrust::sort(policy, seg_begin, seg_end);
                 }
             }
             begin = end;

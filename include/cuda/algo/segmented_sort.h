@@ -8,6 +8,18 @@
 
 namespace cuda::algo::segmented {
 
+    /**
+     * @brief Sort keys within each segment, gathering the permutation into out_*
+     *
+     * Device work is issued on `stream`: the uploads, the per-segment thrust sorts and
+     * the gathers all run there. Segment boundaries come from `segment_ids` itself, so
+     * `num_segments` is not used for anything and may be passed as the number of
+     * distinct ids the caller believes it wrote.
+     *
+     * @note The call is host-blocking: segment boundaries are found by scanning
+     *       segment_ids on the host, which requires a copy back from the device. The
+     *       stream is honoured for ordering, not for a non-blocking return.
+     */
     template <typename T>
     void sort_by_key(const T* keys, const int* segment_ids, T* out_keys, int* out_segments, size_t count, size_t num_segments, cudaStream_t stream = nullptr);
 
