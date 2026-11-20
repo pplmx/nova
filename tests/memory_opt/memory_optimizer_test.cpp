@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <cuda_runtime.h>
 #include <cuda/memory_opt/memory_optimizer.h>
 
@@ -181,6 +182,52 @@ namespace cuda::memory_opt::test {
         EXPECT_EQ(static_cast<int>(WorkloadProfile::LargeBatch), 1);
         EXPECT_EQ(static_cast<int>(WorkloadProfile::Inference), 2);
         EXPECT_EQ(static_cast<int>(WorkloadProfile::Training), 3);
+    }
+
+    // Regression: get_stats() divided by compressed_bytes without checking it.
+    //
+    //     ratio = total_original_bytes_ > 0
+    //                 ? float(total_original_bytes_) / total_compressed_bytes_
+    //                 : 1.0f;
+    //
+    // The guard tests the NUMERATOR. Recording a checkpoint size where the compressed
+    // side is zero -- nothing was written, the codec failed, or the caller only tracks
+    // originals -- makes the ratio +inf, and a stats consumer that formats or compares it
+    // gets a number that is not a ratio at all. The guard now tests the denominator.
+    TEST_F(MemoryOptimizerTest, ZeroCompressedBytesDoesNotProduceAnInfiniteRatio) {
+        auto& manager = MemoryOptimizationManager::instance();
+        manager.reset_stats();
+        manager.record_checkpoint_size(/*original=*/1000, /*compressed=*/0);
+
+        const auto stats = manager.get_stats();
+        EXPECT_EQ(stats.original_bytes, 1000u);
+        EXPECT_EQ(stats.compressed_bytes, 0u);
+        EXPECT_TRUE(std::isfinite(stats.compression_ratio)) << "ratio was " << stats.compression_ratio << " with zero compressed bytes";
+        // Nothing was compressed, so the ratio has to say so rather than being +inf.
+        EXPECT_FLOAT_EQ(stats.compression_ratio, 1.0f);
+        manager.reset_stats();
+    }
+
+    // The two enable_* setters stored flags that nothing read. They are observable now, so
+    // a caller can confirm the configuration took and can tell why a compression ratio is
+    // zero.
+    TEST_F(MemoryOptimizerTest, EnablingFlagsIsVisibleInTheStats) {
+        auto& manager = MemoryOptimizationManager::instance();
+        manager.reset_stats();
+
+        manager.enable_checkpoint_compression(false);
+        manager.enable_defragmentation(false);
+        auto stats = manager.get_stats();
+        EXPECT_FALSE(stats.compression_enabled);
+        EXPECT_FALSE(stats.defragmentation_enabled);
+
+        manager.enable_checkpoint_compression(true);
+        manager.enable_defragmentation(true);
+        stats = manager.get_stats();
+        EXPECT_TRUE(stats.compression_enabled);
+        EXPECT_TRUE(stats.defragmentation_enabled);
+
+        manager.reset_stats();
     }
 
 }  // namespace cuda::memory_opt::test

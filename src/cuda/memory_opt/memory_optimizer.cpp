@@ -285,11 +285,19 @@ namespace cuda::memory_opt {
         MemoryOptimizationStats stats;
         stats.compressed_bytes = total_compressed_bytes_;
         stats.original_bytes = total_original_bytes_;
-        stats.compression_ratio = total_original_bytes_ > 0 ? static_cast<float>(total_original_bytes_) / total_compressed_bytes_ : 1.0f;
+        // Guard the DENOMINATOR, not the numerator. The old condition asked whether
+        // anything was recorded at all and then divided by total_compressed_bytes_, so
+        // recording an original size with nothing compressed produced +inf.
+        stats.compression_ratio = total_compressed_bytes_ > 0 ? static_cast<float>(total_original_bytes_) / static_cast<float>(total_compressed_bytes_) : 1.0f;
         stats.gradient_accumulation_buffers = gradient_accumulation_steps_;
         stats.total_fragmentation = 0;
         stats.num_allocations = 0;
         stats.num_defragmentations = num_defragmentations_;
+        // These two flags were stored by their setters and read by nothing, so a caller
+        // could not tell whether its configuration took, and the stats could not explain
+        // a zero compression ratio. Reported now.
+        stats.compression_enabled = compression_enabled_;
+        stats.defragmentation_enabled = defragmentation_enabled_;
         return stats;
     }
 

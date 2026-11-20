@@ -98,14 +98,27 @@ namespace cuda::memory_opt {
         size_t total_fragmentation;
         int num_allocations;
         int num_defragmentations;
+        /// Whether enable_checkpoint_compression(true) is in effect.
+        bool compression_enabled {false};
+        /// Whether enable_defragmentation(true) is in effect.
+        bool defragmentation_enabled {false};
     };
 
     class MemoryOptimizationManager {
     public:
         static MemoryOptimizationManager& instance();
 
+        /// Turn checkpoint compression on or off.
+        ///
+        /// The manager only records what a caller did; it does not compress anything
+        /// itself. The flag is reported in get_stats() so a consumer can tell a zero
+        /// compression ratio caused by "compression was off" from one caused by nothing
+        /// having been recorded.
         void enable_checkpoint_compression(bool enable);
+
         void set_gradient_accumulation_steps(int steps);
+
+        /// Turn defragmentation on or off; reported in get_stats().
         void enable_defragmentation(bool enable);
 
         void record_checkpoint_size(size_t original, size_t compressed);
