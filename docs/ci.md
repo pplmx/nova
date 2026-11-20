@@ -58,7 +58,16 @@ make lint
 
 # ASan + UBSan
 make sanitize
+```
 
+Under ASan, set `ASAN_OPTIONS=protect_shadow_gap=0`. Without it no CUDA context
+can be created on this host: `cudaGetDeviceCount` returns
+`cudaErrorMemoryAllocation` and every CUDA test skips itself, which reads as a
+green sanitizer run that exercised nothing. `make sanitize` passes its own
+`ASAN_OPTIONS` to `ctest` and does not include this flag, so a run that reports
+only skips is a run that did not check the device code.
+
+```bash
 # Coverage
 cmake -G Ninja -B build-coverage -DNOVA_COVERAGE=ON
 cmake --build build-coverage --parallel
