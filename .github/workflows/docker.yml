@@ -53,7 +53,7 @@ jobs:
 
             -   name: Derive Image Tags
                 id: meta
-                uses: docker/metadata-action@v5
+                uses: docker/metadata-action@v6
                 with:
                     # Repository-derived, so a rename does not silently leave
                     # images under the old name (this workflow still said `cu`).
