@@ -46,6 +46,13 @@ namespace cuda::memory {
 
         void sync_prefetch(const stream::Stream& stream);
 
+        /// Number of prefetch requests queued but not yet executed.
+        ///
+        /// Zero after sync_prefetch(). Exposed so the queue can be observed: the only
+        /// test of sync_prefetch() asserted that blocks still existed afterwards, which
+        /// says nothing about whether the pending queue was drained.
+        [[nodiscard]] size_t pending_prefetch_count() const;
+
     private:
         KVCacheAllocator* allocator_;
         StreamingCacheConfig config_;

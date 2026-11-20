@@ -124,4 +124,9 @@ namespace cuda::memory {
         pending_prefetch_.clear();
     }
 
+    size_t StreamingCacheManager::pending_prefetch_count() const {
+        std::lock_guard<std::mutex> lock(prefetch_mutex_);
+        return pending_prefetch_.size();
+    }
+
 }  // namespace cuda::memory

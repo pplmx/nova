@@ -98,8 +98,14 @@ namespace cuda::memory {
         allocator->allocate(1, 16);
 
         manager->prefetch_async(1, 16, stream);
+        EXPECT_GE(manager->pending_prefetch_count(), 1u) << "prefetch_async queued nothing";
+
         manager->sync_prefetch(stream);
+        EXPECT_EQ(manager->pending_prefetch_count(), 0u) << "sync_prefetch left requests queued, despite its name";
+
+        // A second sync on an empty queue must stay empty rather than resurrect anything.
         manager->sync_prefetch(stream);
+        EXPECT_EQ(manager->pending_prefetch_count(), 0u);
 
         auto blocks = allocator->get_blocks(1);
         EXPECT_GE(blocks.size(), 1);
