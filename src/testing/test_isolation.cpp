@@ -10,6 +10,7 @@
 #include "cuda/device/error.h"
 
 #include <cuda_runtime.h>
+#include <cuda/distributed/common.h>
 #include <map>
 #include <vector>
 #include <mutex>
@@ -46,8 +47,16 @@ namespace cuda::testing {
 
     void TestIsolationContext::execute_isolated(std::function<void()> fn) {
         auto context = create();
-        context->reset_cuda_context();
+        // Singletons FIRST. Their resetters release CUDA handles those singletons own
+        // (streams, events, cuBLAS/cuSPARSE handles), and cudaDeviceReset() destroys the
+        // context those handles live on. In the old order the resetters ran afterwards,
+        // on dead handles: libcuda dereferences them rather than returning an error, so
+        // the first singleton with a cached event crashed inside cuEventDestroy --
+        // measured as an AddressSanitizer SEGV in MeshStreams::reset() reached from this
+        // function. Every singleton that owns CUDA state has to be registered here for
+        // the order to help; MeshStreams was not, and is now.
         context->reset_singletons();
+        context->reset_cuda_context();
 
         fn();
 
@@ -77,6 +86,10 @@ namespace cuda::testing {
                 register_singleton_resetter("TimelineExporter", [] { cuda::observability::TimelineExporter::instance().clear(); });
                 register_singleton_resetter("timeout_manager", [] { nova::error::timeout_manager::instance().reset(); });
                 register_singleton_resetter("degradation_manager", [] { nova::error::degradation_manager::instance().reset(); });
+                // Owns a CUDA stream and event per device. Without an entry its handles were
+                // released after cudaDeviceReset() had already destroyed the context, which
+                // segfaults inside cuEventDestroy.
+                register_singleton_resetter("MeshStreams", [] { cuda::distributed::MeshStreams::instance().reset(); });
             }
         } g_singleton_registrations;
 

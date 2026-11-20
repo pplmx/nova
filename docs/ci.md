@@ -128,6 +128,36 @@ process; a neighbour moving free memory between two samples is indistinguishable
 from a leak. Nothing in the build can detect that condition, so if one of them
 fails, check what else is on the device before reading anything into it.
 
+### Resetting the CUDA context in a test
+
+Do not call `cudaDeviceReset()` from a test fixture. It tears down the entire process
+context, not just the case's own resources, and several process-wide singletons cache
+handles that live on that context (`MeshStreams`, `NcclContext`, `CusparseContext`).
+Those handles do not become null; they stay as non-null values pointing at a destroyed
+context, and the runtime offers no way to detect that from the value:
+
+```cpp
+cudaEvent_t e;
+cudaEventCreate(&e);
+cudaDeviceReset();
+cudaGetDevice(&dev);        // succeeds, reports device 0
+cudaGetLastError();         // clean
+cudaEventDestroy(e);        // SIGSEGV inside libcuda, not an error return
+```
+
+Measured exactly as shown, with no sanitizer and no CUPTI involved. The failure mode
+depends on the case's memory layout, which is why it shows up under ASan on cases that
+pass in a normal build -- `MeshStreamsPartialInitTest.ResetReturnsToTheUninitialisedState`
+crashed there in `cudaEventDestroy` and passes alone.
+
+What a fixture usually wants from the reset is only that no work from a previous case is
+still in flight. `cudaDeviceSynchronize()` does that and invalidates nothing. All 42 call
+sites were converted; the two suites that need a clean context for a different reason
+construct their own resources instead of resetting the process.
+
+`cudaDeviceSynchronize` also costs nothing when the intent was to release memory: the
+device allocator already reclaims on `cudaFree`, and a reset was never needed for it.
+
 ## Release workflows
 
 Three workflows respond to a version tag, and all three were dead until the
