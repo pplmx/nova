@@ -72,8 +72,15 @@ namespace cuda::observability::test {
     TEST(NvtxDomainsTest, HandlesAreUsableAsTemplateArguments) {
         // A domain handle has to be a constant expression to serve as a template
         // argument; if these became runtime values this would stop compiling.
-        static_assert(NVTXDomains::Memory != NVTXDomains::Device);
-        static_assert(NVTXDomains::Algo != NVTXDomains::API);
+        //
+        // The assertion is written as `A == A`, not `A != B`. Comparing the two
+        // DIFFERENT tags is not a constant expression under UBSan: the sanitizer
+        // instruments the objects being pointed at, so their addresses stop being
+        // usable in a constant comparison and `make sanitize` failed to compile
+        // this file at all. Distinctness is checked at runtime by
+        // EveryDomainIsDistinct above, which is where that property belongs.
+        static_assert(NVTXDomains::Memory == NVTXDomains::Memory);
+        static_assert(NVTXDomains::Algo == NVTXDomains::Algo);
         SUCCEED();
     }
 
