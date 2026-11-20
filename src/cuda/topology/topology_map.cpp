@@ -9,9 +9,30 @@
 #include <set>
 #include <sstream>
 #include <filesystem>
+
+// Hostname lookup: <unistd.h> on POSIX, <winsock2.h> on Windows. Hostname is
+// the only symbol this file needs a platform header for, and it is needed by
+// detect(), whose NIC enumeration below is Linux-only.
+#if defined(_WIN32)
+#include <winsock2.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace {
+
+    /// Overwrite an environment variable.
+    ///
+    /// POSIX has setenv(). Windows has no setenv, only _putenv_s(), which also
+    /// takes overwrite semantics so the two calls match. std::getenv() is
+    /// portable and is what this file uses to read the value back.
+    bool set_env(const char* name, const std::string& value) {
+#if defined(_WIN32)
+        return ::_putenv_s(name, value.c_str()) == 0;
+#else
+        return ::setenv(name, value.c_str(), 1) == 0;
+#endif
+    }
 
     bool file_exists(const std::string& path) {
         std::ifstream f(path);
@@ -83,6 +104,7 @@ namespace cuda::topology {
             map.hostname = hostname;
         }
 
+#if defined(__linux__)
         try {
             const std::string sys_class_net = "/sys/class/net";
             for (const auto& entry : std::filesystem::directory_iterator(sys_class_net)) {
@@ -124,6 +146,13 @@ namespace cuda::topology {
             // "no NICs found" from "a NIC with unknown properties" by looking at the vector's
             // size, not by catching.
         }
+#else
+        // NIC enumeration reads /sys/class/net and per-interface type, address and
+        // speed files. That is Linux sysfs; on Windows and macOS it would silently
+        // yield an empty list anyway, so the hostname above is all that is reported
+        // and the caller sees nics.empty() as it would on a Linux machine without
+        // sysfs.
+#endif
 
         return map;
     }
@@ -273,13 +302,13 @@ namespace cuda::topology {
         // NCCL_TUNING, as this did, leaves NCCL_ALGO unset and the selection has no
         // effect at all — measured: NCCL_ALGO was (unset) while NCCL_TUNING held
         // "NCCL_ALGO=CollNet".
-        setenv("NCCL_ALGO", algorithm_to_string(config.algorithm).c_str(), 1);
+        set_env("NCCL_ALGO", algorithm_to_string(config.algorithm));
 
         // Any extra tuning fragment the caller supplied is appended to NCCL_ALGO,
         // which is where NCCL accepts the comma-separated form (e.g. "Ring,Tree").
         if (!config.nccl_tuning_env.empty()) {
             const std::string combined = algorithm_to_string(config.algorithm) + "," + config.nccl_tuning_env;
-            setenv("NCCL_ALGO", combined.c_str(), 1);
+            set_env("NCCL_ALGO", combined);
         }
     }
 

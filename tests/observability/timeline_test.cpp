@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <unistd.h>
+#include "test_temp_paths.h"
 #include <fstream>
 #include <filesystem>
 
@@ -23,7 +23,7 @@ namespace cuda::observability::test {
             // and every later test in the binary saw pid 1 — a test in another file that
             // asserts the exported JSON carries ::getpid() failed only when this suite ran
             // first. Restore what the singleton would have reported on its own.
-            TimelineExporter::instance().set_process_id(static_cast<int>(::getpid()));
+            TimelineExporter::instance().set_process_id(nova::test::process_id());
         }
     };
 

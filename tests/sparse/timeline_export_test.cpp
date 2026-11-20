@@ -24,7 +24,7 @@
 
 #include <gtest/gtest.h>
 
-#include <unistd.h>
+#include "test_temp_paths.h"
 
 #include <cstdio>
 #include <fstream>
@@ -49,7 +49,7 @@ namespace cuda::observability::test {
 
         /// Unique path per process and test, so parallel ctest runs cannot collide.
         std::string temp_path(const char* tag) {
-            return std::string("/tmp/nova_timeline_") + tag + "_" + std::to_string(::getpid()) + ".json";
+            return nova::test::temp_path(std::string("nova_timeline_") + tag + "_", ".json");
         }
 
         /// True when `needle` occurs in `haystack`.
@@ -88,7 +88,7 @@ namespace cuda::observability::test {
 
         ASSERT_FALSE(json.empty());
         EXPECT_FALSE(contains(json, "\"pid\": 0,")) << "pid 0 cannot distinguish processes:\n" << json;
-        EXPECT_TRUE(contains(json, "\"pid\": " + std::to_string(::getpid()) + ",")) << "expected the current process id:\n" << json;
+        EXPECT_TRUE(contains(json, "\"pid\": " + std::to_string(nova::test::process_id()) + ",")) << "expected the current process id:\n" << json;
     }
 
     // clear() must undo a set_process_id() override, not just drop the events.
@@ -109,7 +109,7 @@ namespace cuda::observability::test {
         const std::string json = slurp(path);
         std::remove(path.c_str());
 
-        EXPECT_TRUE(contains(json, "\"pid\": " + std::to_string(::getpid()) + ",")) << "clear() should have discarded the overridden process id:\n" << json;
+        EXPECT_TRUE(contains(json, "\"pid\": " + std::to_string(nova::test::process_id()) + ",")) << "clear() should have discarded the overridden process id:\n" << json;
     }
 
     TEST(TimelineExporterTest, ExportProducesWellFormedTraceArrays) {

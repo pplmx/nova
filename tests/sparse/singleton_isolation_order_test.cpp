@@ -22,7 +22,7 @@
 
 #include <cuda_runtime.h>
 
-#include <unistd.h>
+#include "test_temp_paths.h"
 
 namespace singleton_isolation_order_test {
 
@@ -55,7 +55,7 @@ namespace singleton_isolation_order_test {
         cuda::testing::reset_all_singletons();
 
         exporter.record_event("order-probe", "cat", 1);
-        const std::string path = "/tmp/nova_order_probe_" + std::to_string(::getpid()) + ".json";
+        const std::string path = nova::test::temp_path("nova_order_probe_", ".json");
         ASSERT_TRUE(exporter.export_to_file(path));
 
         std::ifstream file(path);
@@ -63,7 +63,7 @@ namespace singleton_isolation_order_test {
         file.close();
         std::remove(path.c_str());
 
-        EXPECT_NE(json.find("\"pid\": " + std::to_string(::getpid()) + ","), std::string::npos) << "the reset should have restored the real pid:\n" << json;
+        EXPECT_NE(json.find("\"pid\": " + std::to_string(nova::test::process_id()) + ","), std::string::npos) << "the reset should have restored the real pid:\n" << json;
     }
 
     TEST(SingletonIsolationOrderTest, EveryRegisteredSingletonIsDistinctlyNamed) {

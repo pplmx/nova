@@ -24,7 +24,7 @@
 
 #include <gtest/gtest.h>
 
-#include <unistd.h>
+#include "test_temp_paths.h"
 
 #include <cuda_runtime.h>
 
@@ -68,7 +68,7 @@ namespace cuda::performance::test {
             config.grid_sizes = {1};
             config.warmup_iterations = 0;
             config.measure_iterations = 2;
-            config.config_path = "/tmp/nova_autotune_test_" + std::to_string(::getpid()) + ".json";
+            config.config_path = nova::test::temp_path("nova_autotune_test_", ".json");
             return config;
         }
 

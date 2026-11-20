@@ -5,12 +5,10 @@
 #include <iomanip>
 #include <sstream>
 
-#include <unistd.h>
-
 namespace cuda::observability {
 
     TimelineExporter::TimelineExporter(ProcessIdTag) {
-        pid_ = static_cast<int>(::getpid());
+        pid_ = detail::current_process_id();
     }
 
     TimelineExporter& TimelineExporter::instance() {

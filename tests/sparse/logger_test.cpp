@@ -24,7 +24,7 @@
 
 #include <gtest/gtest.h>
 
-#include <unistd.h>
+#include "test_temp_paths.h"
 
 #include <atomic>
 #include <chrono>
@@ -49,7 +49,7 @@ namespace nova::logging::test {
         std::string capture_log(const std::function<void()>& emit) {
             static std::atomic<unsigned> counter {0};
 
-            const auto path = std::filesystem::temp_directory_path() / ("nova_logger_test." + std::to_string(::getpid()) + "." + std::to_string(counter.fetch_add(1)) + ".log");
+            const auto path = nova::test::temp_dir() / ("nova_logger_test." + std::to_string(nova::test::process_id()) + "." + std::to_string(counter.fetch_add(1)) + ".log");
 
             std::fflush(stderr);
             FILE* saved = stderr;

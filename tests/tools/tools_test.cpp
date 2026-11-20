@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <unistd.h>
+#include "test_temp_paths.h"
 #include <fstream>
 #include <cuda_runtime.h>
 #include <cuda/tools/bank_conflict_analyzer.h>
@@ -95,8 +95,8 @@ namespace cuda::tools::test {
         // The two exports returned void and nothing was checked, so a writer that produced an
         // empty file — or failed to open it — passed. Both paths are now inspected: the files
         // must exist and contain the recorded names.
-        const std::string trace_path = "/tmp/nova_tools_trace_" + std::to_string(::getpid()) + ".json";
-        const std::string json_path = "/tmp/nova_tools_timeline_" + std::to_string(::getpid()) + ".json";
+        const std::string trace_path = nova::test::temp_path("nova_tools_trace_", ".json");
+        const std::string json_path = nova::test::temp_path("nova_tools_timeline_", ".json");
 
         visualizer.export_chrome_trace(trace_path);
         visualizer.export_json(json_path);

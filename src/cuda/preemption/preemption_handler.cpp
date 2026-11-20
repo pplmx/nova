@@ -9,9 +9,29 @@
 #include <fstream>
 #include <sstream>
 
+// Signal handling is the one part of this file that is genuinely platform
+// specific.
+//
+// POSIX gets the implementation the header documents: sigaction() installs the
+// handler and a self-pipe carries one byte out of signal context to a
+// dispatcher thread. Windows has no sigaction, no pipe() and no SIGUSR1: it
+// has signal() and SIGTERM/SIGINT/SIGBREAK only, and no async-signal-safety
+// contract, so there is nothing to move out of the handler. The Windows branch
+// therefore installs a plain signal() handler that publishes the two atomics
+// and wakes the dispatcher through a semaphore; every operation the dispatcher
+// performs is identical on both platforms.
+//
+// SIGUSR1 does not exist on Windows. The nearest equivalents are SIGBREAK
+// (CTRL_BREAK_EVENT) and SIGINT (CTRL_C_EVENT); both are installed so that
+// kSignalUserDefined-style "user asked us to stop" arrives the same way.
+#if defined(_WIN32)
+#include <windows.h>
+#include <csignal>
+#else
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
+#endif
 
 namespace nova::preemption {
 
@@ -24,12 +44,25 @@ namespace nova::preemption {
     // else happens on a thread reading the other end.
     static std::atomic<int> g_signal_pipe_write {-1};
 
+#if defined(_WIN32)
+    // Windows equivalent of the pipe's write end: the handler sets this and
+    // returns, the dispatcher waits on it. SetEvent is on Microsoft's list of
+    // functions safe to call from a console control handler.
+    static std::atomic<HANDLE> g_wake_event {nullptr};
+#endif
+
     struct SignalHandler::Impl {
         bool installed = false;
         ShutdownCallback callback;
 
-        // Reader half of the self-pipe and the thread that services it.
+        // Reader half of the self-pipe and the thread that services it. On
+        // Windows there is no pipe; the dispatcher waits on a manual-reset event
+        // that the handler sets, which serves the same purpose: the signal
+        // handler does one non-blocking operation and returns.
         int pipe_read_fd = -1;
+#if defined(_WIN32)
+        HANDLE wake_event = nullptr;
+#endif
         std::thread dispatcher;
         std::atomic<bool> dispatcher_stop {false};
     };
@@ -56,6 +89,15 @@ namespace nova::preemption {
         g_shutdown_requested.store(true, std::memory_order_relaxed);
         g_received_signal.store(signal, std::memory_order_relaxed);
 
+#if defined(_WIN32)
+        // SetEvent is the Windows stand-in for write(2) here: non-blocking, and
+        // the flags above already hold the signal number, so a lost wakeup costs
+        // nothing.
+        const HANDLE event = g_wake_event.load(std::memory_order_relaxed);
+        if (event != nullptr) {
+            ::SetEvent(event);
+        }
+#else
         const int fd = g_signal_pipe_write.load(std::memory_order_relaxed);
         if (fd >= 0) {
             const unsigned char byte = static_cast<unsigned char>(signal & 0x7f);
@@ -63,6 +105,7 @@ namespace nova::preemption {
             // dropping the byte loses no information. Ignore EAGAIN and EINTR deliberately.
             (void)!::write(fd, &byte, 1);
         }
+#endif
     }
 
     void SignalHandler::install_handlers() {
@@ -70,6 +113,69 @@ namespace nova::preemption {
             return;
         }
 
+#if defined(_WIN32)
+        // Windows: a manual-reset event stands in for the pipe, and signal()
+        // stands in for sigaction(). The dispatcher below is shared.
+        impl_->wake_event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (impl_->wake_event == nullptr) {
+            std::cerr << "[Preemption] could not create the signal wake event; "
+                         "shutdown requests will set the flag but no callback will run"
+                      << std::endl;
+        } else {
+            g_wake_event.store(impl_->wake_event, std::memory_order_release);
+
+            impl_->dispatcher_stop.store(false, std::memory_order_release);
+            impl_->dispatcher = std::thread([this] {
+                while (!impl_->dispatcher_stop.load(std::memory_order_acquire)) {
+                    ::WaitForSingleObject(impl_->wake_event, 50);
+                    ::ResetEvent(impl_->wake_event);
+
+                    const int signal = g_received_signal.load(std::memory_order_relaxed);
+                    ShutdownCallback callback;
+                    {
+                        std::lock_guard<std::mutex> lock(g_signal_mutex);
+                        g_signal_time = std::chrono::steady_clock::now();
+                        callback = impl_->callback;
+                    }
+                    if (callback) {
+                        callback(signal);
+                    }
+                }
+            });
+
+            ::signal(SIGTERM, signal_handler);
+            ::signal(SIGINT, signal_handler);
+            ::signal(SIGBREAK, signal_handler);
+        }
+
+        impl_->installed = true;
+    }
+
+    void SignalHandler::uninstall_handlers() {
+        if (!impl_->installed) {
+            return;
+        }
+
+        ::signal(SIGTERM, SIG_DFL);
+        ::signal(SIGINT, SIG_DFL);
+        ::signal(SIGBREAK, SIG_DFL);
+
+        const HANDLE event = g_wake_event.exchange(nullptr, std::memory_order_acq_rel);
+        if (event != nullptr) {
+            ::SetEvent(event);  // release the dispatcher from its wait
+        }
+        impl_->dispatcher_stop.store(true, std::memory_order_release);
+        if (impl_->dispatcher.joinable()) {
+            impl_->dispatcher.join();
+        }
+        if (impl_->wake_event != nullptr) {
+            ::CloseHandle(impl_->wake_event);
+            impl_->wake_event = nullptr;
+        }
+
+        impl_->installed = false;
+    }
+#else
         // Self-pipe: the handler writes one byte, this thread reads it and does the real work
         // outside signal context.
         int fds[2] = {-1, -1};
@@ -153,6 +259,7 @@ namespace nova::preemption {
 
         impl_->installed = false;
     }
+#endif  // _WIN32
 
     bool SignalHandler::is_shutdown_requested() const {
         std::lock_guard<std::mutex> lock(g_signal_mutex);

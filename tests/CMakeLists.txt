@@ -306,6 +306,7 @@ target_link_libraries(nova-tests
     cuda_impl
 )
 target_include_directories(nova-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/matrix
     ${CMAKE_SOURCE_DIR}/data

@@ -19,13 +19,27 @@
 
 #include <gtest/gtest.h>
 
-#include <dirent.h>
-#include <unistd.h>
+#include <cerrno>
+#include <csignal>
+
+// SIGUSR1 does not exist on Windows; SIGINT is the closest "user asked us to
+// stop" signal there and is one of the three POSIX-adjacent signals Windows
+// does define (with SIGTERM and SIGBREAK). The preemption handler installs a
+// handler for it on that platform.
+#if defined(_WIN32)
+constexpr int kUserSignal = SIGINT;
+#else
+constexpr int kUserSignal = SIGUSR1;
+#endif
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <thread>
+
+#if defined(__linux__)
+#include <dirent.h>
+#endif
 
 namespace signal_handler_state_test {
 
@@ -110,12 +124,12 @@ namespace signal_handler_state_test {
 
         // Poll for the dispatcher rather than sleeping a fixed time: the point is that the
         // callback eventually runs, not that it runs within some deadline.
-        std::raise(SIGUSR1);
+        std::raise(kUserSignal);
         for (int i = 0; i < 400 && received.load() == 0; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
-        EXPECT_EQ(received.load(), SIGUSR1) << "the dispatcher thread should have seen the signal number through the pipe";
+        EXPECT_EQ(received.load(), kUserSignal) << "the dispatcher thread should have seen the signal number through the pipe";
         EXPECT_TRUE(handler.is_shutdown_requested()) << "the flag is set in the handler itself, so it is visible without waiting";
 
         handler.uninstall_handlers();
@@ -144,21 +158,24 @@ namespace signal_handler_state_test {
             std::atomic<int> received {0};
             handler.set_shutdown_callback([&received](int signal) { received.store(signal); });
             handler.install_handlers();
-            std::raise(SIGUSR1);
+            std::raise(kUserSignal);
             for (int spin = 0; spin < 400 && received.load() == 0; ++spin) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
-            EXPECT_EQ(received.load(), SIGUSR1) << "cycle " << i;
+            EXPECT_EQ(received.load(), kUserSignal) << "cycle " << i;
             handler.uninstall_handlers();
         }
     }
 
+#if defined(__linux__)
     TEST(SignalHandlerDispatchTest, RepeatedInstallAndUninstallDoesNotLeakFileDescriptors) {
         nova::preemption::SignalHandler& handler = nova::preemption::SignalHandler::instance();
 
         // install_handlers() creates a pipe and uninstall_handlers() must close both ends.
         // Counting /proc/self/fd before and after a run of cycles is the direct check; a leak
         // here would exhaust descriptors in a long-lived process that restarts preemption.
+        // /proc/self/fd is Linux-only, and so is this check: Windows has no pipe
+        // to leak here (the handler waits on an event) and macOS has no /proc.
         const auto count_open_fds = [] {
             DIR* dir = ::opendir("/proc/self/fd");
             if (dir == nullptr) {
@@ -183,5 +200,6 @@ namespace signal_handler_state_test {
         const int after = count_open_fds();
         EXPECT_EQ(after, before) << "10 install/uninstall cycles changed the descriptor count";
     }
+#endif  // __linux__
 
 }  // namespace signal_handler_state_test

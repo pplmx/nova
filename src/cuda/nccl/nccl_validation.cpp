@@ -11,7 +11,19 @@
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
+
+// statfs() is POSIX: <sys/statfs.h> on Linux, <sys/param.h> + <sys/mount.h> on
+// macOS/BSD. Windows has no statfs at all, and the shared-memory check is
+// meaningless there because NCCL itself is Linux-only. validate_shared_memory()
+// below reports "not checked" on any platform without statfs rather than
+// failing the validation, which is what it already did when statfs returned an
+// error.
+#if defined(__linux__)
 #include <sys/statfs.h>
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+#include <sys/mount.h>
+#include <sys/param.h>
+#endif
 
 #if NOVA_NCCL_ENABLED
 #include <nccl.h>
@@ -85,6 +97,7 @@ namespace cuda::nccl {
         ValidationResult result;
         result.valid = true;
 
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
         struct statfs fs_stats;
 
         if (statfs("/dev/shm", &fs_stats) != 0) {
@@ -111,6 +124,13 @@ namespace cuda::nccl {
         } else {
             result.message = "Shared memory OK: " + std::to_string(shm_available / (1024 * 1024)) + " MB available (" + std::to_string(shm_total / (1024 * 1024)) + " MB total)";
         }
+#else
+        // No statfs on this platform. Report "not checked" and stay valid, which is
+        // the same outcome as a statfs that failed above: an unavailable check is
+        // not a failed check, and NCCL does not run on these platforms anyway.
+        result.warnings.push_back("statfs is unavailable on this platform -- assuming /dev/shm is available");
+        result.message = "Shared memory check skipped";
+#endif
 
         return result;
     }

@@ -3,11 +3,35 @@
 #include <chrono>
 #include <fstream>
 #include <mutex>
-#include <unistd.h>
 #include <string>
 #include <vector>
 
+// getpid() lives in <unistd.h> on POSIX and in <process.h> as _getpid() on
+// Windows. Both the constructor and clear() need it, and both are in a header
+// that users of the library include, so the platform split has to be here
+// rather than behind a source file. The two-argument localtime case in
+// logger.hpp uses the same #if defined(_WIN32) shape.
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace cuda::observability {
+
+    namespace detail {
+
+        /// Process id as int. Windows spells it _getpid() and returns int, POSIX
+        /// getpid() returns pid_t; both fit the int that TimelineEvent stores.
+        inline int current_process_id() {
+#if defined(_WIN32)
+            return static_cast<int>(::_getpid());
+#else
+            return static_cast<int>(::getpid());
+#endif
+        }
+
+    }  // namespace detail
 
     struct TimelineEvent {
         std::string name;
@@ -54,7 +78,7 @@ namespace cuda::observability {
             // same binary attributes its events to the wrong process. Clearing restores the
             // value this exporter would have reported on its own, so clear() means "back to
             // the state I started in" rather than "drop the events and keep the overrides".
-            pid_ = static_cast<int>(::getpid());
+            pid_ = detail::current_process_id();
         }
 
         size_t event_count() const {
@@ -65,7 +89,8 @@ namespace cuda::observability {
     private:
         TimelineExporter() = default;
 
-        /// Seeds pid_ from getpid(). The exporter previously left pid_ at 0 and
+        /// Seeds pid_ from detail::current_process_id(). The exporter previously
+        /// left pid_ at 0 and
         /// nothing in production ever called set_process_id, so every trace
         /// advertised itself as process 0 — a value Chrome's trace viewer cannot use
         /// to tell processes apart.
