@@ -21,6 +21,7 @@
  */
 
 #include <cuda/neural/sync_batch_norm.h>
+#include <cuda/mesh/device_mesh.h>
 
 #include <gtest/gtest.h>
 
@@ -106,7 +107,30 @@ namespace cuda::neural::test {
     }  // namespace
 
     // Regression: this produced "an illegal memory access was encountered".
-    TEST(SyncBatchNormBackwardTest, EmptyBatchIsRejected) {
+    /// Fixture for the single-rank gradient cases.
+    ///
+    /// backward() takes the distributed path whenever the process-wide DeviceMesh reports
+    /// more than one device, and that path is a COLLECTIVE: every rank must be in it at
+    /// once. A single-threaded call on a multi-device host blocks forever once an earlier
+    /// NCCL test has left communicators initialised -- measured: the full NCCL-enabled
+    /// single-process run stopped here at case 2288 (killed at the timeout, exit 137).
+    /// Under ctest each case is its own process, which is why this never showed up there.
+    ///
+    /// The cases that only check argument validation would not hang, but they belong to
+    /// the same suite and read better with one rule than two.
+    class SyncBatchNormBackwardTest : public ::testing::Test {
+    protected:
+        void SetUp() override {
+            auto& mesh = cuda::mesh::DeviceMesh::instance();
+            mesh.initialize();
+            if (mesh.device_count() > 1) {
+                GTEST_SKIP() << "single-rank semantics; the collective path needs one thread "
+                                "per rank and is covered by SyncBatchNormTest.MultiGpu_*";
+            }
+        }
+    };
+
+    TEST_F(SyncBatchNormBackwardTest, EmptyBatchIsRejected) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -121,7 +145,7 @@ namespace cuda::neural::test {
     }
 
     // Regression: same failure through the other extent.
-    TEST(SyncBatchNormBackwardTest, EmptySpatialExtentIsRejected) {
+    TEST_F(SyncBatchNormBackwardTest, EmptySpatialExtentIsRejected) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -134,7 +158,7 @@ namespace cuda::neural::test {
         (void)cudaGetLastError();
     }
 
-    TEST(SyncBatchNormBackwardTest, NegativeExtentsAreRejected) {
+    TEST_F(SyncBatchNormBackwardTest, NegativeExtentsAreRejected) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -145,7 +169,7 @@ namespace cuda::neural::test {
         (void)cudaGetLastError();
     }
 
-    TEST(SyncBatchNormBackwardTest, ProducesFiniteGradients) {
+    TEST_F(SyncBatchNormBackwardTest, ProducesFiniteGradients) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
@@ -185,7 +209,7 @@ namespace cuda::neural::test {
         }
     }
 
-    TEST(SyncBatchNormBackwardTest, ConstantInputHasZeroInputGradient) {
+    TEST_F(SyncBatchNormBackwardTest, ConstantInputHasZeroInputGradient) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
         }
