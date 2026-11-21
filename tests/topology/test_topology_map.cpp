@@ -295,4 +295,93 @@ namespace cuda::topology {
         EXPECT_EQ(ctx.get_cross_node_comm_size(), 1) << "one rank is elsewhere";
     }
 
+    // Regression: select_best_nic() was `is_rdma_capable && bandwidth > best`, which reduced to
+    // "RDMA and a POSITIVE bandwidth". An InfiniBand port has no /sys/class/net/<if>/speed --
+    // that attribute is Ethernet-only -- so its bandwidth is 0 and it could never be selected.
+    // Measured on this host: four active IB ports present, and the function returned a 10 GbE
+    // veth, from which network_type() reported "Ethernet". select_for_allreduce() only
+    // considers CollNet when network_type() is "InfiniBand", so the fabric could never be used.
+    TEST_F(TopologyMapTest, SelectsAnRdmaPortOverAFasterLookingEthernetOne) {
+        TopologyMap map;
+        NicInfo ethernet;
+        ethernet.name = "eth0";
+        ethernet.type = NicType::Ethernet;
+        ethernet.bandwidth_gbps = 10000;
+
+        NicInfo infiniband;
+        infiniband.name = "ib0";
+        infiniband.type = NicType::InfiniBand;
+        infiniband.bandwidth_gbps = 0;  // no speed attribute for IB
+        infiniband.is_rdma_capable = true;
+
+        map.nics = {ethernet, infiniband};
+
+        EXPECT_EQ(map.select_best_nic().name, "ib0") << "an RDMA port outranks a plain Ethernet one";
+        EXPECT_EQ(map.network_type(), "InfiniBand") << "and the network is named after it";
+        EXPECT_TRUE(map.has_rdma());
+    }
+
+    // Among RDMA ports the fastest still wins, and among Ethernet interfaces too: the ranking
+    // must not have turned into "the first RDMA port always wins".
+    TEST_F(TopologyMapTest, PrefersMoreBandwidthWithinTheSameClass) {
+        TopologyMap map;
+        NicInfo slow;
+        slow.name = "mlx5_0";
+        slow.type = NicType::InfiniBand;
+        slow.is_rdma_capable = true;
+        slow.bandwidth_gbps = 100;
+
+        NicInfo fast;
+        fast.name = "mlx5_1";
+        fast.type = NicType::InfiniBand;
+        fast.is_rdma_capable = true;
+        fast.bandwidth_gbps = 400;
+
+        map.nics = {slow, fast};
+        EXPECT_EQ(map.select_best_nic().name, "mlx5_1");
+
+        map.nics = {};
+        NicInfo eth_slow;
+        eth_slow.name = "eth0";
+        eth_slow.type = NicType::Ethernet;
+        eth_slow.bandwidth_gbps = 1000;
+        NicInfo eth_fast;
+        eth_fast.name = "eth1";
+        eth_fast.type = NicType::Ethernet;
+        eth_fast.bandwidth_gbps = 25000;
+        map.nics = {eth_slow, eth_fast};
+        EXPECT_EQ(map.select_best_nic().name, "eth1");
+    }
+
+    // Regression: estimate_bandwidth() returned an int directly from a uint64_t function, so
+    // the kernel's "-1" -- which means "this interface cannot report its speed" -- became
+    // 18446744073709551615, the largest possible bandwidth. Six Docker bridges on this host
+    // reported that value and outranked every real port. "Unknown" must read as 0.
+    TEST_F(TopologyMapTest, UnreportedSpeedIsNotTreatedAsInfiniteBandwidth) {
+        // A real interface whose driver reports no speed is what this asserts about; on a host
+        // where every interface reports one there is nothing to observe, so pick any and check
+        // the invariant that no interface claims an absurd bandwidth.
+        const TopologyMap map = TopologyDetector::detect();
+        for (const auto& nic : map.nics) {
+            EXPECT_LT(nic.bandwidth_gbps, uint64_t(100) * 1000 * 1000) << nic.name << " reports an implausible bandwidth; -1 means unknown, not infinite";
+        }
+
+        // And the translation itself, through the public entry point: an interface that does
+        // not exist has no speed file, so it must be 0 rather than anything else.
+        EXPECT_EQ(TopologyDetector::estimate_bandwidth("nova-no-such-interface"), 0u);
+    }
+
+    // Regression: /sys/class/net also contains entries that are not interfaces with a type
+    // file (bonding_masters is the one on this host). directory_iterator lists them, and
+    // without a check they became NicInfo records of type Unknown -- and because
+    // bonding_masters sorts first, it won select_best_nic() on an otherwise idle machine.
+    TEST_F(TopologyMapTest, OnlyRealInterfacesAreEnumerated) {
+        const TopologyMap map = TopologyDetector::detect();
+        for (const auto& nic : map.nics) {
+            EXPECT_FALSE(nic.name.empty());
+            EXPECT_NE(nic.name, "bonding_masters") << "that is a sysfs control file, not an interface";
+            EXPECT_NE(nic.name, "lo") << "loopback is not a fabric path";
+        }
+    }
+
 }  // namespace cuda::topology

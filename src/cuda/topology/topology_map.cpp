@@ -5,10 +5,11 @@
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <sstream>
-#include <filesystem>
 
 // Hostname lookup: <unistd.h> on POSIX, <winsock2.h> on Windows. Hostname is
 // the only symbol this file needs a platform header for, and it is needed by
@@ -39,6 +40,32 @@ namespace {
         return f.good();
     }
 
+    /// Parse a single integer out of a sysfs attribute.
+    ///
+    /// Returns nullopt for empty, non-numeric and out-of-range content instead of throwing:
+    /// every caller here treats "the driver did not report this" as a legitimate answer, and
+    /// an exception used to abort the whole enumeration.
+    std::optional<long long> parse_sysfs_int(const std::string& text) {
+        if (text.empty()) {
+            return std::nullopt;
+        }
+        try {
+            size_t consumed = 0;
+            const long long value = std::stoll(text, &consumed);
+            // Trailing whitespace/newline is expected; trailing junk means the file is not
+            // the integer the caller expects.
+            for (size_t i = consumed; i < text.size(); ++i) {
+                const char c = text[i];
+                if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                    return std::nullopt;
+                }
+            }
+            return value;
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
     std::string read_file(const std::string& path) {
         std::ifstream f(path);
         if (!f.good()) {
@@ -61,16 +88,49 @@ namespace cuda::topology {
     }
 
     NicInfo TopologyMap::select_best_nic() const {
-        NicInfo best;
+        // Preference order, not a single "biggest number wins":
+        //
+        //   1. RDMA-capable and a known bandwidth    -- fastest fabric port
+        //   2. RDMA-capable with no bandwidth figure -- an InfiniBand port reports no
+        //      /sys/class/net/<if>/speed at all, because that attribute is Ethernet-only
+        //   3. any interface with a known bandwidth
+        //   4. whatever is left (the first NIC)
+        //
+        // The old body was `is_rdma_capable && bandwidth > best`, which silently reduced to
+        // "RDMA and a positive bandwidth". InfiniBand ports have no speed file, so their
+        // bandwidth is 0 and they could never win: measured on a host with four active IB
+        // ports, this returned a 10 GbE veth. network_type() then reported "Ethernet", and
+        // select_for_allreduce() -- which asks for "InfiniBand" before it will consider
+        // CollNet -- could not select the algorithm the fabric was there for.
+        // Lower is better. 0..3 are the four cases of the preference order above.
+        const auto rank_of = [](const NicInfo& nic) {
+            if (nic.is_rdma_capable) {
+                return nic.bandwidth_gbps > 0 ? 0 : 1;
+            }
+            return nic.bandwidth_gbps > 0 ? 2 : 3;
+        };
+
+        const NicInfo* best = nullptr;
         for (const auto& nic : nics) {
-            if (nic.is_rdma_capable && nic.bandwidth_gbps > best.bandwidth_gbps) {
-                best = nic;
+            if (best == nullptr) {
+                best = &nic;
+                continue;
+            }
+            const int candidate_rank = rank_of(nic);
+            const int current_rank = rank_of(*best);
+            if (candidate_rank != current_rank) {
+                if (candidate_rank < current_rank) {
+                    best = &nic;
+                }
+                continue;
+            }
+            // Within a rank, more bandwidth wins; ties keep the earlier interface, which
+            // keeps the result stable for a given host.
+            if (nic.bandwidth_gbps > best->bandwidth_gbps) {
+                best = &nic;
             }
         }
-        if (!best.name.empty()) {
-            return best;
-        }
-        return nics.empty() ? NicInfo {} : nics[0];
+        return best != nullptr ? *best : NicInfo {};
     }
 
     bool TopologyMap::has_rdma() const {
@@ -113,18 +173,32 @@ namespace cuda::topology {
                     continue;
                 }
 
+                // /sys/class/net holds a few entries that are not interfaces with a `type`
+                // file -- bonding_masters is the clearest example -- and directory_iterator
+                // happily lists them. Without this check such an entry became a NicInfo with
+                // type Unknown. Measured: bonding_masters was the FIRST entry, so it won
+                // select_best_nic() on every device below and reported the network as
+                // Unknown although four InfiniBand ports were present.
+                const auto type_path = entry.path() / "type";
+                if (!file_exists(type_path.string())) {
+                    continue;
+                }
+
                 NicInfo nic;
                 nic.name = name;
 
-                const auto type_path = entry.path() / "type";
-                if (file_exists(type_path.string())) {
-                    std::string type_str = read_file(type_path.string());
-                    int type = std::stoi(type_str);
-                    if (type == 32) {
-                        nic.type = NicType::InfiniBand;
-                    } else {
-                        nic.type = NicType::Ethernet;
-                    }
+                // A type file that exists but reads as empty or non-numeric is a NIC whose
+                // sort the driver has not filled in; it used to reach std::stoi and throw,
+                // which the enclosing catch then turned into "stop enumerating", so every
+                // interface after it in the directory order was silently dropped.
+                const std::string type_str = read_file(type_path.string());
+                const auto parsed_type = parse_sysfs_int(type_str);
+                if (!parsed_type.has_value()) {
+                    nic.type = NicType::Unknown;
+                } else if (*parsed_type == 32) {
+                    nic.type = NicType::InfiniBand;
+                } else {
+                    nic.type = NicType::Ethernet;
                 }
 
                 nic.is_rdma_capable = is_rdma_capable(name);
@@ -166,22 +240,20 @@ namespace cuda::topology {
 
     uint64_t TopologyDetector::estimate_bandwidth(const std::string& interface) {
         const auto speed_path = "/sys/class/net/" + interface + "/speed";
-        if (file_exists(speed_path)) {
-            std::string speed_str = read_file(speed_path);
-            if (!speed_str.empty()) {
-                try {
-                    int speed = std::stoi(speed_str);
-                    return speed;
-                } catch (const std::exception&) {
-                    // /sys/class/net/<if>/speed reports a bare integer, or "-1" / an empty
-                    // file for an interface whose speed the driver cannot report (virtual
-                    // interfaces, some bonds). std::stoi throws on the latter forms; the
-                    // contract of this function is 0 for "unknown", which is what falls
-                    // through below.
-                }
-            }
+        const auto speed = parse_sysfs_int(read_file(speed_path));
+        if (!speed.has_value()) {
+            return 0;
         }
-        return 0;
+        // A negative speed means UNKNOWN, not infinite. "-1" is what the kernel writes for an
+        // interface whose speed the driver cannot report (virtual and bridged interfaces,
+        // some bonds). This returned the int directly from a uint64_t function, so -1 became
+        // 18446744073709551615 -- the LARGEST possible bandwidth. Measured on this host:
+        // six br-* interfaces reported that value, and because select_best_nic() takes the
+        // maximum, a Docker bridge outranked the machine's four InfiniBand ports.
+        if (*speed < 0) {
+            return 0;
+        }
+        return static_cast<uint64_t>(*speed);
     }
 
     bool TopologyDetector::is_rdma_capable(const std::string& interface) {
