@@ -24,10 +24,54 @@ namespace cuda::inference {
             }
         }
 
+        /// The top-p sampler's only parameter. It is a cumulative probability, so the
+        /// meaningful range is (0, 1]. Nothing checked it: p = 0 and p = -0.5 fell through
+        /// the cutoff loop without ever accumulating past p and sampled from the whole
+        /// vocabulary, p = 1.5 never reached its cutoff, and p = NaN made every comparison
+        /// false -- all four returned token 0 from peaked logits as if they had sampled.
+        void validate_top_p(float p, const char* fn) {
+            if (!(p > 0.0f && p <= 1.0f)) {
+                throw std::invalid_argument(std::string(fn) + ": top_p must be in (0, 1], got " + std::to_string(p));
+            }
+        }
+
+        /// Everything the sampling maths divides by or indexes with. The values were
+        /// previously unvalidated until the first decode step: max_beams = -4 surfaced as
+        /// "vector::reserve" from initialize_beams, max_beams = 0 returned an empty result
+        /// as if search had run, and a bad temperature or top_p only threw once a forward
+        /// pass had already produced logits.
+        void validate_beam_config(const BeamSearchConfig& config, const char* fn) {
+            if (config.max_beams < 1) {
+                throw std::invalid_argument(std::string(fn) + ": max_beams must be at least 1, got " + std::to_string(config.max_beams));
+            }
+            if (config.top_k < 1) {
+                throw std::invalid_argument(std::string(fn) + ": top_k must be at least 1, got " + std::to_string(config.top_k));
+            }
+            validate_top_p(config.top_p, fn);
+            if (!(config.temperature > 0.0f)) {
+                throw std::invalid_argument(std::string(fn) + ": temperature must be positive, got " + std::to_string(config.temperature));
+            }
+            // length_penalty is the exponent in length^penalty. A negative exponent turns
+            // the normaliser into a multiplier of the length, which rewards long sequences
+            // instead of penalising them; a NaN one makes every score NaN and every
+            // comparison in the sorts false.
+            if (!std::isfinite(config.length_penalty) || config.length_penalty < 0.0f) {
+                throw std::invalid_argument(std::string(fn) + ": length_penalty must be finite and non-negative, got " + std::to_string(config.length_penalty));
+            }
+        }
+
     }  // namespace
 
     TopKSampler::TopKSampler(int k)
-        : k_(k) {}
+        : k_(k) {
+        // `k` is how many tokens survive, so it cannot be zero or negative. Nothing checked
+        // it: k = 0 returned an empty list from a successful call, and k = -1 surfaced as
+        // "cannot create std::vector larger than max_size()", an error about a container
+        // rather than about the argument.
+        if (k < 1) {
+            throw std::invalid_argument("TopKSampler: k must be at least 1, got " + std::to_string(k));
+        }
+    }
 
     std::vector<std::pair<int, float>> TopKSampler::sample(const float* logits, int vocab_size, float temperature, uint64_t seed) {
         validate_sampling_inputs(vocab_size, temperature, "TopKSampler::sample");
@@ -70,7 +114,9 @@ namespace cuda::inference {
     }
 
     TopPSampler::TopPSampler(float p)
-        : p_(p) {}
+        : p_(p) {
+        validate_top_p(p_, "TopPSampler");
+    }
 
     int TopPSampler::sample(const float* logits, int vocab_size, float temperature, uint64_t seed) {
         validate_sampling_inputs(vocab_size, temperature, "TopPSampler::sample");
@@ -124,9 +170,15 @@ namespace cuda::inference {
     BeamSearchManager::BeamSearchManager(BlockManager* block_manager, const BeamSearchConfig& config)
         : block_manager_(block_manager),
           config_(config),
-          rng_(42) {}
+          rng_(42) {
+        validate_beam_config(config_, "BeamSearchManager");
+    }
 
     void BeamSearchManager::configure(const BeamSearchConfig& config) {
+        // Validated here as well as in the constructor: configure() is the documented way to
+        // change the bounds after construction, and a bad config used to survive until the
+        // first decode step, after the forward pass had already produced logits.
+        validate_beam_config(config, "BeamSearchManager::configure");
         config_ = config;
     }
 
@@ -149,7 +201,16 @@ namespace cuda::inference {
     }
 
     void BeamSearchManager::compute_length_normalized_scores() {
+        // score is what prune_beams() and the final sort rank on, so it must be written on
+        // both paths. Leaving it alone when length normalisation is disabled left every
+        // hypothesis at its initial 0.0f, and the ranking then sorted on a constant:
+        // measured with four beams whose true log_probs were -14.62, -13.62, -14.42 and
+        // -15.22, the returned order was 14.62, 13.62, 14.42, 15.22 -- not monotone, i.e.
+        // an arbitrary order presented as a shortest-first beam list.
         if (!config_.enable_length_norm) {
+            for (auto& hyp : hypotheses_) {
+                hyp.score = hyp.log_prob;
+            }
             return;
         }
 
@@ -196,26 +257,81 @@ namespace cuda::inference {
     }
 
     int BeamSearchManager::sample_token(const float* logits, int vocab_size, uint64_t seed) {
-        if (config_.top_p < 1.0f) {
-            TopPSampler sampler(config_.top_p);
-            return sampler.sample(logits, vocab_size, config_.temperature, seed);
-        } else if (config_.top_k > 1) {
-            TopKSampler sampler(config_.top_k);
-            auto top_k = sampler.sample(logits, vocab_size, config_.temperature, seed);
+        // The branch table used to read:
+        //
+        //   top_p < 1.0            -> TopPSampler(top_p)
+        //   else if top_k > 1      -> top-k, then draw with r = (seed % 1000) / 1000
+        //   else                   -> TopPSampler(0.9f)      <- hardcoded 0.9
+        //
+        // Three defects came out of that. The final branch ignored the configuration
+        // entirely: the default config is top_k = 1, top_p = 1.0, which every caller reads as
+        // greedy, and it sampled with top_p = 0.9 instead -- measured on 100 emitted tokens
+        // with a clear argmax, 56 of them were not the argmax. The top-k branch drew
+        // r = (seed % 1000) / 1000, and search() builds the seed as step * 1000 + beam, so r
+        // was beam / 1000: every beam in a step drew essentially the same number, below the
+        // first atom's probability whenever that atom exceeded beam/1000. With four equally
+        // likely tokens and four beams, 100 of 100 draws landed on token 1 and all four beams
+        // emitted an identical sequence. The branch also never consulted top_p once top_k > 1,
+        // so a (top_k, top_p) pair behaved as top_k alone.
+        //
+        // The contract now: top_k = 1 is greedy (the argmax, no sampling); otherwise top-k
+        // narrows the candidates and top-p narrows them further, and the draw comes from the
+        // sampler's own mt19937 rather than from the raw seed.
+        const int effective_k = std::min(config_.top_k, vocab_size);
 
-            float r = static_cast<float>(seed % 1000) / 1000.0f;
-            float cumsum = 0.0f;
-            for (const auto& [token, prob] : top_k) {
-                cumsum += prob;
-                if (r <= cumsum) {
-                    return token;
+        if (effective_k <= 1) {
+            int best = 0;
+            for (int i = 1; i < vocab_size; ++i) {
+                if (logits[i] > logits[best]) {
+                    best = i;
                 }
             }
-            return top_k[0].first;
-        } else {
-            TopPSampler sampler(0.9f);
-            return sampler.sample(logits, vocab_size, config_.temperature, seed);
+            return best;
         }
+
+        TopKSampler k_sampler(effective_k);
+        const auto candidates = k_sampler.sample(logits, vocab_size, config_.temperature, seed);
+
+        // top_p = 1 keeps every one of the k candidates; a smaller value keeps the shortest
+        // prefix whose cumulative probability reaches p, and always at least one token.
+        size_t keep = candidates.size();
+        if (config_.top_p < 1.0f) {
+            keep = 0;
+            float cumulative = 0.0f;
+            for (const auto& candidate : candidates) {
+                cumulative += candidate.second;
+                ++keep;
+                if (cumulative >= config_.top_p) {
+                    break;
+                }
+            }
+            if (keep == 0) {
+                keep = 1;
+            }
+        }
+
+        float total = 0.0f;
+        for (size_t i = 0; i < keep; ++i) {
+            total += candidates[i].second;
+        }
+        if (!(total > 0.0f)) {
+            return candidates[0].first;
+        }
+
+        // Independent of the seed's low-order structure: the seed selects the stream, this
+        // draw selects within it.
+        std::mt19937 rng(static_cast<uint32_t>(seed));
+        std::uniform_real_distribution<float> dist(0.0f, total);
+        const float target = dist(rng);
+
+        float cumulative = 0.0f;
+        for (size_t i = 0; i < keep; ++i) {
+            cumulative += candidates[i].second;
+            if (target <= cumulative) {
+                return candidates[i].first;
+            }
+        }
+        return candidates[keep - 1].first;
     }
 
     void BeamSearchManager::clear_trace() {
@@ -227,6 +343,19 @@ namespace cuda::inference {
                                                           int vocab_size,
                                                           const stream::Stream& stream,
                                                           std::function<void(memory::Buffer<float>&, const std::vector<int64_t>&, const stream::Stream&)> forward_fn) {
+        // vocab_size is passed straight to the logits Buffer, so a non-positive value
+        // surfaced from cudaMalloc as "invalid argument" or "out of memory" -- an allocator
+        // message for a caller error. prompt_length sizes the generated region: when it is
+        // not smaller than max_length the loop body never runs and search() returns
+        // max_beams empty hypotheses, which reads as a successful search.
+        if (vocab_size <= 0) {
+            throw std::invalid_argument("BeamSearchManager::search: vocab_size must be positive, got " + std::to_string(vocab_size));
+        }
+        if (prompt_length < 0 || prompt_length >= config_.max_length) {
+            throw std::invalid_argument("BeamSearchManager::search: prompt_length must be in [0, max_length), got " + std::to_string(prompt_length) + " with max_length "
+                                        + std::to_string(config_.max_length));
+        }
+
         initialize_beams(prompt_length);
         clear_trace();
 
@@ -291,7 +420,12 @@ namespace cuda::inference {
 
                 new_hyp.finished = (token == config_.eos_token_id);
 
-                if (config_.enable_reuse && hyp.sequence_id >= 0) {
+                // enable_reuse is a request, not a guarantee: it needs a BlockManager to
+                // fork from, and the constructor accepts a null one for callers that only
+                // want beam bookkeeping. Dereferencing it unconditionally crashed the
+                // process under ASan on the DEFAULT config (enable_reuse = true), so the
+                // header's "may be null" was a contract no code honoured.
+                if (config_.enable_reuse && block_manager_ != nullptr && hyp.sequence_id >= 0) {
                     auto* kv_cache = block_manager_->get_kv_cache();
                     if (kv_cache) {
                         int num_blocks = 1;

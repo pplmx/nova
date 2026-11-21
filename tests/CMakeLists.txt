@@ -231,6 +231,7 @@ add_executable(nova-tests
     sparse/activations_edge_test.cpp
     sparse/cross_entropy_validation_test.cpp
     sparse/sampling_validation_test.cpp
+    sparse/beam_sampling_contract_test.cpp
     sparse/pagerank_result_test.cpp
     sparse/graph_container_state_test.cpp
     sparse/sssp_reported_stats_test.cpp
