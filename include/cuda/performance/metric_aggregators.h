@@ -36,12 +36,33 @@ namespace cuda::performance {
     public:
         void add_sample(uint64_t flops, uint64_t elapsed_ns);
 
+        /**
+         * @brief Peak throughput the efficiency is measured against
+         *
+         * This is the FP64 figure passed to set_device_peak_flops(). The other two peaks are
+         * retained but not used by any query here: add_sample() is not told which precision a
+         * sample came from, so there is nothing to select between them. Record all three, size
+         * the samples against the matching peak yourself, or use an aggregator per precision.
+         */
         [[nodiscard]] double get_theoretical_gflops() const;
+
+        /// Mean of the samples added by add_sample(), in GFLOP/s.
         [[nodiscard]] double get_achieved_gflops() const;
+
+        /// get_achieved_gflops() as a percentage of get_theoretical_gflops(); 0 if no peak set.
         [[nodiscard]] double get_efficiency_percent() const;
+
         [[nodiscard]] AggregatedMetric get_summary() const;
 
         void reset();
+
+        /**
+         * @brief Record the device's peak throughput at each precision
+         *
+         * @param fp64_gflops Peak FP64 GFLOP/s; this is what get_efficiency_percent() divides by
+         * @param fp32_gflops Peak FP32 GFLOP/s, retained but unused by this class's queries
+         * @param fp16_gflops Peak FP16 GFLOP/s, retained but unused by this class's queries
+         */
         void set_device_peak_flops(double fp64_gflops, double fp32_gflops, double fp16_gflops);
 
     private:

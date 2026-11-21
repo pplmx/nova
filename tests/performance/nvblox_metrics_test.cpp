@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <algorithm>
+
 #include <cuda/performance/nvblox_metrics.h>
 #include <cuda/performance/kernel_profiler.h>
 #include <cuda/performance/metric_aggregators.h>
@@ -188,6 +190,50 @@ namespace cuda::performance::test {
 
         profiler.enable();
         EXPECT_TRUE(profiler.is_enabled());
+    }
+
+    // Regression: KernelProfiler::estimate_occupancy() computed
+    //
+    //     blocks_needed = ceil(threads_per_block / maxThreadsPerBlock)   // always 1
+    //     active_blocks = min(max_blocks_per_sm, blocks_needed)          // always 1
+    //
+    // so the caller's max_blocks_per_sm argument had no effect at all, and the answer was the
+    // occupancy of exactly one block per SM. Measured on this device (2048 threads per SM):
+    // estimate_occupancy(1024, 1) and estimate_occupancy(1024, 64) both returned 0.5, where
+    // two 1024-thread blocks fit and the answer is 1.0.
+    //
+    // The case is written against the device's own limits so it holds on any GPU, and the
+    // discriminating assertion is that the SAME block size gives DIFFERENT answers for
+    // different max_blocks_per_sm -- which the old implementation could never produce.
+    TEST_F(KernelProfilerTest, OccupancyRespondsToTheBlocksPerSmArgument) {
+        auto& profiler = KernelProfiler::instance();
+
+        cudaDeviceProp prop;
+        if (cudaGetDeviceProperties(&prop, 0) != cudaSuccess) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no device to query";
+        }
+        const int block_size = std::min(prop.maxThreadsPerBlock, 256);
+        const int blocks_that_fit = prop.maxThreadsPerMultiProcessor / block_size;
+        if (blocks_that_fit < 2) {
+            GTEST_SKIP() << "device holds fewer than two blocks of this size; the argument cannot be distinguished";
+        }
+
+        const float one_block = profiler.estimate_occupancy(block_size, 1);
+        const float many_blocks = profiler.estimate_occupancy(block_size, blocks_that_fit);
+
+        EXPECT_GT(one_block, 0.0f);
+        EXPECT_LT(one_block, many_blocks) << "asking for more resident blocks must raise occupancy; it was ignored before";
+        EXPECT_FLOAT_EQ(many_blocks, 1.0f) << "a block size that tiles the SM exactly reaches full occupancy";
+
+        // Occupancy is a ratio and cannot exceed it.
+        EXPECT_LE(profiler.estimate_occupancy(block_size, blocks_that_fit * 8), 1.0f) << "more blocks than fit cannot exceed 100%";
+
+        // A block larger than the device allows cannot be launched; reporting a clamped
+        // occupancy for it would describe a kernel that never runs.
+        EXPECT_FLOAT_EQ(profiler.estimate_occupancy(prop.maxThreadsPerBlock * 2, 1), 0.0f);
+        EXPECT_FLOAT_EQ(profiler.estimate_occupancy(0, 1), 0.0f);
+        EXPECT_FLOAT_EQ(profiler.estimate_occupancy(block_size, 0), 0.0f);
     }
 
     TEST_F(KernelProfilerTest, OccupancyCalculator) {

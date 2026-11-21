@@ -73,12 +73,39 @@ namespace cuda::performance {
             return 0.0f;
         }
 
-        int max_threads_per_sm = prop.maxThreadsPerMultiProcessor;
-        int threads_per_block = std::min(block_size, prop.maxThreadsPerBlock);
-        int blocks_needed = (threads_per_block + prop.maxThreadsPerBlock - 1) / prop.maxThreadsPerBlock;
-        int active_blocks = std::min(max_blocks_per_sm, blocks_needed);
+        // Occupancy is resident threads over the SM's capacity.
+        //
+        // The old body computed `blocks_needed = ceil(threads_per_block / maxThreadsPerBlock)`,
+        // which is 1 for every valid block size because a block can never be larger than
+        // maxThreadsPerBlock -- so `active_blocks = min(max_blocks_per_sm, 1)` was always 1 and
+        // the caller's max_blocks_per_sm argument had no effect whatsoever. Measured:
+        // estimate_occupancy(1024, 1) and estimate_occupancy(1024, 64) both returned 0.5 on a
+        // device with 2048 threads per SM, where 2 blocks of 1024 can be resident and the
+        // answer is 1.0. The function reported the occupancy of exactly one block per SM and
+        // called the result a percentage.
+        //
+        // The number of blocks that can be resident is bounded by both the caller's
+        // max_blocks_per_sm and what the SM can hold, and the result is clamped to 1.0 because
+        // a request for more blocks than fit cannot exceed full occupancy.
+        if (block_size <= 0 || max_blocks_per_sm <= 0) {
+            return 0.0f;
+        }
 
-        return static_cast<float>(active_blocks * threads_per_block) / static_cast<float>(max_threads_per_sm);
+        const int max_threads_per_sm = prop.maxThreadsPerMultiProcessor;
+        if (max_threads_per_sm <= 0) {
+            return 0.0f;
+        }
+
+        // A block larger than the device allows cannot be launched; report nothing rather
+        // than silently shrinking the caller's request and answering about a different block.
+        if (block_size > prop.maxThreadsPerBlock) {
+            return 0.0f;
+        }
+
+        const int blocks_that_fit = max_threads_per_sm / block_size;
+        const int resident_blocks = std::min(max_blocks_per_sm, blocks_that_fit);
+        const float occupancy = static_cast<float>(resident_blocks * block_size) / static_cast<float>(max_threads_per_sm);
+        return std::min(occupancy, 1.0f);
     }
 
     void KernelProfiler::enable() {
