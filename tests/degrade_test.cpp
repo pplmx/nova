@@ -109,26 +109,80 @@ TEST_F(DegradationTest, DoesNotAskToDegradeWhenAlreadyAtTheLowestLevel) {
     EXPECT_FALSE(manager.should_degrade("lowest")) << "precision is already at the lowest level, so there is nothing left to degrade";
 }
 
-TEST_F(DegradationTest, RecordQualityStoresScore) {
+// record_quality() had no observable effect: it discarded a passing score, and for a failing
+// one it only registered the operation at high precision without keeping the score. So
+// should_degrade() -- which the header's own example calls immediately after this -- gave the
+// same answer for a quality of 0.0 and one of 0.99. Measured before the fix: both false.
+//
+// The case used to be `EXPECT_TRUE(should_degrade(x) || !should_degrade(x))`, true either way
+// and therefore asserting nothing.
+TEST_F(DegradationTest, RecordQualityDrivesShouldDegrade) {
     auto& manager = degradation_manager::instance();
+    manager.reset();
+
+    quality_threshold threshold;
+    threshold.min_quality_score = 0.8;
+    threshold.min_acceptable_precision = precision_level::low;  // precision alone never triggers
+    manager.set_threshold(threshold);
 
     manager.record_quality("inference_op", 0.95);
-    manager.record_quality("inference_op", 0.85);
+    EXPECT_FALSE(manager.should_degrade("inference_op")) << "a passing score is not a degradation signal";
 
-    EXPECT_TRUE(manager.should_degrade("inference_op") || !manager.should_degrade("inference_op"));
+    manager.record_quality("inference_op", 0.5);
+    EXPECT_TRUE(manager.should_degrade("inference_op")) << "a failing score must be visible to should_degrade";
+
+    manager.record_quality("inference_op", 0.99);
+    EXPECT_FALSE(manager.should_degrade("inference_op")) << "the latest score supersedes the failing one";
+
+    // A score exactly at the threshold passes: the comparison is "below", not "at or below".
+    manager.record_quality("inference_op", 0.8);
+    EXPECT_FALSE(manager.should_degrade("inference_op")) << "a score equal to the threshold is acceptable";
+
+    manager.reset();
 }
 
+// This case asserted nothing after the second score: it set up exactly the situation where
+// should_degrade() should flip, and then stopped. The missing assertion is what let the
+// record_quality() defect survive.
 TEST_F(DegradationTest, ShouldDegradeConsidersQualityScore) {
     auto& manager = degradation_manager::instance();
+    manager.reset();
 
     quality_threshold threshold;
     threshold.min_quality_score = 0.9;
+    threshold.min_acceptable_precision = precision_level::low;
     manager.set_threshold(threshold);
 
     manager.record_quality("batch_op", 0.95);
     EXPECT_FALSE(manager.should_degrade("batch_op"));
 
     manager.record_quality("batch_op", 0.75);
+    EXPECT_TRUE(manager.should_degrade("batch_op")) << "0.75 is below the 0.9 threshold";
+
+    manager.reset();
+}
+
+// The precision part of the answer must survive the score part being added: an operation that
+// was degraded past the acceptable level reports a degradation even with a passing score.
+TEST_F(DegradationTest, PrecisionBelowMinimumStillOverridesAPassingScore) {
+    auto& manager = degradation_manager::instance();
+    manager.reset();
+
+    quality_threshold threshold;
+    threshold.min_quality_score = 0.5;
+    threshold.min_acceptable_precision = precision_level::high;
+    manager.set_threshold(threshold);
+
+    manager.trigger_degradation("weak_op", precision_level::medium, "test");
+    manager.record_quality("weak_op", 0.99);
+    EXPECT_TRUE(manager.should_degrade("weak_op")) << "medium is weaker than the required high";
+
+    // At the floor there is nothing to give up, even when both signals would fire.
+    manager.trigger_degradation("weak_op", precision_level::low, "floor");
+    manager.record_quality("weak_op", 0.1);
+    EXPECT_FALSE(manager.should_degrade("weak_op")) << "there is no level below low";
+
+    manager.reset();
 }
 
 TEST_F(DegradationTest, DegradationEventContainsAllFields) {

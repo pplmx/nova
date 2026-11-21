@@ -215,6 +215,14 @@ namespace nova::error {
 
         /**
          * @brief Record quality score for an operation
+         *
+         * The score is retained and read by should_degrade(), which reports a degradation when
+         * the most recently recorded score is below get_threshold().min_quality_score. Replace
+         * semantics: each call supersedes the previous score for that operation.
+         *
+         * Scores are per operation and independent of precision level; recording a good score
+         * after a bad one clears the degradation signal without changing the precision.
+         *
          * @param operation Operation name
          * @param quality_score Quality score (0.0-1.0)
          */
@@ -237,15 +245,29 @@ namespace nova::error {
 
         /**
          * @brief Check if operation should be degraded
+         *
+         * True when either condition holds and there is still precision to give up:
+         *
+         * - the most recent score from record_quality() is below
+         *   get_threshold().min_quality_score, or
+         * - the current precision is weaker than get_threshold().min_acceptable_precision,
+         *   which is the case a caller that only calls trigger_degradation() reports.
+         *
+         * False once precision is at precision_level::low, where there is nothing left to
+         * give up regardless of what the scores say.
+         *
+         * Only the LAST recorded score counts: a passing score after a failing one clears the
+         * signal.
+         *
          * @param operation Operation name
-         * @return true if quality scores indicate degradation needed
+         * @return true if quality scores or precision indicate degradation is needed
          */
         [[nodiscard]] bool should_degrade(std::string_view operation) const;
         /**
          * @brief Reset all tracked state back to defaults.
          *
          * Clears the registered callback, restores default quality thresholds,
-         * and forgets every operation's current precision. This lets a
+         * and forgets every operation's current precision and recorded score. This lets a
          * long-running process (or a test runner) isolate one usage of the
          * manager from another, instead of leaking a previously-installed
          * callback (which may capture references to already-destroyed objects)
@@ -259,6 +281,12 @@ namespace nova::error {
         degradation_callback callback_;
         quality_threshold threshold_;
         std::unordered_map<std::string, precision_level> precision_by_op_;
+        /// Most recent quality score per operation, as recorded by record_quality(). This is
+        /// what makes that function observable: it used to register an operation at high
+        /// precision and store nothing, so should_degrade() -- which the header's own example
+        /// calls right after record_quality() -- reported the same answer for a score of 0.0
+        /// and one of 0.99.
+        std::unordered_map<std::string, double> quality_by_op_;
     };
 
 }  // namespace nova::error

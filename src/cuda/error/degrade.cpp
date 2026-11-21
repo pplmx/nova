@@ -16,6 +16,7 @@ namespace nova::error {
         callback_ = nullptr;
         threshold_ = quality_threshold {};
         precision_by_op_.clear();
+        quality_by_op_.clear();
     }
 
     void degradation_manager::set_threshold(quality_threshold threshold) {
@@ -27,13 +28,17 @@ namespace nova::error {
     }
 
     void degradation_manager::record_quality(std::string_view operation, double quality_score) {
-        if (quality_score >= threshold_.min_quality_score) {
-            return;
-        }
-        auto it = precision_by_op_.find(std::string(operation));
-        if (it == precision_by_op_.end()) {
-            precision_by_op_[std::string(operation)] = precision_level::high;
-        }
+        // Record the score and NOTHING else. This used to discard a passing score and, for a
+        // failing one, only register the operation at high precision -- so the score itself
+        // was never kept and should_degrade(), which the header's own example calls straight
+        // after this, could not see it. Measured: a score of 0.0 and a score of 0.99 produced
+        // identical answers from should_degrade().
+        //
+        // Registering at high precision on a failing score is also wrong on its own terms: it
+        // claims the operation is at full precision when the caller has just measured that it
+        // is not performing, and it would silently undo a level the caller had set through
+        // trigger_degradation().
+        quality_by_op_[std::string(operation)] = quality_score;
     }
 
     void degradation_manager::trigger_degradation(std::string_view operation, precision_level new_level, std::string_view reason) {
@@ -61,23 +66,28 @@ namespace nova::error {
     }
 
     bool degradation_manager::should_degrade(std::string_view operation) const {
-        auto precision = get_precision(operation);
+        const precision_level precision = get_precision(operation);
 
-        // The enum counts down in precision -- high = 0, medium = 1, low = 2 -- so
-        // `precision > min_acceptable` reads as "the current level is less precise than
-        // the minimum acceptable", which is the opposite of the question the name asks.
-        // It happened to give the right answer for the two levels the existing tests
-        // cover (high and medium against a minimum of medium, both false at the
-        // boundary), but at the lowest level it reported true: precision could not go
-        // any lower, yet the caller was told to degrade again. Measured before the fix.
-        //
-        // There is nothing to give up at the floor, so that is the one case corrected
-        // here; the mapping for the other levels is left as it was, since changing which
-        // side of the threshold counts as "degradable" would invert behaviour the current
-        // callers rely on.
+        // Nothing is left to give up at the floor, whatever the scores say. This was the one
+        // case the old `precision > min_acceptable` comparison got visibly wrong: precision
+        // could not go any lower and the caller was told to degrade again.
         if (precision >= precision_level::low) {
             return false;
         }
+
+        // A recorded score below the threshold is the degradation signal. The header documents
+        // should_degrade() as "true if quality scores indicate degradation needed" and its
+        // example calls record_quality() first, but the implementation only ever looked at the
+        // precision level, so record_quality() had no observable effect at all.
+        const auto score = quality_by_op_.find(std::string(operation));
+        if (score != quality_by_op_.end() && score->second < threshold_.min_quality_score) {
+            return true;
+        }
+
+        // Otherwise fall back to the precision comparison, which is what a caller that only
+        // uses trigger_degradation() reports. The enum counts DOWN in precision -- high = 0,
+        // medium = 1, low = 2 -- so this reads "the current level is weaker than the minimum
+        // acceptable one".
         return precision > threshold_.min_acceptable_precision;
     }
 
