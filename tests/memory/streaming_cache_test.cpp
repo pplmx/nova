@@ -288,4 +288,133 @@ namespace cuda::memory {
         EXPECT_GE(blocks3.size(), 1);
     }
 
+    // ---------------------------------------------------------------------------
+    // Importance-weighted eviction only ever saw the sequences its caller had scored.
+    //
+    // It ranked a snapshot of importance_weights_ and freed the sequences found there, so a
+    // sequence holding blocks but never passed to update_importance() was invisible. With no
+    // weights recorded at all -- a manager that starts with the default config, or a caller
+    // that scores only some requests -- evict_importance_weighted() freed nothing and returned
+    // as if it had. Measured on a full 32-block pool: it reported success with allocated=32
+    // and free=0, while KVCacheAllocator::evict(8) freed 8 blocks from the same state.
+    //
+    // The allocator now exposes get_sequence_ids() so the manager can rank what actually
+    // holds memory; an unweighted sequence sorts at the documented default importance.
+    // ---------------------------------------------------------------------------
+
+    TEST_F(StreamingCacheTest, EvictImportanceWeightedWithNoWeightsRecordedFreesBlocks) {
+        KVCacheAllocatorConfig config {
+            .num_heads = 4,
+            .head_dim = 64,
+            .block_size_tokens = 16,
+            .num_blocks = 32,
+            .num_layers = 2,
+        };
+        auto local_allocator = std::make_unique<KVCacheAllocator>(config);
+        auto local_manager = std::make_unique<StreamingCacheManager>(local_allocator.get(),
+                                                                     StreamingCacheConfig {
+                                                                         .enable_async_eviction = true,
+                                                                         .eviction_policy = 1,
+                                                                     });
+
+        // Fill the pool, and never call update_importance().
+        local_allocator->allocate(1, 256);
+        local_allocator->allocate(2, 256);
+        ASSERT_EQ(local_allocator->get_num_free_blocks(), 0);
+        ASSERT_GT(local_allocator->get_stats().allocated_blocks, 0);
+
+        local_manager->evict_importance_weighted(8);
+
+        EXPECT_GT(local_allocator->get_num_free_blocks(), 0) << "a weighted eviction that frees nothing is not a successful eviction";
+    }
+
+    // The complement: a sequence that holds blocks but was never scored must not be treated
+    // as unreachable, and one that was scored but holds nothing must not be the only one
+    // considered.
+    TEST_F(StreamingCacheTest, EvictImportanceWeightedSeesUnscoredSequences) {
+        KVCacheAllocatorConfig config {
+            .num_heads = 4,
+            .head_dim = 64,
+            .block_size_tokens = 16,
+            .num_blocks = 32,
+            .num_layers = 2,
+        };
+        auto local_allocator = std::make_unique<KVCacheAllocator>(config);
+        auto local_manager = std::make_unique<StreamingCacheManager>(local_allocator.get(),
+                                                                     StreamingCacheConfig {
+                                                                         .enable_async_eviction = true,
+                                                                         .eviction_policy = 1,
+                                                                     });
+
+        // Fill the pool with a sequence that is never scored, and record a weight only for
+        // a sequence that holds nothing.
+        for (int64_t seq = 7; local_allocator->get_num_free_blocks() > 0; ++seq) {
+            local_allocator->allocate(seq, 256);
+        }
+        local_manager->update_importance(999, 0.1f);
+
+        ASSERT_EQ(local_allocator->get_num_free_blocks(), 0);
+
+        local_manager->evict_importance_weighted(4);
+
+        EXPECT_GT(local_allocator->get_num_free_blocks(), 0) << "the unscored sequence holding the blocks was not considered";
+    }
+
+    // Regression: the loop tested `evicted >= num_blocks` with `evicted` starting at 0, so a
+    // negative count was already satisfied and the call returned having freed nothing -- the
+    // same observable result as a legitimate no-op, from an argument that cannot mean one.
+    TEST_F(StreamingCacheTest, EvictRejectsANegativeBlockCount) {
+        EXPECT_THROW(manager->evict_importance_weighted(-8), std::invalid_argument) << "a negative count is not a smaller request";
+        EXPECT_NO_THROW(manager->evict_importance_weighted(0)) << "zero is a legal no-op";
+    }
+
+    // Regression: eviction_policy selects a strategy by number. Any value other than 1 fell
+    // through to plain LRU, so a caller setting 7 got an eviction it had not asked for while
+    // believing a policy was in effect. prefetch_ahead_blocks = 0 is likewise not a
+    // configuration, it is the absence of one.
+    TEST_F(StreamingCacheTest, ConfigurationIsValidatedAtConstruction) {
+        const auto rejection = [this](StreamingCacheConfig config) {
+            try {
+                StreamingCacheManager manager(allocator.get(), config);
+            } catch (const std::invalid_argument& error) {
+                return std::string(error.what());
+            }
+            return std::string();
+        };
+
+        EXPECT_FALSE(rejection([] {
+                         StreamingCacheConfig c;
+                         c.eviction_policy = 7;
+                         return c;
+                     }())
+                         .empty())
+            << "eviction_policy = 7 silently ran LRU";
+        EXPECT_FALSE(rejection([] {
+                         StreamingCacheConfig c;
+                         c.prefetch_ahead_blocks = 0;
+                         return c;
+                     }())
+                         .empty());
+
+        EXPECT_TRUE(rejection(StreamingCacheConfig {}).empty()) << "the defaults must stay valid";
+        EXPECT_TRUE(rejection([] {
+                        StreamingCacheConfig c;
+                        c.eviction_policy = 0;
+                        return c;
+                    }())
+                        .empty());
+        EXPECT_TRUE(rejection([] {
+                        StreamingCacheConfig c;
+                        c.eviction_policy = 1;
+                        return c;
+                    }())
+                        .empty());
+    }
+
+    // Every method dereferences the allocator, so a null one is a crash on first use rather
+    // than a manager without a cache.
+    TEST_F(StreamingCacheTest, ConstructionRejectsANullAllocator) {
+        EXPECT_THROW(StreamingCacheManager(nullptr, StreamingCacheConfig {}), std::invalid_argument);
+    }
+
 }  // namespace cuda::memory

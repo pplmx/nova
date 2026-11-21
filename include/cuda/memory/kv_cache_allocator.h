@@ -84,6 +84,16 @@ namespace cuda::memory {
 
         void evict(int num_blocks_needed);
         std::vector<const KVCacheBlock*> get_blocks(int64_t sequence_id) const;
+
+        /// Ids of the sequences that currently hold at least one block.
+        ///
+        /// Added for StreamingCacheManager's importance-weighted eviction, which has to rank
+        /// the sequences that actually hold memory. Without an enumeration it could only see
+        /// the ids the caller had already scored, so a sequence holding blocks but never
+        /// scored was invisible to it and the eviction freed nothing. The order is not
+        /// meaningful; the returned vector is a snapshot taken under the lock.
+        std::vector<int64_t> get_sequence_ids() const;
+
         const KVCacheBlock* get_block(int64_t sequence_id, int block_index) const;
 
         struct PrefixMatch {
@@ -386,6 +396,19 @@ namespace cuda::memory {
         }
 
         stats_.used_memory = stats_.allocated_blocks * block_memory_size_;
+    }
+
+    inline std::vector<int64_t> KVCacheAllocator::get_sequence_ids() const {
+        std::unique_lock lock(mutex_);
+
+        std::vector<int64_t> result;
+        result.reserve(sequence_blocks_.size());
+        for (const auto& [seq_id, block_indices] : sequence_blocks_) {
+            if (!block_indices.empty()) {
+                result.push_back(seq_id);
+            }
+        }
+        return result;
     }
 
     inline std::vector<const KVCacheBlock*> KVCacheAllocator::get_blocks(int64_t sequence_id) const {
