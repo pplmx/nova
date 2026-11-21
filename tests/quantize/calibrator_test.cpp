@@ -229,6 +229,77 @@ namespace nova {
                 EXPECT_EQ(results.size(), 4u);
             }
 
+            // Regression: the non-symmetric branch derived zero_point from the RAW scale and
+            // only then clamped the scale, so a degenerate range divided by zero. Measured on
+            // 64 samples:
+            //
+            //     asymmetric, all zeros  -> zero_point = nan
+            //     asymmetric, constant 3 -> zero_point = -inf
+            //
+            // and the scale floor alone did not help: with scale pinned at 1e-6 the ratio
+            // (val - zero_point) / scale saturates at the int8 bound, so a quantize/dequantize
+            // round trip of a constant 3.0f returned 0 (max error 2.99987). The symmetric path
+            // was fine throughout, which is why only one half of the same test data broke.
+            TEST_F(CalibratorTest, DegenerateDataCalibratesToAFiniteUsableRange) {
+                const std::vector<float> zeros(64, 0.0f);
+                const std::vector<float> constant(64, 3.0f);
+                const std::pair<const char*, const std::vector<float>*> cases[] = {{"all zeros", &zeros}, {"constant 3", &constant}};
+
+                for (const auto& [label, data] : cases) {
+                    for (bool symmetric : {true, false}) {
+                        MinMaxCalibrator calibrator(symmetric);
+                        const auto result = calibrator.calibrate(data->data(), data->size(), 0);
+
+                        EXPECT_TRUE(std::isfinite(result.scale)) << label << " symmetric=" << symmetric << ": scale is not finite";
+                        EXPECT_GT(result.scale, 0.0f) << label << " symmetric=" << symmetric << ": scale must be positive";
+                        EXPECT_TRUE(std::isfinite(result.zero_point)) << label << " symmetric=" << symmetric << ": zero_point is " << result.zero_point;
+                        EXPECT_GE(result.zero_point, -127.0f) << label << " symmetric=" << symmetric;
+                        EXPECT_LE(result.zero_point, 127.0f) << label << " symmetric=" << symmetric;
+
+                        // The real requirement: the calibration can represent the data it was
+                        // measured from, so a round trip returns the input.
+                        cuda::QuantizationParams params;
+                        params.scale = result.scale;
+                        params.zero_point = result.zero_point;
+
+                        float* d_src = nullptr;
+                        int8_t* d_quantized = nullptr;
+                        float* d_back = nullptr;
+                        ASSERT_EQ(cudaMalloc(&d_src, data->size() * sizeof(float)), cudaSuccess);
+                        ASSERT_EQ(cudaMalloc(&d_quantized, data->size() * sizeof(int8_t)), cudaSuccess);
+                        ASSERT_EQ(cudaMalloc(&d_back, data->size() * sizeof(float)), cudaSuccess);
+                        ASSERT_EQ(cudaMemcpy(d_src, data->data(), data->size() * sizeof(float), cudaMemcpyHostToDevice), cudaSuccess);
+
+                        cuda::quantize_f32_to_int8_async(d_src, d_quantized, data->size(), params, 0);
+                        cuda::dequantize_int8_to_f32_async(d_quantized, d_back, data->size(), params, 0);
+
+                        std::vector<float> round_trip(data->size());
+                        ASSERT_EQ(cudaMemcpy(round_trip.data(), d_back, data->size() * sizeof(float), cudaMemcpyDeviceToHost), cudaSuccess);
+
+                        for (size_t i = 0; i < round_trip.size(); ++i) {
+                            EXPECT_TRUE(std::isfinite(round_trip[i])) << label << " symmetric=" << symmetric << ": element " << i << " is not finite";
+                            EXPECT_NEAR(round_trip[i], (*data)[i], 1e-3f) << label << " symmetric=" << symmetric << ": element " << i << " did not survive the round trip";
+                        }
+
+                        cudaFree(d_src);
+                        cudaFree(d_quantized);
+                        cudaFree(d_back);
+                        (void)cudaGetLastError();
+                    }
+                }
+            }
+
+            // NaN calibration data must not produce a plausible-looking zero point.
+            TEST_F(CalibratorTest, NonFiniteDataDoesNotProduceANaNZeroPoint) {
+                std::vector<float> nan_data(32, NAN);
+                MinMaxCalibrator calibrator(false);
+                const auto result = calibrator.calibrate(nan_data.data(), nan_data.size(), 0);
+
+                EXPECT_TRUE(std::isfinite(result.zero_point)) << "zero_point is " << result.zero_point;
+                EXPECT_TRUE(std::isfinite(result.scale));
+                EXPECT_GT(result.scale, 0.0f);
+            }
+
         }  // namespace test
     }  // namespace quantize
 }  // namespace nova

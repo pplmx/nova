@@ -12,6 +12,32 @@
 namespace nova {
     namespace quantize {
 
+        namespace {
+
+            /// Pick a scale that can actually represent the calibrated data.
+            ///
+            /// A degenerate range -- every sample equal -- makes (max - min) exactly zero, and
+            /// merely flooring that raw value at 1e-6 does not rescue the result: the ratio
+            /// (val - zero_point) / scale then reaches millions, saturates at the int8 bound,
+            /// and the dequantized value is not the input. Measured, 64 samples of 3.0f,
+            /// asymmetric: scale 1e-6, zero_point -127, round-trip max error 2.99987 -- the
+            /// value came back as 0. Sizing the step from the magnitude instead keeps the
+            /// round-trip exact, and the 1e-6 floor still applies to ordinary scales.
+            float stabilized_scale(float scale, float min_val, float max_val) {
+                if (max_val - min_val <= 0.0f) {
+                    const float magnitude = std::max(std::abs(min_val), std::abs(max_val));
+                    if (!std::isfinite(magnitude)) {
+                        // NaN or infinite data cannot be represented; a unit scale keeps the
+                        // output finite and the caller can see the bad input in min/max.
+                        return 1.0f;
+                    }
+                    return std::max(magnitude, 1.0f) / 127.0f;
+                }
+                return scale < 1e-6f ? 1e-6f : scale;
+            }
+
+        }  // namespace
+
         MinMaxCalibrator::MinMaxCalibrator(bool symmetric)
             : symmetric_(symmetric),
               min_val_(0.0f),
@@ -32,11 +58,30 @@ namespace nova {
                 zero_point = 0.0f;
             } else {
                 scale = (max_val_ - min_val_) / 254.0f;
-                zero_point = -min_val_ / scale - 127.0f;
+                zero_point = 0.0f;
             }
 
-            if (scale < 1e-6f) {
-                scale = 1e-6f;
+            // Clamp the scale BEFORE deriving the zero point. The non-symmetric branch used to
+            // compute `zero_point = -min_val / scale - 127` with the raw scale and only then
+            // clamp, so a degenerate range divided by zero. Measured, 64 samples:
+            //
+            //     symmetric=false, all zeros   -> zero_point = nan
+            //     symmetric=false, constant 3  -> zero_point = -inf
+            //
+            // Both are exactly the cases the clamp exists for. A NaN or infinite zero point is
+            // carried into every quantized value, so the calibration produced garbage instead
+            // of the safe identity the symmetric path produced for the same input.
+            scale = stabilized_scale(scale, min_val_, max_val_);
+            if (!symmetric_) {
+                zero_point = -min_val_ / scale - 127.0f;
+                // Keep the result inside the representable int8 span so a caller can use it
+                // without a second clamp, and never hand back a non-finite zero point: a NaN
+                // min/max must not silently become a plausible-looking offset.
+                if (!std::isfinite(zero_point)) {
+                    zero_point = 0.0f;
+                } else {
+                    zero_point = std::clamp(zero_point, -127.0f, 127.0f);
+                }
             }
 
             return CalibrationResult(scale, zero_point, symmetric_, min_val_, max_val_);
@@ -93,6 +138,28 @@ namespace nova {
             float abs_max = std::max(std::abs(threshold), std::abs(-threshold));
             float scale = abs_max / 127.0f;
             float zero_point = 0.0f;
+
+            // A degenerate calibration range -- every sample equal -- makes (max - min) exactly
+            // zero, and clamping THAT to 1e-6 does not rescue the result: the ratio
+            // (val - zero_point) / scale then reaches 3e6, saturates at the int8 bound, and the
+            // dequantized value is not the input. Measured, 64 samples of 3.0f, asymmetric:
+            // scale 1e-6, zero_point -127, round-trip max error 2.99987 (the value came back
+            // as 0). Falling back to a range that actually represents the data keeps the
+            // round-trip exact; the 1e-6 floor still applies to the scale itself.
+            if (max_val_ - min_val_ <= 0.0f) {
+                // All samples identical (or a degenerate/invalid range). Size the step from the
+                // magnitude, covering the full int8 span so zero_point can centre the value.
+                const float magnitude = std::max(std::abs(min_val_), std::abs(max_val_));
+                if (!std::isfinite(magnitude)) {
+                    // NaN or infinite data cannot be represented at all; a unit scale keeps the
+                    // output finite and lets the caller see the bad input in min_val/max_val.
+                    scale = 1.0f;
+                    min_val_ = std::isnan(min_val_) ? 0.0f : min_val_;
+                    max_val_ = std::isnan(max_val_) ? 0.0f : max_val_;
+                } else {
+                    scale = std::max(magnitude, 1.0f) / 127.0f;
+                }
+            }
 
             if (scale < 1e-6f) {
                 scale = 1e-6f;
@@ -218,8 +285,14 @@ namespace nova {
                 zero_point = -d_min / scale - 127.0f;
             }
 
-            if (scale < 1e-6f) {
-                scale = 1e-6f;
+            scale = stabilized_scale(scale, d_min, d_max);
+            if (!symmetric_) {
+                zero_point = -d_min / scale - 127.0f;
+                if (!std::isfinite(zero_point)) {
+                    zero_point = 0.0f;
+                } else {
+                    zero_point = std::clamp(zero_point, -127.0f, 127.0f);
+                }
             }
 
             return CalibrationResult(scale, zero_point, symmetric_, d_min, d_max);
