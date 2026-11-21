@@ -277,9 +277,34 @@ namespace nova::memory::test {
         EXPECT_EQ(health.device_id, 0);
         EXPECT_FALSE(health.status_message.empty());
 
-        // is_device_healthy on an unpopulated cache reports the conservative state
-        // rather than throwing.
+        // is_device_healthy on an unpopulated cache must not throw. What it REPORTS is the
+        // subject of the case below; this one is only about not dereferencing a null impl_.
         (void)monitor.is_device_healthy(0);
+    }
+
+    // is_device_healthy() answered `true` for every device id that had never been measured,
+    // including ones that do not exist. That contradicts its sibling query on the same id:
+    // get_health() reports such a device as "Unknown". Measured with monitoring running:
+    //
+    //     get_health(-1)         -> status_message "Unknown"
+    //     is_device_healthy(-1)  -> true
+    //     (likewise for 8 and 99 on an 8-device host)
+    //
+    // A caller gating work on device health was told to proceed on a device the monitor had
+    // never seen. The previous version of the case above described this as "the conservative
+    // state", which it was not: `true` is the optimistic answer.
+    TEST(DeviceHealthMonitorTest, UnknownDeviceIsNotReportedHealthy) {
+        auto& monitor = DeviceHealthMonitor::instance();
+
+        // Ids that cannot be devices on any host.
+        for (int id : {-1, -1000, 1'000'000}) {
+            EXPECT_FALSE(monitor.is_device_healthy(id)) << "device " << id << " was reported healthy without ever being measured";
+        }
+
+        // The two queries must agree about the same id.
+        const auto health = monitor.get_health(1'000'000);
+        EXPECT_EQ(health.status_message, "Unknown") << "the sibling query says it knows nothing";
+        EXPECT_EQ(monitor.is_device_healthy(1'000'000), health.is_healthy) << "is_device_healthy and get_health must not disagree about an unmeasured device";
     }
 
     TEST(DeviceHealthMonitorTest, HealthCallbacksCanBeReplacedAndCleared) {

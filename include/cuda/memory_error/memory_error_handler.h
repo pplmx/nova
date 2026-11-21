@@ -47,7 +47,22 @@ namespace nova::memory {
         void start_monitoring();
         void stop_monitoring();
 
+        /**
+         * @brief Last measured health for a device
+         *
+         * Returns a default-constructed record with status_message "Unknown" when the monitor
+         * has not measured that device -- including any id outside the device count.
+         */
         DeviceHealth get_health(int device_id);
+
+        /**
+         * @brief Whether the monitor has measured this device as healthy
+         *
+         * False when nothing is known about the id, because "not measured" is not "healthy":
+         * a caller gating work on this must not proceed on a device the monitor has never
+         * seen. This used to return true for every unknown id, contradicting get_health(),
+         * which reports the same id as "Unknown".
+         */
         bool is_device_healthy(int device_id) const;
 
         void set_check_interval(std::chrono::milliseconds interval);

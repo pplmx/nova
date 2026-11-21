@@ -120,9 +120,14 @@ namespace nova::memory {
             return impl_->health_cache.at(device_id);
         }
 
+        // Note is_healthy = false: this record describes a device that was never measured.
+        // The field used to be `true` while status_message said "Unknown", so the two halves
+        // of one record disagreed, and is_device_healthy() -- which returns this same flag for
+        // known devices -- had to special-case the unknown path to answer `false`. A caller
+        // reading the struct directly saw "healthy" for a device the monitor had never seen.
         DeviceHealth health;
         health.device_id = device_id;
-        health.is_healthy = true;
+        health.is_healthy = false;
         health.memory_used = 0;
         health.memory_total = 0;
         health.utilization = 0.0f;
@@ -136,7 +141,17 @@ namespace nova::memory {
         if (impl_->health_cache.count(device_id)) {
             return impl_->health_cache.at(device_id).is_healthy;
         }
-        return true;
+        // Nothing has been measured for this device, so there is no evidence that it is
+        // healthy; reporting `true` here was an unmeasured claim, and it contradicted the
+        // sibling query: get_health() answers "Unknown" for the same id. Measured before this
+        // change, with monitoring running, ids -1, 8 and 99 all reported healthy:
+        //
+        //     get_health(-1)          -> msg "Unknown"
+        //     is_device_healthy(-1)   -> true
+        //
+        // `false` is the conservative answer for "not measured" -- a caller that gates work on
+        // device health must not proceed on an id the monitor has never seen.
+        return false;
     }
 
     void DeviceHealthMonitor::set_check_interval(std::chrono::milliseconds interval) {
