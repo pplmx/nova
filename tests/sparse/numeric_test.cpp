@@ -288,4 +288,194 @@ namespace cuda::numeric::test {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // cubic_spline_interpolation was not a spline: it wrote the linear form and left
+    // the cubic and quadratic slots at zero, so every segment was a straight line.
+    // Measured on sin over [0, pi] with five knots, midpoint error 7.033e-02, against
+    // 1.064e-03 for the natural cubic spline it now computes.
+    // ---------------------------------------------------------------------------
+
+    namespace {
+
+        /// Evaluate segment i of a coefficient buffer at local t.
+        float eval_segment(const std::vector<float>& coeffs, size_t i, float t) {
+            return coeffs[i * 4 + 0] * t * t * t + coeffs[i * 4 + 1] * t * t + coeffs[i * 4 + 2] * t + coeffs[i * 4 + 3];
+        }
+
+    }  // namespace
+
+    // The defining property: the quadratic and cubic coefficients are not all zero, and the
+    // result is substantially more accurate than piecewise linear on the same knots.
+    TEST(CubicSplineTest, IsActuallyCubicAndBeatsPiecewiseLinear) {
+        std::vector<float> x = {0.0f, static_cast<float>(M_PI) / 4.0f, static_cast<float>(M_PI) / 2.0f, static_cast<float>(3.0 * M_PI) / 4.0f, static_cast<float>(M_PI)};
+        std::vector<float> y;
+        for (float v : x) {
+            y.push_back(std::sin(v));
+        }
+
+        auto result = cuda::numeric::cubic_spline_interpolation(x.data(), y.data(), x.size());
+        std::vector<float> coeffs(result.coeffs.size());
+        result.coeffs.copy_to(coeffs.data(), coeffs.size());
+
+        // Before the fix every one of these was exactly 0.
+        int nonzero = 0;
+        for (size_t i = 0; i + 1 < x.size(); ++i) {
+            if (coeffs[i * 4 + 0] != 0.0f || coeffs[i * 4 + 1] != 0.0f) {
+                ++nonzero;
+            }
+        }
+        EXPECT_EQ(nonzero, static_cast<int>(x.size() - 1)) << "every segment must carry a non-zero curvature term";
+
+        double max_midpoint_error = 0.0;
+        for (size_t i = 0; i + 1 < x.size(); ++i) {
+            const float xm = 0.5f * (x[i] + x[i + 1]);
+            const float t = xm - x[i];
+            max_midpoint_error = std::max(max_midpoint_error, std::fabs(static_cast<double>(eval_segment(coeffs, i, t)) - std::sin(xm)));
+        }
+        EXPECT_LT(max_midpoint_error, 2e-3) << "a natural spline on these knots is ~1.1e-3; the linear version was 7.0e-2";
+    }
+
+    // A spline must pass through every knot it was given, at both ends of each segment.
+    TEST(CubicSplineTest, PassesThroughEveryKnot) {
+        std::vector<float> x = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+        std::vector<float> y = {0.0f, 0.25f, 1.0f, 2.25f, 4.0f};  // y = x^2
+
+        auto result = cuda::numeric::cubic_spline_interpolation(x.data(), y.data(), x.size());
+        std::vector<float> coeffs(result.coeffs.size());
+        result.coeffs.copy_to(coeffs.data(), coeffs.size());
+
+        for (size_t i = 0; i + 1 < x.size(); ++i) {
+            const float h = x[i + 1] - x[i];
+            EXPECT_NEAR(eval_segment(coeffs, i, 0.0f), y[i], 1e-4f) << "start of segment " << i;
+            EXPECT_NEAR(eval_segment(coeffs, i, h), y[i + 1], 1e-4f) << "end of segment " << i;
+        }
+    }
+
+    // The natural end condition: second derivative zero at the first and last knot.
+    // S''(t) = 6*a*t + 2*b, so at t = 0 it is 2*b.
+    TEST(CubicSplineTest, HasZeroSecondDerivativeAtBothEnds) {
+        std::vector<float> x = {0.0f, 1.0f, 2.0f, 3.0f};
+        std::vector<float> y = {0.0f, 1.0f, 8.0f, 27.0f};
+
+        auto result = cuda::numeric::cubic_spline_interpolation(x.data(), y.data(), x.size());
+        std::vector<float> coeffs(result.coeffs.size());
+        result.coeffs.copy_to(coeffs.data(), coeffs.size());
+
+        EXPECT_NEAR(coeffs[1], 0.0f, 1e-5f) << "S'' at the first knot must be 0 for a natural spline";
+
+        const size_t last = x.size() - 2;
+        const float h_last = x[last + 1] - x[last];
+        const float second_deriv_end = 6.0f * coeffs[last * 4 + 0] * h_last + 2.0f * coeffs[last * 4 + 1];
+        EXPECT_NEAR(second_deriv_end, 0.0f, 1e-4f) << "S'' at the last knot must be 0 for a natural spline";
+    }
+
+    // A natural cubic spline does NOT reproduce an arbitrary cubic exactly, because it forces
+    // the second derivative to zero at the ends and x^3 has curvature 6x there. The error is
+    // therefore a property of the end condition, not of this implementation: measured against
+    // an independent reference solve, a natural spline on x^3 over [0, 2] with these knots
+    // reaches 1.37e-01 at the far segment. This case pins that the implementation agrees with
+    // that reference -- a much larger disagreement would mean the system is being solved wrong.
+    TEST(CubicSplineTest, MatchesTheNaturalSplineReferenceOnACubic) {
+        std::vector<float> x = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+        std::vector<float> y;
+        for (float v : x) {
+            y.push_back(v * v * v);
+        }
+
+        auto result = cuda::numeric::cubic_spline_interpolation(x.data(), y.data(), x.size());
+        std::vector<float> coeffs(result.coeffs.size());
+        result.coeffs.copy_to(coeffs.data(), coeffs.size());
+
+        // The reference values below come from an independent Thomas-algorithm solve of the
+        // same natural-spline system, not from this implementation.
+        const float expected[4][3] = {
+            {-0.000140f, 0.012277f, 0.049805f},
+            {0.249581f, 0.431920f, 0.679548f},
+            {1.404157f, 1.916295f, 2.564035f},
+            {4.364258f, 5.496652f, 6.724470f},
+        };
+        for (size_t i = 0; i + 1 < x.size(); ++i) {
+            const float h = x[i + 1] - x[i];
+            for (int k = 1; k < 4; ++k) {
+                const float t = h * static_cast<float>(k) / 4.0f;
+                EXPECT_NEAR(eval_segment(coeffs, i, t), expected[i][k - 1], 1e-4f) << "segment " << i << " at t=" << t;
+            }
+        }
+    }
+
+    // A repeated knot makes a segment of zero width, so the system has no solution. It must be
+    // reported rather than divided by zero.
+    TEST(CubicSplineTest, RejectsNonIncreasingKnots) {
+        std::vector<float> x_same = {0.0f, 1.0f, 1.0f, 2.0f};
+        std::vector<float> y = {0.0f, 1.0f, 2.0f, 3.0f};
+        EXPECT_THROW(cuda::numeric::cubic_spline_interpolation(x_same.data(), y.data(), 4), std::invalid_argument);
+
+        std::vector<float> x_down = {0.0f, 1.0f, 0.5f};
+        std::vector<float> y_down = {0.0f, 1.0f, 2.0f};
+        EXPECT_THROW(cuda::numeric::cubic_spline_interpolation(x_down.data(), y_down.data(), 3), std::invalid_argument);
+    }
+
+    // ---------------------------------------------------------------------------
+    // bisection could not find a root that sits on an endpoint of the bracket.
+    // ---------------------------------------------------------------------------
+
+    // Regression: f(x) = x over [0, 1] has its root at a = 0. The midpoint loop only tests
+    // interior points, so the interval narrowed towards 0 from above and the routine returned
+    // 1.0 -- the wrong end of the bracket -- while reporting converged = true.
+    TEST(BisectionTest, FindsARootThatSitsOnTheLowerEndpoint) {
+        auto result = cuda::numeric::bisection([](float x) { return x; }, 0.0f, 1.0f);
+
+        EXPECT_TRUE(result.converged);
+        EXPECT_NEAR(result.root, 0.0f, 1e-6f) << "the root is at the lower endpoint, not the upper one";
+        EXPECT_NEAR(result.residual, 0.0f, 1e-6f);
+    }
+
+    TEST(BisectionTest, FindsARootThatSitsOnTheUpperEndpoint) {
+        auto result = cuda::numeric::bisection([](float x) { return x - 1.0f; }, 0.0f, 1.0f);
+
+        EXPECT_TRUE(result.converged);
+        EXPECT_NEAR(result.root, 1.0f, 1e-6f);
+        EXPECT_NEAR(result.residual, 0.0f, 1e-6f);
+    }
+
+    // An interval with no sign change must be reported, and the residual must not carry a
+    // stale value from a previous evaluation.
+    TEST(BisectionTest, ReportsAnIntervalThatDoesNotBracketARoot) {
+        auto result = cuda::numeric::bisection([](float x) { return x * x + 1.0f; }, -1.0f, 1.0f);
+
+        EXPECT_FALSE(result.converged);
+        EXPECT_EQ(result.iterations, 0u);
+        EXPECT_TRUE(std::isinf(result.residual)) << "no evaluation was performed, so the residual is not a number";
+    }
+
+    // newton_raphson used to report |dx| (the last Newton step) in `residual`, while bisection
+    // reported |f(root)|. The two agree to first order near a simple root, so a value like
+    // 4.2e-08 looked reasonable either way; this case requires the documented meaning by
+    // comparing the field against an independent evaluation of the function at the answer.
+    TEST(NewtonRaphsonTest, ResidualIsTheFunctionValueAtTheRoot) {
+        auto result = cuda::numeric::newton_raphson(square_minus_two, square_minus_two_deriv, 1.0f);
+
+        ASSERT_TRUE(result.converged);
+        EXPECT_NEAR(result.root, std::sqrt(2.0f), 1e-5f);
+
+        const float evaluated = square_minus_two(result.root);
+        EXPECT_NEAR(result.residual, std::abs(evaluated), 1e-6f) << "residual must be |f(root)|, not the step size that produced it";
+    }
+
+    // A vanishing derivative stops the iteration; the reported residual is still the truth about
+    // the point it stopped at, not a stale or invented number.
+    TEST(NewtonRaphsonTest, ReportsTheResidualWhenTheDerivativeVanishes) {
+        auto result = cuda::numeric::newton_raphson([](float) { return 1.0f; }, [](float) { return 0.0f; }, 0.5f);
+
+        EXPECT_FALSE(result.converged);
+        EXPECT_NEAR(result.residual, 1.0f, 1e-6f) << "f is 1 everywhere, so that is the residual wherever it stopped";
+    }
+
+    // The ordinary interior case must still work.
+    TEST(BisectionTest, FindsAnInteriorRoot) {
+        auto result = cuda::numeric::bisection(square_minus_two, 0.0f, 2.0f);
+        EXPECT_TRUE(result.converged);
+        EXPECT_NEAR(result.root, std::sqrt(2.0f), 1e-5f);
+    }
+
 }  // namespace cuda::numeric::test
