@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include <random>
 #include <vector>
 
@@ -17,6 +18,71 @@ namespace cuda::neural::optimizers::test {
 
         int device_ = 0;
     };
+
+    // Regression: step() is the bias-correction exponent, so its value 0 makes
+    // 1 - beta1^step exactly zero. The learning-rate scale became NaN and the device kernel
+    // wrote it through every parameter -- measured, a 4-element buffer came back
+    // {nan, nan, nan, nan} and cudaDeviceSynchronize returned cudaSuccess, so nothing in the
+    // call reported a problem. A negative step feeds std::pow a value the correction cannot
+    // use and produced the same NaN.
+    //
+    // The existing device/host comparison sweeps `for (int s = 1; s <= K; ++s)`, which steps
+    // around the one value that breaks.
+    TEST_F(OptimizersTest, AdamWRejectsADegenerateStepInsteadOfWritingNan) {
+        const size_t n = 16;
+        std::vector<float> w(n, 1.0f), g(n, 0.1f);
+        OptimizerConfig config;
+        AdamWOptimizer optimizer(config);
+        cuda::memory::Buffer<float> d_w(n), d_g(n);
+        d_w.copy_from(w.data(), n);
+        d_g.copy_from(g.data(), n);
+
+        for (int bad_step : {0, -1, -1000}) {
+            EXPECT_THROW(optimizer.step(d_w.data(), d_g.data(), n, bad_step), std::invalid_argument) << "step " << bad_step << " would divide by zero in the bias correction";
+        }
+
+        // The rejection must not have touched the parameters: the call threw before dispatch.
+        std::vector<float> after(n);
+        d_w.copy_to(after.data(), n);
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_EQ(after[i], 1.0f) << "parameter " << i << " was modified by a rejected step";
+            EXPECT_TRUE(std::isfinite(after[i]));
+        }
+
+        // And the first valid step still works and stays finite.
+        EXPECT_NO_THROW(optimizer.step(d_w.data(), d_g.data(), n, 1));
+        d_w.copy_to(after.data(), n);
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_TRUE(std::isfinite(after[i])) << "parameter " << i << " is not finite after a valid step";
+        }
+    }
+
+    // LAMB has the same bias-correction denominator and the same device-kernel path.
+    TEST_F(OptimizersTest, LAMBRejectsADegenerateStepInsteadOfWritingNan) {
+        const size_t n = 16;
+        std::vector<float> w(n, 1.0f), g(n, 0.1f);
+        LAMBConfig config;
+        LAMBOptimizer optimizer(config);
+        cuda::memory::Buffer<float> d_w(n), d_g(n);
+        d_w.copy_from(w.data(), n);
+        d_g.copy_from(g.data(), n);
+
+        for (int bad_step : {0, -1, -1000}) {
+            EXPECT_THROW(optimizer.step(d_w.data(), d_g.data(), n, bad_step), std::invalid_argument) << "step " << bad_step << " would divide by zero in the bias correction";
+        }
+
+        std::vector<float> after(n);
+        d_w.copy_to(after.data(), n);
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_EQ(after[i], 1.0f) << "parameter " << i << " was modified by a rejected step";
+        }
+
+        EXPECT_NO_THROW(optimizer.step(d_w.data(), d_g.data(), n, 1));
+        d_w.copy_to(after.data(), n);
+        for (size_t i = 0; i < n; ++i) {
+            EXPECT_TRUE(std::isfinite(after[i])) << "parameter " << i << " is not finite after a valid step";
+        }
+    }
 
     TEST_F(OptimizersTest, AdamWOptimizerConstruction) {
         OptimizerConfig config;

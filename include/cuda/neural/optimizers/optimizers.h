@@ -24,6 +24,17 @@ namespace cuda::neural::optimizers {
         explicit AdamWOptimizer(const OptimizerConfig& config);
         ~AdamWOptimizer();
 
+        /**
+         * @brief Apply one AdamW update
+         *
+         * @param params Parameter buffer, updated in place
+         * @param grads Gradient buffer
+         * @param num_elements Number of elements in both buffers
+         * @param step 1-based step counter. The bias correction divides by (1 - beta1^step),
+         *             which is zero at step 0, so 0 and negative values are rejected with
+         *             std::invalid_argument instead of writing NaN through the parameters.
+         * @param stream Stream to run on
+         */
         void step(float* params, const float* grads, size_t num_elements, int step, cudaStream_t stream = nullptr);
 
         void set_learning_rate(float lr);
@@ -74,6 +85,19 @@ namespace cuda::neural::optimizers {
         explicit LAMBOptimizer(const LAMBConfig& config);
         ~LAMBOptimizer();
 
+        /**
+         * @brief Apply one LAMB update
+         *
+         * @param params Parameter buffer, updated in place
+         * @param grads Gradient buffer
+         * @param num_elements Number of elements in both buffers
+         * @param step 1-based step counter. The bias correction divides by (1 - beta1^step),
+         *             which is zero at step 0, so 0 and negative values are rejected with
+         *             std::invalid_argument instead of writing NaN through the parameters.
+         * @param layer_norm_1 First layer-norm accumulator, or nullptr
+         * @param layer_norm_2 Second layer-norm accumulator, or nullptr
+         * @param stream Stream to run on
+         */
         void step(float* params, const float* grads, size_t num_elements, int step, float* layer_norm_1 = nullptr, float* layer_norm_2 = nullptr, cudaStream_t stream = nullptr);
 
         void set_learning_rate(float lr);

@@ -30,6 +30,15 @@ namespace cuda::neural::optimizers {
     AdamWOptimizer::~AdamWOptimizer() = default;
 
     void AdamWOptimizer::step(float* params, const float* grads, size_t num_elements, int step, cudaStream_t stream) {
+        // The bias correction is lr * sqrt(1 - beta2^step) / (1 - beta1^step), so step 0 makes
+        // the denominator exactly 0 and step < 0 makes std::pow return a value the correction
+        // cannot use. Both produced a NaN scale that the device kernel applied to every
+        // parameter: measured, all four elements of a buffer became NaN and
+        // cudaDeviceSynchronize still returned cudaSuccess, so the caller's only signal was a
+        // training run that silently diverged. Reject the argument where it is still visible.
+        if (step < 1) {
+            throw std::invalid_argument("AdamWOptimizer::step: step must be >= 1 (it is the bias-correction exponent)");
+        }
         if (!initialized_) {
             m_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
             v_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
@@ -129,6 +138,11 @@ namespace cuda::neural::optimizers {
     LAMBOptimizer::~LAMBOptimizer() {}
 
     void LAMBOptimizer::step(float* params, const float* grads, size_t num_elements, int step, float* layer_norm_1, float* layer_norm_2, cudaStream_t stream) {
+        // Same bias-correction denominator as AdamW: step 0 divides by zero and step < 0 feeds
+        // std::pow a value it cannot use, both of which reach the kernel as a NaN scale.
+        if (step < 1) {
+            throw std::invalid_argument("LAMBOptimizer::step: step must be >= 1 (it is the bias-correction exponent)");
+        }
         if (!initialized_) {
             m_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
             v_data_ = std::make_unique<cuda::memory::Buffer<float>>(num_elements);
