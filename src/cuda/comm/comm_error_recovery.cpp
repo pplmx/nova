@@ -70,7 +70,15 @@ namespace nova::comm {
                 ErrorCallback callback;
                 std::vector<CommError> to_report;
                 {
-                    std::shared_lock lock(impl_->state_mutex);
+                    // UNIQUE, not shared: this loop WRITES every field of CommState
+                    // (consecutive_not_ready, last_check, is_healthy, is_stalled). It used to
+                    // take a shared_lock, which excludes register_comm()/unregister_comm()
+                    // because they take a unique lock -- but does NOT exclude get_status(),
+                    // which also takes a shared lock. Two shared holders may run
+                    // concurrently, so the monitor's writes raced get_status()'s reads of
+                    // the same bools and time_points, and a reader could observe is_healthy
+                    // disagreeing with is_stalled or a partially updated timestamp.
+                    std::unique_lock lock(impl_->state_mutex);
                     callback = impl_->error_callback;
                     for (auto& [comm_id, state] : impl_->comm_states) {
                         cudaError_t result = cudaStreamQuery(state.stream);
@@ -132,19 +140,29 @@ namespace nova::comm {
         impl_->comm_states.erase(comm_id);
     }
 
+    // Every setter below writes a field the monitor thread reads on each pass
+    // (timeout_threshold, check_interval, stall_confirmations_required, error_callback), and
+    // none of them took the lock the monitor holds while reading the same fields. A configure
+    // call made while the monitor was running was therefore a plain data race.
     void HealthMonitor::set_timeout_threshold(std::chrono::seconds timeout) {
+        std::unique_lock lock(impl_->state_mutex);
         impl_->timeout_threshold = timeout;
     }
 
     void HealthMonitor::set_check_interval(std::chrono::milliseconds interval) {
-        impl_->check_interval = interval;
+        // The monitor sleeps on check_interval outside the lock, so an interval shorter than
+        // the monitor's own pass would spin; keep it positive.
+        std::unique_lock lock(impl_->state_mutex);
+        impl_->check_interval = interval.count() > 0 ? interval : std::chrono::milliseconds(1);
     }
 
     void HealthMonitor::set_stall_confirmations(int count) {
+        std::unique_lock lock(impl_->state_mutex);
         impl_->stall_confirmations_required = std::max(1, count);
     }
 
     void HealthMonitor::set_error_callback(ErrorCallback callback) {
+        std::unique_lock lock(impl_->state_mutex);
         impl_->error_callback = std::move(callback);
     }
 

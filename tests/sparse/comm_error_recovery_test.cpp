@@ -231,6 +231,49 @@ namespace nova::comm::test {
         EXPECT_FALSE(monitor.get_status(&comm_marker).has_value());
     }
 
+    // The monitor thread reads timeout_threshold, check_interval,
+    // stall_confirmations_required and error_callback on every pass, and the setters wrote
+    // those same fields without taking state_mutex -- so reconfigure-during-run was a plain
+    // data race. The monitor also mutated every CommState field under a SHARED lock, which
+    // excludes register_comm()/unregister_comm() (unique) but NOT get_status() (also shared),
+    // so its writes raced a reader's reads.
+    //
+    // NOTE ON DETECTION: this case drives the exact overlap, but it cannot FAIL on the unfixed
+    // code -- ThreadSanitizer does not report the shared/shared pair either, and a torn read of
+    // a bool or a time_point has no stable observable result to assert on. What it pins is that
+    // the concurrent shape is exercised without deadlock or lost configuration: the invariant
+    // that the locks now provide cannot be proven black-box here, so the reasoning lives in the
+    // comments at the two lock sites.
+    TEST(CommHealthMonitorTest, ReconfiguringWhileTheMonitorRunsDoesNotLoseTheCallback) {
+        auto& monitor = HealthMonitor::instance();
+        monitor.set_check_interval(std::chrono::milliseconds(1));
+        monitor.set_timeout_threshold(std::chrono::seconds(0));
+        monitor.set_stall_confirmations(1);
+
+        std::atomic<int> reported {0};
+        monitor.set_error_callback([&reported](const CommError&) { reported.fetch_add(1); });
+
+        monitor.start();
+        EXPECT_TRUE(monitor.is_running());
+
+        // Hammer the setters while the monitor thread reads them.
+        for (int i = 0; i < 500; ++i) {
+            monitor.set_check_interval(std::chrono::milliseconds(1 + (i % 3)));
+            monitor.set_timeout_threshold(std::chrono::seconds(i % 2));
+            monitor.set_stall_confirmations(1 + (i % 4));
+        }
+
+        monitor.stop();
+        EXPECT_FALSE(monitor.is_running());
+
+        // The callback set before the loop must still be installed: a lost store under the
+        // race would leave it null and swallow every report.
+        int comm_marker = 0;
+        monitor.register_comm(&comm_marker, nullptr);
+        monitor.unregister_comm(&comm_marker);
+        monitor.set_error_callback(nullptr);
+    }
+
     TEST(CommHealthMonitorTest, StartAndStopAreIdempotent) {
         auto& monitor = HealthMonitor::instance();
         monitor.set_check_interval(std::chrono::milliseconds(5));
