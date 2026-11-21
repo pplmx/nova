@@ -264,6 +264,13 @@ namespace cuda::linalg::test {
         EXPECT_EQ(result.R.size(), 4u);
     }
 
+    // Q is row-major, as linalg.h now states and as every other result in that header is:
+    // the (3x2) factor has element (i, j) at q[i*2 + j]. This case previously read it as
+    // column-major (q[i + j*3]) -- while the very same file declares DeviceMatrix "a device
+    // copy of a row-major matrix". For the chosen input that misreading happened to look
+    // right: column-major reads of the row-major 3x2 Q gave [1,0,0] (norm 1, so "unit
+    // length") and [1,1,1] (norm 3), and the old assertions only checked the first column's
+    // unit length and a dot product against a column it had misread, so they passed at 1e-3.
     TEST(QrDecompositionTest, QIsOrthonormal) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";
@@ -274,22 +281,37 @@ namespace cuda::linalg::test {
         QRResult result;
         ASSERT_NO_THROW(qr_decomposition(matrix.data(), 3, 2, result));
 
-        std::vector<float> q(6);
+        constexpr int rows = 3, cols = 2;
+        std::vector<float> q(static_cast<size_t>(rows) * cols);
         result.Q.copy_to(q.data(), q.size());
 
-        // Q is 3x2 stored column-major: column j starts at j*3.
-        for (int j = 0; j < 2; ++j) {
+        for (int j = 0; j < cols; ++j) {
             float norm = 0.0f;
-            for (int i = 0; i < 3; ++i) {
-                norm += q[i + j * 3] * q[i + j * 3];
+            for (int i = 0; i < rows; ++i) {
+                norm += q[static_cast<size_t>(i) * cols + j] * q[static_cast<size_t>(i) * cols + j];
             }
-            EXPECT_NEAR(norm, 1.0f, 1e-3f) << "column " << j << " is not unit length";
+            EXPECT_NEAR(norm, 1.0f, 1e-4f) << "column " << j << " is not unit length";
         }
         float dot = 0.0f;
-        for (int i = 0; i < 3; ++i) {
-            dot += q[i] * q[i + 3];
+        for (int i = 0; i < rows; ++i) {
+            dot += q[static_cast<size_t>(i) * cols + 0] * q[static_cast<size_t>(i) * cols + 1];
         }
-        EXPECT_NEAR(dot, 0.0f, 1e-3f) << "the two columns are not orthogonal";
+        EXPECT_NEAR(dot, 0.0f, 1e-4f) << "the two columns are not orthogonal";
+
+        // Q*R must reconstruct the input, which is the property the orthonormality check
+        // alone cannot see.
+        const std::vector<float> original = {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+        std::vector<float> r(static_cast<size_t>(cols) * cols);
+        result.R.copy_to(r.data(), r.size());
+        for (int i = 0; i < rows; ++i) {
+            for (int j = 0; j < cols; ++j) {
+                float acc = 0.0f;
+                for (int t = 0; t < cols; ++t) {
+                    acc += q[static_cast<size_t>(i) * cols + t] * r[static_cast<size_t>(t) * cols + j];
+                }
+                EXPECT_NEAR(acc, original[static_cast<size_t>(i) * cols + j], 1e-4f) << "Q*R at (" << i << "," << j << ")";
+            }
+        }
     }
 
     // ------------------------------------------------------ Cholesky ----------

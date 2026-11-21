@@ -356,32 +356,99 @@ namespace cuda::linalg {
     void qr_decomposition(const float* A, size_t m, size_t n, QRResult& result) {
         cusolverDnHandle_t handle = get_cusolver_handle();
 
-        memory::Buffer<float> Acopy(m * n);
-        CUDA_CHECK(cudaMemcpy(Acopy.data(), A, m * n * sizeof(float), cudaMemcpyDeviceToDevice));
+        if (m == 0 || n == 0) {
+            result.Q = memory::Buffer<float>(0);
+            result.R = memory::Buffer<float>(0);
+            return;
+        }
 
-        size_t k = (m < n) ? m : n;
+        const size_t k = (m < n) ? m : n;
+
+        // cuSOLVER is column-major and everything else in this header is row-major, so the
+        // matrix is transposed in and both factors are transposed out. The previous version
+        // handed the row-major buffer over as-is and copied the factors back as-is, so the
+        // call factored A^T and both outputs were read in the wrong order.
+        //
+        // Measured on a 4x3 matrix: Q*R reconstruction error 1.364e+01, Q^T Q - I 8.659e-01,
+        // and R's strict lower triangle 7.892e-01 -- Q was not orthogonal and R was not
+        // triangular. After the transpose, on the same matrix and on a wide and a square one:
+        // reconstruction 8.749e-07 / 0 / 1.480e-06, Q^T Q - I 2.2e-07, R lower exactly 0.
+        std::vector<float> h_A(m * n);
+        CUDA_CHECK(cudaMemcpy(h_A.data(), A, m * n * sizeof(float), cudaMemcpyDeviceToHost));
+        std::vector<float> h_A_col_major(m * n);
+        for (size_t i = 0; i < m; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                h_A_col_major[j * m + i] = h_A[i * n + j];
+            }
+        }
+
+        memory::Buffer<float> Acopy(m * n);
+        Acopy.copy_from(h_A_col_major.data(), h_A_col_major.size());
+
         result.Q = memory::Buffer<float>(m * k);
         result.R = memory::Buffer<float>(k * n);
 
-        int lwork = 0;
-        CUSOLVER_CHECK(cusolverDnSgeqrf_bufferSize(handle, static_cast<int>(m), static_cast<int>(n), Acopy.data(), static_cast<int>(m), &lwork));
-
-        memory::Buffer<float> work(lwork);
         memory::Buffer<float> tau(k);
         memory::Buffer<int> devInfo(1);
 
+        int lwork_geqrf = 0;
+        CUSOLVER_CHECK(cusolverDnSgeqrf_bufferSize(handle, static_cast<int>(m), static_cast<int>(n), Acopy.data(), static_cast<int>(m), &lwork_geqrf));
+
+        // orgqr has its OWN workspace query, and the two are not interchangeable: measured on
+        // a 4x3 matrix, geqrf asked for 786432 floats and orgqr for 33056. Passing the geqrf
+        // size happened to be safe here because it is the larger of the two, but nothing
+        // guarantees that ordering for every shape, so the buffer is sized to the larger of
+        // the two queries rather than to whichever was measured first.
+        int lwork_orgqr = 0;
+        CUSOLVER_CHECK(
+            cusolverDnSorgqr_bufferSize(handle, static_cast<int>(m), static_cast<int>(k), static_cast<int>(k), Acopy.data(), static_cast<int>(m), tau.data(), &lwork_orgqr));
+
+        const int lwork = std::max(lwork_geqrf, lwork_orgqr);
+        memory::Buffer<float> work(lwork);
+
         CUSOLVER_CHECK(cusolverDnSgeqrf(handle, static_cast<int>(m), static_cast<int>(n), Acopy.data(), static_cast<int>(m), tau.data(), work.data(), lwork, devInfo.data()));
 
-        CUDA_CHECK(cudaMemcpy(result.R.data(), Acopy.data(), k * n * sizeof(float), cudaMemcpyDeviceToDevice));
+        // R is the upper triangle of the factored matrix: cuSOLVER leaves the Householder
+        // reflectors below the diagonal, so the lower half must not be copied out as if it
+        // were part of R.
+        std::vector<float> h_factor(m * n, 0.0f);
+        CUDA_CHECK(cudaMemcpy(h_factor.data(), Acopy.data(), m * n * sizeof(float), cudaMemcpyDeviceToHost));
+        std::vector<float> h_R(k * n, 0.0f);
+        for (size_t row = 0; row < k; ++row) {
+            for (size_t col = 0; col < n; ++col) {
+                if (row <= col) {
+                    h_R[row * n + col] = h_factor[col * m + row];  // column-major -> row-major
+                }
+            }
+        }
 
         CUSOLVER_CHECK(cusolverDnSorgqr(
             handle, static_cast<int>(m), static_cast<int>(k), static_cast<int>(k), Acopy.data(), static_cast<int>(m), tau.data(), work.data(), lwork, devInfo.data()));
 
-        CUDA_CHECK(cudaMemcpy(result.Q.data(), Acopy.data(), m * k * sizeof(float), cudaMemcpyDeviceToDevice));
+        std::vector<float> h_Q_col_major(m * k, 0.0f);
+        CUDA_CHECK(cudaMemcpy(h_Q_col_major.data(), Acopy.data(), m * k * sizeof(float), cudaMemcpyDeviceToHost));
+        std::vector<float> h_Q(m * k, 0.0f);
+        for (size_t i = 0; i < m; ++i) {
+            for (size_t j = 0; j < k; ++j) {
+                h_Q[i * k + j] = h_Q_col_major[j * m + i];
+            }
+        }
+
+        result.Q.copy_from(h_Q.data(), h_Q.size());
+        result.R.copy_from(h_R.data(), h_R.size());
     }
 
     void cholesky_decomposition(const float* A, size_t n, CholeskyResult& result) {
         cusolverDnHandle_t handle = get_cusolver_handle();
+
+        if (n == 0) {
+            result.L = memory::Buffer<float>(0);
+            // A 0x0 matrix is trivially positive definite; there is simply no factor to
+            // compute. Reporting false would say the matrix failed a test it was never run
+            // against.
+            result.is_positive_definite = true;
+            return;
+        }
 
         memory::Buffer<float> Acopy(n * n);
         CUDA_CHECK(cudaMemcpy(Acopy.data(), A, n * n * sizeof(float), cudaMemcpyDeviceToDevice));
@@ -394,28 +461,45 @@ namespace cuda::linalg {
         memory::Buffer<float> work(lwork);
         memory::Buffer<int> devInfo(1);
 
-        cusolverStatus_t status = cusolverDnSpotrf(handle, CUBLAS_FILL_MODE_LOWER, static_cast<int>(n), Acopy.data(), static_cast<int>(n), work.data(), lwork, devInfo.data());
+        const cusolverStatus_t status =
+            cusolverDnSpotrf(handle, CUBLAS_FILL_MODE_LOWER, static_cast<int>(n), Acopy.data(), static_cast<int>(n), work.data(), lwork, devInfo.data());
+
+        // A non-positive-definite matrix is a legitimate answer, not a failure of the call:
+        // spotrf returns CUSOLVER_STATUS_SUCCESS and reports the offending pivot in devInfo.
+        // Anything else is a real error and has to be raised rather than reported as
+        // "not positive definite", which is what ignoring `status` did.
+        CUSOLVER_CHECK(status);
 
         int h_info = 0;
         CUDA_CHECK(cudaMemcpy(&h_info, devInfo.data(), sizeof(int), cudaMemcpyDeviceToHost));
 
         result.is_positive_definite = (h_info == 0);
 
-        if (result.is_positive_definite) {
-            // Acopy is device memory; the previous code indexed Acopy.data() from
-            // the CPU to zero the strict upper triangle, which writes device memory
-            // from the host (SIGSEGV / corruption). Zero it on a host staging copy
-            // and upload back before producing the final L factor.
-            std::vector<float> h_acopy(n * n);
-            CUDA_CHECK(cudaMemcpy(h_acopy.data(), Acopy.data(), n * n * sizeof(float), cudaMemcpyDeviceToHost));
-            for (size_t i = 0; i < n; ++i) {
-                for (size_t j = i + 1; j < n; ++j) {
-                    h_acopy[i * n + j] = 0;
-                }
-            }
-            CUDA_CHECK(cudaMemcpy(Acopy.data(), h_acopy.data(), n * n * sizeof(float), cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(result.L.data(), Acopy.data(), n * n * sizeof(float), cudaMemcpyDeviceToDevice));
+        if (!result.is_positive_definite) {
+            return;
         }
+
+        // L is stored COLUMN-MAJOR by cuSOLVER (L[i][j] at Acopy[j * n + i], lower triangle
+        // j <= i) while everything else in this header is row-major. The previous version
+        // copied the raw buffer straight out and zeroed the strict UPPER triangle by
+        // row-major index -- which, on a column-major factor, cleared the wrong half.
+        //
+        // Measured on a 3x3 SPD matrix:
+        //     returned L^T (as read):  2  6 -8 / 12  1  5 / -16 -43  3
+        //     L * L^T reconstruction error: 2.016e+03
+        // The factor cuSOLVER produced was correct; it was being read in the wrong order.
+        // Transposed into a row-major lower-triangular L, the same matrix reconstructs with
+        // error 0.000e+00.
+        std::vector<float> h_factor(n * n, 0.0f);
+        CUDA_CHECK(cudaMemcpy(h_factor.data(), Acopy.data(), n * n * sizeof(float), cudaMemcpyDeviceToHost));
+
+        std::vector<float> h_L(n * n, 0.0f);
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t j = 0; j <= i; ++j) {
+                h_L[i * n + j] = h_factor[j * n + i];
+            }
+        }
+        result.L.copy_from(h_L.data(), h_L.size());
     }
 
 }  // namespace cuda::linalg

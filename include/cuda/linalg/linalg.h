@@ -5,6 +5,23 @@
  * @brief GPU linear algebra operations: SVD, eigenvalue decomposition, matrix factorization
  * @author Nova CUDA Library
  * @version 2.3
+ *
+ * @par Layout convention
+ * Every matrix here is **row-major**, both in and out. Nothing in this header said so, which
+ * is how two of the four functions came to hand a row-major buffer to column-major cuSOLVER
+ * routines and copy the factors back without transposing: qr_decomposition returned a Q that
+ * was not orthogonal and an R that was not triangular, and cholesky_decomposition returned a
+ * factor that did not reconstruct its input at all. Both are fixed, and the conversions are
+ * explicit at the cuSOLVER boundary.
+ *
+ * @par Result layouts
+ * - SVD: U is m x min(m,n), S is min(m,n), Vt is min(m,n) x n, all row-major.
+ * - EVD: eigenvalues ascending; eigenvectors **column-major** (V[i][j] at `i + j*n`), so
+ *   eigenvector j is contiguous. This is the one result that is not row-major, kept because
+ *   it is the layout syevd exposed and callers may already index it that way.
+ * - QR: Q is m x min(m,n) row-major with orthonormal columns, R is min(m,n) x n row-major
+ *   upper-triangular, A = Q*R.
+ * - Cholesky: L is n x n row-major lower-triangular, A = L*L^T.
  */
 
 #include <cuda_runtime.h>
