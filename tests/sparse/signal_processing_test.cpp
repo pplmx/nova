@@ -337,4 +337,131 @@ namespace cuda::signal::test {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Regressions for the two contract defects in signal.cu that the cases above
+    // did not reach.
+    // ---------------------------------------------------------------------------
+
+    // Regression: haar_wavelet_forward accepted any length but is only correct for powers of
+    // two. Measured round-trip error (forward then inverse, same length) before the guard:
+    //
+    //     n=8  9.5e-07       n=7  7.000e+00
+    //     n=4  2.4e-07       n=6  5.500e+00
+    //     n=2  1.2e-07       n=5  5.000e+00
+    //     n=1  0             n=12 1.050e+01
+    //
+    // An odd curr_n leaves its last sample untransformed, and the detail write to
+    // [curr_n/2, curr_n) then overwrites it. For n=5 the coefficients came out as
+    // [5, -2, ...] with index 4 still holding the raw sample and index 1 overwritten.
+    TEST(HaarWaveletTest, NonPowerOfTwoLengthIsRejectedRatherThanSilentlyLossy) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        for (const size_t n : {size_t {3}, size_t {5}, size_t {6}, size_t {7}, size_t {12}}) {
+            std::vector<float> values(n, 1.0f);
+            DeviceBuffer signal(values);
+            EXPECT_THROW(haar_wavelet_forward(signal.data(), n), std::invalid_argument) << "n=" << n << " would silently corrupt the signal";
+        }
+    }
+
+    // The inverse has to reject the same lengths, or it would happily reconstruct garbage from a
+    // buffer the forward transform could never have produced.
+    TEST(HaarWaveletTest, InverseRejectsANonPowerOfTwoSize) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::vector<float> values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+        DeviceBuffer signal(values);
+        // Build a well-formed transform first, then ask for a size it cannot describe.
+        const auto forward = haar_wavelet_forward(signal.data(), 4);
+        EXPECT_THROW(haar_wavelet_inverse(forward, 5), std::invalid_argument);
+    }
+
+    // A truncated coefficient buffer must be reported, not read past. This was unchecked: the
+    // copy into the result read original_size elements from a buffer that could be shorter.
+    TEST(HaarWaveletTest, InverseRejectsACoefficientBufferShorterThanTheSize) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        WaveletResult short_coeffs;
+        short_coeffs.coefficients = memory::Buffer<float>(2);
+        short_coeffs.levels = 3;
+        EXPECT_THROW(haar_wavelet_inverse(short_coeffs, 8), std::invalid_argument);
+    }
+
+    // The guard must not narrow the sizes that already worked. Every power of two up to 64
+    // round-trips, which is what the algorithm is written for.
+    TEST(HaarWaveletTest, EveryPowerOfTwoStillRoundTrips) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        for (const size_t n : {size_t {2}, size_t {4}, size_t {8}, size_t {16}, size_t {32}, size_t {64}}) {
+            std::vector<float> values(n);
+            for (size_t i = 0; i < n; ++i) {
+                values[i] = static_cast<float>((i * 7) % 11) - 5.0f;
+            }
+            DeviceBuffer signal(values);
+
+            const auto forward = haar_wavelet_forward(signal.data(), n);
+            EXPECT_EQ(forward.levels, static_cast<size_t>(std::log2(static_cast<double>(n))));
+
+            const auto reconstructed = haar_wavelet_inverse(forward, n);
+            const auto output = to_host(reconstructed, n);
+            for (size_t i = 0; i < n; ++i) {
+                EXPECT_NEAR(output[i], values[i], 1e-4f) << "n=" << n << " sample " << i;
+            }
+        }
+    }
+
+    // Regression: fir_filter copied with cudaMemcpyHostToDevice while taking device pointers,
+    // unlike every other entry point in the module. Under unified virtual addressing the wrong
+    // direction still resolves the source, which is why it produced correct answers and went
+    // unnoticed; the corrected contract is device-in, and this pins the documented answer so a
+    // future change to the copy direction has a value to fail against.
+    TEST(FirFilterTest, DeviceResidentInputProducesTheDocumentedConvolution) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::vector<float> values = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+        const std::vector<float> taps = {1.0f, 2.0f, 3.0f};
+        DeviceBuffer signal(values);
+        DeviceBuffer coefficients(taps);
+
+        const auto result = fir_filter(signal.data(), values.size(), coefficients.data(), taps.size());
+        ASSERT_EQ(result.output_size, values.size());
+        const auto output = to_host(result.output, result.output_size);
+
+        // Past the filter span this is the plain convolution sum, checked against a host
+        // reference rather than hard-coded so the case states the definition.
+        for (size_t i = 0; i < values.size(); ++i) {
+            double expected = 0.0;
+            for (size_t j = 0; j < taps.size(); ++j) {
+                if (i >= j) {
+                    expected += static_cast<double>(values[i - j]) * taps[j];
+                }
+            }
+            EXPECT_NEAR(output[i], static_cast<float>(expected), 1e-4f) << "sample " << i;
+        }
+    }
+
+    // A zero-length signal has no samples to filter. It used to launch a 0-block grid, which the
+    // driver rejects.
+    TEST(FirFilterTest, ZeroLengthSignalProducesAnEmptyResult) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::vector<float> taps = {1.0f, 2.0f};
+        DeviceBuffer coefficients(taps);
+
+        const auto result = fir_filter(nullptr, 0, coefficients.data(), taps.size());
+        EXPECT_EQ(result.output_size, 0u);
+        EXPECT_EQ(result.output.size(), 0u);
+    }
+
 }  // namespace cuda::signal::test

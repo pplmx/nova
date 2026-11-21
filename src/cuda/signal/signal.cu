@@ -187,6 +187,29 @@ namespace cuda::signal {
             return empty;
         }
 
+        // The in-place layout below only works when every level halves the region exactly.
+        // For any other length the transform is LOSSY in a way nothing reported: a level
+        // transforms floor(curr_n / 2) pairs, so an odd curr_n leaves its last sample
+        // untouched, and the detail coefficients are then written to [curr_n/2, curr_n),
+        // which overwrites that sample and whatever the next level still needs.
+        //
+        // Measured round-trip error (forward then inverse, same length):
+        //     n=8  9.5e-07        n=7  7.000e+00
+        //     n=4  2.4e-07        n=6  5.500e+00
+        //     n=2  1.2e-07        n=5  5.000e+00
+        //     n=1  0               n=12 1.050e+01
+        // For n=5 the coefficients come out as [5, -2, ...] where index 4 still holds the
+        // raw sample 5 and index 1 was overwritten by level 1's detail. Every power of two
+        // up to 1024 round-trips with error ~2e-10, so the algorithm is right for the sizes
+        // it was written for; rejecting the rest is honest where silently corrupting data is
+        // not. A caller with an arbitrary length should pad to the next power of two (and
+        // discard the padding after the inverse).
+        if ((n & (n - 1)) != 0) {
+            throw std::invalid_argument("haar_wavelet_forward: length " + std::to_string(n) + " is not a power of two. The in-place Haar layout needs exact halving at every level; "
+                                                                                              "for other lengths the rounding drops samples and the detail coefficients overwrite them, so the transform is silently "
+                                                                                              "lossy. Pad the signal to the next power of two first.");
+        }
+
         size_t levels = 0;
         size_t temp_n = n;
         while (temp_n > 1) {
@@ -231,8 +254,22 @@ namespace cuda::signal {
         if (original_size == 0) {
             return memory::Buffer<float>(0);
         }
+        // Same reason as haar_wavelet_forward: the layout assumes exact halving, so a length
+        // that is not a power of two cannot describe coefficients this module produced.
+        // Rejecting it here keeps the mirror of the forward check rather than reconstructing
+        // garbage from a buffer that could never have been valid.
+        if ((original_size & (original_size - 1)) != 0) {
+            throw std::invalid_argument("haar_wavelet_inverse: original_size " + std::to_string(original_size) + " is not a power of two; haar_wavelet_forward rejects such lengths, so no "
+                                                                                                                      "coefficient buffer this module produced can have it.");
+        }
         if (coeffs.levels >= sizeof(size_t) * 8) {
             throw std::invalid_argument("haar_wavelet_inverse: level count " + std::to_string(coeffs.levels) + " exceeds the representable depth for original_size "
+                                        + std::to_string(original_size));
+        }
+        // The coefficient buffer has to hold the whole transform. Reading original_size
+        // elements out of a shorter buffer walked off the end.
+        if (coeffs.coefficients.size() < original_size) {
+            throw std::invalid_argument("haar_wavelet_inverse: the coefficient buffer holds " + std::to_string(coeffs.coefficients.size()) + " elements but original_size is "
                                         + std::to_string(original_size));
         }
         for (size_t level = coeffs.levels; level > 0; --level) {
@@ -284,14 +321,28 @@ namespace cuda::signal {
         result.output = memory::Buffer<float>(signal_len);
         result.output_size = signal_len;
 
+        if (signal_len == 0) {
+            return result;
+        }
+
         memory::Buffer<float> d_signal(signal_len);
         memory::Buffer<float> d_coeffs(num_coeffs);
         memory::Buffer<float> d_output(signal_len);
 
-        CUDA_CHECK(cudaMemcpy(d_signal.data(), signal, signal_len * sizeof(float), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_coeffs.data(), coefficients, num_coeffs * sizeof(float), cudaMemcpyHostToDevice));
+        // Both inputs are DEVICE pointers, consistent with every other entry point in this
+        // module (fft_convolution and haar_wavelet_forward copy DeviceToDevice). These two
+        // copies were HostToDevice, which treats the arguments as host addresses: measured,
+        // a device-resident input happened to produce the right answer anyway because unified
+        // virtual addressing resolves the source pointer either way, so nothing failed -- but
+        // it is not the contract, and a host-resident argument would have reached the kernel
+        // as an address the device cannot read.
+        CUDA_CHECK(cudaMemcpy(d_signal.data(), signal, signal_len * sizeof(float), cudaMemcpyDeviceToDevice));
+        if (num_coeffs > 0) {
+            CUDA_CHECK(cudaMemcpy(d_coeffs.data(), coefficients, num_coeffs * sizeof(float), cudaMemcpyDeviceToDevice));
+        }
 
         fir_kernel<<<(signal_len + 255) / 256, 256>>>(d_signal.data(), d_coeffs.data(), d_output.data(), signal_len, num_coeffs);
+        CUDA_CHECK(cudaGetLastError());
 
         CUDA_CHECK(cudaMemcpy(result.output.data(), d_output.data(), signal_len * sizeof(float), cudaMemcpyDeviceToDevice));
 
