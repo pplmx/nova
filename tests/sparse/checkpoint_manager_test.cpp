@@ -296,6 +296,46 @@ namespace nova::checkpoint::test {
         std::filesystem::remove_all(path);
     }
 
+    // Regression: the traversal guard was a SUBSTRING search for "..", so any legitimate name
+    // containing two consecutive dots was refused. Measured before the fix:
+    //
+    //     file..name.bin     -> THROWS Path traversal is not allowed
+    //     v1..2/weights.bin  -> THROWS Path traversal is not allowed
+    //
+    // A ".." is dangerous only when it is a whole path component; inside a filename it is an
+    // ordinary character. The guard now walks the components.
+    TEST(FileStorageBackendTest, TraversalIsAPathComponentNotASubstring) {
+        const auto path = std::filesystem::temp_directory_path() / "nova_ckpt_component_test";
+        std::filesystem::remove_all(path);
+        FileStorageBackend backend(path.string());
+
+        // Names that merely contain ".." must resolve.
+        EXPECT_NO_THROW(backend.resolve_path("file..name.bin")) << "two dots inside a filename are not traversal";
+        EXPECT_NO_THROW(backend.resolve_path("v1..2/weights.bin")) << "two dots inside a directory name are not traversal";
+        EXPECT_NO_THROW(backend.resolve_path("..leading")) << "a name starting with dots is not traversal";
+        EXPECT_NO_THROW(backend.resolve_path("trailing..")) << "a name ending with dots is not traversal";
+
+        // And they must land inside the base directory.
+        const std::string resolved = backend.resolve_path("file..name.bin");
+        EXPECT_EQ(resolved.find(path.string()), 0u) << "resolved outside the base directory: " << resolved;
+
+        // Real traversal is still refused, in every position.
+        EXPECT_THROW(backend.resolve_path(".."), std::invalid_argument);
+        EXPECT_THROW(backend.resolve_path("../escape"), std::invalid_argument);
+        EXPECT_THROW(backend.resolve_path("sub/../../escape"), std::invalid_argument);
+        EXPECT_THROW(backend.resolve_path("a/.."), std::invalid_argument);
+
+        // A file with two dots in its name must survive a real write/read round trip, which is
+        // the case a user actually hits (version strings in tensor names).
+        const char payload[] = "weights";
+        ASSERT_NO_THROW(backend.write("model..v2.bin", payload, sizeof(payload) - 1));
+        char readback[sizeof(payload)] = {};
+        ASSERT_NO_THROW(backend.read("model..v2.bin", readback, sizeof(payload) - 1));
+        EXPECT_STREQ(readback, payload);
+
+        std::filesystem::remove_all(path);
+    }
+
     // Regression: read() treated a short file as success. `!ifs && !ifs.eof()` let a
     // stream that ended early pass, so the caller's buffer kept whatever it held
     // beyond the bytes the file actually provided, and the loader decoded it as

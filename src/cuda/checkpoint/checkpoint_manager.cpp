@@ -23,9 +23,15 @@ namespace nova::checkpoint {
             if (p.is_absolute()) {
                 throw std::invalid_argument("Absolute paths are not allowed: " + path);
             }
-            std::string normalized = path;
-            if (normalized.find("..") != std::string::npos) {
-                throw std::invalid_argument("Path traversal is not allowed: " + path);
+            // Traversal is a PATH COMPONENT, not a substring. This used to reject any path
+            // containing the two characters "..", which refused legitimate names such as
+            // "file..name.bin" and "v1..2/weights.bin" -- measured, both were rejected while a
+            // plain "sub/model.bin" resolved normally. Walk the components instead and reject
+            // only a component that is exactly "..".
+            for (const auto& component : p) {
+                if (component == "..") {
+                    throw std::invalid_argument("Path traversal is not allowed: " + path);
+                }
             }
             if (path.empty()) {
                 return base_path;
