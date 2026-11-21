@@ -123,6 +123,18 @@ namespace cuda::inference {
 
         LogProbTracker logprob_tracker_;
 
+        /// Scratch sequence ids this runner created and has not yet released. Rollback and
+        /// commit operate on these and on nothing else, so a caller's own sequences are
+        /// never touched by a speculative decode.
+        std::vector<int64_t> owned_sequences_;
+
+        /// Picks an id no sequence currently holds. Scratch ids are negative so they cannot
+        /// collide with the non-negative ids create_sequence() hands out to callers.
+        int64_t acquire_sequence_id();
+
+        /// Releases every id in owned_sequences_ and clears the list.
+        void release_owned_sequences();
+
         struct KVCacheSnapshot {
             std::vector<int64_t> sequence_ids;
             std::vector<int> num_blocks;

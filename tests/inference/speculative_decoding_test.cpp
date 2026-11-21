@@ -181,22 +181,28 @@ namespace cuda::inference {
         EXPECT_EQ(captured.draft_depth, 4);
     }
 
-    TEST_F(SpeculativeDecodingTest, KVSnapshotRollback) {
+    // Regression: rollback_kv_state() used to snapshot EVERY active sequence in the
+    // BlockManager and then free_sequence() each of them. A caller's live requests were
+    // therefore destroyed by a partially-rejected draft -- measured with two unrelated
+    // sequences active and a decode that failed acceptance, both were gone afterwards.
+    //
+    // This case used to assert the opposite (EXPECT_LT on the sequence count after a
+    // rollback), i.e. it pinned the destruction as the contract. The runner has no way to
+    // restore a sequence it deleted and BlockManager has no truncate, so the only correct
+    // behaviour is to leave sequences the runner did not create alone.
+    TEST_F(SpeculativeDecodingTest, KVSnapshotRollbackLeavesCallerSequencesAlone) {
         auto* seq1 = block_manager->create_sequence(200, 128);
-        int64_t seq1_id = seq1->id;
-        block_manager->append_tokens(seq1_id, 8);
-
         auto* seq2 = block_manager->create_sequence(201, 128);
-        int64_t seq2_id = seq2->id;
-        block_manager->append_tokens(seq2_id, 4);
 
-        int before_rollback = static_cast<int>(block_manager->get_active_sequences().size());
+        const int before_rollback = static_cast<int>(block_manager->get_active_sequences().size());
+        ASSERT_EQ(before_rollback, 2);
 
         spec_runner->snapshot_kv_state();
         spec_runner->rollback_kv_state();
 
-        int after_rollback = static_cast<int>(block_manager->get_active_sequences().size());
-        EXPECT_LT(after_rollback, before_rollback);
+        EXPECT_EQ(static_cast<int>(block_manager->get_active_sequences().size()), before_rollback) << "a rollback must not delete sequences the runner did not create";
+        EXPECT_EQ(block_manager->get_sequence(seq1->id), seq1) << "sequence 200 was destroyed";
+        EXPECT_EQ(block_manager->get_sequence(seq2->id), seq2) << "sequence 201 was destroyed";
     }
 
     TEST_F(SpeculativeDecodingTest, KVCommitWithoutRollback) {
@@ -416,6 +422,101 @@ namespace cuda::inference {
         // number of tokens the drafter may propose per step, so the result cannot exceed it and
         // a configured depth of five must not produce more.
         EXPECT_LE(static_cast<int>(draft_tokens.size()), 5) << "the drafter proposed more tokens than draft_depth allows";
+    }
+
+    // Regression: the runner hardcoded sequence id 0 for its scratch sequence. Sequence 0 is
+    // the FIRST id create_sequence() hands out, so any caller holding it -- the ordinary case
+    // -- made both entry points throw "Sequence 0 already exists" before doing any work.
+    TEST_F(SpeculativeDecodingTest, DecodeDoesNotCollideWithACallerSequenceIdZero) {
+        auto* caller_seq = block_manager->create_sequence(0, 128);
+        ASSERT_NE(caller_seq, nullptr);
+
+        SpeculativeDecodingConfig config;
+        config.draft_depth = 2;
+        config.vocab_size = 64;
+        config.temperature = 0.0f;
+        spec_runner->configure(config);
+
+        memory::Buffer<float> embeddings(128);
+        stream::Stream stream;
+        auto forward_fn = [](memory::Buffer<float>& logits, const std::vector<int64_t>&, bool, const stream::Stream&) {
+            std::vector<float> h(64, 0.0f);
+            logits.copy_from(h.data(), 64);
+        };
+
+        EXPECT_NO_THROW({ (void)spec_runner->generate_draft_tokens(embeddings, 16, stream, forward_fn); }) << "sequence id 0 belongs to the caller";
+        EXPECT_NO_THROW({ (void)spec_runner->decode(embeddings, 16, stream, forward_fn); }) << "sequence id 0 belongs to the caller";
+        EXPECT_NE(block_manager->get_sequence(0), nullptr) << "the caller's sequence 0 was taken over or freed";
+    }
+
+    // Regression: a partially-rejected draft ran rollback_kv_state(), which freed EVERY
+    // active sequence. Measured before the fix with two unrelated caller sequences (701,
+    // 702) and an acceptance threshold the draft could not meet: decode() returned with
+    // get_active_sequences() at 0 and both sequences gone.
+    TEST_F(SpeculativeDecodingTest, APartialRejectDoesNotDestroyCallerSequences) {
+        auto* first = block_manager->create_sequence(701, 128);
+        auto* second = block_manager->create_sequence(702, 128);
+        ASSERT_EQ(block_manager->get_active_sequences().size(), 2u);
+
+        SpeculativeDecodingConfig config;
+        config.draft_depth = 3;
+        config.vocab_size = 64;
+        config.temperature = 0.0f;
+        config.acceptance_threshold = 0.99f;  // the draft below cannot meet this
+        spec_runner->configure(config);
+
+        memory::Buffer<float> embeddings(128);
+        stream::Stream stream;
+        // Draft and target disagree completely: acceptance ratio is ~0, so the rollback
+        // branch is the one taken.
+        auto forward_fn = [](memory::Buffer<float>& logits, const std::vector<int64_t>&, bool is_draft, const stream::Stream&) {
+            std::vector<float> h(64, -20.0f);
+            h[is_draft ? 1 : 40] = 20.0f;
+            logits.copy_from(h.data(), 64);
+        };
+
+        const std::vector<int> accepted = spec_runner->decode(embeddings, 16, stream, forward_fn);
+        EXPECT_EQ(accepted.size(), 0u) << "this case needs the rollback branch";
+
+        EXPECT_EQ(block_manager->get_sequence(701), first) << "sequence 701 was destroyed by a rollback";
+        EXPECT_EQ(block_manager->get_sequence(702), second) << "sequence 702 was destroyed by a rollback";
+        EXPECT_EQ(block_manager->get_active_sequences().size(), 2u);
+    }
+
+    // Whatever the verification outcome, the runner's own scratch sequence is released.
+    // Before the split between caller-owned and runner-owned sequences, the commit path left
+    // the verify sequence behind and the rollback path took the caller's sequences with it.
+    TEST_F(SpeculativeDecodingTest, EveryDecodeReleasesItsScratchSequence) {
+        auto* caller_seq = block_manager->create_sequence(801, 128);
+        ASSERT_NE(caller_seq, nullptr);
+
+        memory::Buffer<float> embeddings(128);
+        stream::Stream stream;
+
+        const auto run_with = [&](float threshold) {
+            SpeculativeDecodingConfig config;
+            config.draft_depth = 3;
+            config.vocab_size = 64;
+            config.temperature = 0.0f;
+            config.acceptance_threshold = threshold;
+            spec_runner->configure(config);
+
+            auto forward_fn = [threshold](memory::Buffer<float>& logits, const std::vector<int64_t>&, bool is_draft, const cuda::stream::Stream&) {
+                std::vector<float> h(64, -20.0f);
+                // At threshold 0 everything is accepted; at 0.99 nothing is.
+                h[is_draft ? 1 : (threshold < 0.5f ? 1 : 40)] = 20.0f;
+                logits.copy_from(h.data(), 64);
+            };
+            (void)spec_runner->decode(embeddings, 16, stream, forward_fn);
+        };
+
+        run_with(0.0f);  // commit path
+        EXPECT_EQ(block_manager->get_active_sequences().size(), 1u) << "the commit path leaked its scratch sequence";
+
+        run_with(0.99f);  // rollback path
+        EXPECT_EQ(block_manager->get_active_sequences().size(), 1u) << "the rollback path leaked its scratch sequence";
+
+        EXPECT_NE(block_manager->get_sequence(801), nullptr) << "the caller's sequence must survive either path";
     }
 
     TEST_F(SpeculativeDecodingTest, DecodeRunsReplayAndVerifiesPerPosition) {

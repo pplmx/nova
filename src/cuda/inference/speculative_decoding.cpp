@@ -156,14 +156,22 @@ namespace cuda::inference {
     }
 
     void SpeculativeDecodingRunner::snapshot_kv_state() {
+        // The snapshot is a savepoint for the KV state this runner owns, and it must never
+        // reach beyond that.
+        //
+        // It used to copy every ACTIVE sequence in the BlockManager, and rollback then called
+        // free_sequence() on each of them. A caller's own live requests were therefore
+        // destroyed whenever a draft was partially rejected: measured with two unrelated
+        // sequences (701, 702) active and a draft that failed acceptance, decode() returned
+        // with both gone and get_active_sequences() at 0. The runner cannot restore a
+        // sequence it deleted, and BlockManager offers no truncate, so a snapshot covering
+        // another owner's sequences is a delete list rather than a savepoint.
         kv_snapshot_ = KVCacheSnapshot {};
-        kv_snapshot_->sequence_ids.clear();
+        kv_snapshot_->sequence_ids = owned_sequences_;
         kv_snapshot_->num_blocks.clear();
-
-        for (const auto& [seq_id, seq] : block_manager_->get_active_sequences()) {
-            (void)seq;
-            kv_snapshot_->sequence_ids.push_back(seq_id);
-            kv_snapshot_->num_blocks.push_back(static_cast<int>(seq->block_table.size()));
+        for (const int64_t seq_id : owned_sequences_) {
+            const Sequence* seq = block_manager_->get_sequence(seq_id);
+            kv_snapshot_->num_blocks.push_back(seq != nullptr ? static_cast<int>(seq->block_table.size()) : 0);
         }
     }
 
@@ -172,15 +180,50 @@ namespace cuda::inference {
             return;
         }
 
-        for (size_t i = 0; i < kv_snapshot_->sequence_ids.size(); ++i) {
-            block_manager_->free_sequence(kv_snapshot_->sequence_ids[i]);
+        // Discard only the sequences that were in the snapshot, i.e. the ones this runner
+        // created. A caller's sequences were never recorded, so they cannot be lost here.
+        for (const int64_t seq_id : kv_snapshot_->sequence_ids) {
+            block_manager_->free_sequence(seq_id);
+            owned_sequences_.erase(std::remove(owned_sequences_.begin(), owned_sequences_.end(), seq_id), owned_sequences_.end());
         }
 
         kv_snapshot_.reset();
     }
 
     void SpeculativeDecodingRunner::commit_kv_state() {
+        // Nothing to undo: commit means what the accepted positions wrote stays where it is.
+        // The scratch sequence holding it is released by decode() itself, which is the only
+        // place that knows the forward passes are finished with it.
         kv_snapshot_.reset();
+    }
+
+    void SpeculativeDecodingRunner::release_owned_sequences() {
+        std::vector<int64_t> owned;
+        owned.swap(owned_sequences_);
+        for (const int64_t seq_id : owned) {
+            block_manager_->free_sequence(seq_id);
+        }
+    }
+
+    int64_t SpeculativeDecodingRunner::acquire_sequence_id() {
+        // The runner used to hardcode id 0 for its scratch sequence, so any caller that owned
+        // sequence 0 -- the first one create_sequence() hands out, i.e. the ordinary case --
+        // made generate_draft_tokens() and decode() throw "Sequence 0 already exists".
+        // Measured with a single caller sequence id 0: both entry points threw before doing
+        // any work.
+        //
+        // Scan for an id no one holds. Scratch ids are negative so they can never collide
+        // with the non-negative ids a caller hands out, and the scan is bounded so a
+        // misbehaving caller cannot spin here.
+        static constexpr int64_t FIRST_SCRATCH_ID = -2;
+        static constexpr int64_t LAST_SCRATCH_ID = FIRST_SCRATCH_ID - 1'000'000;
+
+        for (int64_t candidate = FIRST_SCRATCH_ID; candidate >= LAST_SCRATCH_ID; --candidate) {
+            if (block_manager_->get_sequence(candidate) == nullptr) {
+                return candidate;
+            }
+        }
+        throw std::runtime_error("SpeculativeDecodingRunner::acquire_sequence_id: no free scratch sequence id");
     }
 
     std::vector<int> SpeculativeDecodingRunner::generate_draft_tokens(
@@ -191,8 +234,8 @@ namespace cuda::inference {
         std::vector<int> draft_tokens;
         draft_tokens.reserve(config_.draft_depth);
 
-        auto* seq = block_manager_->create_sequence(0, prompt_length + config_.max_draft_depth);
-        int64_t seq_id = seq->id;
+        const int64_t seq_id = acquire_sequence_id();
+        block_manager_->create_sequence(seq_id, prompt_length + config_.max_draft_depth);
 
         const int vocab_size = config_.vocab_size > 0 ? config_.vocab_size : 32000;
         memory::Buffer<float> logits(vocab_size);
@@ -217,6 +260,9 @@ namespace cuda::inference {
             block_manager_->append_tokens(seq_id, 1);
         }
 
+        // The draft scratch sequence is not part of the KV state a rollback restores: it is
+        // released here, before any snapshot is taken. Registering it would leave a dangling
+        // id in owned_sequences_.
         block_manager_->free_sequence(seq_id);
 
         return draft_tokens;
@@ -329,8 +375,6 @@ namespace cuda::inference {
         logprob_tracker_.clear();
         draft_tokens_ = generate_draft_tokens(prompt_embeddings, prompt_length, stream, forward_fn);
 
-        snapshot_kv_state();
-
         const int k = static_cast<int>(draft_tokens_.size());
         const int vocab_size = config_.vocab_size > 0 ? config_.vocab_size : 32000;
 
@@ -347,8 +391,16 @@ namespace cuda::inference {
         // dual-model backend — same contract generate_draft_tokens() uses). The
         // old code appended (k-1) then k tokens (2k-1 total), which both polluted
         // the verify prefix and could exceed max_tokens when max_draft_depth < 2k-1.
-        auto* verify_seq = block_manager_->create_sequence(0, prompt_length + k);
-        const int64_t verify_seq_id = verify_seq->id;
+        const int64_t verify_seq_id = acquire_sequence_id();
+        block_manager_->create_sequence(verify_seq_id, prompt_length + k);
+        owned_sequences_.push_back(verify_seq_id);
+
+        // Taken AFTER the verify sequence exists, so the savepoint covers exactly what this
+        // runner owns and a rollback releases it. Taken before, the snapshot was always
+        // empty and only release_owned_sequences() cleared up -- the same outcome by a
+        // longer route.
+        snapshot_kv_state();
+
         std::vector<int64_t> seq_ids = {verify_seq_id};
 
         memory::Buffer<float> draft_logits(vocab_size);
@@ -395,7 +447,10 @@ namespace cuda::inference {
             commit_kv_state();
         }
 
-        block_manager_->free_sequence(verify_seq_id);
+        // The verify sequence is scratch however the verification went. rollback_kv_state()
+        // already released it and dropped it from owned_sequences_; this covers the commit
+        // path, where nothing else would.
+        release_owned_sequences();
 
         return output_tokens;
     }
