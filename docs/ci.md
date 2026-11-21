@@ -158,6 +158,52 @@ construct their own resources instead of resetting the process.
 `cudaDeviceSynchronize` also costs nothing when the intent was to release memory: the
 device allocator already reclaims on `cudaFree`, and a reset was never needed for it.
 
+### When a reset is what a test needs: register the handles
+
+`execute_isolated()` does reset the context, so the singletons that own CUDA handles have to
+release them first. That is what the reset registry is for, and it is not optional: a handle
+from a destroyed context is not merely invalid, it is *silently* invalid, and worse, it
+poisons handles created afterwards.
+
+```cpp
+cublasCreate(&h);  cudaDeviceReset();  cublasDestroy(h);      // SIGSEGV inside libcuda
+cublasCreate(&h);  cudaDeviceReset();  cublasSgemm(h, ...);   // CUBLAS_STATUS_EXECUTION_FAILED
+cudaStream_t s;    cudaStreamCreate(&s);  cudaDeviceReset();  // s is now dead,
+cublasCreate(&fresh); cublasSetStream(fresh, s);              // ...and this poisons `fresh`
+cublasSgemm(fresh, ...);                                      // SIGSEGV inside libcuda
+cudaStreamSynchronize(dead_s);  cudaStreamDestroy(dead_s);    // both report cudaSuccess
+```
+
+The last two lines are why nothing notices until much later: the stream calls that would
+reveal a dead handle both claim success, so the failure surfaces in whichever unrelated call
+binds the handle next.
+
+Measured on this host, this cost two things on one suite run: the multi-GPU matmul failed
+with `CUBLAS_STATUS_EXECUTION_FAILED` when it ran after `execute_isolated()`, and the process
+then died at exit inside `cublasDestroy` after reporting **every test passed** (exit 139,
+after the GoogleTest summary). The exit crash came from a static destructor running
+`cublasDestroy` during `__run_exit_handlers`, when the driver is already tearing the thread's
+context down.
+
+Two rules follow:
+
+1. **A cache of CUDA handles registers a resetter** with `register_singleton_resetter()`,
+   from the translation unit that owns the handles. `MeshStreams`, `NcclContext` and the
+   per-device cuBLAS handle cache in `distributed/matmul.cu` all do.
+2. **Never destroy CUDA handles from a static destructor.** `MeshStreams`, `NcclContext`,
+   `CusparseContext` and the cuBLAS cache are all intentionally leaked for this reason; the
+   driver reclaims their resources at exit, and a process-wide object whose destructor calls
+   into libcuda is a crash waiting for the right teardown order.
+
+The registry itself is reached through function-local accessors, not file-scope statics.
+Registration happens in the constructors of static objects in *other* translation units, and
+one of those running before the registry's own constructor is a crash before `main()` — which
+also breaks `gtest_discover_tests`, so the build fails rather than a test.
+
+`ContextResetRecoveryTest` drives the sequence work → `execute_isolated()` → work again for
+each of the three caches. It needs two GPUs and NCCL to reach the multi-GPU path, and skips
+for the same environmental reasons as `DistributedMatmulTest`.
+
 ## Release workflows
 
 Three workflows respond to a version tag, and all three were dead until the

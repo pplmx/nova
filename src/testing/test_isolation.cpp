@@ -17,8 +17,33 @@
 
 namespace cuda::testing {
 
-    static std::map<std::string, std::function<void()>> g_singletons;
-    static std::mutex g_mutex;
+    namespace {
+
+        /// The registry and its mutex are reached through accessors, not file-scope
+        /// objects.
+        ///
+        /// register_singleton_resetter() is called from the constructors of static
+        /// registration objects in OTHER translation units (the convention documented in
+        /// the header is to register from the singleton's own TU). Those constructors can
+        /// run before this one does, and a std::map that has not been constructed yet is
+        /// not an empty map -- inserting into it dereferences an uninitialised tree.
+        /// Measured: registering one cache from src/cuda/distributed/matmul.cu crashed
+        /// every nova-tests invocation inside std::_Rb_tree_decrement before main() ran,
+        /// which also broke gtest test discovery and so the build itself.
+        ///
+        /// Function-local statics are constructed on first use, so whichever order the
+        /// translation units initialise in, the registry exists before it is touched.
+        std::map<std::string, std::function<void()>>& singleton_registry() {
+            static auto* registry = new std::map<std::string, std::function<void()>>();
+            return *registry;
+        }
+
+        std::mutex& singleton_registry_mutex() {
+            static auto* mutex = new std::mutex();
+            return *mutex;
+        }
+
+    }  // namespace
 
     class CUDATestIsolationContext : public TestIsolationContext {
     public:
@@ -64,8 +89,8 @@ namespace cuda::testing {
     }
 
     void register_singleton_resetter(const char* name, std::function<void()> resetter) {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        g_singletons[name] = resetter;
+        std::lock_guard<std::mutex> lock(singleton_registry_mutex());
+        singleton_registry()[name] = std::move(resetter);
     }
 
     namespace {
@@ -98,15 +123,16 @@ namespace cuda::testing {
     void reset_all_singletons() {
         // Copy the callbacks out and release the lock before running any of them.
         //
-        // Calling them under g_mutex meant a resetter that reaches back into the registry —
+        // Calling them under the registry mutex meant a resetter that reaches back into the registry —
         // registering another singleton, or anything that does — would re-enter a non-recursive
         // mutex. Running user code while holding a lock that user code may need is the same
         // mistake the profiler's stop_timer made with its own mutex.
         std::vector<std::function<void()>> callbacks;
         {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            callbacks.reserve(g_singletons.size());
-            for (auto& pair : g_singletons) {
+            auto& registry = singleton_registry();
+            std::lock_guard<std::mutex> lock(singleton_registry_mutex());
+            callbacks.reserve(registry.size());
+            for (auto& pair : registry) {
                 if (pair.second) {
                     callbacks.push_back(pair.second);
                 }
@@ -119,13 +145,13 @@ namespace cuda::testing {
     }
 
     void unregister_singleton_resetter(const char* name) {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        g_singletons.erase(name);
+        std::lock_guard<std::mutex> lock(singleton_registry_mutex());
+        singleton_registry().erase(name);
     }
 
     size_t registered_singleton_count() {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        return g_singletons.size();
+        std::lock_guard<std::mutex> lock(singleton_registry_mutex());
+        return singleton_registry().size();
     }
 
     void reset_all_cuda_state() {

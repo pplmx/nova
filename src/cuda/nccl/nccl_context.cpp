@@ -8,6 +8,7 @@
 
 #include "cuda/nccl/nccl_context.h"
 #include "cuda/nccl/nccl_recovery.h"
+#include "cuda/testing/test_isolation.h"
 
 #include <algorithm>
 #include <cstring>
@@ -79,6 +80,35 @@ namespace cuda::nccl {
     NcclContext::~NcclContext() {
         destroy();
     }
+
+    namespace {
+
+        /// Releases the singleton's streams and communicators when the test harness resets
+        /// the CUDA context, so initialize() rebuilds them on the new one.
+        ///
+        /// The context owns CUDA streams per device and NCCL communicators built on them.
+        /// cudaDeviceReset() destroys the context those live on, but every value stays
+        /// non-null and every query keeps answering: measured after a reset on this host,
+        /// has_nccl() still returned true, device_count() still returned 2, and
+        /// get_stream(0) returned the *same* pointer. cudaStreamSynchronize and even
+        /// cudaStreamDestroy on it report cudaSuccess, so nothing reveals that the handle
+        /// is dead. Passing it to cuBLAS does: a freshly created handle with
+        /// cublasSetStream(stale stream) then cublasSgemm SIGSEGVs inside libcuda.
+        ///
+        /// On the suite that showed up as the second run of the multi-GPU matmul after
+        /// execute_isolated() failing with CUBLAS_STATUS_EXECUTION_FAILED, because the
+        /// stream it was handed came from the destroyed context.
+        ///
+        /// Registration belongs here, next to destroy(), per register_singleton_resetter().
+        /// destroy() is idempotent and clears broken_/initialized_, so the next
+        /// initialize() recreates everything on the current context.
+        struct NcclContextRegistration {
+            NcclContextRegistration() {
+                cuda::testing::register_singleton_resetter("NcclContext", [] { NcclContext::instance().destroy(); });
+            }
+        } g_nccl_context_registration;
+
+    }  // namespace
 
     void NcclContext::initialize() {
         initialize(NcclContextConfig {});

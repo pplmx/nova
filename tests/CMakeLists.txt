@@ -82,6 +82,7 @@ add_executable(nova-tests
     distributed/distributed_ops_test.cu
     distributed/distributed_pool_test.cu
     distributed/distributed_matmul_test.cu
+    distributed/context_reset_recovery_test.cu
     pipeline/pipeline_test.cpp
     mpi/test_mpi_context.cpp
     topology/test_topology_map.cpp

@@ -25,6 +25,7 @@
 #include "cuda/nccl/nccl_context.h"
 #include "cuda/neural/matmul.h"
 #include "cuda/device/error.h"
+#include "cuda/testing/test_isolation.h"
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -39,48 +40,69 @@ namespace cuda::distributed {
     namespace {
 
         /**
-         * @brief Get or create a cuBLAS handle for the specified device
+         * @brief Thread-safe cache of one cuBLAS handle per device
          *
-         * Thread-safe: rank threads pin to different devices on the multi-GPU path and
-         * may request their per-device handle concurrently for the first time, so the
-         * cache lookups and appends are serialized. Handles are created under a
-         * ScopedDevice, binding each to its own device's context.
-         */
-        /**
-         * @brief Process-lifetime cache of one cuBLAS handle per device
+         * Rank threads pin to different devices on the multi-GPU path and may request
+         * their per-device handle concurrently for the first time, so the lookups and
+         * appends are serialized. Handles are created under a ScopedDevice, which binds
+         * each one to its own device's context.
          *
-         * Same purpose as before -- rank threads ask for the same device's handle
-         * concurrently on the multi-GPU path -- but the vectors are now owned by an
-         * object whose destructor destroys them. As three function-local statics they
-         * were simply never released: LeakSanitizer reported the handles created here
-         * as a direct leak of 204144 bytes in 48 allocations, reached from
-         * matmul_multi_gpu().
+         * A cuBLAS handle is a child of the CUDA *context* that was current when it was
+         * created, not of the process, and it stops being usable when that context goes
+         * away -- cudaDeviceReset() here, a driver-driven context loss elsewhere. The
+         * handle value stays non-null and the runtime offers no way to tell it is dead:
          *
-         * Destruction runs at static-teardown time, which is after every use in
-         * normal execution; a handle that outlived its device context is not destroyed
-         * here, because cublasDestroy on a torn-down context is worse than the leak.
+         *     cublasCreate(&h);                      // ok
+         *     cudaDeviceReset();                     // h now points at a dead context
+         *     cublasDestroy(h);                      // SIGSEGV inside libcuda
+         *     cublasSgemm(h, ...);                   // CUBLAS_STATUS_EXECUTION_FAILED
+         *
+         * Measured on this host with a standalone programme, and on the suite both ways:
+         * a multi-GPU matmul running after execute_isolated() failed with
+         * CUBLAS_STATUS_EXECUTION_FAILED, and the process then died at exit inside
+         * cublasDestroy after reporting every test passed (exit 139).
+         *
+         * Two things follow, and the previous version had neither:
+         *
+         *  - The handles must be destroyed while their context is still alive. The
+         *    reset registry does that: it runs from reset_all_singletons(), which
+         *    execute_isolated() calls BEFORE cudaDeviceReset() precisely so singletons
+         *    can release their handles first (see docs/ci.md). release() is the hook.
+         *  - The cache must not be destroyed by a static destructor. That runs inside
+         *    __run_exit_handlers, which is exactly where cublasDestroy faulted, so the
+         *    object is intentionally leaked and the driver reclaims it at exit -- the
+         *    same trade MeshStreams and NcclContext make.
          */
         struct CublasHandleCache {
             std::vector<cublasHandle_t> handles;
             std::vector<int> devices;
             std::mutex mutex;
 
-            ~CublasHandleCache() {
+            /// Destroy every cached handle on the context it belongs to. Must run while
+            /// those contexts are alive, which is why the reset registry calls it.
+            void release() {
+                std::lock_guard<std::mutex> lock(mutex);
                 for (size_t i = 0; i < handles.size(); ++i) {
                     if (handles[i] == nullptr) {
                         continue;
                     }
-                    // Best effort: static teardown may run after the CUDA context has
-                    // gone, and a failure here must not escape a destructor.
                     (void)cudaSetDevice(devices[i]);
                     (void)cublasDestroy(handles[i]);
                 }
+                handles.clear();
+                devices.clear();
                 (void)cudaGetLastError();
             }
         };
 
+        /// Process-wide and intentionally never destroyed; see CublasHandleCache.
+        CublasHandleCache& cublas_cache() {
+            static CublasHandleCache* cache = new CublasHandleCache();
+            return *cache;
+        }
+
         cublasHandle_t get_cublas_handle_for_device(int device) {
-            static CublasHandleCache cache;
+            CublasHandleCache& cache = cublas_cache();
 
             {
                 std::lock_guard<std::mutex> lock(cache.mutex);
@@ -109,6 +131,16 @@ namespace cuda::distributed {
                 return handle;
             }
         }
+
+        /// Releases the cached handles when the test harness resets the CUDA context.
+        /// Registered here rather than in test_isolation.cpp so the registration sits
+        /// next to the state it clears, which is the convention documented on
+        /// register_singleton_resetter().
+        struct CublasCacheRegistration {
+            CublasCacheRegistration() {
+                cuda::testing::register_singleton_resetter("CublasHandleCache", [] { cublas_cache().release(); });
+            }
+        } g_cublas_cache_registration;
 
     }  // anonymous namespace
 
