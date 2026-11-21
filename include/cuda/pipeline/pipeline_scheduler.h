@@ -57,10 +57,22 @@ namespace cuda::pipeline {
 
         /**
          * @brief Construct pipeline scheduler
+         *
+         * All three counts must be positive, and they are checked here rather than trusted.
+         * Nothing validated them before and every derived value was nonsense in a different
+         * way: with num_microbatches = 0 bubble_overhead_percent() reported exactly 100%,
+         * because its numerator K - 1 equalled its denominator M + K - 1 for a pipeline that
+         * would run nothing; with num_stages negative it reported 0% because the
+         * `num_stages_ <= 1` early return swallowed it; and run() iterated `stage < -2`,
+         * doing no work while still recording the completion event and setting
+         * completed_ = true. A caller reading those numbers had no way to tell a
+         * configuration mistake from a measurement.
+         *
          * @param ctx NCCL context
-         * @param num_stages Number of pipeline stages
-         * @param num_microbatches Number of micro batches
-         * @param microbatch_size Samples per microbatch
+         * @param num_stages Number of pipeline stages; must be positive
+         * @param num_microbatches Number of micro batches; must be positive
+         * @param microbatch_size Samples per microbatch; must be positive
+         * @throws std::invalid_argument if any count is not positive
          */
         PipelineScheduler(::cuda::nccl::NcclContext& ctx, int num_stages, int num_microbatches, int microbatch_size);
 

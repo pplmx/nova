@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 
 namespace cuda::pipeline {
 
@@ -17,6 +19,20 @@ namespace cuda::pipeline {
           num_microbatches_(num_microbatches),
           microbatch_size_(microbatch_size),
           schedule_type_(ScheduleType::OneForwardOneBackward) {
+        // Every derived value here depends on these being positive. Nothing checked them, and
+        // each bad combination produced a confident wrong number rather than an error:
+        // num_microbatches = 0 gave a 100% bubble estimate for a pipeline that runs nothing,
+        // and a negative num_stages slipped through bubble_overhead_percent()'s early return
+        // as 0% while run() iterated over an empty range and still reported completion.
+        if (num_stages <= 0) {
+            throw std::invalid_argument("PipelineScheduler: num_stages must be positive, got " + std::to_string(num_stages));
+        }
+        if (num_microbatches <= 0) {
+            throw std::invalid_argument("PipelineScheduler: num_microbatches must be positive, got " + std::to_string(num_microbatches));
+        }
+        if (microbatch_size <= 0) {
+            throw std::invalid_argument("PipelineScheduler: microbatch_size must be positive, got " + std::to_string(microbatch_size));
+        }
         CUDA_CHECK(cudaEventCreate(&completion_event_));
     }
 
