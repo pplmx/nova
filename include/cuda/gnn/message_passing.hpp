@@ -65,26 +65,92 @@ namespace nova {
 
             /**
              * @brief GCN-style aggregation
+             *
+             * Computes, for each node i:
+             *
+             *     output[i] = sum over neighbours j of node_features[j]
+             *                 / sqrt(degree(i) + 1)
+             *
+             * Two things distinguish this from the normalised adjacency GCN is usually
+             * introduced with (Kipf & Welling, D^-1/2 (A + I) D^-1/2):
+             *
+             *  - The divisor is the RECEIVING node's degree only. The symmetric form also
+             *    divides by the sender's, so an edge carries the same weight in both
+             *    directions. Here it does not: measured on a 3-node graph where node 0 has
+             *    degree 2 and node 1 has degree 1, an impulse at node 1 reaches node 0 with
+             *    weight 0.577350, while the same impulse reversed reaches node 1 with
+             *    0.707107.
+             *  - There is no self-loop. A node with degree 0 aggregates nothing and returns
+             *    0, discarding its own feature; the (A + I) form would return the feature
+             *    unchanged. Measured with two isolated nodes holding 7 and -3: both outputs
+             *    are 0.
+             *
+             * The `+ 1` in the divisor is a damping term, not a self-loop: it shrinks the
+             * contribution of high-degree nodes without adding the node's own feature.
+             *
+             * This is stated rather than changed because the behaviour is defined, tested and
+             * consistent; a caller that needs true GCN normalisation should normalise the
+             * CSR matrix itself (scale each entry by 1/sqrt(deg_i deg_j)) and add the
+             * diagonal before calling.
+             *
              * @param graph Adjacency matrix
-             * @param node_features Input node features
-             * @param[out] output Aggregated features
+             * @param node_features Input node features, one per node
+             * @param[out] output Aggregated features, one per node
              */
             void gcn_aggregate(const sparse::SparseMatrixCSR<float>& graph, const float* node_features, float* output);
 
             /**
              * @brief GCN-style propagation
+             *
+             * Applies gcn_aggregate() @p hops times. hops=0 copies the input through
+             * unchanged, and a negative count throws. See gcn_aggregate() for the
+             * normalisation this uses at each step.
+             *
              * @param graph Adjacency matrix
-             * @param node_features Input node features
-             * @param[out] output Output features
+             * @param node_features Input node features, one per node
+             * @param[out] output Output features, one per node
+             * @param hops Number of aggregation rounds; must not be negative
              */
             void gcn_propagate(const sparse::SparseMatrixCSR<float>& graph, const float* node_features, float* output, int hops = 1);
 
         private:
             MessageFunction message_fn_;
             AggregateFunction aggregate_fn_;
+
+            /// Rejects a graph whose column indices do not name an existing node.
+            ///
+            /// Every entry point indexes node_features with the graph's column index, so a
+            /// column at or past num_rows() reads outside the caller's buffer. Measured under
+            /// ASan with a 2-node graph whose single entry points at column 5 and a feature
+            /// buffer of exactly num_rows() floats, as documented: stack-buffer-overflow in
+            /// gcn_aggregate. forward() has the same read.
+            ///
+            /// This is the same defect GraphAttention::forward had, fixed there by checking
+            /// up front; these three call sites were missed at the time.
+            static void require_columns_within_nodes(const sparse::SparseMatrixCSR<float>& graph);
         };
 
+        inline void MessagePassing::require_columns_within_nodes(const sparse::SparseMatrixCSR<float>& graph) {
+            const int num_nodes = graph.num_rows();
+            for (int node = 0; node < num_nodes; ++node) {
+                const int begin = graph.row_offsets()[node];
+                const int end = graph.row_offsets()[node + 1];
+                for (int idx = begin; idx < end; ++idx) {
+                    const int neighbor = graph.col_indices()[idx];
+                    if (neighbor < 0 || neighbor >= num_nodes) {
+                        throw std::out_of_range("MessagePassing: row " + std::to_string(node) + " references column " + std::to_string(neighbor) + ", outside [0, "
+                                                + std::to_string(num_nodes) + ")");
+                    }
+                }
+            }
+        }
+
         inline void MessagePassing::forward(const sparse::SparseMatrixCSR<float>& graph, const float* node_features, float* output) {
+            if (node_features == nullptr || output == nullptr) {
+                throw std::invalid_argument("MessagePassing::forward: node_features and output must not be null");
+            }
+            require_columns_within_nodes(graph);
+
             int num_nodes = graph.num_rows();
 
             for (int i = 0; i < num_nodes; ++i) {
@@ -118,6 +184,11 @@ namespace nova {
         }
 
         inline void MessagePassing::gcn_aggregate(const sparse::SparseMatrixCSR<float>& graph, const float* node_features, float* output) {
+            if (node_features == nullptr || output == nullptr) {
+                throw std::invalid_argument("MessagePassing::gcn_aggregate: node_features and output must not be null");
+            }
+            require_columns_within_nodes(graph);
+
             int num_nodes = graph.num_rows();
 
             for (int i = 0; i < num_nodes; ++i) {
@@ -140,9 +211,15 @@ namespace nova {
             // (2.886751 2.309401 1.732051 on the 3-node ring). A caller asking for no
             // propagation got one, and a caller whose hop count went negative from a counted
             // loop got one as well instead of an error.
+            if (node_features == nullptr || output == nullptr) {
+                throw std::invalid_argument("MessagePassing::gcn_propagate: node_features and output must not be null");
+            }
             if (hops < 0) {
                 throw std::invalid_argument("MessagePassing::gcn_propagate: hops must not be negative, got " + std::to_string(hops));
             }
+            // Checked once here rather than once per hop: gcn_aggregate re-checks, but the
+            // graph does not change between iterations.
+            require_columns_within_nodes(graph);
             if (hops == 0) {
                 std::copy(node_features, node_features + graph.num_rows(), output);
                 return;

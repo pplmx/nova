@@ -285,3 +285,151 @@ TEST_F(GNNTest, PropagationAtOneHopActuallyAggregates) {
     // And it differs from the input, which is what hops=0 must not do.
     EXPECT_NE(output[0], features[0]);
 }
+
+// ---------------------------------------------------------------------------
+// The aggregation's documented formula, pinned by value.
+//
+// gcn_aggregate is NOT the symmetric D^-1/2 (A+I) D^-1/2 normalisation that GCN is usually
+// introduced with. It divides by the receiving node's degree only and adds no self-loop, and
+// the header now says so. These cases lock in what it actually does, so a later change to the
+// arithmetic is a deliberate decision rather than a silent one.
+// ---------------------------------------------------------------------------
+
+// output[i] = sum(neighbours of i) / sqrt(degree(i) + 1).
+// The 3-node ring has degree 2 everywhere, so the divisor is sqrt(3) for all three nodes.
+TEST_F(GNNTest, GCNAggregationDividesByTheReceivingNodesDegreeOnly) {
+    auto graph = create_test_graph();
+    std::vector<float> features = {1.0f, 2.0f, 3.0f};
+    std::vector<float> output(3, 0.0f);
+
+    MessagePassing mp;
+    mp.gcn_aggregate(graph, features.data(), output.data());
+
+    const float divisor = std::sqrt(3.0f);
+    EXPECT_NEAR(output[0], (2.0f + 3.0f) / divisor, 1e-5f);  // neighbours of 0 are 1 and 2
+    EXPECT_NEAR(output[1], (3.0f + 1.0f) / divisor, 1e-5f);  // neighbours of 1 are 2 and 0
+    EXPECT_NEAR(output[2], (1.0f + 2.0f) / divisor, 1e-5f);  // neighbours of 2 are 0 and 1
+}
+
+// The divisor uses the receiving node's degree, not the sender's, so an edge is not
+// symmetric: the same impulse carries a different weight in each direction.
+TEST_F(GNNTest, GCNAggregationIsNotSymmetricAcrossAnEdge) {
+    // node 0 <-> node 1, node 0 <-> node 2. Degrees: 2, 1, 1.
+    nova::sparse::SparseMatrixCSR<float> graph({1.0f, 1.0f, 1.0f}, {0, 2, 3, 3}, {1, 2, 0}, 3, 3);
+
+    MessagePassing mp;
+    std::vector<float> into_zero = {0.0f, 1.0f, 0.0f};  // impulse at node 1
+    std::vector<float> output_a(3, 0.0f);
+    mp.gcn_aggregate(graph, into_zero.data(), output_a.data());
+
+    std::vector<float> into_one = {1.0f, 0.0f, 0.0f};  // impulse at node 0
+    std::vector<float> output_b(3, 0.0f);
+    mp.gcn_aggregate(graph, into_one.data(), output_b.data());
+
+    EXPECT_NEAR(output_a[0], 1.0f / std::sqrt(3.0f), 1e-5f) << "node 0 has degree 2, so the divisor is sqrt(3)";
+    EXPECT_NEAR(output_b[1], 1.0f / std::sqrt(2.0f), 1e-5f) << "node 1 has degree 1, so the divisor is sqrt(2)";
+    EXPECT_NE(output_a[0], output_b[1]) << "the edge weight differs by direction; that is what 'not symmetric' means here";
+}
+
+// No self-loop: a node with no neighbours aggregates nothing and loses its own feature.
+// The (A + I) form would return the feature unchanged, so this case pins the difference.
+TEST_F(GNNTest, GCNAggregationDiscardsTheFeatureOfAnIsolatedNode) {
+    nova::sparse::SparseMatrixCSR<float> graph({1.0f}, {0, 0, 0}, {0}, 2, 2);  // no edges at all
+    std::vector<float> features = {7.0f, -3.0f};
+    std::vector<float> output = {-1.0f, -1.0f};
+
+    MessagePassing mp;
+    mp.gcn_aggregate(graph, features.data(), output.data());
+
+    EXPECT_FLOAT_EQ(output[0], 0.0f) << "an isolated node has nothing to aggregate and no self-loop to fall back on";
+    EXPECT_FLOAT_EQ(output[1], 0.0f);
+}
+
+// The first hop's values are the aggregate of the input, and they are exactly the numbers
+// quoted in the header's explanation of the formula.
+TEST_F(GNNTest, GCNPropagationOneHopMatchesTheDocumentedValues) {
+    auto graph = create_test_graph();
+    std::vector<float> features = {1.0f, 2.0f, 3.0f};
+    std::vector<float> output(3, 0.0f);
+
+    MessagePassing mp;
+    mp.gcn_propagate(graph, features.data(), output.data(), 1);
+
+    EXPECT_NEAR(output[0], 2.8867514f, 1e-5f);
+    EXPECT_NEAR(output[1], 2.3094010f, 1e-5f);
+    EXPECT_NEAR(output[2], 1.7320508f, 1e-5f);
+}
+
+// ---------------------------------------------------------------------------
+// The same out-of-range column defect GraphAttention had, in MessagePassing.
+// All three entry points index node_features with the graph's column index.
+// ASan with a 2-node graph whose entry points at column 5 and a feature buffer
+// of exactly num_rows() floats: stack-buffer-overflow.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+    // Two nodes, one entry pointing at a column that does not exist.
+    nova::sparse::SparseMatrixCSR<float> graph_with_a_missing_column() {
+        return nova::sparse::SparseMatrixCSR<float>({1.0f}, {0, 1, 1}, {5}, 2, 2);
+    }
+
+}  // namespace
+
+TEST_F(GNNTest, GenericForwardRejectsAColumnIndexOutsideTheNodes) {
+    auto graph = graph_with_a_missing_column();
+    std::vector<float> features = {1.0f, 1.0f};
+    std::vector<float> output(2, 0.0f);
+
+    MessagePassing mp;
+    EXPECT_THROW(mp.forward(graph, features.data(), output.data()), std::out_of_range);
+}
+
+TEST_F(GNNTest, GCNAggregationRejectsAColumnIndexOutsideTheNodes) {
+    auto graph = graph_with_a_missing_column();
+    std::vector<float> features = {1.0f, 1.0f};
+    std::vector<float> output(2, 0.0f);
+
+    MessagePassing mp;
+    EXPECT_THROW(mp.gcn_aggregate(graph, features.data(), output.data()), std::out_of_range);
+}
+
+TEST_F(GNNTest, GCNPropagationRejectsAColumnIndexOutsideTheNodes) {
+    auto graph = graph_with_a_missing_column();
+    std::vector<float> features = {1.0f, 1.0f};
+    std::vector<float> output(2, 0.0f);
+
+    MessagePassing mp;
+    // Also at hops=0: the check must not depend on the aggregate path being taken.
+    EXPECT_THROW(mp.gcn_propagate(graph, features.data(), output.data(), 0), std::out_of_range);
+    EXPECT_THROW(mp.gcn_propagate(graph, features.data(), output.data(), 2), std::out_of_range);
+}
+
+// The guard must not reject an ordinary rectangular matrix whose columns are simply fewer
+// than its rows, and it must not reject a graph with no edges.
+TEST_F(GNNTest, MessagePassingAcceptsValidGraphs) {
+    nova::sparse::SparseMatrixCSR<float> rectangular({1.0f, 1.0f}, {0, 1, 2}, {0, 1}, 2, 2);
+    std::vector<float> features = {1.0f, 2.0f};
+    std::vector<float> output(2, 0.0f);
+
+    MessagePassing mp;
+    EXPECT_NO_THROW(mp.forward(rectangular, features.data(), output.data()));
+    EXPECT_NO_THROW(mp.gcn_aggregate(rectangular, features.data(), output.data()));
+
+    nova::sparse::SparseMatrixCSR<float> empty({1.0f}, {0, 0, 0}, {0}, 2, 2);
+    EXPECT_NO_THROW(mp.forward(empty, features.data(), output.data()));
+    EXPECT_NO_THROW(mp.gcn_aggregate(empty, features.data(), output.data()));
+}
+
+// Null inputs are rejected rather than dereferenced, consistently with GraphAttention.
+TEST_F(GNNTest, MessagePassingRejectsNullPointers) {
+    auto graph = create_test_graph();
+    std::vector<float> features = {1.0f, 2.0f, 3.0f};
+    std::vector<float> output(3, 0.0f);
+
+    MessagePassing mp;
+    EXPECT_THROW(mp.forward(graph, nullptr, output.data()), std::invalid_argument);
+    EXPECT_THROW(mp.forward(graph, features.data(), nullptr), std::invalid_argument);
+    EXPECT_THROW(mp.gcn_aggregate(graph, nullptr, output.data()), std::invalid_argument);
+    EXPECT_THROW(mp.gcn_propagate(graph, nullptr, output.data(), 1), std::invalid_argument);
+}
