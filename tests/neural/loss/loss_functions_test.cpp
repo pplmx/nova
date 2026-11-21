@@ -486,4 +486,78 @@ namespace cuda::neural::loss::test {
         EXPECT_LT(dev, 9.0f);
     }
 
+    // Regression: cross_entropy_loss_device() checked batch_size and num_classes but never the
+    // targets, which it uses as an index into the row (row[t]). The host cross_entropy_loss()
+    // validates exactly this ("target 99 at index 2 is outside [0, 3)"), so the same inputs
+    // that threw on the host returned a plausible-looking loss from the device entry point.
+    // Measured before the fix: batch 4, C 3, targets {0, 1, 99, 0} gave 1.223612 with
+    // cudaDeviceSynchronize returning cudaSuccess, where an in-range batch gives 1.098612.
+    //
+    // The read is out of bounds: row[99] on a 3-class row. It is not reliably a crash, which is
+    // what makes it worth pinning -- the loss looks like a measurement.
+    TEST_F(LossFunctionsTest, DeviceCrossEntropyRejectsOutOfRangeTargets) {
+        const int batch = 4;
+        const int C = 3;
+        CrossEntropyConfig config;
+        config.num_classes = C;
+
+        std::vector<float> logits(static_cast<size_t>(batch) * C, 0.5f);
+
+        // Each case: one target outside [0, C) at a different position, plus the two ways it can
+        // be outside (too large, negative).
+        const std::vector<std::vector<int>> bad_targets = {
+            {0, 1, 99, 0},  // too large, in the middle
+            {0, 1, C, 0},   // exactly one past the last valid class
+            {-1, 1, 2, 0},  // negative, first row
+            {0, 1, 2, -7},  // negative, last row
+        };
+
+        for (const auto& targets : bad_targets) {
+            cuda::memory::Buffer<float> d_logits(logits.size());
+            cuda::memory::Buffer<int> d_targets(targets.size());
+            cuda::memory::Buffer<float> d_loss(1);
+            d_logits.copy_from(logits.data(), logits.size());
+            d_targets.copy_from(targets.data(), targets.size());
+
+            EXPECT_THROW(cross_entropy_loss_device(d_logits.data(), d_targets.data(), d_loss.data(), batch, C, config, stream_), std::invalid_argument)
+                << "targets with an out-of-range class must be rejected, not used as an index";
+            // Leave the device clean for the next case regardless of the outcome.
+            (void)cudaStreamSynchronize(stream_);
+            (void)cudaGetLastError();
+        }
+
+        // The same batch with in-range targets still works and still gives the exact value.
+        std::vector<int> good {0, 1, 2, 0};
+        cuda::memory::Buffer<float> d_logits(logits.size());
+        cuda::memory::Buffer<int> d_targets(good.size());
+        cuda::memory::Buffer<float> d_loss(1);
+        d_logits.copy_from(logits.data(), logits.size());
+        d_targets.copy_from(good.data(), good.size());
+        EXPECT_NO_THROW(cross_entropy_loss_device(d_logits.data(), d_targets.data(), d_loss.data(), batch, C, config, stream_));
+        float dev = 0.0f;
+        d_loss.copy_to(&dev, 1);
+        // Uniform 0.5 logits over 3 classes: every target has loss ln(3).
+        EXPECT_NEAR(dev, 1.0986123f, 1e-4f) << "the validation must not disturb the valid path";
+    }
+
+    // accuracy_device() shares the unchecked index: it compares targets[b] against an argmax,
+    // so an out-of-range class silently counted the row as wrong instead of being reported.
+    TEST_F(LossFunctionsTest, DeviceAccuracyRejectsOutOfRangeTargets) {
+        const int batch = 4;
+        const int C = 3;
+
+        std::vector<float> logits(static_cast<size_t>(batch) * C, 0.5f);
+        std::vector<int> targets {0, 1, 2, 99};
+
+        cuda::memory::Buffer<float> d_logits(logits.size());
+        cuda::memory::Buffer<int> d_targets(targets.size());
+        cuda::memory::Buffer<float> d_correct(1);
+        d_logits.copy_from(logits.data(), logits.size());
+        d_targets.copy_from(targets.data(), targets.size());
+
+        EXPECT_THROW(accuracy_device(d_logits.data(), d_targets.data(), d_correct.data(), batch, C, stream_), std::invalid_argument);
+        (void)cudaStreamSynchronize(stream_);
+        (void)cudaGetLastError();
+    }
+
 }  // namespace cuda::neural::loss::test

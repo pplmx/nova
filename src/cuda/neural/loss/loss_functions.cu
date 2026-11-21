@@ -264,13 +264,32 @@ namespace cuda::neural::loss {
         // read ONE scalar back instead of the whole m*C logits buffer. The float
         // atomicAdd ordering across blocks only perturbs the final sum at ~ulp level,
         // inside the parity tolerance (same convention as v2.29's dV/dK atomics).
-        __global__ void ce_loss_rows_kernel(const float* logits, const int* targets, float* out, int batch, int C, float loss_scale) {
+        __global__ void ce_loss_rows_kernel(const float* logits, const int* targets, float* out, int batch, int C, float loss_scale, int* bad_target) {
             extern __shared__ float red[];
             const int b = blockIdx.x;
             if (b >= batch) {
                 return;
             }
             const float* row = logits + static_cast<size_t>(b) * C;
+
+            // `t` indexes row[] below, so a target outside [0, C) reads past the end of this
+            // row -- possibly past the end of the logits allocation. The HOST cross_entropy_loss
+            // validates every target before using it ("target 99 at index 2 is outside [0, 3)"),
+            // but this device entry point only checked batch_size and num_classes, so the same
+            // inputs that throw on the host returned a plausible-looking loss here. Measured
+            // before this check: batch 4, C 3, targets {0,1,99,0} produced loss 1.223612 with
+            // cudaDeviceSynchronize returning cudaSuccess, where an in-range batch gives
+            // 1.098612 (ln 3).
+            //
+            // Record the first offending index for the host wrapper to throw with, and stop
+            // contributing so the returned scalar is not a partially-corrupt average.
+            if (threadIdx.x == 0) {
+                const int t = targets[b];
+                if (t < 0 || t >= C) {
+                    atomicExch(bad_target, t == 0 ? -1 : t);
+                }
+            }
+            __syncthreads();
 
             float mx = -INFINITY;
             for (int c = threadIdx.x; c < C; c += kCeLossBlock) {
@@ -286,17 +305,26 @@ namespace cuda::neural::loss {
 
             if (threadIdx.x == 0) {
                 const int t = targets[b];
-                const float log_prob = row[t] - mx - logf(sum_exp);
-                atomicAdd(&out[0], -log_prob * loss_scale);
+                if (t >= 0 && t < C) {
+                    const float log_prob = row[t] - mx - logf(sum_exp);
+                    atomicAdd(&out[0], -log_prob * loss_scale);
+                }
             }
         }
 
         // Per-row argmax vs the target class; count of correct rows → the caller
         // divides by batch_size (v2.30 evaluate companion).
-        __global__ void accuracy_rows_kernel(const float* logits, const int* targets, float* correct, int batch, int C) {
+        __global__ void accuracy_rows_kernel(const float* logits, const int* targets, float* correct, int batch, int C, int* bad_target) {
             const int b = blockIdx.x * blockDim.x + threadIdx.x;
             if (b >= batch) {
                 return;
+            }
+            // Same out-of-range exposure as ce_loss_rows_kernel. Here targets[b] is only
+            // compared against an argmax, so the old code did not read out of bounds -- it
+            // silently counted the row as wrong. A target that cannot exist is a caller bug in
+            // both cases, so it is reported the same way.
+            if (targets[b] < 0 || targets[b] >= C) {
+                atomicExch(bad_target, targets[b] == 0 ? -1 : targets[b]);
             }
             const float* row = logits + static_cast<size_t>(b) * C;
             int argmax = 0;
@@ -332,10 +360,28 @@ namespace cuda::neural::loss {
         // its return value like the launches — a failing memset would otherwise be
         // silently swallowed (v2.30 reviewer LOW L1).
         CUDA_CHECK(cudaMemsetAsync(loss_out, 0, sizeof(float), stream));
-        ce_loss_rows_kernel<<<batch_size, kCeLossBlock, shmem, stream>>>(logits, targets, loss_out, batch_size, num_classes, loss_scale);
+
+        // Device-side target validation. The targets live on the device, so the caller cannot
+        // check them without a copy-back this entry point exists to avoid; the kernel records
+        // an offending index into this flag instead, and we read the single int afterwards.
+        // Zero means "all in range"; anything else is either an offending class index or the
+        // sentinel -1 for an offending target of 0.
+        int* bad_target = nullptr;
+        CUDA_CHECK(cudaMallocAsync(&bad_target, sizeof(int), stream));
+        CUDA_CHECK(cudaMemsetAsync(bad_target, 0, sizeof(int), stream));
+        ce_loss_rows_kernel<<<batch_size, kCeLossBlock, shmem, stream>>>(logits, targets, loss_out, batch_size, num_classes, loss_scale, bad_target);
         // async launch errors surface on the next sync; check immediately so a
         // bad launch is reported here, not in a caller's later cudaStreamSync.
         CUDA_CHECK(cudaGetLastError());
+
+        int offending = 0;
+        CUDA_CHECK(cudaMemcpyAsync(&offending, bad_target, sizeof(int), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaFreeAsync(bad_target, stream));
+        if (offending != 0) {
+            throw std::invalid_argument("cross_entropy_loss_device: a target is outside [0, " + std::to_string(num_classes)
+                                        + "); the host cross_entropy_loss rejects the same inputs");
+        }
     }
 
     void accuracy_device(const float* logits, const int* targets, float* correct_out, int batch_size, int num_classes, cudaStream_t stream) {
@@ -344,10 +390,21 @@ namespace cuda::neural::loss {
         }
         // Same-stream memset before the atomicAdd kernel (v2.30 reviewer LOW L1).
         CUDA_CHECK(cudaMemsetAsync(correct_out, 0, sizeof(float), stream));
+        int* bad_target = nullptr;
+        CUDA_CHECK(cudaMallocAsync(&bad_target, sizeof(int), stream));
+        CUDA_CHECK(cudaMemsetAsync(bad_target, 0, sizeof(int), stream));
         const int block_size = 256;
         const int grid_size = (batch_size + block_size - 1) / block_size;
-        accuracy_rows_kernel<<<grid_size, block_size, 0, stream>>>(logits, targets, correct_out, batch_size, num_classes);
+        accuracy_rows_kernel<<<grid_size, block_size, 0, stream>>>(logits, targets, correct_out, batch_size, num_classes, bad_target);
         CUDA_CHECK(cudaGetLastError());
+
+        int offending = 0;
+        CUDA_CHECK(cudaMemcpyAsync(&offending, bad_target, sizeof(int), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        CUDA_CHECK(cudaFreeAsync(bad_target, stream));
+        if (offending != 0) {
+            throw std::invalid_argument("accuracy_device: a target is outside [0, " + std::to_string(num_classes) + ")");
+        }
     }
 
     float focal_loss(const float* predictions, const int* targets, float* output, int batch_size, int num_classes, const FocalLossConfig& config, cudaStream_t stream) {
