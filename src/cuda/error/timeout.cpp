@@ -103,6 +103,11 @@ namespace nova::error {
         return std::chrono::steady_clock::now() > it->second.deadline;
     }
 
+    bool timeout_manager::is_tracked(operation_id id) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return operations_.find(id) != operations_.end();
+    }
+
     bool timeout_manager::is_cancelled(operation_id id) const {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = operations_.find(id);

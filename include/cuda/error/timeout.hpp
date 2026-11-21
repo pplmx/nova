@@ -243,9 +243,18 @@ namespace nova::error {
 
         /**
          * @brief Start tracking a new operation
+         *
          * @param name Operation name for logging
          * @param timeout Timeout duration
-         * @return Unique operation ID
+         * @return A unique non-zero operation ID, or 0 when the manager is already tracking
+         *         max_concurrent_operations operations and refused this one.
+         *
+         * A refused operation is NOT tracked: is_expired() reports false forever and
+         * get_remaining() reports zero, so the two queries that look like a timeout signal
+         * give contradictory answers about an operation that does not exist. Callers must
+         * check the returned ID against 0 before treating either answer as a fact. (Use
+         * timeout_guard or timeout_context for RAII tracking, which preserve the distinction
+         * through is_tracked().)
          */
         [[nodiscard]] operation_id start_operation(std::string_view name, std::chrono::milliseconds timeout);
 
@@ -262,14 +271,35 @@ namespace nova::error {
         /** @brief End tracking an operation (success or permanent failure) */
         void end_operation(operation_id id);
 
-        /** @brief Get remaining time for an operation */
+        /**
+         * @brief Get remaining time for an operation
+         *
+         * Zero means either "the deadline has passed" or "this ID is not tracked"; use
+         * is_tracked() to tell the two apart.
+         */
         [[nodiscard]] std::chrono::milliseconds get_remaining(operation_id id) const;
 
-        /** @brief Check if an operation has expired */
+        /** @brief Check if an operation has expired. False for an untracked ID. */
         [[nodiscard]] bool is_expired(operation_id id) const;
 
-        /** @brief Check if an operation was cancelled */
+        /**
+         * @brief Check if an operation was cancelled
+         *
+         * True for an untracked ID, since an operation that is not running cannot proceed.
+         * That makes it the one query that reports a refusal as a stop signal rather than as
+         * "still fine"; is_tracked() is the query that reports it as a refusal.
+         */
         [[nodiscard]] bool is_cancelled(operation_id id) const;
+
+        /**
+         * @brief Whether this ID names an operation the manager is currently tracking.
+         *
+         * The distinction the other three queries cannot express: they answer about a MISSING
+         * operation with ordinary-looking values (is_expired false, remaining zero), which a
+         * caller cannot separate from a live operation that still has time or has run out.
+         * False for the 0 returned when start_operation() refuses.
+         */
+        [[nodiscard]] bool is_tracked(operation_id id) const;
 
         /** @brief Set callback for timeout notifications */
         void set_callback(timeout_callback cb);

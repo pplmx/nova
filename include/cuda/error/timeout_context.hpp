@@ -51,19 +51,34 @@ namespace nova::error {
 
         /**
          * @brief Get the operation ID
-         * @return Unique operation identifier
+         * @return Operation identifier, or 0 if the manager refused to track this context
          */
         [[nodiscard]] operation_id id() const noexcept { return id_; }
 
         /**
+         * @brief Whether the manager is actually tracking this context
+         *
+         * False when start_operation() refused for hitting max_concurrent_operations. A
+         * refused context still answers is_expired() and remaining(); it answers them about an
+         * operation that does not exist, so they are meaningless rather than wrong. Check this
+         * before acting on either.
+         */
+        [[nodiscard]] bool is_tracked() const;
+
+        /**
          * @brief Check if deadline has passed
-         * @return true if current time exceeds effective deadline
+         * @return true if current time exceeds effective deadline; false if this context is
+         *         not tracked at all, which reads as "time remains" and must not be trusted
+         *         without is_tracked()
          */
         [[nodiscard]] bool is_expired() const;
 
         /**
          * @brief Get remaining time until deadline
-         * @return Remaining duration (negative if expired)
+         *
+         * Clamped at zero: an expired context reports 0, not a negative remainder. Use
+         * is_expired() to distinguish "expired" from "just under a millisecond left", and
+         * is_tracked() to distinguish both from "not being tracked".
          */
         [[nodiscard]] std::chrono::milliseconds remaining() const;
 

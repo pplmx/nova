@@ -5,6 +5,7 @@
 #include <thread>
 #include <cuda_runtime.h>
 #include "cuda/error/timeout.hpp"
+#include "cuda/error/timeout_context.hpp"
 
 using namespace nova::error;
 
@@ -292,4 +293,60 @@ TEST_F(TimeoutTest, ConcurrentOperationsAreHandled) {
     }
 
     EXPECT_EQ(manager.active_count(), 0u);
+}
+
+// start_operation() returns 0 when the manager is already at max_concurrent_operations. The
+// header said only "@return Unique operation ID", so a caller could not know 0 was a refusal,
+// and the queries it would naturally use to find out answer about an operation that does not
+// exist:
+//
+//     is_expired(0)    = false   -> "you have all the time in the world"
+//     is_cancelled(0)  = true    -> "you must stop"
+//     get_remaining(0) = 0 ms    -> "you are out of time"
+//
+// Three queries, two of them contradicting each other, none of them saying "this is not
+// tracked". is_tracked() answers that question directly.
+TEST_F(TimeoutTest, RefusedOperationIsReportedAsUntracked) {
+    auto& manager = timeout_manager::instance();
+    timeout_config config;
+    config.max_concurrent_operations = 1;
+    manager.set_config(config);
+
+    const auto live = manager.start_operation("live", std::chrono::seconds(60));
+    ASSERT_NE(live, 0u) << "the first operation must be tracked";
+    const auto refused = manager.start_operation("refused", std::chrono::seconds(60));
+
+    EXPECT_EQ(refused, 0u) << "at the cap the manager must report the refusal as id 0";
+    EXPECT_NE(refused, live);
+
+    // The distinction the other queries cannot make.
+    EXPECT_TRUE(manager.is_tracked(live));
+    EXPECT_FALSE(manager.is_tracked(refused));
+
+    // And the answers a caller might mistake for a timeout signal.
+    EXPECT_FALSE(manager.is_expired(refused)) << "an untracked id must not claim to have timed out";
+    EXPECT_EQ(manager.get_remaining(refused), std::chrono::milliseconds {0});
+    EXPECT_TRUE(manager.is_cancelled(refused)) << "an operation that never started cannot proceed";
+
+    manager.end_operation(live);
+    EXPECT_FALSE(manager.is_tracked(live)) << "a finished operation is no longer tracked";
+    manager.set_config(timeout_config {});
+}
+
+// timeout_context surfaces the same distinction, because the refusal happens inside its
+// constructor and a caller holding one has no other way to find out.
+TEST_F(TimeoutTest, TimeoutContextReportsWhetherItWasTracked) {
+    timeout_manager& manager = timeout_manager::instance();
+    timeout_config config;
+    config.max_concurrent_operations = 1;
+    manager.set_config(config);
+
+    timeout_context live(nullptr, std::chrono::seconds(60), "live");
+    ASSERT_TRUE(live.is_tracked());
+
+    timeout_context refused(nullptr, std::chrono::seconds(60), "refused");
+    EXPECT_FALSE(refused.is_tracked()) << "the manager was at its cap, so this was never registered";
+    EXPECT_EQ(refused.id(), 0u);
+
+    manager.set_config(timeout_config {});
 }

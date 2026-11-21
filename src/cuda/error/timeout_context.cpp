@@ -16,6 +16,10 @@ namespace nova::error {
         timeout_manager::instance().end_operation(id_);
     }
 
+    bool timeout_context::is_tracked() const {
+        return timeout_manager::instance().is_tracked(id_);
+    }
+
     bool timeout_context::is_expired() const {
         return timeout_manager::instance().is_expired(id_);
     }
