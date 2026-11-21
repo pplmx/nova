@@ -20,9 +20,17 @@ namespace cuda::memory {
 
     struct DevicePoolMetrics {
         int device_id = -1;
+        /// Bytes this pool has handed out on the device.
         size_t allocated_bytes = 0;
+        /// Room this pool could still hand out: the device's free memory plus what this pool
+        /// already holds itself. It cannot reclaim another owner's blocks, so this is not the
+        /// device's free memory.
         size_t available_bytes = 0;
+        /// Device memory total, as reported by the driver.
         size_t total_memory = 0;
+        /// Device memory free, as reported by the driver. Every figure derived from this
+        /// struct used to come from total minus this pool's own allocations, which overstates
+        /// free memory by whatever other tenants on the device are holding.
         size_t free_memory = 0;
         int num_allocations = 0;
         MemoryPool::PoolMetrics local_metrics;
@@ -49,7 +57,8 @@ namespace cuda::memory {
         // MGPU-09: Per-device allocation
         void* allocate(size_t bytes, int device_id, int stream_id = -1);
 
-        // MGPU-10: Auto-allocation (selects device with most free memory)
+        /// Auto-allocation on the device with the most FREE memory, as the driver reports it.
+        /// Falls back to device 0 when Config::enable_auto_allocation is false.
         void* allocate_auto(size_t bytes, int stream_id = -1);
 
         // MGPU-11: Ownership tracking - deallocate handles cross-device correctly
@@ -68,7 +77,11 @@ namespace cuda::memory {
         // Device count
         int device_count() const { return static_cast<int>(pools_.size()); }
 
-        // Get best device for allocation (most free memory)
+        /// Device with the most free memory, as reported by cudaMemGetInfo.
+        ///
+        /// Queried live: free memory changes as every process on the machine allocates. The
+        /// previous implementation ranked devices by total minus this pool's own allocations,
+        /// which ignores other tenants and sent every auto-allocation to the busiest device.
         int get_best_device() const;
 
         // Single-GPU fallback
@@ -80,12 +93,18 @@ namespace cuda::memory {
     private:
         Config config_;
         std::vector<MemoryPool> pools_;
-        std::vector<size_t> device_total_memory_;
         mutable std::mutex ownership_mutex_;
         std::unordered_map<void*, OwnershipRecord> ownership_map_;
 
+        /// One device's memory picture, both figures from the driver.
+        struct DeviceMemory {
+            size_t free_bytes = 0;
+            size_t total_bytes = 0;
+        };
+
         void initialize_pools();
-        size_t query_device_free_memory(int device_id) const;
+        /// Queries one device, restoring the calling thread's device afterwards.
+        DeviceMemory query_device_memory(int device_id) const;
     };
 
 }  // namespace cuda::memory

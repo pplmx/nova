@@ -109,6 +109,88 @@ TEST_F(DistributedMemoryPoolTest, GetBestDeviceReturnsValidId) {
     EXPECT_LT(best_device, pool_->device_count());
 }
 
+// Regression: get_best_device() ranked devices by total memory minus this pool's OWN
+// allocations, which is not free memory as soon as anything else on the machine holds any.
+// Measured with 60 GB of device 0 and 30 GB of device 1 taken by another allocation while
+// device 2 was untouched:
+//
+//     dev 0: real_free=20.1 GB   dev 1: 52.4 GB   dev 2: 84.6 GB
+//     get_best_device() = 0      <- the device with the LEAST free memory
+//
+// Every auto-allocation therefore went to the busiest device, the opposite of the policy the
+// method exists to implement. The case above only checked that the id is in range.
+//
+// NOTE ON DETECTION: on an idle machine every device is equally free and the old ranking
+// agrees with the driver by accident, so this case has to CREATE the contention. It takes a
+// large block on the device the driver calls emptiest and holds it while asking again; only a
+// live query moves its answer.
+TEST_F(DistributedMemoryPoolTest, GetBestDevicePicksTheDeviceWithTheMostFreeMemory) {
+    const int device_count = pool_->device_count();
+    if (device_count < 2) {
+        GTEST_SKIP() << "needs at least two devices to have a wrong answer";
+    }
+
+    int original = 0;
+    ASSERT_EQ(cudaGetDevice(&original), cudaSuccess);
+
+    // Ask the driver what the answer is, independently of the pool.
+    const auto free_on = [](int device) -> size_t {
+        size_t free_mem = 0, total_mem = 0;
+        if (cudaSetDevice(device) != cudaSuccess || cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
+            (void)cudaGetLastError();
+            return 0;
+        }
+        return free_mem;
+    };
+
+    std::vector<size_t> free_per_device(static_cast<size_t>(device_count), 0);
+    int emptiest = 0;
+    for (int i = 0; i < device_count; ++i) {
+        free_per_device[static_cast<size_t>(i)] = free_on(i);
+        if (free_per_device[static_cast<size_t>(i)] > free_per_device[static_cast<size_t>(emptiest)]) {
+            emptiest = i;
+        }
+    }
+    cudaSetDevice(original);
+
+    const int before = pool_->get_best_device();
+    EXPECT_GE(before, 0);
+    EXPECT_LT(before, device_count);
+
+    // Make the emptiest device the fullest: hold most of its free memory while asking again.
+    ASSERT_EQ(cudaSetDevice(emptiest), cudaSuccess);
+    void* hog = nullptr;
+    const size_t reserve = (free_per_device[static_cast<size_t>(emptiest)] / 4) * 3;
+    const bool reserved = reserve > 0 && cudaMalloc(&hog, reserve) == cudaSuccess;
+    cudaSetDevice(original);
+    if (!reserved) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "could not reserve memory to create contention";
+    }
+
+    // What the driver says now, and what a live query should therefore answer.
+    int expected_after = -1;
+    size_t expected_free = 0;
+    for (int i = 0; i < device_count; ++i) {
+        const size_t free_now = free_on(i);
+        if (free_now > expected_free) {
+            expected_free = free_now;
+            expected_after = i;
+        }
+    }
+    cudaSetDevice(original);
+
+    const int chosen = pool_->get_best_device();
+
+    cudaSetDevice(emptiest);
+    cudaFree(hog);
+    cudaSetDevice(original);
+
+    ASSERT_GE(expected_after, 0);
+    EXPECT_EQ(chosen, expected_after) << "get_best_device() returned device " << chosen << " while the driver reported device " << expected_after << " as emptiest, after "
+                                      << reserve << " bytes were taken from device " << emptiest;
+}
+
 TEST_F(DistributedMemoryPoolTest, AllMetricsAccessible) {
     auto all_metrics = pool_->get_all_metrics();
 
@@ -121,6 +203,47 @@ TEST_F(DistributedMemoryPoolTest, AllMetricsAccessible) {
         EXPECT_GE(metrics.allocated_bytes, 0);
         EXPECT_GE(metrics.free_memory, 0);
     }
+}
+
+// Regression: the metrics reported free_memory as total - this pool's own allocations. That
+// is not free memory; it is wrong by whatever every other tenant on the device holds.
+// Measured with an 8 GB allocation from another source on device 0: the pool reported
+// 85.1 GB free where the driver said 76.1 GB. The field is advertised as free memory, so it
+// now comes from the driver.
+TEST_F(DistributedMemoryPoolTest, FreeMemoryMetricMatchesTheDriver) {
+    int original = 0;
+    cudaGetDevice(&original);
+
+    size_t driver_free = 0, driver_total = 0;
+    ASSERT_EQ(cudaSetDevice(0), cudaSuccess);
+    ASSERT_EQ(cudaMemGetInfo(&driver_free, &driver_total), cudaSuccess);
+
+    // Take a chunk of memory that the pool knows nothing about, standing in for another
+    // tenant. Without it the two definitions agree and the case proves nothing.
+    void* outsider = nullptr;
+    const size_t outsider_bytes = size_t(2) << 30;  // 2 GB
+    const bool took_memory = (cudaMalloc(&outsider, outsider_bytes) == cudaSuccess);
+    if (!took_memory) {
+        (void)cudaGetLastError();
+        cudaSetDevice(original);
+        GTEST_SKIP() << "could not reserve memory to distinguish the two definitions";
+    }
+
+    ASSERT_EQ(cudaMemGetInfo(&driver_free, &driver_total), cudaSuccess);
+    cudaSetDevice(original);
+
+    const auto metrics = pool_->get_device_metrics(0);
+
+    // 64 MB of slack: the pool's own bookkeeping and driver granularity move the number.
+    const size_t slack = size_t(64) << 20;
+    EXPECT_LE(metrics.free_memory, driver_free + slack) << "reported free_memory " << metrics.free_memory << " exceeds the driver's " << driver_free
+                                                        << ": the field is not free memory";
+    EXPECT_GE(metrics.free_memory + slack, driver_free) << "reported free_memory " << metrics.free_memory << " is below the driver's " << driver_free;
+    EXPECT_EQ(metrics.total_memory, driver_total) << "total_memory must be the device's total, not its free memory";
+
+    cudaSetDevice(0);
+    cudaFree(outsider);
+    cudaSetDevice(original);
 }
 
 // ============================================================================

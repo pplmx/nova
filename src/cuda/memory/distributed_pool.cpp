@@ -33,7 +33,6 @@ namespace cuda::memory {
     DistributedMemoryPool::DistributedMemoryPool(DistributedMemoryPool&& other) noexcept
         : config_(std::move(other.config_)),
           pools_(std::move(other.pools_)),
-          device_total_memory_(std::move(other.device_total_memory_)),
           ownership_map_(std::move(other.ownership_map_)) {
         // ownership_map_ moved but needs mutex - done via assignment
     }
@@ -45,7 +44,6 @@ namespace cuda::memory {
             clear();
             config_ = std::move(other.config_);
             pools_ = std::move(other.pools_);
-            device_total_memory_ = std::move(other.device_total_memory_);
             ownership_map_ = std::move(other.ownership_map_);
         }
         return *this;
@@ -63,7 +61,6 @@ namespace cuda::memory {
 
         // Reserve capacity to avoid reallocations during pool creation
         pools_.reserve(device_count);
-        device_total_memory_.reserve(device_count);
 
         // Create a memory pool for each device and query device memory capacity
         // Each pool is configured identically based on config_ settings
@@ -73,17 +70,24 @@ namespace cuda::memory {
             pool_config.max_blocks = config_.max_blocks_per_device;
 
             pools_.emplace_back(pool_config);
-
-            // Query total memory for this device
-            size_t total_mem = query_device_free_memory(i);
-            device_total_memory_.push_back(total_mem);
         }
+
+        // Nothing about the devices' memory is cached: get_best_device() and
+        // get_device_metrics() query the driver when asked, because free memory changes as
+        // every tenant on the machine allocates and frees. Caching it at construction was
+        // what made both report a number that was not free memory.
     }
 
-    // Query total device memory by switching context temporarily
-    // Note: This queries TOTAL memory, not free memory - caller calculates free as total - allocated
-    // The device switch is necessary because cudaMemGetInfo returns info for the current device only
-    size_t DistributedMemoryPool::query_device_free_memory(int device_id) const {
+    // Query the free and total memory of one device by switching context temporarily.
+    //
+    // The name says "free" while the body returns total_mem, and every caller then subtracted
+    // this pool's OWN allocations from it. That made the result "total minus our own use",
+    // which is only free memory on an idle machine: with another tenant holding 8 GB of
+    // device 0, this reported 85.1 GB free where cudaMemGetInfo said 76.1 GB.
+    //
+    // The device switch is necessary because cudaMemGetInfo reports the current device only.
+    // Both numbers are returned now, so a caller cannot silently get one for the other.
+    DistributedMemoryPool::DeviceMemory DistributedMemoryPool::query_device_memory(int device_id) const {
         size_t free_mem = 0;
         size_t total_mem = 0;
 
@@ -99,7 +103,7 @@ namespace cuda::memory {
         // Restore device state for caller
         CUDA_CHECK(cudaSetDevice(current_device));
 
-        return total_mem;
+        return DeviceMemory {.free_bytes = free_mem, .total_bytes = total_mem};
     }
 
     // Allocate memory from a specific device's pool
@@ -140,18 +144,25 @@ namespace cuda::memory {
         return allocate(bytes, 0, stream_id);
     }
 
-    // Find device with most available memory for load balancing
-    // Available = total device memory - memory already allocated by our pools
-    // Note: This doesn't account for other processes' GPU memory usage
+    // Find the device with the most free memory for load balancing
+    //
+    // The header promises "most free memory", and the old body computed
+    // total - this pool's own allocations. That ignores every other tenant on the machine, so
+    // it ranked devices by a number that is not free memory. Measured with 60 GB of device 0
+    // and 30 GB of device 1 held by another allocation while device 2 was untouched:
+    //
+    //     dev 0: real_free=20.1 GB   dev 1: 52.4 GB   dev 2: 84.6 GB
+    //     get_best_device() = 0      <- the device with the LEAST free memory
+    //
+    // Every assignment went to the busiest device, which is the opposite of the policy the
+    // method exists to implement. It asks the driver now; this pool's own use is already
+    // reflected in what cudaMemGetInfo reports, so subtracting it again would double-count.
     int DistributedMemoryPool::get_best_device() const {
         int best_device = 0;
         size_t max_free = 0;
 
         for (int i = 0; i < device_count(); ++i) {
-            // Calculate free memory: total - allocated
-            size_t allocated = pools_[i].total_allocated();
-            size_t free_on_device = device_total_memory_[i] - allocated;
-
+            const size_t free_on_device = query_device_memory(i).free_bytes;
             if (free_on_device > max_free) {
                 max_free = free_on_device;
                 best_device = i;
@@ -208,10 +219,17 @@ namespace cuda::memory {
         DevicePoolMetrics metrics;
         metrics.device_id = device_id;
         metrics.allocated_bytes = pools_[device_id].total_allocated();
-        metrics.total_memory = device_total_memory_[device_id];
-        // Available = total - our allocations (doesn't account for other GPU users)
-        metrics.available_bytes = device_total_memory_[device_id] - metrics.allocated_bytes;
-        metrics.free_memory = metrics.available_bytes;
+
+        // Both figures come from the driver, so they describe the machine rather than this
+        // pool's share of it. The previous code reported total - own_allocations under the
+        // name free_memory, which overstates what a caller can allocate by whatever every
+        // other tenant on the device is holding.
+        const DeviceMemory memory = query_device_memory(device_id);
+        metrics.total_memory = memory.total_bytes;
+        metrics.free_memory = memory.free_bytes;
+        // Room this pool could still hand out before the device is full, given that the pool
+        // cannot reclaim another owner's blocks.
+        metrics.available_bytes = memory.free_bytes + pools_[device_id].total_allocated();
         metrics.num_allocations = static_cast<int>(pools_[device_id].num_allocations());
         metrics.local_metrics = pools_[device_id].get_metrics();
 
