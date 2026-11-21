@@ -1,13 +1,17 @@
 #include "cuda/preemption/preemption_handler.h"
 
 #include <atomic>
+#include <cctype>
+#include <cerrno>
 #include <chrono>
-#include <thread>
-#include <mutex>
 #include <condition_variable>
-#include <iostream>
+#include <cstdlib>
 #include <fstream>
+#include <iostream>
+#include <limits>
+#include <mutex>
 #include <sstream>
+#include <thread>
 
 // Signal handling is the one part of this file that is genuinely platform
 // specific.
@@ -470,8 +474,7 @@ namespace nova::preemption {
         : impl_(std::make_unique<Impl>()) {}
 
     ResumeValidator::ValidationResult ResumeValidator::validate_checkpoint(const std::string& checkpoint_path) {
-        ValidationResult result;
-        result.is_valid = false;
+        ValidationResult result;  // every field defaulted; checkpoint_step stays -1 until parsed
 
         std::ifstream manifest_file(checkpoint_path + "/manifest.txt");
         if (!manifest_file) {
@@ -482,22 +485,72 @@ namespace nova::preemption {
         std::string line;
         int step = 0;
 
-        // Manifest layout: line 1 is checkpoint version (metadata only), line 2 is
-        // the training step used below. Remaining fields are informational
-        // model/optimizer metadata and are not part of validation.
-        std::getline(manifest_file, line);  // skip version
-        std::getline(manifest_file, line);
-        step = std::stoi(line);
+        // Manifest layout, as CheckpointManager::save() writes it: line 1 is the format
+        // version, line 2 is the training step, then timestamp and tensor counts. Remaining
+        // fields are informational and are not part of validation.
+        //
+        // Parsing is total: every malformed manifest produces a result with is_valid == false
+        // and a message, never an exception. This used to call std::stoi on line 2 without
+        // checking that the line EXISTS, so a truncated or empty manifest reached stoi with an
+        // empty string and threw std::invalid_argument out of a function whose return type is
+        // ValidationResult, and a step too large for an int threw std::out_of_range:
+        //
+        //     empty manifest   -> std::invalid_argument: stoi
+        //     one line only    -> std::invalid_argument: stoi
+        //     non-numeric step -> std::invalid_argument: stoi
+        //     huge step        -> std::out_of_range: stoi
+        //
+        // recover_state() and attempt_recovery() both call this, so all three public entry
+        // points of the validator threw on a corrupt checkpoint instead of reporting one.
+        std::getline(manifest_file, line);  // version
+        if (!std::getline(manifest_file, line)) {
+            result.error_message = "Checkpoint manifest has no step line (expected version, then step)";
+            return result;
+        }
+
+        // strtol with explicit bounds rather than stoi: no exception to catch, and an
+        // out-of-range value is reported as the malformed manifest it is. Trailing spaces are
+        // tolerated; trailing garbage is not.
+        const char* begin = line.c_str();
+        char* end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(begin, &end, 10);
+        const bool no_digits = (end == begin);
+        const bool out_of_range = (errno == ERANGE) || parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max();
+        const bool trailing_garbage = (end != nullptr) && (*end != '\0' && !std::isspace(static_cast<unsigned char>(*end)));
+        if (no_digits || out_of_range || trailing_garbage) {
+            result.error_message = "Checkpoint manifest step line is not a valid step number: '" + line + "'";
+            return result;
+        }
+        step = static_cast<int>(parsed);
+
+        // A negative step is not a position in training. It cannot come from
+        // CheckpointManager, which writes its own step, so it means the frame or the file was
+        // corrupted -- report it rather than handing a negative resume point to a caller.
+        if (step < 0) {
+            result.error_message = "Checkpoint manifest records a negative step: " + std::to_string(step);
+            return result;
+        }
 
         manifest_file.close();
 
         std::ifstream model_file(checkpoint_path + "/model.bin", std::ios::binary | std::ios::ate);
         std::ifstream optimizer_file(checkpoint_path + "/optimizer.bin", std::ios::binary | std::ios::ate);
 
-        result.has_model_state = model_file.good();
-        result.has_optimizer_state = optimizer_file.good();
+        // Presence is not enough: a zero-length file is what a truncated or failed write
+        // leaves behind, and `good()` is true for it. Measured before this check -- two
+        // 0-byte state files were reported as a valid checkpoint with both flags set, which
+        // is precisely the case a resume path must refuse.
+        result.has_model_state = model_file.good() && model_file.tellg() > 0;
+        result.has_optimizer_state = optimizer_file.good() && optimizer_file.tellg() > 0;
         result.has_rng_state = false;
         result.checkpoint_step = step;
+
+        if (!result.has_model_state) {
+            result.error_message = model_file.good() ? "Checkpoint model.bin is empty" : "Checkpoint model state not found";
+        } else if (!result.has_optimizer_state) {
+            result.error_message = optimizer_file.good() ? "Checkpoint optimizer.bin is empty" : "Checkpoint optimizer state not found";
+        }
         result.is_valid = result.has_model_state && result.has_optimizer_state;
 
         return result;
@@ -632,6 +685,22 @@ namespace nova::preemption {
 
     PreemptionManager::Status PreemptionManager::get_status() const {
         Status status;
+
+        // Every member below is only assigned by initialize(); before it, the three pointers
+        // are null and this dereferenced signal_handler immediately. Measured: calling
+        // get_status() on a freshly constructed manager (the ordinary "what is my state?"
+        // probe, which is exactly when a caller has not initialized anything) crashed with
+        // SIGSEGV. Reporting the uninitialized state is the useful answer.
+        if (!impl_->initialized.load()) {
+            status.preemption_handlers_installed = false;
+            status.shutdown_in_progress = false;
+            status.shutdown_complete = false;
+            status.received_signal = 0;
+            status.shutdown_elapsed = std::chrono::milliseconds {0};
+            status.remaining_timeout = impl_->config.shutdown_timeout;
+            return status;
+        }
+
         auto handler_state = impl_->signal_handler->get_state();
 
         status.preemption_handlers_installed = handler_state.handler_installed;

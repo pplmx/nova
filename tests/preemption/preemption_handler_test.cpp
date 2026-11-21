@@ -1,8 +1,13 @@
 #include <cuda/preemption/preemption_handler.h>
 
+#include "test_temp_paths.h"
+
 #include <gtest/gtest.h>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <thread>
 
 namespace nova::preemption::test {
@@ -166,6 +171,120 @@ namespace nova::preemption::test {
         EXPECT_EQ(result.error_message, "Checkpoint manifest not found");
         EXPECT_FALSE(v.recover_state("/nonexistent/nova/ckpt"));
         EXPECT_EQ(v.get_latest_checkpoint_path(), "/nonexistent/nova/ckpt");
+    }
+
+    // validate_checkpoint() called std::stoi on the manifest's step line without checking
+    // that the line exists, and without bounding the value. All three public entry points --
+    // validate_checkpoint, recover_state, attempt_recovery -- threw out of functions whose
+    // contract is to REPORT an unusable checkpoint. Measured on the unfixed code:
+    //
+    //     empty manifest   -> std::invalid_argument: stoi
+    //     one line only    -> std::invalid_argument: stoi
+    //     non-numeric step -> std::invalid_argument: stoi
+    //     huge step        -> std::out_of_range: stoi
+    //     negative step    -> valid = true, step = -5
+    TEST(PreemptionHandlerTest, MalformedManifestIsReportedNotThrown) {
+        struct Case {
+            const char* label;
+            const char* manifest;
+        };
+        const Case cases[] = {
+            {"empty", ""},
+            {"version only", "1\n"},
+            {"non-numeric step", "1\nnot-a-number\n"},
+            {"step past an int", "1\n99999999999999999999\n"},
+            {"negative step", "1\n-5\n"},
+            {"step then garbage", "1\n42abc\n"},
+        };
+
+        ResumeValidator& v = ResumeValidator::instance();
+        const std::string root = nova::test::temp_path("nova-preemption-manifest", "");
+        std::filesystem::remove_all(root);
+        int index = 0;
+        for (const auto& c : cases) {
+            const std::string dir = root + "-case" + std::to_string(index++);
+            std::filesystem::remove_all(dir);
+            std::filesystem::create_directories(dir);
+            std::ofstream(dir + "/manifest.txt") << c.manifest;
+            std::ofstream(dir + "/model.bin", std::ios::binary) << "weights";
+            std::ofstream(dir + "/optimizer.bin", std::ios::binary) << "state";
+
+            // Neither throwing nor reporting the checkpoint as usable.
+            nova::preemption::ResumeValidator::ValidationResult result;
+            EXPECT_NO_THROW(result = v.validate_checkpoint(dir)) << "validate_checkpoint threw on a " << c.label << " manifest";
+            EXPECT_FALSE(result.is_valid) << c.label << " was accepted as a resumable checkpoint";
+            EXPECT_FALSE(result.error_message.empty()) << c.label << " was rejected without saying why";
+            EXPECT_EQ(result.checkpoint_step, -1) << c.label << " left a step a caller could resume from";
+
+            // The two wrappers must inherit the rejection rather than throwing.
+            EXPECT_NO_THROW({ EXPECT_FALSE(v.recover_state(dir)); }) << "recover_state threw on a " << c.label << " manifest";
+            nova::preemption::ResumeValidator::RecoveryResult recovery;
+            EXPECT_NO_THROW(recovery = v.attempt_recovery(dir)) << "attempt_recovery threw on a " << c.label << " manifest";
+            EXPECT_FALSE(recovery.success) << c.label << " was recovered from";
+        }
+    }
+
+    // A well-formed manifest must still be accepted, or the rejection above is just a wall.
+    TEST(PreemptionHandlerTest, WellFormedManifestIsAccepted) {
+        ResumeValidator& v = ResumeValidator::instance();
+        const std::string dir = nova::test::temp_path("nova-preemption-valid", "");
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        // The layout CheckpointManager::save() writes: version, step, timestamp, counts.
+        std::ofstream(dir + "/manifest.txt") << "1\n42\n1700000000000000000\n3\n2";
+        std::ofstream(dir + "/model.bin", std::ios::binary) << "weights";
+        std::ofstream(dir + "/optimizer.bin", std::ios::binary) << "state";
+
+        const auto result = v.validate_checkpoint(dir);
+        EXPECT_TRUE(result.is_valid);
+        EXPECT_EQ(result.checkpoint_step, 42);
+        EXPECT_TRUE(result.has_model_state);
+        EXPECT_TRUE(result.has_optimizer_state);
+        EXPECT_TRUE(v.recover_state(dir));
+
+        const auto recovery = v.attempt_recovery(dir);
+        EXPECT_TRUE(recovery.success);
+        EXPECT_EQ(recovery.recovered_step, 42);
+    }
+
+    // Presence of the file is not the same as presence of state: a zero-length model.bin is
+    // what a failed or truncated write leaves behind, and ifstream::good() reports it as fine.
+    // Measured before this check: two 0-byte files were accepted as a valid checkpoint.
+    TEST(PreemptionHandlerTest, EmptyStateFilesAreNotResumableState) {
+        ResumeValidator& v = ResumeValidator::instance();
+        const std::string dir = nova::test::temp_path("nova-preemption-empty-state", "");
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        std::ofstream(dir + "/manifest.txt") << "1\n42\n";
+        std::ofstream(dir + "/model.bin", std::ios::binary);      // 0 bytes
+        std::ofstream(dir + "/optimizer.bin", std::ios::binary);  // 0 bytes
+
+        const auto result = v.validate_checkpoint(dir);
+        EXPECT_FALSE(result.is_valid) << "two empty state files are not a checkpoint";
+        EXPECT_FALSE(result.has_model_state);
+        EXPECT_FALSE(result.has_optimizer_state);
+        EXPECT_FALSE(v.recover_state(dir));
+
+        // One non-empty side is still not a complete checkpoint.
+        std::ofstream(dir + "/model.bin", std::ios::binary) << "weights";
+        const auto partial = v.validate_checkpoint(dir);
+        EXPECT_FALSE(partial.is_valid);
+        EXPECT_TRUE(partial.has_model_state);
+        EXPECT_FALSE(partial.has_optimizer_state);
+    }
+
+    // get_status() dereferenced signal_handler, which only initialize() assigns. Measured on a
+    // freshly constructed manager -- exactly when a caller asks "what is my state?" before
+    // initializing anything -- it crashed with SIGSEGV.
+    TEST(PreemptionHandlerTest, GetStatusBeforeInitializeReportsUninitialized) {
+        // Called before any initialize() in this process. The singleton is shared with other
+        // cases, so this is only a meaningful regression probe when it has not been set up;
+        // either way it must not dereference null.
+        PreemptionManager& m = PreemptionManager::instance();
+        nova::preemption::PreemptionManager::Status status;
+        EXPECT_NO_THROW(status = m.get_status());
+        EXPECT_FALSE(status.shutdown_in_progress);
+        EXPECT_FALSE(status.shutdown_complete);
     }
 
     TEST(PreemptionHandlerTest, ManagerForwardsCheckpointCallback) {

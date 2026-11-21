@@ -114,16 +114,35 @@ namespace nova::preemption {
     public:
         static ResumeValidator& instance();
 
+        /**
+         * @brief Result of validating a checkpoint directory
+         *
+         * Every field is initialised, so a result read on a failure path is a defined value
+         * rather than whatever was on the stack. checkpoint_step is -1 when the manifest
+         * could not be parsed: a caller must not resume from a step this struct could not
+         * establish.
+         */
         struct ValidationResult {
-            bool is_valid;
-            bool has_model_state;
-            bool has_optimizer_state;
-            bool has_rng_state;
-            int checkpoint_step;
+            bool is_valid = false;
+            bool has_model_state = false;
+            bool has_optimizer_state = false;
+            bool has_rng_state = false;
+            int checkpoint_step = -1;
             std::string error_message;
             std::vector<std::string> warnings;
         };
 
+        /**
+         * @brief Check that a checkpoint directory holds resumable state
+         *
+         * Never throws on a malformed checkpoint: a missing manifest, a truncated manifest, a
+         * non-numeric or out-of-range step, a negative step, and an empty model/optimizer file
+         * each produce is_valid == false with a message saying which. Values that cannot be
+         * parsed do not surface as std::stoi's exceptions.
+         *
+         * A zero-length model.bin or optimizer.bin counts as absent: presence alone cannot
+         * distinguish a written file from one a failed or truncated write left behind.
+         */
         ValidationResult validate_checkpoint(const std::string& checkpoint_path);
 
         bool recover_state(const std::string& checkpoint_path);
