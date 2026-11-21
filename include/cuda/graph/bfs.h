@@ -35,8 +35,44 @@ namespace cuda::graph {
         size_t memory_usage() const;
     };
 
+    /**
+     * @brief Traverse the graph from @p source
+     *
+     * Returns when the result is complete and its HOST arrays are populated: the final
+     * cudaMemcpy is followed by download(). Passing a @p stream moves the device work onto
+     * that stream, but the function still synchronises before returning, so the returned
+     * object is always ready to read.
+     *
+     * @param graph Graph to traverse; it is uploaded if it has not been
+     * @param source Vertex to start from; must be in [0, num_vertices)
+     * @param stream Stream for the device work; work is completed before returning
+     */
     BFSResult bfs(const CSRGraph& graph, int source, cudaStream_t stream = nullptr);
 
+    /**
+     * @brief Traverse the graph and store the result in @p result
+     *
+     * @warning Despite the name this is **not** asynchronous. It runs the whole traversal,
+     * including the download that fills the host arrays, before returning:
+     *
+     *     bfs_async(graph, result, 0, stream);
+     *     // no synchronisation here:
+     *     result.distance_to(1)   // already the final distance
+     *
+     * Measured with an explicit stream and no synchronisation afterwards, the distances were
+     * 0 1 2 1 -- the completed traversal -- so the name describes nothing and a caller who
+     * omits a synchronisation it thinks it needs loses nothing, while one who relies on the
+     * call returning before the work starts would be wrong.
+     *
+     * The name is kept because renaming a public symbol is a breaking change and this
+     * declaration has been in the header since the module was added; `bfs()` is what a caller
+     * should use, and this is a thin wrapper that assigns its return value.
+     *
+     * @param graph Graph to traverse
+     * @param result Overwritten with the traversal; any previous contents are released
+     * @param source Vertex to start from; must be in [0, num_vertices)
+     * @param stream Stream for the device work; work is completed before returning
+     */
     void bfs_async(const CSRGraph& graph, BFSResult& result, int source, cudaStream_t stream = nullptr);
 
     /**

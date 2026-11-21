@@ -199,3 +199,57 @@ TEST_F(BFSTest, BFSFindsEverythingInCompleteTriangle) {
     EXPECT_EQ(result.distance_to(2), 1);
     EXPECT_EQ(result.distance_to(3), -1);
 }
+
+// ---------------------------------------------------------------------------
+// bfs_async is synchronous; these cases are what "the name describes nothing"
+// means concretely, and they protect the contract the header now states.
+// ---------------------------------------------------------------------------
+
+// The result is readable with no synchronisation after the call, even when the caller
+// supplied a stream. If a future change made this genuinely asynchronous, this is the case
+// that would fail -- and it should, because that would be an observable break.
+TEST_F(BFSTest, AsyncIsCompleteWhenItReturnsEvenWithAStream) {
+    std::vector<std::vector<int>> adjacency(4);  // path 0 -> 1 -> 2 -> 3
+    adjacency[0] = {1};
+    adjacency[1] = {2};
+    adjacency[2] = {3};
+    auto graph = create_csr_from_adjacency(adjacency);
+
+    cudaStream_t stream = nullptr;
+    ASSERT_EQ(cudaStreamCreate(&stream), cudaSuccess);
+
+    BFSResult result(4);
+    bfs_async(*graph, result, 0, stream);
+
+    // Deliberately no cudaStreamSynchronize between the call and these reads.
+    EXPECT_EQ(result.distance_to(0), 0);
+    EXPECT_EQ(result.distance_to(1), 1);
+    EXPECT_EQ(result.distance_to(2), 2);
+    EXPECT_EQ(result.distance_to(3), 3);
+    EXPECT_EQ(result.visited_count, 4);
+
+    cudaStreamDestroy(stream);
+}
+
+// The same function must produce the same answer as bfs() for the same input, since that is
+// what the wrapper does. This guards against the two drifting apart.
+TEST_F(BFSTest, AsyncAgreesWithTheSynchronousEntryPoint) {
+    std::vector<std::vector<int>> adjacency(4);  // path 0 -> 1 -> 2 -> 3
+    adjacency[0] = {1};
+    adjacency[1] = {2};
+    adjacency[2] = {3};
+    auto graph = create_csr_from_adjacency(adjacency);
+
+    BFSResult from_async(4);
+    bfs_async(*graph, from_async, 1);
+
+    auto from_sync = bfs(*graph, 1);
+
+    ASSERT_EQ(from_async.num_vertices, from_sync.num_vertices);
+    for (int v = 0; v < from_sync.num_vertices; ++v) {
+        EXPECT_EQ(from_async.distance_to(v), from_sync.distance_to(v)) << "at vertex " << v;
+        EXPECT_EQ(from_async.is_reachable(v), from_sync.is_reachable(v));
+    }
+    EXPECT_EQ(from_async.visited_count, from_sync.visited_count);
+    EXPECT_EQ(from_async.max_distance, from_sync.max_distance);
+}
