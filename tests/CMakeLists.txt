@@ -266,6 +266,7 @@ add_executable(nova-tests
     sparse/singleton_reset_registry_test.cpp
     sparse/singleton_isolation_order_test.cpp
     sparse/quantize_precision_odr_test.cpp
+    sparse/nccl_availability_test.cpp
     sparse/header_self_containment_test.cpp
 )
 

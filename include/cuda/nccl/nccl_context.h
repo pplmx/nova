@@ -284,10 +284,32 @@ namespace cuda::nccl {
          * @brief Check if NCCL is available and functional
          * @return true if context has valid communicators
          */
-        /// Whether NCCL is usable: initialised, not broken, and has at least one communicator.
+        /// Whether NCCL is usable: initialised, not broken, and has at least one live
+        /// communicator.
+        ///
+        /// This is the readiness gate callers use before entering a collective, so it has to
+        /// be true only when a collective can actually run. It tested !communicators_.empty(),
+        /// which is not the same question: create_streams_and_comms() resizes the vector to
+        /// device_count_ unconditionally and only the NCCL branch fills it, so in a
+        /// NOVA_ENABLE_NCCL=OFF build the vector holds device_count_ null entries and this
+        /// function answered true. Measured on this host with NCCL compiled out:
+        ///
+        ///     NOVA_NCCL_ENABLED=0 has_nccl=1 device_count=2
+        ///
+        /// every caller then posted a collective that returned "NCCL not enabled". A build
+        /// with no NCCL is the case where the answer matters most, and it was the case that
+        /// was wrong. The check is now for a non-null communicator.
         [[nodiscard]] bool has_nccl() const {
             std::lock_guard<std::mutex> lock(init_mutex_);
-            return initialized_ && !broken_.load(std::memory_order_acquire) && !communicators_.empty();
+#if NOVA_NCCL_ENABLED
+            if (!initialized_ || broken_.load(std::memory_order_acquire)) {
+                return false;
+            }
+            return std::any_of(communicators_.begin(), communicators_.end(), [](ncclComm_t comm) { return comm != nullptr; });
+#else
+            // Without NCCL there is no communicator to own, so nothing can be collective.
+            return false;
+#endif
         }
 
         /**
