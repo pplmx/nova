@@ -115,6 +115,19 @@ namespace documented_examples_test {
             // thrown exception from EXPECT_THROW as an uncaught failure at "unknown file" when
             // the type does not match exactly. Catching it directly and asserting on the message
             // keeps the failure readable and does not depend on the macro's comma handling.
+            // This branch only holds when no NCCL context exists. When the build enables
+            // NCCL and an earlier test has initialised one for the process, all_gather
+            // does not refuse -- it takes the real collective path and hands send_data
+            // straight to NCCL. The pointers below are HOST addresses, so that path
+            // dereferences them as device memory: measured, the full NCCL-enabled run
+            // segfaulted exactly here (exit 139). Checking has_nccl() first is what makes
+            // this case state its precondition instead of assuming it.
+            if (cuda::nccl::NcclContext::instance().has_nccl()) {
+                GTEST_SKIP() << "an NCCL context exists in this process, so the refusal path this "
+                                "case checks is not reachable; the collective path needs device "
+                                "pointers and one thread per rank";
+            }
+
             std::vector<float> send_data {1.0F, 2.0F, 3.0F, 4.0F};
             bool threw = false;
             std::string message;
