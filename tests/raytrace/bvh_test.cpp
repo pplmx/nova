@@ -37,17 +37,27 @@ TEST_F(BVHTest, BuildBVHWithKnownPrimitives) {
 
 TEST_F(BVHTest, BVHNodeIsLeafDetection) {
     BVHNode leaf_node;
+    // is_leaf() is an explicit flag, not a derivation from the union: the leaf and internal
+    // views overlay each other, so no arrangement of their fields can distinguish the two
+    // without destroying one of them. This case constructs the nodes by hand and now sets the
+    // flag the way build_bvh() does.
+    leaf_node.is_leaf_flag = true;
     leaf_node.leaf.prim_count = 4;
     leaf_node.leaf.first_prim = 0;
 
     BVHNode internal_node;
+    internal_node.is_leaf_flag = false;
     internal_node.internal.left_child = 1;
     internal_node.internal.right_child = 2;
     internal_node.internal.prim_count = 0;
-    internal_node.leaf.prim_count = 0;
 
     EXPECT_TRUE(leaf_node.is_leaf());
     EXPECT_FALSE(internal_node.is_leaf());
+
+    // A default-constructed node is a leaf: a node with no children and no primitives is the
+    // only safe reading, and it is what traversal does with an empty tree.
+    BVHNode untouched;
+    EXPECT_TRUE(untouched.is_leaf());
 }
 
 TEST_F(BVHTest, BVHTraversalFindsHit) {
@@ -174,4 +184,96 @@ TEST_F(BVHTest, BVHTraversalStats) {
     auto result = traverse_bvh(ray, nodes.data(), num_nodes, prim_bounds.data(), prim_indices.data());
 
     EXPECT_GE(result.stats.nodes_visited, 1u);
+}
+
+// ---------------------------------------------------------------------------
+// The build and traversal functions are ordinary host functions, and every
+// pointer they take is a HOST pointer. Nothing in the header said so, and the
+// natural reading of an API in a CUDA library is the opposite: a call with
+// cudaMalloc'd buffers dumps core inside build_bvh rather than returning a CUDA
+// error. These cases pin the working contract so the documentation has a
+// counterpart in the tests.
+// ---------------------------------------------------------------------------
+
+TEST_F(BVHTest, BuildsFromHostStorageAndTraversesToTheNearestPrimitive) {
+    const std::vector<AABB> boxes = {
+        AABB(Vec3(0, 0, 0), Vec3(1, 1, 1)),
+        AABB(Vec3(3, 0, 0), Vec3(4, 1, 1)),
+        AABB(Vec3(6, 0, 0), Vec3(7, 1, 1)),
+        AABB(Vec3(9, 0, 0), Vec3(10, 1, 1)),
+        AABB(Vec3(12, 0, 0), Vec3(13, 1, 1)),
+    };
+
+    std::vector<BVHNode> nodes(MAX_NODES);
+    std::vector<uint32_t> prim_indices(boxes.size());
+
+    const size_t num_nodes = build_bvh(boxes.data(), boxes.size(), nodes.data(), prim_indices.data(), MAX_NODES);
+    ASSERT_GE(num_nodes, 1u);
+
+    // A ray along +x at the height of every box enters the first one at x = 0.
+    const Ray ray(Vec3(-5, 0.5f, 0.5f), Vec3(1, 0, 0));
+    const auto result = traverse_bvh(ray, nodes.data(), num_nodes, boxes.data(), prim_indices.data());
+
+    ASSERT_TRUE(result.hit);
+    EXPECT_FLOAT_EQ(result.t, 5.0f) << "the nearest box starts at x = 0, five units from the origin";
+    EXPECT_EQ(result.prim_idx, 0u) << "the nearest primitive is the first box";
+}
+
+// A ray that misses every box must report no hit rather than a stale nearest.
+TEST_F(BVHTest, ARayThatMissesEveryPrimitiveReportsNoHit) {
+    const std::vector<AABB> boxes = {
+        AABB(Vec3(0, 0, 0), Vec3(1, 1, 1)),
+        AABB(Vec3(3, 0, 0), Vec3(4, 1, 1)),
+    };
+
+    std::vector<BVHNode> nodes(MAX_NODES);
+    std::vector<uint32_t> prim_indices(boxes.size());
+    const size_t num_nodes = build_bvh(boxes.data(), boxes.size(), nodes.data(), prim_indices.data(), MAX_NODES);
+
+    const Ray ray(Vec3(-5, 100, 100), Vec3(1, 0, 0));
+    const auto result = traverse_bvh(ray, nodes.data(), num_nodes, boxes.data(), prim_indices.data());
+
+    EXPECT_FALSE(result.hit);
+}
+
+// A zero-node tree has nothing to visit, and must answer without touching the stack.
+TEST_F(BVHTest, TraversalOfAnEmptyTreeReportsNoHit) {
+    const std::vector<AABB> boxes = {AABB(Vec3(0, 0, 0), Vec3(1, 1, 1))};
+    const std::vector<uint32_t> prim_indices = {0};
+    const Ray ray(Vec3(-5, 0.5f, 0.5f), Vec3(1, 0, 0));
+
+    const auto result = traverse_bvh(ray, nullptr, 0, boxes.data(), prim_indices.data());
+    EXPECT_FALSE(result.hit);
+}
+
+// The normal reaches the caller from the primitive that was hit, which is what the
+// traverse_bvh signature's compute_normals parameter is about. Before the primitive
+// fix this passed (0,0,0) through for a box hit from -x.
+TEST_F(BVHTest, ATraversalHitCarriesThePrimitiveNormal) {
+    const std::vector<AABB> boxes = {AABB(Vec3(0, 0, 0), Vec3(1, 1, 1))};
+
+    std::vector<BVHNode> nodes(MAX_NODES);
+    std::vector<uint32_t> prim_indices(boxes.size());
+    const size_t num_nodes = build_bvh(boxes.data(), boxes.size(), nodes.data(), prim_indices.data(), MAX_NODES);
+
+    const Ray ray(Vec3(-5, 0.5f, 0.5f), Vec3(1, 0, 0));
+    const auto result = traverse_bvh(ray, nodes.data(), num_nodes, boxes.data(), prim_indices.data());
+
+    ASSERT_TRUE(result.hit);
+    EXPECT_FLOAT_EQ(result.hit_normal.x, -1.0f) << "entering through the x = 0 face, the outward normal points at -x";
+    EXPECT_FLOAT_EQ(result.hit_normal.y, 0.0f);
+    EXPECT_FLOAT_EQ(result.hit_normal.z, 0.0f);
+}
+
+// A capacity too small for the tree must be reported, not written past.
+TEST_F(BVHTest, NodeCapacityOverflowIsReported) {
+    std::vector<AABB> boxes;
+    for (int i = 0; i < 16; ++i) {
+        boxes.push_back(AABB(Vec3(static_cast<float>(i) * 2, 0, 0), Vec3(static_cast<float>(i) * 2 + 1, 1, 1)));
+    }
+
+    std::vector<BVHNode> nodes(1);  // far too small
+    std::vector<uint32_t> prim_indices(boxes.size());
+
+    EXPECT_THROW(build_bvh(boxes.data(), boxes.size(), nodes.data(), prim_indices.data(), nodes.size()), std::overflow_error);
 }

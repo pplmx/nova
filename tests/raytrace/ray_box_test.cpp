@@ -116,3 +116,90 @@ TEST_F(RayBoxTest, MultipleBoxesWithRay) {
     EXPECT_TRUE(hit2.hit);
     EXPECT_LT(hit1.t_near, hit2.t_near);
 }
+
+// ---------------------------------------------------------------------------
+// The hit normal was (0,0,0) for five of the six faces. It was derived from
+// whichever tnear the clipping loop happened to hold after its last iteration --
+// the Z slab -- and from comparing the reciprocal direction magnitudes, which
+// picks the axis the ray is most nearly parallel to rather than the face it
+// entered through. Nothing in this file asserted on hit_normal, so it went
+// unnoticed.
+//
+// The convention these cases pin: hit_normal points OUT of the box and therefore
+// against the incoming ray, so dot(normal, direction) < 0.
+// ---------------------------------------------------------------------------
+
+TEST_F(RayBoxTest, ReportsTheEntryFaceNormalForEveryAxis) {
+    const AABB box = create_unit_box();
+
+    struct Case {
+        const char* name;
+        Vec3 origin;
+        Vec3 direction;
+        Vec3 expected_normal;
+    };
+    // The box is [0,1]^3, so the min faces are at 0 and the max faces at 1.
+    const Case cases[] = {
+        {"entering through x = 0", Vec3(-5, 0.5f, 0.5f), Vec3(1, 0, 0), Vec3(-1, 0, 0)},
+        {"entering through x = 1", Vec3(5, 0.5f, 0.5f), Vec3(-1, 0, 0), Vec3(1, 0, 0)},
+        {"entering through y = 0", Vec3(0.5f, -5, 0.5f), Vec3(0, 1, 0), Vec3(0, -1, 0)},
+        {"entering through y = 1", Vec3(0.5f, 5, 0.5f), Vec3(0, -1, 0), Vec3(0, 1, 0)},
+        {"entering through z = 0", Vec3(0.5f, 0.5f, -5), Vec3(0, 0, 1), Vec3(0, 0, -1)},
+        {"entering through z = 1", Vec3(0.5f, 0.5f, 5), Vec3(0, 0, -1), Vec3(0, 0, 1)},
+    };
+
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        Ray ray(c.origin, c.direction);
+        const auto hit = box.intersect(ray);
+
+        ASSERT_TRUE(hit.hit);
+        EXPECT_FLOAT_EQ(hit.hit_normal.x, c.expected_normal.x);
+        EXPECT_FLOAT_EQ(hit.hit_normal.y, c.expected_normal.y);
+        EXPECT_FLOAT_EQ(hit.hit_normal.z, c.expected_normal.z);
+
+        // The normal must face the ray, which is the property a shading calculation relies on.
+        EXPECT_LT(hit.hit_normal.dot(ray.direction), 0.0f) << "the reported normal must point against the incoming ray";
+    }
+}
+
+// The normal must agree with the face the hit point actually lies on, including when the
+// ray enters off-centre so that the other two slabs do not clip at t_near.
+TEST_F(RayBoxTest, NormalMatchesTheFaceOfTheHitPoint) {
+    const AABB box = create_unit_box();
+    Ray ray(Vec3(-5, 0.3f, 0.2f), Vec3(1, 0, 0));
+
+    const auto hit = box.intersect(ray);
+    ASSERT_TRUE(hit.hit);
+
+    const Vec3 p = ray.point_at(hit.t_near);
+    EXPECT_FLOAT_EQ(p.x, box.min_point.x) << "the ray must enter through the x = 0 face";
+    EXPECT_FLOAT_EQ(hit.hit_normal.x, -1.0f) << "and the normal must name that same face";
+}
+
+// A ray that starts inside was never clipped by an entry face, so there is no entry normal
+// to report. That is the one case where (0,0,0) is the honest answer, and it must not be
+// confused with the failures above.
+TEST_F(RayBoxTest, NoEntryNormalWhenTheRayStartsInside) {
+    const AABB box = create_unit_box();
+    Ray ray(Vec3(0.5f, 0.5f, 0.5f), Vec3(1, 0, 0));
+
+    const auto hit = box.intersect(ray);
+    ASSERT_TRUE(hit.hit);
+    EXPECT_FLOAT_EQ(hit.hit_normal.x, 0.0f);
+    EXPECT_FLOAT_EQ(hit.hit_normal.y, 0.0f);
+    EXPECT_FLOAT_EQ(hit.hit_normal.z, 0.0f);
+}
+
+// The clipping arithmetic must survive a ray parallel to two slabs at once: the reciprocal
+// direction is clamped and the remaining slab decides.
+TEST_F(RayBoxTest, ParallelToTwoSlabsStillFindsTheRemainingFace) {
+    const AABB box = create_unit_box();
+    Ray ray(Vec3(-5, 0.25f, 0.75f), Vec3(1, 0, 0));  // y and z direction components are 0
+
+    const auto hit = box.intersect(ray);
+    ASSERT_TRUE(hit.hit);
+    EXPECT_FLOAT_EQ(hit.hit_normal.x, -1.0f);
+    EXPECT_FLOAT_EQ(hit.t_near, 5.0f);
+    EXPECT_FLOAT_EQ(hit.t_far, 6.0f);
+}

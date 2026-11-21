@@ -108,11 +108,26 @@ namespace cuda::raytrace {
 
             float t1, t2, tnear, tfar;
 
+            // Which slab produced the current tmin, and on which side. The normal was
+            // previously derived from whichever tnear the loop variable happened to hold
+            // after the last iteration -- the Z slab -- and from comparing the reciprocal
+            // direction magnitudes, which selects the axis the ray is most nearly parallel
+            // to rather than the face it entered through. Measured on the unit cube with six
+            // axis-aligned rays: five of the six normals came back (0,0,0) and the sixth was
+            // wrong in sign. Tracking the axis as the slabs are clipped is what makes the
+            // normal the face that actually determined t_near.
+            int hit_axis = -1;
+            float hit_sign = 0.0f;
+
             t1 = (min_point.x - ray.origin.x) * inv_dir_x;
             t2 = (max_point.x - ray.origin.x) * inv_dir_x;
             tnear = fminf(t1, t2);
             tfar = fmaxf(t1, t2);
-            tmin = fmaxf(tmin, tnear);
+            if (tnear > tmin) {
+                tmin = tnear;
+                hit_axis = 0;
+                hit_sign = (t1 < t2) ? -1.0f : 1.0f;
+            }
             tmax = fminf(tmax, tfar);
             if (tmin > tmax) {
                 return result;
@@ -122,7 +137,11 @@ namespace cuda::raytrace {
             t2 = (max_point.y - ray.origin.y) * inv_dir_y;
             tnear = fminf(t1, t2);
             tfar = fmaxf(t1, t2);
-            tmin = fmaxf(tmin, tnear);
+            if (tnear > tmin) {
+                tmin = tnear;
+                hit_axis = 1;
+                hit_sign = (t1 < t2) ? -1.0f : 1.0f;
+            }
             tmax = fminf(tmax, tfar);
             if (tmin > tmax) {
                 return result;
@@ -132,7 +151,11 @@ namespace cuda::raytrace {
             t2 = (max_point.z - ray.origin.z) * inv_dir_z;
             tnear = fminf(t1, t2);
             tfar = fmaxf(t1, t2);
-            tmin = fmaxf(tmin, tnear);
+            if (tnear > tmin) {
+                tmin = tnear;
+                hit_axis = 2;
+                hit_sign = (t1 < t2) ? -1.0f : 1.0f;
+            }
             tmax = fminf(tmax, tfar);
             if (tmin > tmax) {
                 return result;
@@ -143,14 +166,16 @@ namespace cuda::raytrace {
                 result.t_near = tmin;
                 result.t_far = tmax;
 
-                if (fabsf(tnear - tmin) < 1e-5f) {
-                    if (fabsf(inv_dir_x) < fabsf(inv_dir_y) && fabsf(inv_dir_x) < fabsf(inv_dir_z)) {
-                        result.hit_normal = Vec3(t1 < t2 ? -1.0f : 1.0f, 0, 0);
-                    } else if (fabsf(inv_dir_y) < fabsf(inv_dir_z)) {
-                        result.hit_normal = Vec3(0, t1 < t2 ? -1.0f : 1.0f, 0);
-                    } else {
-                        result.hit_normal = Vec3(0, 0, t1 < t2 ? -1.0f : 1.0f);
-                    }
+                // hit_axis stays -1 when the ray starts inside the box: tmin is then the
+                // ray's own t_min and no face was crossed, so there is no entry normal to
+                // report. That is the same (0,0,0) the old code returned for the inside case
+                // by accident; it is now the deliberate answer.
+                if (hit_axis == 0) {
+                    result.hit_normal = Vec3(hit_sign, 0, 0);
+                } else if (hit_axis == 1) {
+                    result.hit_normal = Vec3(0, hit_sign, 0);
+                } else if (hit_axis == 2) {
+                    result.hit_normal = Vec3(0, 0, hit_sign);
                 }
             }
 
@@ -217,6 +242,18 @@ namespace cuda::raytrace {
                 if (t > ray.t_max) {
                     return result;
                 }
+            }
+
+            // The far root is only an answer when it lies ahead of the origin. A ray that
+            // starts outside the sphere and points away from it reaches neither root: both
+            // are behind it, so t is negative and the ray does not hit anything.
+            //
+            // The check above only tested the far root against t_max, so a ray pointing away
+            // reported hit = true with t_enter = -4 on a unit sphere centred at the origin
+            // (measured), which violates the Ray contract that t >= t_min >= 0 and hands a
+            // renderer a hit behind the camera.
+            if (t < ray.t_min) {
+                return result;
             }
 
             result.hit = true;

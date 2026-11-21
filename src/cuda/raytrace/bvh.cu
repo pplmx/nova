@@ -189,8 +189,9 @@ namespace cuda::raytrace {
             }
 
             if (prim_count <= options.max_prims_per_leaf) {
-                node.leaf.prim_count = prim_count;
-                node.leaf.first_prim = start;
+                node.is_leaf_flag = true;
+                node.leaf.prim_count = static_cast<uint32_t>(prim_count);
+                node.leaf.first_prim = static_cast<uint32_t>(start);
                 return next_node;
             }
 
@@ -206,37 +207,86 @@ namespace cuda::raytrace {
 
             int mid;
             if (partition.dim < 0) {
+                // No SAH split: fall back to a median split BY CENTROID, which requires the
+                // indices to actually be ordered along some axis. The old fallback divided
+                // the index range in half without touching prim_indices, so the two children
+                // were handed index ranges that had nothing to do with which primitives they
+                // contained -- every child then covered the whole set.
                 mid = start + prim_count / 2;
+                // Sort the index range by centroid along the axis with the largest spread, so
+                // the median split actually separates primitives that are far apart. A total
+                // order (x, then y, then z) keeps the sort well defined for coincident
+                // centroids.
+                AABB span = prim_bounds[prim_indices[start]];
+                for (int i = start + 1; i < end; ++i) {
+                    span.expand(prim_bounds[prim_indices[i]]);
+                }
+                const Vec3 ext = span.extent();
+                const int axis = (ext.x >= ext.y && ext.x >= ext.z) ? 0 : ((ext.y >= ext.z) ? 1 : 2);
+                std::sort(prim_indices + start, prim_indices + end, [prim_bounds, axis](uint32_t a, uint32_t b) {
+                    const Vec3 ca = prim_bounds[a].center();
+                    const Vec3 cb = prim_bounds[b].center();
+                    const float va = (axis == 0) ? ca.x : ((axis == 1) ? ca.y : ca.z);
+                    const float vb = (axis == 0) ? cb.x : ((axis == 1) ? cb.y : cb.z);
+                    if (va != vb) {
+                        return va < vb;
+                    }
+                    if (ca.x != cb.x) {
+                        return ca.x < cb.x;
+                    }
+                    if (ca.y != cb.y) {
+                        return ca.y < cb.y;
+                    }
+                    return ca.z < cb.z;
+                });
             } else {
                 mid = start + partition.left_count;
-                float split_pos = partition.pos;
-                int left_idx = start;
-                int right_idx = mid;
+                const float split_pos = partition.pos;
+                const int split_dim = partition.dim;
 
+                // Partition in place: walk i over the whole range and swap anything that
+                // belongs on the right into the next right slot. `left_idx` used to be
+                // initialised and never advanced, so the `left_idx == start` test below was
+                // always true and every node fell back to the median path -- which, until the
+                // sort above was added, did not reorder anything either. Measured: the
+                // prim_indices array came back as 0 1 2 3 4 for five boxes, unchanged.
+                int right_idx = mid;
                 for (int i = start; i < end; ++i) {
-                    float centroid;
                     const AABB& box = prim_bounds[prim_indices[i]];
-                    if (partition.dim == 0) {
+                    float centroid;
+                    if (split_dim == 0) {
                         centroid = (box.min_point.x + box.max_point.x) * 0.5f;
-                    } else if (partition.dim == 1) {
+                    } else if (split_dim == 1) {
                         centroid = (box.min_point.y + box.max_point.y) * 0.5f;
                     } else {
                         centroid = (box.min_point.z + box.max_point.z) * 0.5f;
                     }
 
                     if (centroid > split_pos && right_idx < end) {
-                        uint32_t temp = prim_indices[i];
-                        prim_indices[i] = prim_indices[right_idx];
-                        prim_indices[right_idx] = temp;
+                        std::swap(prim_indices[i], prim_indices[right_idx]);
                         right_idx++;
                     }
                 }
 
-                if (left_idx == start || right_idx == end) {
+                // If the partition produced an empty half the split is unusable, so fall
+                // back to the centroid sort rather than recursing on an empty range.
+                if (mid <= start || mid >= end) {
                     mid = start + prim_count / 2;
+                    std::sort(prim_indices + start, prim_indices + end, [prim_bounds](uint32_t a, uint32_t b) {
+                        const Vec3 ca = prim_bounds[a].center();
+                        const Vec3 cb = prim_bounds[b].center();
+                        if (ca.x != cb.x) {
+                            return ca.x < cb.x;
+                        }
+                        if (ca.y != cb.y) {
+                            return ca.y < cb.y;
+                        }
+                        return ca.z < cb.z;
+                    });
                 }
             }
 
+            node.is_leaf_flag = false;
             node.internal.left_child = next_node++;
             node.internal.right_child = next_node++;
             node.internal.prim_count = 0;
