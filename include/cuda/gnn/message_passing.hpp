@@ -23,8 +23,11 @@
 #define NOVA_CUDA_GNN_MESSAGE_PASSING_HPP
 
 #include <cuda/sparse/sparse_matrix.hpp>
+#include <algorithm>
 #include <cmath>
 #include <functional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace nova {
@@ -131,7 +134,20 @@ namespace nova {
         }
 
         inline void MessagePassing::gcn_propagate(const sparse::SparseMatrixCSR<float>& graph, const float* node_features, float* output, int hops) {
-            if (hops <= 1) {
+            // hops is the number of aggregation rounds. The old `hops <= 1` branch sent 0 and
+            // every negative value through one aggregation, so hops=0 did a full hop and
+            // hops=-5 did too: measured, 0, 1 and -5 produced identical output
+            // (2.886751 2.309401 1.732051 on the 3-node ring). A caller asking for no
+            // propagation got one, and a caller whose hop count went negative from a counted
+            // loop got one as well instead of an error.
+            if (hops < 0) {
+                throw std::invalid_argument("MessagePassing::gcn_propagate: hops must not be negative, got " + std::to_string(hops));
+            }
+            if (hops == 0) {
+                std::copy(node_features, node_features + graph.num_rows(), output);
+                return;
+            }
+            if (hops == 1) {
                 gcn_aggregate(graph, node_features, output);
                 return;
             }

@@ -15,7 +15,10 @@
 #define NOVA_CUDA_GNN_SAMPLING_HPP
 
 #include <cuda/sparse/sparse_matrix.hpp>
+#include <algorithm>
 #include <random>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace nova {
@@ -50,19 +53,33 @@ namespace nova {
 
             /**
              * @brief Sample neighbors from graph
+             *
              * @param graph Adjacency matrix
-             * @param seed_nodes Starting nodes
-             * @param num_samples Maximum neighbors per node
+             * @param seed_nodes Starting nodes; each must lie in [0, graph.num_rows())
+             * @param num_samples Maximum neighbors per node; must not be negative
              * @return Sampled neighbor information
+             * @throws std::out_of_range if a seed node is outside the graph. This was a
+             *         heap-buffer-overflow: the seed indexed row_offsets() directly, measured
+             *         under ASan with a seed of 7 on a 3-node graph.
+             * @throws std::invalid_argument if num_samples is negative. It reached
+             *         `all_neighbors.begin() + num_samples`, which walks the iterator before
+             *         the range begin and threw std::length_error from vector's constructor.
              */
             SampledNeighbors sample_neighbors(const sparse::SparseMatrixCSR<float>& graph, const std::vector<int>& seed_nodes, int num_samples);
 
             /**
              * @brief Extract k-hop neighborhood
+             *
              * @param graph Adjacency matrix
-             * @param seed_nodes Starting nodes
-             * @param k Number of hops
-             * @return Aggregated node IDs
+             * @param seed_nodes Starting nodes; each must lie in [0, graph.num_rows())
+             * @param k Number of hops; 0 returns the seeds, and a negative value is rejected
+             * @return Aggregated node IDs (the seeds plus every node reached within k hops)
+             * @throws std::out_of_range if a seed node is outside the graph, for the same
+             *         reason as sample_neighbors() -- measured under ASan with a seed of 9 on
+             *         a 3-node graph.
+             * @throws std::invalid_argument if k is negative. It used to return the seeds
+             *         unchanged, which reads as "nothing was reachable" rather than "the hop
+             *         count is invalid".
              */
             std::vector<int> k_hop_aggregation(const sparse::SparseMatrixCSR<float>& graph, const std::vector<int>& seed_nodes, int k);
 
@@ -71,12 +88,30 @@ namespace nova {
         };
 
         inline GraphSampler::SampledNeighbors GraphSampler::sample_neighbors(const sparse::SparseMatrixCSR<float>& graph, const std::vector<int>& seed_nodes, int num_samples) {
+            // A negative budget reached `all_neighbors.begin() + num_samples`, which walks the
+            // iterator before the range: measured under ASan,
+            //   terminate called after throwing an instance of 'std::length_error'
+            //   what(): cannot create std::vector larger than max_size()
+            if (num_samples < 0) {
+                throw std::invalid_argument("GraphSampler::sample_neighbors: num_samples must not be negative, got " + std::to_string(num_samples));
+            }
+
+            const int num_nodes = graph.num_rows();
+
+            // row_offsets()[node] is indexed with the caller's seed, so a seed outside the
+            // graph reads past the array: measured under ASan, a seed of 7 on a 3-node graph
+            // was a heap-buffer-overflow inside this function.
             SampledNeighbors result;
             result.node_ids = seed_nodes;
             result.neighbor_counts.resize(seed_nodes.size());
+            result.neighbors.reserve(seed_nodes.size());
 
             for (size_t i = 0; i < seed_nodes.size(); ++i) {
                 int node = seed_nodes[i];
+                if (node < 0 || node >= num_nodes) {
+                    throw std::out_of_range("GraphSampler::sample_neighbors: seed node " + std::to_string(node) + " at position " + std::to_string(i) + " is outside [0, "
+                                            + std::to_string(num_nodes) + ")");
+                }
                 int degree = graph.row_offsets()[node + 1] - graph.row_offsets()[node];
 
                 if (degree <= num_samples) {
@@ -104,6 +139,24 @@ namespace nova {
         }
 
         inline std::vector<int> GraphSampler::k_hop_aggregation(const sparse::SparseMatrixCSR<float>& graph, const std::vector<int>& seed_nodes, int k) {
+            // A negative hop count ran the loop zero times and returned the seeds, which reads
+            // as "the k-hop neighbourhood of these nodes" when nothing was traversed.
+            if (k < 0) {
+                throw std::invalid_argument("GraphSampler::k_hop_aggregation: k must not be negative, got " + std::to_string(k));
+            }
+
+            const int num_nodes = graph.num_rows();
+
+            // Same out-of-range read as sample_neighbors(): the seed indexes row_offsets()
+            // directly. Measured under ASan, a seed of 9 on a 3-node graph was a
+            // heap-buffer-overflow inside this function.
+            for (size_t i = 0; i < seed_nodes.size(); ++i) {
+                if (seed_nodes[i] < 0 || seed_nodes[i] >= num_nodes) {
+                    throw std::out_of_range("GraphSampler::k_hop_aggregation: seed node " + std::to_string(seed_nodes[i]) + " at position " + std::to_string(i) + " is outside [0, "
+                                            + std::to_string(num_nodes) + ")");
+                }
+            }
+
             std::vector<int> frontier = seed_nodes;
             std::vector<int> visited(frontier.begin(), frontier.end());
 
