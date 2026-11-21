@@ -7,8 +7,87 @@
 #include <sstream>
 #include <chrono>
 #include <cmath>
+#include <optional>
+#include <type_traits>
 
 namespace cuda::performance {
+
+    namespace {
+
+        /// Parse one scalar out of a cache file field.
+        ///
+        /// Returns nullopt rather than throwing, and rejects trailing junk: the cache is
+        /// written by a previous run and read back as untrusted input, so a corrupted field
+        /// must cost its own value, not the constructor that happens to be doing the reading.
+        template <typename T>
+        std::optional<T> parse_scalar(const std::string& text) {
+            if (text.empty()) {
+                return std::nullopt;
+            }
+            try {
+                size_t consumed = 0;
+                if constexpr (std::is_integral_v<T>) {
+                    const long long value = std::stoll(text, &consumed);
+                    if (value < static_cast<long long>(std::numeric_limits<T>::min()) || value > static_cast<long long>(std::numeric_limits<T>::max())) {
+                        return std::nullopt;
+                    }
+                    if (consumed != text.size()) {
+                        return std::nullopt;
+                    }
+                    return static_cast<T>(value);
+                } else {
+                    const long double value = std::stold(text, &consumed);
+                    if (consumed != text.size()) {
+                        return std::nullopt;
+                    }
+                    return static_cast<T>(value);
+                }
+            } catch (const std::exception&) {
+                return std::nullopt;
+            }
+        }
+
+        /// Read the four fields of an AutotuneResult out of "k=v,k=v,...".
+        ///
+        /// Shared by Autotuner::load_cache() and AutotuneRegistry::load_from_file(), which had
+        /// identical copies of the parsing loop and identical defects in it. A field that
+        /// cannot be parsed keeps its default; a non-finite timing is not a measurement.
+        AutotuneResult parse_result_fields(const std::string& value_str) {
+            AutotuneResult result;
+            std::istringstream vss(value_str);
+            std::string pair;
+
+            while (std::getline(vss, pair, ',')) {
+                const size_t eq = pair.find('=');
+                if (eq == std::string::npos) {
+                    continue;
+                }
+
+                const std::string k = pair.substr(0, eq);
+                const std::string v = pair.substr(eq + 1);
+
+                if (k == "block_size") {
+                    if (const auto parsed = parse_scalar<int>(v)) {
+                        result.optimal_block_size = *parsed;
+                    }
+                } else if (k == "grid_size") {
+                    if (const auto parsed = parse_scalar<int>(v)) {
+                        result.optimal_grid_size = *parsed;
+                    }
+                } else if (k == "time_ms") {
+                    if (const auto parsed = parse_scalar<float>(v); parsed && std::isfinite(*parsed)) {
+                        result.best_time_ms = *parsed;
+                    }
+                } else if (k == "speedup") {
+                    if (const auto parsed = parse_scalar<float>(v); parsed && std::isfinite(*parsed)) {
+                        result.speedup_vs_default = *parsed;
+                    }
+                }
+            }
+            return result;
+        }
+
+    }  // namespace
 
     Autotuner::Autotuner(const AutotuneConfig& config)
         : config_(config) {
@@ -87,33 +166,19 @@ namespace cuda::performance {
             }
 
             std::string key = line.substr(0, colon);
-            std::string value_str = line.substr(colon + 1);
-
-            AutotuneResult result;
-            std::istringstream vss(value_str);
-            std::string pair;
-
-            while (std::getline(vss, pair, ',')) {
-                size_t eq = pair.find('=');
-                if (eq == std::string::npos) {
-                    continue;
-                }
-
-                std::string k = pair.substr(0, eq);
-                std::string v = pair.substr(eq + 1);
-
-                if (k == "block_size") {
-                    result.optimal_block_size = std::stoi(v);
-                } else if (k == "grid_size") {
-                    result.optimal_grid_size = std::stoi(v);
-                } else if (k == "time_ms") {
-                    result.best_time_ms = std::stof(v);
-                } else if (k == "speedup") {
-                    result.speedup_vs_default = std::stof(v);
-                }
-            }
-
-            cached_results_[key] = result;
+            // A cache file is untrusted input: written by a previous run, possibly truncated by
+            // a crash or edited by hand. It used to be parsed with std::stoi/std::stof directly,
+            // so one damaged field threw out of the CONSTRUCTOR and made the autotuner
+            // unusable. Measured:
+            //
+            //     block_size=abc                       -> std::invalid_argument: stoi
+            //     block_size=99999999999999999999      -> std::out_of_range: stoi
+            //     block_size=                           -> std::invalid_argument: stoi
+            //     time_ms=nan                           -> accepted, timing = nan
+            //
+            // parse_result_fields() skips a field it cannot parse, so one bad line costs one
+            // cached result rather than the whole cache.
+            cached_results_[key] = parse_result_fields(line.substr(colon + 1));
         }
     }
 
@@ -189,34 +254,10 @@ namespace cuda::performance {
                 continue;
             }
 
-            std::string key = line.substr(0, colon);
-            std::string value_str = line.substr(colon + 1);
-
-            AutotuneResult result;
-            std::istringstream vss(value_str);
-            std::string pair;
-
-            while (std::getline(vss, pair, ',')) {
-                size_t eq = pair.find('=');
-                if (eq == std::string::npos) {
-                    continue;
-                }
-
-                std::string k = pair.substr(0, eq);
-                std::string v = pair.substr(eq + 1);
-
-                if (k == "block_size") {
-                    result.optimal_block_size = std::stoi(v);
-                } else if (k == "grid_size") {
-                    result.optimal_grid_size = std::stoi(v);
-                } else if (k == "time_ms") {
-                    result.best_time_ms = std::stof(v);
-                } else if (k == "speedup") {
-                    result.speedup_vs_default = std::stof(v);
-                }
-            }
-
-            results_[key] = result;
+            // Same untrusted-input problem as Autotuner::load_cache(), through a copy of the
+            // same loop: a damaged field threw out of load_from_file() instead of being
+            // skipped.
+            results_[line.substr(0, colon)] = parse_result_fields(line.substr(colon + 1));
         }
     }
 
