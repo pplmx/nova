@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstring>
 #include <cuda_runtime.h>
 #include <cuda/memory_opt/memory_optimizer.h>
 
@@ -228,6 +229,85 @@ namespace cuda::memory_opt::test {
         EXPECT_TRUE(stats.defragmentation_enabled);
 
         manager.reset_stats();
+    }
+
+    // compress() has four paths: compression off, input below min_size, and the codec path --
+    // which, when no codec is compiled in, is a plain copy. They disagreed about a buffer too
+    // small for the input: three returned 0, and the copy path memcpy'd min(input, capacity)
+    // and returned that, so a 4096-byte input into a 100-byte buffer "succeeded" with 100.
+    // That return value is indistinguishable from a genuine compression result, so a caller
+    // wrote a truncated checkpoint and reported it as compressed.
+    //
+    // The case drives every path because the build picks one at compile time and a future
+    // build may pick differently; the invariant is the same across all of them.
+    TEST_F(MemoryOptimizerTest, CompressRefusesAnOutputBufferItCannotFill) {
+        auto& compressor = CheckpointCompressor::instance();
+
+        struct Path {
+            const char* label;
+            bool enable;
+            size_t min_size;
+        };
+        const Path paths[] = {
+            {"compression disabled", false, 64},
+            {"below min_size", true, 1u << 20},
+            {"codec or copy path", true, 64},
+        };
+
+        std::vector<char> input(4096, 'A');
+        std::vector<char> too_small(100, 0);
+        std::vector<char> big_enough(8192, 0);
+
+        for (const auto& path : paths) {
+            CompressionConfig config;
+            config.enable_compression = path.enable;
+            config.min_size_for_compression = path.min_size;
+            compressor.set_config(config);
+
+            EXPECT_EQ(compressor.compress(input.data(), input.size(), too_small.data(), too_small.size()), 0u)
+                << path.label << " reported success for a buffer smaller than the input";
+
+            const size_t written = compressor.compress(input.data(), input.size(), big_enough.data(), big_enough.size());
+            ASSERT_GT(written, 0u) << path.label << " failed to store into a large enough buffer";
+            ASSERT_LE(written, big_enough.size());
+
+            // Whatever the path did, the bytes must round-trip.
+            std::vector<char> recovered(input.size(), 0);
+            const size_t back = compressor.decompress(big_enough.data(), written, recovered.data(), recovered.size());
+            EXPECT_EQ(back, input.size()) << path.label << " did not round-trip";
+            EXPECT_EQ(std::memcmp(recovered.data(), input.data(), input.size()), 0) << path.label << " changed the data";
+        }
+    }
+
+    // With no codec compiled in, compress() is a copy and every ratio is exactly 1.0. The
+    // public accessor exists so a caller can find that out instead of inferring compression
+    // from a return value that a copy satisfies. This case asserts the pair is consistent: a
+    // backend present means the flag is true, and no backend means the copy is what runs.
+    TEST_F(MemoryOptimizerTest, CompressionBackendFlagMatchesWhatTheBuildCompiled) {
+        auto& compressor = CheckpointCompressor::instance();
+
+        CompressionConfig config;
+        config.enable_compression = true;
+        config.min_size_for_compression = 1;
+        compressor.set_config(config);
+
+        // Highly compressible: 64 KiB of a repeating 4-byte pattern.
+        std::vector<char> input(64 * 1024);
+        for (size_t i = 0; i < input.size(); ++i) {
+            input[i] = static_cast<char>(i % 4);
+        }
+        std::vector<char> output(input.size() * 2, 0);
+        const size_t written = compressor.compress(input.data(), input.size(), output.data(), output.size());
+
+        ASSERT_GT(written, 0u);
+        if (CheckpointCompressor::has_compression_backend()) {
+            // A real codec may or may not beat the input on this data; it must at least be
+            // bounded by the input, since compress() falls back to a copy when it cannot win.
+            EXPECT_LE(written, input.size());
+        } else {
+            EXPECT_EQ(written, input.size()) << "without a backend the input is stored verbatim";
+            EXPECT_EQ(std::memcmp(output.data(), input.data(), input.size()), 0) << "the copy path must not alter the bytes";
+        }
     }
 
 }  // namespace cuda::memory_opt::test

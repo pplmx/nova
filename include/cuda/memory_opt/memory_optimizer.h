@@ -16,15 +16,60 @@ namespace cuda::memory_opt {
         float target_compression_ratio = 2.0f;
     };
 
+    /**
+     * @class CheckpointCompressor
+     * @brief Byte-for-byte checkpoint compression, when a codec is compiled in
+     *
+     * @par This build may have no codec
+     * The implementation selects a backend with `NOVA_USE_ZSTD`, else `NOVA_USE_LZ4`, else
+     * falls back to a straight copy. Nothing in this project's build sets either macro, so the
+     * fallback is what is compiled: compress() and decompress() are memcpy and every ratio is
+     * exactly 1.0. `enable_compression` therefore has no effect in a default build, and the
+     * two implementations are indistinguishable -- measured, a 64 KiB buffer of easily
+     * compressible data came back byte-identical with the flag both on and off.
+     *
+     * That is stated here because it cannot be inferred from the return value: compress()
+     * reports the number of bytes it WROTE, and a copy writes all of them. Use
+     * has_compression_backend() to decide whether compression is available instead of
+     * assuming enable_compression bought something.
+     */
     class CheckpointCompressor {
     public:
         static CheckpointCompressor& instance();
 
+        /// Whether a real codec is compiled into this build.
+        ///
+        /// False means compress() stores the input verbatim. Check this before reporting a
+        /// compression ratio to a user, and before assuming checkpoint writes were reduced.
+        [[nodiscard]] static constexpr bool has_compression_backend() noexcept {
+#if NOVA_USE_ZSTD || NOVA_USE_LZ4
+            return true;
+#else
+            return false;
+#endif
+        }
+
         void set_config(const CompressionConfig& config);
         CompressionConfig get_config() const;
 
+        /**
+         * @brief Store input into output, compressing when a backend and the config allow it
+         *
+         * @return Bytes written to @p output, or 0 when @p output_capacity is too small to hold
+         *         the input and no codec could reduce it. The size alone cannot tell a caller
+         *         whether compression happened; compare it with @p input_size, or check
+         *         has_compression_backend().
+         */
         size_t compress(const void* input, size_t input_size, void* output, size_t output_capacity);
 
+        /**
+         * @brief Recover the original bytes
+         *
+         * On a decode failure the input is copied through, so a caller receiving a short or
+         * corrupt blob gets the bytes back rather than an empty buffer.
+         *
+         * @return Bytes written to @p output
+         */
         size_t decompress(const void* input, size_t input_size, void* output, size_t output_capacity);
 
         float get_compression_ratio() const { return compression_ratio_; }

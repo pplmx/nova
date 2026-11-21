@@ -35,22 +35,27 @@ namespace cuda::memory_opt {
     }
 
     size_t CheckpointCompressor::compress(const void* input, size_t input_size, void* output, size_t output_capacity) {
+        // Every path reports bytes WRITTEN or 0 for "did not fit". Reporting success for a
+        // buffer it could only partly fill is the one answer a caller cannot recover from,
+        // because the returned size is indistinguishable from a real compression result.
+        const auto record = [this](size_t written) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            total_compressed_bytes_ += written;
+            compression_ratio_ = total_compressed_bytes_ > 0 ? static_cast<float>(total_original_bytes_) / total_compressed_bytes_ : 1.0f;
+        };
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
             total_original_bytes_ += input_size;
         }
 
         if (!config_.enable_compression || input_size < config_.min_size_for_compression) {
-            if (input_size <= output_capacity) {
-                memcpy(output, input, input_size);
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    total_compressed_bytes_ += input_size;
-                    compression_ratio_ = total_original_bytes_ > 0 ? static_cast<float>(total_original_bytes_) / total_compressed_bytes_ : 1.0f;
-                }
-                return input_size;
+            if (input_size > output_capacity) {
+                return 0;
             }
-            return 0;
+            memcpy(output, input, input_size);
+            record(input_size);
+            return input_size;
         }
 
         size_t compressed_size = 0;
@@ -58,28 +63,43 @@ namespace cuda::memory_opt {
 #if NOVA_USE_ZSTD
         compressed_size = ZSTD_compress(output, output_capacity, input, input_size, config_.compression_level);
         if (ZSTD_isError(compressed_size)) {
-            memcpy(output, input, std::min(input_size, output_capacity));
-            compressed_size = std::min(input_size, output_capacity);
+            // The codec could not fit the result. Fall back to a copy when it fits, and
+            // refuse when it does not -- a truncated copy is not recoverable data.
+            if (input_size > output_capacity) {
+                return 0;
+            }
+            memcpy(output, input, input_size);
+            compressed_size = input_size;
         }
 #elif NOVA_USE_LZ4
-        int lz4_size = LZ4_compress_default(static_cast<const char*>(input), static_cast<char*>(output), static_cast<int>(input_size), static_cast<int>(output_capacity));
+        const int lz4_size = LZ4_compress_default(static_cast<const char*>(input), static_cast<char*>(output), static_cast<int>(input_size), static_cast<int>(output_capacity));
         if (lz4_size == 0) {
-            memcpy(output, input, std::min(input_size, output_capacity));
-            compressed_size = std::min(input_size, output_capacity);
+            if (input_size > output_capacity) {
+                return 0;
+            }
+            memcpy(output, input, input_size);
+            compressed_size = input_size;
         } else {
             compressed_size = static_cast<size_t>(lz4_size);
         }
 #else
-        memcpy(output, input, std::min(input_size, output_capacity));
-        compressed_size = std::min(input_size, output_capacity);
+        // No codec is compiled into this build, so the input is stored verbatim. The path used
+        // to memcpy min(input_size, output_capacity) bytes and report that count, so with a
+        // buffer smaller than the input it silently truncated and returned a success-looking
+        // size:
+        //
+        //     in=4096 cap=100 -> returned 100
+        //
+        // The other three paths already refuse in that situation; this one now does too,
+        // which also makes the two builds behave the same way from the caller's side.
+        if (input_size > output_capacity) {
+            return 0;
+        }
+        memcpy(output, input, input_size);
+        compressed_size = input_size;
 #endif
 
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            total_compressed_bytes_ += compressed_size;
-            compression_ratio_ = total_original_bytes_ > 0 ? static_cast<float>(total_original_bytes_) / total_compressed_bytes_ : 1.0f;
-        }
-
+        record(compressed_size);
         return compressed_size;
     }
 
