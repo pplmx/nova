@@ -284,6 +284,58 @@ namespace cuda::raytrace::test {
         (void)cudaGetLastError();
     }
 
+    // Zero primitives is not the same case as zero rays, and the two were handled identically:
+    // both returned without writing anything. With rays present and no boxes to test against,
+    // the documented answer is one "missed" result per ray, and the buffer used to keep
+    // whatever the caller left in it. Measured: a results array pre-filled with
+    // {hit = true, t_near = -12345} came back unchanged, so a caller reading it saw a hit that
+    // no box could have produced.
+    TEST(RayBatchTest, ZeroPrimitivesReportsAMissForEveryRay) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        constexpr size_t kRays = 4;
+
+        Ray* d_rays = nullptr;
+        AABB* d_boxes = nullptr;
+        Sphere* d_spheres = nullptr;
+        AABB::BoxHit* d_box_results = nullptr;
+        Sphere::SphereHit* d_sphere_results = nullptr;
+        ASSERT_EQ(cudaMalloc(&d_rays, kRays * sizeof(Ray)), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&d_boxes, sizeof(AABB)), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&d_spheres, sizeof(Sphere)), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&d_box_results, kRays * sizeof(AABB::BoxHit)), cudaSuccess);
+        ASSERT_EQ(cudaMalloc(&d_sphere_results, kRays * sizeof(Sphere::SphereHit)), cudaSuccess);
+
+        // Poison both result arrays so "untouched" is distinguishable from "written".
+        const std::vector<AABB::BoxHit> box_poison(kRays, AABB::BoxHit {true, -12345.0f, -12345.0f, Vec3(-1, -1, -1)});
+        const std::vector<Sphere::SphereHit> sphere_poison(kRays, Sphere::SphereHit {true, -12345.0f, -12345.0f, Vec3(-1, -1, -1), false});
+        ASSERT_EQ(cudaMemcpy(d_box_results, box_poison.data(), kRays * sizeof(AABB::BoxHit), cudaMemcpyHostToDevice), cudaSuccess);
+        ASSERT_EQ(cudaMemcpy(d_sphere_results, sphere_poison.data(), kRays * sizeof(Sphere::SphereHit), cudaMemcpyHostToDevice), cudaSuccess);
+
+        ASSERT_NO_THROW(ray_box_intersect_batch(d_rays, d_boxes, d_box_results, kRays, 0, nullptr));
+        ASSERT_NO_THROW(ray_sphere_intersect_batch(d_rays, d_spheres, d_sphere_results, kRays, 0, nullptr));
+        ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+        std::vector<AABB::BoxHit> box_out(kRays);
+        std::vector<Sphere::SphereHit> sphere_out(kRays);
+        ASSERT_EQ(cudaMemcpy(box_out.data(), d_box_results, kRays * sizeof(AABB::BoxHit), cudaMemcpyDeviceToHost), cudaSuccess);
+        ASSERT_EQ(cudaMemcpy(sphere_out.data(), d_sphere_results, kRays * sizeof(Sphere::SphereHit), cudaMemcpyDeviceToHost), cudaSuccess);
+
+        for (size_t i = 0; i < kRays; ++i) {
+            EXPECT_FALSE(box_out[i].hit) << "ray " << i << " cannot hit any of zero boxes, and its result still says it did";
+            EXPECT_FALSE(sphere_out[i].hit) << "ray " << i << " cannot hit any of zero spheres";
+        }
+
+        cudaFree(d_rays);
+        cudaFree(d_boxes);
+        cudaFree(d_spheres);
+        cudaFree(d_box_results);
+        cudaFree(d_sphere_results);
+        (void)cudaGetLastError();
+    }
+
     TEST(IntersectionStatsTest, HitRateIsDefinedForZeroTests) {
         IntersectionStats stats;
         EXPECT_FLOAT_EQ(stats.hit_rate(), 0.0f) << "no division by zero";
