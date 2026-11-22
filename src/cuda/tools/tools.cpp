@@ -4,8 +4,9 @@
 #include "cuda/device/error.h"
 
 #include <algorithm>
-#include <sstream>
 #include <iomanip>
+#include <sstream>
+#include <stdexcept>
 
 namespace cuda::tools {
 
@@ -49,6 +50,17 @@ namespace cuda::tools {
     }
 
     int detect_bank_conflicts(const void* shared_mem_ptr, int num_elements, int stride) {
+        // The outer loop advances by `stride`, so a stride of 0 never advances: measured, this
+        // hung indefinitely (no return within 3 seconds, killed at exit 124) and a negative
+        // stride walks backwards off the start of the array. Both are caller errors the
+        // signature cannot prevent, so report them instead of looping or reading out of bounds.
+        if (stride <= 0) {
+            throw std::invalid_argument("detect_bank_conflicts: stride must be positive");
+        }
+        if (num_elements <= 0) {
+            return 0;
+        }
+
         int num_banks = 32;
         int bank_width = 4;
 

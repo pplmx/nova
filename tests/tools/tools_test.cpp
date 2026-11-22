@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 #include "test_temp_paths.h"
 #include <fstream>
 #include <cuda_runtime.h>
@@ -49,7 +51,27 @@ namespace cuda::tools::test {
 
     TEST_F(ToolsTest, BankConflictDetection) {
         int conflicts = detect_bank_conflicts(nullptr, 64, 32);
+        // The old assertion was EXPECT_GE(conflicts, 0) on a count that cannot be negative,
+        // so it could never fail. A stride of 32 over 64 elements visits indices 0 and 32; the
+        // scan for each i looks at j in (i, i+stride), so it counts the pairs it examines.
         EXPECT_GE(conflicts, 0);
+        EXPECT_LE(conflicts, 64) << "a conflict count cannot exceed the number of elements examined";
+        // Stride == num_elements visits exactly one group; stride 1 has no inner loop at all.
+        EXPECT_EQ(detect_bank_conflicts(nullptr, 64, 1), 0) << "consecutive elements land in distinct banks";
+    }
+
+    // Regression: the outer loop is `for (int i = 0; i < num_elements; i += stride)`, so a
+    // stride of 0 never advances. Measured: detect_bank_conflicts(nullptr, 32, 0) did not
+    // return within 3 seconds (killed at exit 124). A negative stride walked i backwards past
+    // zero. Both are caller errors the int parameter cannot prevent.
+    TEST_F(ToolsTest, BankConflictDetectionRejectsANonPositiveStride) {
+        for (int bad_stride : {0, -1, -32}) {
+            EXPECT_THROW(detect_bank_conflicts(nullptr, 64, bad_stride), std::invalid_argument) << "stride " << bad_stride << " would loop forever or read backwards";
+        }
+
+        // A degenerate element count is not an error: there is simply nothing to examine.
+        EXPECT_EQ(detect_bank_conflicts(nullptr, 0, 32), 0);
+        EXPECT_EQ(detect_bank_conflicts(nullptr, -5, 32), 0);
     }
 
     TEST_F(ToolsTest, BankConflictAnalysis) {
