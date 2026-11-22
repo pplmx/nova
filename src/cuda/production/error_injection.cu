@@ -130,16 +130,29 @@ namespace cuda::production {
         : limit_bytes_(limit_bytes) {}
 
     bool MemoryPressureTest::allocate(size_t bytes) const {
+        // The check and the reservation must be one atomic step. This was a plain load followed
+        // by an unconditional fetch_add, so several threads could all read the same `current`,
+        // all pass the test, and all add their bytes: measured with 128 threads released from a
+        // barrier against a 1000-byte limit and 100 bytes each, one run granted 56 allocations
+        // where at most 10 fit. A pressure test that over-commits is worse than useless -- it
+        // reports headroom that does not exist.
         size_t current = used_bytes_.load(std::memory_order_relaxed);
-        if (current + bytes > limit_bytes_) {
-            return false;
+        for (;;) {
+            // Overflow-safe comparison: `current + bytes` wraps for a huge request, which would
+            // make an impossible allocation look affordable.
+            if (bytes > limit_bytes_ - current) {
+                return false;
+            }
+            if (used_bytes_.compare_exchange_weak(current, current + bytes, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                return true;
+            }
+            // compare_exchange_weak reloads `current` on failure; loop and retest.
         }
-        used_bytes_.fetch_add(bytes, std::memory_order_relaxed);
-        return true;
     }
 
     size_t MemoryPressureTest::remaining() const {
         size_t current = used_bytes_.load(std::memory_order_relaxed);
+        // Same overflow hazard as allocate(): a usage above the limit must report 0, not wrap.
         return (current >= limit_bytes_) ? 0 : (limit_bytes_ - current);
     }
 

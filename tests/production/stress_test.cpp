@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 
+#include <atomic>
+#include <limits>
+#include <thread>
+#include <vector>
+
 #include "cuda/production/error_injection.h"
 #include "cuda/device/error.h"
 
@@ -108,6 +113,65 @@ TEST_F(MemoryPressureTest, AllocationLimit) {
     EXPECT_TRUE(pressure.allocate(512));
     EXPECT_TRUE(pressure.allocate(512));
     EXPECT_FALSE(pressure.allocate(1));
+}
+
+// Regression: allocate() was a load followed by an unconditional fetch_add, so concurrent
+// callers could all read the same used_bytes_, all pass the limit check, and all reserve. The
+// existing cases here are all single-threaded and therefore cannot see it. Measured with 128
+// threads released from a barrier, a 1000-byte limit and 100 bytes each: one run granted 56
+// allocations where at most 10 fit.
+//
+// The threads are released together deliberately -- staggering them lets each finish its
+// check-and-add before the next starts, and the defect disappears.
+TEST_F(MemoryPressureTest, ConcurrentAllocationNeverOverCommitsTheLimit) {
+    constexpr size_t kLimit = 1000;
+    constexpr size_t kChunk = 100;  // at most 10 can fit
+    constexpr size_t kMaxGrants = kLimit / kChunk;
+    constexpr int kThreads = 128;
+
+    for (int trial = 0; trial < 8; ++trial) {
+        cuda::production::MemoryPressureTest pressure(kLimit);
+        std::atomic<int> granted {0};
+        std::atomic<int> ready {0};
+        std::atomic<bool> go {false};
+
+        std::vector<std::thread> threads;
+        threads.reserve(kThreads);
+        for (int i = 0; i < kThreads; ++i) {
+            threads.emplace_back([&] {
+                ready.fetch_add(1);
+                while (!go.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                if (pressure.allocate(kChunk)) {
+                    granted.fetch_add(1);
+                }
+            });
+        }
+
+        while (ready.load() < kThreads) {
+            std::this_thread::yield();
+        }
+        go.store(true, std::memory_order_release);
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        EXPECT_LE(static_cast<size_t>(granted.load()), kMaxGrants)
+            << "trial " << trial << ": the budget admits at most " << kMaxGrants << " allocations of " << kChunk << " bytes, but " << granted.load() << " were granted";
+        EXPECT_EQ(pressure.remaining(), kLimit - kChunk * static_cast<size_t>(granted.load())) << "trial " << trial << ": remaining must match what was granted";
+    }
+}
+
+// The overflow guard: a request larger than the whole budget must be refused even though
+// `used + bytes` would wrap.
+TEST_F(MemoryPressureTest, AllocationRefusesASizeThatWouldOverflowTheLimit) {
+    cuda::production::MemoryPressureTest pressure(1024);
+    EXPECT_TRUE(pressure.allocate(512));
+
+    EXPECT_FALSE(pressure.allocate(std::numeric_limits<size_t>::max())) << "a wrapping size must be refused, not accepted";
+    EXPECT_FALSE(pressure.allocate(std::numeric_limits<size_t>::max() - 100 + 1));
+    EXPECT_EQ(pressure.remaining(), 512u) << "a refused allocation must not change the accounting";
 }
 
 TEST_F(MemoryPressureTest, IsUnderPressure) {
