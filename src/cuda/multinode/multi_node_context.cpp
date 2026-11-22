@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
+#include <string>
 
 namespace cuda::multinode {
 
@@ -52,6 +54,32 @@ namespace cuda::multinode {
     void MultiNodeContext::initialize(const NodeConfig& config) {
         if (initialized_) {
             return;
+        }
+
+        // num_nodes_ is the quotient of these two, so local_size 0 is an integer division by
+        // zero. That is not an exception anything can catch: measured, initialize() with
+        // world_size 4 and local_size 0 aborted the process with SIGFPE (floating point
+        // exception, core dumped, exit 136) before the caller could react. Validate here, where
+        // the mistake is still attributable, and name it.
+        if (config.local_size <= 0) {
+            throw std::invalid_argument("MultiNodeContext::initialize: local_size must be positive (it divides world_size to yield the node count)");
+        }
+        if (config.world_size <= 0) {
+            throw std::invalid_argument("MultiNodeContext::initialize: world_size must be positive");
+        }
+        if (config.local_size > config.world_size) {
+            // num_nodes_ would truncate to 0, which reads as "no nodes" while the context is
+            // initialized and claiming a world size.
+            throw std::invalid_argument("MultiNodeContext::initialize: local_size (" + std::to_string(config.local_size) + ") exceeds world_size ("
+                                        + std::to_string(config.world_size) + ")");
+        }
+        if (config.world_rank < 0 || config.world_rank >= config.world_size) {
+            throw std::invalid_argument("MultiNodeContext::initialize: world_rank " + std::to_string(config.world_rank) + " is outside [0, " + std::to_string(config.world_size)
+                                        + ")");
+        }
+        if (config.local_rank < 0 || config.local_rank >= config.local_size) {
+            throw std::invalid_argument("MultiNodeContext::initialize: local_rank " + std::to_string(config.local_rank) + " is outside [0, " + std::to_string(config.local_size)
+                                        + ")");
         }
 
         global_rank_ = config.world_rank;
