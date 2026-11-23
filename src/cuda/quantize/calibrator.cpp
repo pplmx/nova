@@ -321,7 +321,35 @@ namespace nova {
         std::vector<CalibrationResult> PerChannelCalibrator::calibrate_per_channel(const float* data, const std::vector<int>& shape, cudaStream_t stream) {
             channel_results_.clear();
 
-            int num_channels = shape[channel_dim_];
+            // shape[channel_dim_] was read with no bounds check at all. Measured: an empty shape
+            // segfaulted for every channel_dim, and with shape {2, 4} a channel_dim of 2, 5 or -1
+            // read past the end and returned zero results as though that were a legitimate answer.
+            if (shape.empty()) {
+                throw ::std::invalid_argument("PerChannelCalibrator::calibrate_per_channel: shape must not be empty");
+            }
+            if (channel_dim_ < 0 || static_cast<size_t>(channel_dim_) >= shape.size()) {
+                throw ::std::invalid_argument("PerChannelCalibrator::calibrate_per_channel: channel_dim=" + ::std::to_string(channel_dim_) + " is outside a shape of rank "
+                                              + ::std::to_string(shape.size()));
+            }
+            // inner_size is the product of the non-channel extents and is passed as a size_t
+            // element count. A zero or negative extent made that product zero or negative, which
+            // then wrapped to a huge count: {2, -4} produced inner_size = -4 and "worked" only
+            // because every kernel treats a negative n as an empty range.
+            for (size_t i = 0; i < shape.size(); ++i) {
+                if (static_cast<int>(i) == channel_dim_) {
+                    continue;
+                }
+                if (shape[i] <= 0) {
+                    throw ::std::invalid_argument("PerChannelCalibrator::calibrate_per_channel: shape[" + ::std::to_string(i) + "]=" + ::std::to_string(shape[i])
+                                                  + " must be positive");
+                }
+            }
+
+            int num_channels = shape[static_cast<size_t>(channel_dim_)];
+            if (num_channels <= 0) {
+                throw ::std::invalid_argument("PerChannelCalibrator::calibrate_per_channel: shape[" + ::std::to_string(channel_dim_) + "]=" + ::std::to_string(num_channels)
+                                              + " must give a positive channel count");
+            }
             int inner_size = 1;
             for (size_t i = 0; i < shape.size(); ++i) {
                 if (static_cast<int>(i) != channel_dim_) {

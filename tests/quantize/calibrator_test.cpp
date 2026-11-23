@@ -262,6 +262,40 @@ namespace nova {
                 EXPECT_EQ(results.size(), 4u);
             }
 
+            // Regression: calibrate_per_channel read shape[channel_dim_] with no bounds check.
+            // Measured before the fix:
+            //   empty shape, any channel_dim  -> segfault (every case)
+            //   shape {2, 4}, channel_dim 2/5 -> zero results, no error
+            //   shape {2, 4}, channel_dim -1  -> zero results, no error
+            //   shape {2, -4}                 -> inner_size = -4, wrapped to a huge size_t count
+            //                                    and "worked" only because the kernels treat a
+            //                                    negative n as an empty range
+            TEST_F(CalibratorTest, PerChannelCalibratorRejectsRankOutOfRange) {
+                std::vector<float> data(64, 1.5f);
+
+                for (const int dim : {0, 1, 5, -1}) {
+                    PerChannelCalibrator calibrator(dim, true);
+                    EXPECT_THROW(calibrator.calibrate_per_channel(data.data(), {}, nullptr), std::invalid_argument) << "empty shape with channel_dim=" << dim;
+                }
+
+                PerChannelCalibrator too_high(2, true);
+                EXPECT_THROW(too_high.calibrate_per_channel(data.data(), {2, 4}, nullptr), std::invalid_argument) << "channel_dim past the end of a rank-2 shape";
+
+                PerChannelCalibrator negative(-1, true);
+                EXPECT_THROW(negative.calibrate_per_channel(data.data(), {2, 4}, nullptr), std::invalid_argument) << "negative channel_dim is not a rank request";
+            }
+
+            TEST_F(CalibratorTest, PerChannelCalibratorRejectsNonPositiveExtents) {
+                std::vector<float> data(64, 1.5f);
+
+                PerChannelCalibrator calibrator(0, true);
+                EXPECT_THROW(calibrator.calibrate_per_channel(data.data(), {2, 0}, nullptr), std::invalid_argument) << "a zero inner extent would divide the buffer by zero";
+                EXPECT_THROW(calibrator.calibrate_per_channel(data.data(), {2, -4}, nullptr), std::invalid_argument) << "a negative inner extent wraps into a huge size_t count";
+                EXPECT_THROW(calibrator.calibrate_per_channel(data.data(), {0, 4}, nullptr), std::invalid_argument) << "a zero channel count has nothing to calibrate";
+
+                EXPECT_NO_THROW(calibrator.calibrate_per_channel(data.data(), {2, 4}, nullptr)) << "a well-formed shape must still work";
+            }
+
             // Regression: the non-symmetric branch derived zero_point from the RAW scale and
             // only then clamped the scale, so a degenerate range divided by zero. Measured on
             // 64 samples:
