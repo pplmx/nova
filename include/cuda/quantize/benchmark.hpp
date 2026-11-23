@@ -97,7 +97,29 @@ namespace nova {
                 void save_results_json(const std::string& path) const;
                 void print_summary() const;
 
+                /**
+                 * @brief Euclidean distance between two vectors, as a raw norm
+                 *
+                 * This is sqrt(sum((a_i - b_i)^2)) over the common prefix -- NOT an average and NOT
+                 * a relative error. It grows with both the error and the length, so it is only
+                 * comparable between two vectors of the same size. Translating it into a
+                 * size-independent figure is the caller's decision: benchmark_accuracy_comparison()
+                 * divides by sqrt(n) to report an RMSE, and dividing by n instead makes the number
+                 * shrink as the batch grows.
+                 *
+                 * When the vectors differ in length only the common prefix is compared.
+                 */
                 float compute_l2_error(const std::vector<float>& a, const std::vector<float>& b);
+
+                /**
+                 * @brief Sum of a_i * log(a_i / b_i) over the common prefix
+                 *
+                 * Not a normalised KL divergence: the inputs are not required to be probability
+                 * distributions and are not normalised. A term is skipped when either value is not
+                 * strictly positive, which means a position where `a` is positive and `b` is zero
+                 * contributes nothing -- the mathematical limit there is +infinity, so the returned
+                 * figure understates in that case rather than reporting a divergence.
+                 */
                 float compute_kl_divergence(const std::vector<float>& a, const std::vector<float>& b);
                 std::vector<float> generate_random_data(size_t n, float scale = 1.0f);
 

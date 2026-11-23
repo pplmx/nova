@@ -60,7 +60,12 @@ namespace nova {
                     recovered[i] = static_cast<float>(quantized[i]);
                 }
 
-                result.relative_error = compute_l2_error(data, recovered) / data.size();
+                // RMSE, not the L2 norm divided by the element count. Dividing a norm by n made
+                // the reported error shrink as the batch grew: a uniform 100% error read 0.7071
+                // at n=2, 0.5000 at n=4 and 0.2500 at n=16. A benchmark whose accuracy number
+                // depends on the batch size cannot compare two configurations, which is the one
+                // thing it exists to do. Dividing by sqrt(n) gives the size-invariant RMSE.
+                result.relative_error = data.empty() ? 0.0f : compute_l2_error(data, recovered) / std::sqrt(static_cast<float>(data.size()));
 
                 CUDA_CHECK(cudaFree(d_data));
                 CUDA_CHECK(cudaFree(d_quantized));
@@ -252,7 +257,7 @@ namespace nova {
                 result.batch_size = static_cast<int>(original.size());
 
                 if (metric == "l2") {
-                    result.relative_error = compute_l2_error(original, quantized) / original.size();
+                    result.relative_error = original.empty() ? 0.0f : compute_l2_error(original, quantized) / std::sqrt(static_cast<float>(original.size()));
                 } else if (metric == "kl") {
                     result.relative_error = compute_kl_divergence(original, quantized);
                 }
@@ -351,13 +356,20 @@ namespace nova {
                     recovered[i] = static_cast<float>(quantized[i]);
                 }
 
+                // Average over the elements that were actually measured. Elements whose magnitude
+                // falls below the 1e-6 guard are skipped, because a relative error against ~zero
+                // is meaningless -- but the divisor was still n, so any run containing such
+                // elements under-reported: one measurable element with error 1.0 alongside nine
+                // near-zero ones reported 0.1 instead of 1.0.
                 float sum_rel_err = 0.0f;
+                size_t measured = 0;
                 for (size_t i = 0; i < n; ++i) {
                     if (std::abs(data[i]) > 1e-6f) {
                         sum_rel_err += std::abs(data[i] - recovered[i]) / std::abs(data[i]);
+                        ++measured;
                     }
                 }
-                result.relative_error = sum_rel_err / n;
+                result.relative_error = measured > 0 ? sum_rel_err / static_cast<float>(measured) : 0.0f;
 
                 return result;
             }

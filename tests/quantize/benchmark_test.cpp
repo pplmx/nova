@@ -116,6 +116,44 @@ namespace nova {
                     EXPECT_GT(kl, 0.0f);
                 }
 
+                // Regression: the reported accuracy divided the L2 norm by the element COUNT, so the
+                // number shrank as the batch grew -- a uniform 100% error read 0.5 at n=4 and 0.25
+                // at n=16. A benchmark exists to compare configurations, and this one could not
+                // compare two batch sizes. Dividing by sqrt(n) makes it the RMSE, which is
+                // size-invariant.
+                TEST_F(ComputeErrorTest, L2AccuracyDoesNotDependOnTheBatchSize) {
+                    QuantizationBenchmark bench;
+
+                    const std::vector<float> small_a(4, 1.0f), small_b(4, 2.0f);
+                    const std::vector<float> large_a(16, 1.0f), large_b(16, 2.0f);
+
+                    const auto small = bench.benchmark_accuracy_comparison(small_a, small_b, "l2");
+                    const auto large = bench.benchmark_accuracy_comparison(large_a, large_b, "l2");
+
+                    EXPECT_NEAR(small.relative_error, large.relative_error, 1e-5f)
+                        << "the same 100% error must report the same number at any size; got " << small.relative_error << " vs " << large.relative_error;
+
+                    // And the number has meaning: RMSE of a uniform doubling of 1.0 is 1.0.
+                    EXPECT_NEAR(small.relative_error, 1.0f, 1e-5f) << "root-mean-square error of a 100% uniform error is 1.0";
+                }
+
+                // Regression: the mean relative error accumulated only over elements above the
+                // 1e-6 magnitude guard but divided by the FULL element count, so padding a batch
+                // with near-zero elements divided the answer by the padding factor: one
+                // measurable element of ten reported a tenth of that element's error.
+                TEST_F(ComputeErrorTest, MeanRelativeErrorIgnoresPaddingZeros) {
+                    std::vector<float> padded {0.7f, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                    std::vector<float> alone {0.7f};
+
+                    const auto padded_result = benchmark_fp8_roundtrip(padded.data(), padded.size());
+                    const auto alone_result = benchmark_fp8_roundtrip(alone.data(), alone.size());
+
+                    EXPECT_GT(alone_result.relative_error, 0.0f) << "0.7 is not exactly representable in E4M3, so this must be non-zero";
+
+                    EXPECT_NEAR(padded_result.relative_error, alone_result.relative_error, 1e-5f)
+                        << "adding nine near-zero elements must not change the reported error; got " << padded_result.relative_error << " vs " << alone_result.relative_error;
+                }
+
                 TEST_F(ComputeErrorTest, KLDivergenceHandlesZeroBins) {
                     std::vector<float> a = {1.0f, 0.0f, 1.0f};
                     std::vector<float> b = {1.0f, 1.0f, 1.0f};
@@ -123,7 +161,9 @@ namespace nova {
                     QuantizationBenchmark bench;
                     float kl = bench.compute_kl_divergence(a, b);
 
-                    EXPECT_GE(kl, 0.0f);
+                    // EXPECT_GE(kl, 0.0f) was tautological for a sum of non-negative terms. For
+                    // this input every measured term is log(1/1) = 0, so the exact answer is 0.
+                    EXPECT_NEAR(kl, 0.0f, 1e-6f) << "a == b wherever a is non-zero, so the divergence is exactly zero";
                 }
 
                 class QuantizationBenchmarkConfigTest : public ::testing::Test {};
