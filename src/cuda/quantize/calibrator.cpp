@@ -75,6 +75,7 @@ namespace nova {
             } else {
                 scale = (max_val_ - min_val_) / 254.0f;
                 zero_point = 0.0f;
+                // zero_point is derived below, once the scale has been stabilised.
             }
 
             // Clamp the scale BEFORE deriving the zero point. The non-symmetric branch used to
@@ -89,7 +90,13 @@ namespace nova {
             // of the safe identity the symmetric path produced for the same input.
             scale = stabilized_scale(scale, min_val_, max_val_);
             if (!symmetric_) {
-                zero_point = -min_val_ / scale - 127.0f;
+                // Must be in the quantize kernel's units: it computes q = (v - zero_point)/scale and
+                // the dequantize kernel is now q*scale + zero_point, so zero_point is a VALUE in
+                // the data's own range, specifically the centre of [min, max]. The old form
+                // `-min/scale - 127` is the integer zero point of a different scheme
+                // (q = v/scale + zp): fed to this kernel it turned every sample of data spanning
+                // [0, 1] into code 127 and dequantized all of them to 0.0.
+                zero_point = (min_val_ + max_val_) * 0.5f;
                 // Keep the result inside the representable int8 span so a caller can use it
                 // without a second clamp, and never hand back a non-finite zero point: a NaN
                 // min/max must not silently become a plausible-looking offset.
@@ -358,12 +365,12 @@ namespace nova {
                 zero_point = 0.0f;
             } else {
                 scale = (d_max - d_min) / 254.0f;
-                zero_point = -d_min / scale - 127.0f;
+                zero_point = (d_min + d_max) * 0.5f;
             }
 
             scale = stabilized_scale(scale, d_min, d_max);
             if (!symmetric_) {
-                zero_point = -d_min / scale - 127.0f;
+                zero_point = (d_min + d_max) * 0.5f;
                 if (!std::isfinite(zero_point)) {
                     zero_point = 0.0f;
                 } else {

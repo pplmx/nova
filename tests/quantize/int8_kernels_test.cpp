@@ -38,8 +38,12 @@ namespace nova {
                 }
 
                 void reference_dequantize(const int8_t* src, float* dst, size_t n, float scale, float zero_point = 0.0f) {
+                    // This must invert reference_quantize above, which computes
+                    // q = round((v - zero_point)/scale). The old body was
+                    // (q + zero_point) * scale -- the inverse of a DIFFERENT scheme -- so the two
+                    // references together baked in a round trip that did not return its input.
                     for (size_t i = 0; i < n; ++i) {
-                        dst[i] = (static_cast<float>(src[i]) + zero_point) * scale;
+                        dst[i] = static_cast<float>(src[i]) * scale + zero_point;
                     }
                 }
             };
@@ -235,6 +239,66 @@ namespace nova {
                 cudaFree(d_src);
                 cudaFree(d_min);
                 cudaFree(d_max);
+            }
+
+            // Regression: the asymmetric branch did not round-trip at all. The quantize kernel
+            // computes q = round((v - zero_point)/scale) while the dequantize kernel computed
+            // (q + zero_point) * scale, which inverts a different scheme; the calibrators
+            // supplied zero_point in yet a third convention (-min/scale - 127). Measured on data
+            // spanning [0, 1] calibrated asymmetrically: every sample quantized to code 127 and
+            // dequantized to 0.0, a relative error of 1.0. Note the reference helpers in this
+            // file repeated the same wrong pairing, which is why the suite stayed green.
+            TEST_F(INT8KernelsTest, AsymmetricRoundTripIsNearExact) {
+                struct Range {
+                    const char* label;
+                    float lo;
+                    float hi;
+                };
+                const Range ranges[] = {{"[0,1]", 0.0f, 1.0f}, {"[-10,2]", -10.0f, 2.0f}, {"[3,9]", 3.0f, 9.0f}, {"[-1,1]", -1.0f, 1.0f}, {"[0.5,0.5001]", 0.5f, 0.5001f}};
+
+                for (const auto& range : ranges) {
+                    const size_t n = 512;
+                    std::vector<float> src(n);
+                    for (size_t i = 0; i < n; ++i) {
+                        src[i] = range.lo + (range.hi - range.lo) * static_cast<float>(i) / static_cast<float>(n - 1);
+                    }
+
+                    // The parameters a correct asymmetric calibration produces for this range.
+                    const float scale = std::max((range.hi - range.lo) / 254.0f, 1e-6f);
+                    const float zero_point = 0.5f * (range.lo + range.hi);
+
+                    float* d_src = nullptr;
+                    int8_t* d_q = nullptr;
+                    float* d_back = nullptr;
+                    cudaMalloc(&d_src, n * sizeof(float));
+                    cudaMalloc(&d_q, n);
+                    cudaMalloc(&d_back, n * sizeof(float));
+                    ASSERT_NE(d_src, nullptr);
+                    ASSERT_NE(d_q, nullptr);
+                    ASSERT_NE(d_back, nullptr);
+                    cudaMemcpy(d_src, src.data(), n * sizeof(float), cudaMemcpyHostToDevice);
+
+                    cuda::QuantizationParams params;
+                    params.scale = scale;
+                    params.zero_point = zero_point;
+                    params.symmetric = false;
+                    cuda::quantize_f32_to_int8(d_src, d_q, n, params, 0);
+                    cuda::dequantize_int8_to_f32(d_q, d_back, n, params, 0);
+                    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+                    std::vector<float> back(n);
+                    cudaMemcpy(back.data(), d_back, n * sizeof(float), cudaMemcpyDeviceToHost);
+                    cudaFree(d_src);
+                    cudaFree(d_q);
+                    cudaFree(d_back);
+
+                    // 1/254 of the range is the best a uniform int8 grid can do; allow twice that
+                    // for rounding at both ends.
+                    const float tolerance = (range.hi - range.lo) / 254.0f * 2.0f + 1e-6f;
+                    for (size_t i = 0; i < n; ++i) {
+                        EXPECT_NEAR(back[i], src[i], tolerance) << range.label << " element " << i;
+                    }
+                }
             }
 
             TEST_F(INT8KernelsTest, HistogramComputation) {

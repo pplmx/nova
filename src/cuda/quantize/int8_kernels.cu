@@ -46,7 +46,16 @@ namespace nova {
                     if (SYMMETRIC) {
                         dequantized = static_cast<float>(val) * scale;
                     } else {
-                        dequantized = (static_cast<float>(val) + zero_point) * scale;
+                        // This must invert the quantize kernel, which computes
+                        // q = round((v - zero_point) / scale). The old form was
+                        // (q + zero_point) * scale, which is the inverse of q = v/scale + zero_point
+                        // -- a different scheme. Composing the two did not return the input:
+                        //   v' = ((v - zp)/scale + zp) * scale = v + zp*scale - zp
+                        // so every asymmetric round trip was offset by zp*(scale-1). Measured on
+                        // data spanning [0, 1] with the calibrator's parameters (scale 0.003937,
+                        // zp -127): every sample quantized to code 127 and dequantized to 0.0,
+                        // a relative error of 1.0.
+                        dequantized = static_cast<float>(val) * scale + zero_point;
                     }
 
                     dst[idx] = dequantized;
