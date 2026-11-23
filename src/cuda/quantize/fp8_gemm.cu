@@ -7,54 +7,12 @@ namespace nova {
     namespace quantize {
 
         namespace detail {
-
-            template <int BLOCK_SIZE>
-            __global__ void fp8_gemm_kernel(
-                const FP8E4M3* __restrict__ a, const FP8E4M3* __restrict__ b, float* __restrict__ c, int m, int k, int n, float scale_a, float scale_b, float scale_out) {
-                const int row = blockIdx.y * BLOCK_SIZE + threadIdx.y;
-                const int col = blockIdx.x * BLOCK_SIZE + threadIdx.x;
-
-                if (row >= m || col >= n) {
-                    return;
-                }
-
-                float sum = 0.0f;
-
-                for (int kb = 0; kb < k; kb += BLOCK_SIZE) {
-                    __syncthreads();
-
-                    float a_val = 0.0f;
-                    float b_val = 0.0f;
-
-                    const int a_col = kb + threadIdx.x;
-                    const int b_row = kb + threadIdx.y;
-
-                    if (row < m && a_col < k) {
-                        a_val = static_cast<float>(a[row * k + a_col]) * scale_a;
-                    }
-
-                    if (b_row < k && col < n) {
-                        b_val = static_cast<float>(b[b_row * n + col]) * scale_b;
-                    }
-
-                    __syncthreads();
-
-                    for (int i = 0; i < BLOCK_SIZE && (kb + i) < k; ++i) {
-                        const int a_col_local = i + threadIdx.x;
-                        const int b_row_local = i + threadIdx.y;
-
-                        if (row < m && a_col_local < k && col < n && b_row_local < k) {
-                            float a_local = (threadIdx.x == a_col_local) ? a_val : static_cast<float>(a[row * k + kb + a_col_local]) * scale_a;
-                            float b_local = (threadIdx.y == b_row_local) ? b_val : static_cast<float>(b[(kb + b_row_local) * n + col]) * scale_b;
-                            sum += a_local * b_local;
-                        }
-                    }
-                }
-
-                if (row < m && col < n) {
-                    c[row * n + col] = sum * scale_out;
-                }
-            }
+            // fp8_gemm_kernel (a shared-memory tiled variant) used to live here. It was never
+            // launched, and it could not be: it calls __syncthreads() inside its k-loop, after
+            // `if (row >= m || col >= n) return;` -- threads of a block that exit early, while
+            // the rest wait at the barrier, is a deadlock/UB. Wiring it up would have hung.
+            // Removed rather than repaired: there is no caller, and the correct form (no early
+            // return before a barrier) should be introduced together with a test.
 
             /// Element-wise multiply-accumulate over a k-length dot product. Templated on the
             /// FP8 format so each encoding is decoded by its own conversion operator: an E5M2
@@ -81,60 +39,10 @@ namespace nova {
                 c[row * n + col] = sum * scale_out;
             }
 
-            __global__ void fp8_gemm_row_kernel(
-                const FP8E4M3* __restrict__ a, const FP8E4M3* __restrict__ b, float* __restrict__ c, int m, int k, int n, float scale_a, float scale_b, float scale_out) {
-                const int row = blockIdx.x * blockDim.x + threadIdx.x;
-                if (row >= m) {
-                    return;
-                }
-
-                extern __shared__ float shmem[];
-
-                for (int col_start = 0; col_start < n; col_start += blockDim.y) {
-                    float sum = 0.0f;
-
-                    for (int kb = 0; kb < k; kb += blockDim.y) {
-                        __syncthreads();
-
-                        int num_threads = min(static_cast<int>(blockDim.y), k - kb);
-                        int tid = threadIdx.y;
-
-                        if (tid < num_threads && col_start + tid < n) {
-                            shmem[tid] = static_cast<float>(b[(kb + tid) * n + col_start + tid]) * scale_b;
-                        }
-
-                        __syncthreads();
-
-                        for (int i = 0; i < num_threads && (kb + i) < k; ++i) {
-                            if (col_start + i < n) {
-                                float a_val = static_cast<float>(a[row * k + kb + i]) * scale_a;
-                                float b_val = shmem[i];
-                                sum += a_val * b_val;
-                            }
-                        }
-                    }
-
-                    if (col_start + threadIdx.y < n) {
-                        atomicAdd(&c[row * n + col_start + threadIdx.y], sum * scale_out);
-                    }
-                }
-            }
-
-            __global__ void fp8_gemm_reduce_kernel(const float* __restrict__ input, float* __restrict__ output, int m, int n, float scale_out, int num_partials) {
-                const int row = blockIdx.x * blockDim.x + threadIdx.x;
-                const int col = blockIdx.y * blockDim.y + threadIdx.y;
-
-                if (row >= m || col >= n) {
-                    return;
-                }
-
-                float sum = 0.0f;
-                for (int p = 0; p < num_partials; ++p) {
-                    sum += input[(p * m + row) * n + col];
-                }
-
-                output[row * n + col] = sum * scale_out;
-            }
+            // fp8_gemm_row_kernel and fp8_gemm_reduce_kernel used to live here, a two-stage
+            // split-K GEMM that nothing called. The row kernel has the same barrier defect as the
+            // tiled kernel above (__syncthreads() after `if (row >= m) return;`), so it would
+            // have hung for any m not a multiple of the block height.
 
         }  // namespace detail
 
