@@ -280,6 +280,22 @@ namespace nova::quantize::test {
         // B is the identity, so grad_a equals the ones gradient.
         EXPECT_NEAR(ga[0], 1.0f, 0.3f);
         EXPECT_NEAR(ga[1], 1.0f, 0.3f);
+
+        // This case could not fail for the reason it names. B here is the IDENTITY, which is
+        // symmetric, so grad_a = G*B^T and G*B are the same matrix -- an implementation that
+        // forgot the transpose passes. grad_b was only checked for finiteness, never for value,
+        // so it could be (and was) transposed without a word. The full check lives in
+        // FP8GEMMTest.BackwardProducesBothGradientsForAnAsymmetricB (quantize/fp8_gemm_test.cpp),
+        // which uses non-square shapes and an asymmetric B; that case reports 8 failures against
+        // the implementation this one was passing.
+        //
+        // What is still worth asserting here is the value of grad_b for this concrete input, so
+        // the case is not merely a finite-value check: with B = I and G = ones, A^T * G sums each
+        // column of A. grad_b[i][j] = sum_p A[p][i] * 1.
+        EXPECT_NEAR(gb[0], 4.0f, 0.3f) << "grad_b[0][0] = A[0][0] + A[1][0]";
+        EXPECT_NEAR(gb[1], 4.0f, 0.3f) << "grad_b[0][1] = A[0][0] + A[1][0]";
+        EXPECT_NEAR(gb[2], 6.0f, 0.3f) << "grad_b[1][0] = A[0][1] + A[1][1]";
+        EXPECT_NEAR(gb[3], 6.0f, 0.3f) << "grad_b[1][1] = A[0][1] + A[1][1]";
     }
 
     TEST(Fp8GemmTest, WorkspaceSizeIsPositiveForAUsableShape) {
