@@ -46,6 +46,20 @@ namespace nova {
               max_val_(0.0f) {}
 
         CalibrationResult MinMaxCalibrator::calibrate(const float* data, size_t n, cudaStream_t stream) {
+            // compute_minmax reports (0, 0) for an empty input as its own documented contract, and
+            // every branch below then treats that sentinel as if it were a real data range: the
+            // symmetric path divides 0 by 127, the asymmetric one divides by a clamped-to-nothing
+            // scale. The result is a scale that looks plausible. Measured: calibrating on 0 samples
+            // and then quantizing real data spanning [-2, 3] gave scale 0.00787 and a round-trip
+            // error of 2.0, i.e. half the range was clipped away, while calibrating on the same
+            // data properly gave 0.0236 and no clipping. A calibration with nothing to measure has
+            // no answer, so it says so.
+            if (data == nullptr) {
+                throw ::std::invalid_argument("calibrate: data must not be null");
+            }
+            if (n == 0) {
+                throw ::std::invalid_argument("calibrate: n must be positive, got 0 (a calibration needs at least one sample)");
+            }
             float d_min = 0.0f, d_max = 0.0f;
             cuda::compute_minmax(data, n, &d_min, &d_max, stream);
             CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -133,6 +147,20 @@ namespace nova {
         }
 
         CalibrationResult HistogramCalibrator::calibrate(const float* data, size_t n, cudaStream_t stream) {
+            // compute_minmax reports (0, 0) for an empty input as its own documented contract, and
+            // every branch below then treats that sentinel as if it were a real data range: the
+            // symmetric path divides 0 by 127, the asymmetric one divides by a clamped-to-nothing
+            // scale. The result is a scale that looks plausible. Measured: calibrating on 0 samples
+            // and then quantizing real data spanning [-2, 3] gave scale 0.00787 and a round-trip
+            // error of 2.0, i.e. half the range was clipped away, while calibrating on the same
+            // data properly gave 0.0236 and no clipping. A calibration with nothing to measure has
+            // no answer, so it says so.
+            if (data == nullptr) {
+                throw ::std::invalid_argument("calibrate: data must not be null");
+            }
+            if (n == 0) {
+                throw ::std::invalid_argument("calibrate: n must be positive, got 0 (a calibration needs at least one sample)");
+            }
             float d_min, d_max;
             cuda::compute_minmax(data, n, &d_min, &d_max, stream);
             CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -239,6 +267,20 @@ namespace nova {
               best_zero_point_(0.0f) {}
 
         CalibrationResult MSECalibrator::calibrate(const float* data, size_t n, cudaStream_t stream) {
+            // compute_minmax reports (0, 0) for an empty input as its own documented contract, and
+            // every branch below then treats that sentinel as if it were a real data range: the
+            // symmetric path divides 0 by 127, the asymmetric one divides by a clamped-to-nothing
+            // scale. The result is a scale that looks plausible. Measured: calibrating on 0 samples
+            // and then quantizing real data spanning [-2, 3] gave scale 0.00787 and a round-trip
+            // error of 2.0, i.e. half the range was clipped away, while calibrating on the same
+            // data properly gave 0.0236 and no clipping. A calibration with nothing to measure has
+            // no answer, so it says so.
+            if (data == nullptr) {
+                throw ::std::invalid_argument("calibrate: data must not be null");
+            }
+            if (n == 0) {
+                throw ::std::invalid_argument("calibrate: n must be positive, got 0 (a calibration needs at least one sample)");
+            }
             float d_min, d_max;
             cuda::compute_minmax(data, n, &d_min, &d_max, stream);
             CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -291,6 +333,20 @@ namespace nova {
               symmetric_(symmetric) {}
 
         CalibrationResult PerChannelCalibrator::calibrate(const float* data, size_t n, cudaStream_t stream) {
+            // compute_minmax reports (0, 0) for an empty input as its own documented contract, and
+            // every branch below then treats that sentinel as if it were a real data range: the
+            // symmetric path divides 0 by 127, the asymmetric one divides by a clamped-to-nothing
+            // scale. The result is a scale that looks plausible. Measured: calibrating on 0 samples
+            // and then quantizing real data spanning [-2, 3] gave scale 0.00787 and a round-trip
+            // error of 2.0, i.e. half the range was clipped away, while calibrating on the same
+            // data properly gave 0.0236 and no clipping. A calibration with nothing to measure has
+            // no answer, so it says so.
+            if (data == nullptr) {
+                throw ::std::invalid_argument("calibrate: data must not be null");
+            }
+            if (n == 0) {
+                throw ::std::invalid_argument("calibrate: n must be positive, got 0 (a calibration needs at least one sample)");
+            }
             float d_min, d_max;
             cuda::compute_minmax(data, n, &d_min, &d_max, stream);
             CUDA_CHECK(cudaStreamSynchronize(stream));

@@ -235,6 +235,41 @@ namespace nova {
                 EXPECT_NO_THROW(HistogramCalibrator(256, 0.1f));
             }
 
+            // Regression: every calibrate() accepted an empty sample set and turned compute_minmax's
+            // (0, 0) sentinel into a real-looking scale. Measured: calibrating on 0 samples and then
+            // quantizing data spanning [-2, 3] produced scale 0.00787 and a round-trip error of 2.0
+            // -- half the range clipped -- against 0.0236 and no clipping when calibrated properly.
+            // The four calibrators also disagreed with each other on the empty case (MinMax,
+            // Histogram and PerChannel returned 1/127-scale, MSE returned 1.0), which is the shape
+            // of undefined behaviour rather than a contract.
+            TEST_F(CalibratorTest, AllCalibratorsRejectAnEmptySampleSet) {
+                std::vector<float> data(64, 1.5f);
+
+                MinMaxCalibrator minmax;
+                HistogramCalibrator histogram;
+                MSECalibrator mse(true);
+                PerChannelCalibrator per_channel;
+
+                EXPECT_THROW(minmax.calibrate(data.data(), 0), std::invalid_argument);
+                EXPECT_THROW(histogram.calibrate(data.data(), 0), std::invalid_argument);
+                EXPECT_THROW(mse.calibrate(data.data(), 0), std::invalid_argument);
+                EXPECT_THROW(per_channel.calibrate(data.data(), 0), std::invalid_argument);
+            }
+
+            // A null buffer with a non-zero count used to reach the kernel and fail with a CUDA
+            // error naming int8_kernels.cu, which tells the caller nothing about their argument.
+            TEST_F(CalibratorTest, AllCalibratorsRejectNullData) {
+                MinMaxCalibrator minmax;
+                HistogramCalibrator histogram;
+                MSECalibrator mse(true);
+                PerChannelCalibrator per_channel;
+
+                EXPECT_THROW(minmax.calibrate(nullptr, 64), std::invalid_argument);
+                EXPECT_THROW(histogram.calibrate(nullptr, 64), std::invalid_argument);
+                EXPECT_THROW(mse.calibrate(nullptr, 64), std::invalid_argument);
+                EXPECT_THROW(per_channel.calibrate(nullptr, 64), std::invalid_argument);
+            }
+
             TEST_F(CalibratorTest, MSECalibratorConstantData) {
                 size_t n = 100;
                 std::vector<float> data(n, 1.0f);
