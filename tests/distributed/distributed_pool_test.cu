@@ -18,6 +18,15 @@
 
 using cuda::memory::DistributedMemoryPool;
 
+class DistributedMemoryPoolSerialTest : public ::testing::Test {
+protected:
+    void SetUp() override { pool_ = std::make_unique<DistributedMemoryPool>(); }
+
+    void TearDown() override { pool_.reset(); }
+
+    std::unique_ptr<DistributedMemoryPool> pool_;
+};
+
 class DistributedMemoryPoolTest : public ::testing::Test {
 protected:
     void SetUp() override { pool_ = std::make_unique<DistributedMemoryPool>(); }
@@ -210,7 +219,12 @@ TEST_F(DistributedMemoryPoolTest, AllMetricsAccessible) {
 // Measured with an 8 GB allocation from another source on device 0: the pool reported
 // 85.1 GB free where the driver said 76.1 GB. The field is advertised as free memory, so it
 // now comes from the driver.
-TEST_F(DistributedMemoryPoolTest, FreeMemoryMetricMatchesTheDriver) {
+// Moved out of DistributedMemoryPoolTest into a serial suite: this case compares two
+// device-wide cudaMemGetInfo snapshots, and cudaMemGetInfo aggregates every process on the
+// device, so a concurrent test's allocation is indistinguishable from the disagreement the case
+// is looking for. The rest of DistributedMemoryPoolTest does not read device-wide memory and
+// stays in the parallel set. See the RUN_SERIAL registration in tests/CMakeLists.txt.
+TEST_F(DistributedMemoryPoolSerialTest, FreeMemoryMetricMatchesTheDriver) {
     int original = 0;
     cudaGetDevice(&original);
 

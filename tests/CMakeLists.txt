@@ -463,7 +463,7 @@ if(TARGET cuda_nccl)
 endif()
 
 gtest_discover_tests(nova-tests
-    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*:BufferSerialTest.*:UniquePtrSerialTest.*:MemoryMetricsSerialTest.*"
+    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*:BufferSerialTest.*:UniquePtrSerialTest.*:MemoryMetricsSerialTest.*:DistributedMemoryPoolSerialTest.*:HealthMonitorSerialTest.*"
     PROPERTIES ENVIRONMENT "${NOVA_NCCL_TESTS_ENV}"
 )
 
@@ -483,7 +483,7 @@ set_tests_properties(tensor_parallel_serial PROPERTIES RUN_SERIAL TRUE)
 # -j32 and passed alone, and MemoryMetricsSerialTest reported used() inconsistent with
 # itself under -j4 -- which is a green-or-red signal that depends on scheduling rather
 # than on the code. RUN_SERIAL runs each with no other test in flight.
-foreach(device_memory_suite BufferSerialTest UniquePtrSerialTest MemoryMetricsSerialTest)
+foreach(device_memory_suite BufferSerialTest UniquePtrSerialTest MemoryMetricsSerialTest DistributedMemoryPoolSerialTest HealthMonitorSerialTest)
     string(TOLOWER "${device_memory_suite}" _suite_lower)
     add_test(NAME ${_suite_lower}
              COMMAND nova-tests --gtest_filter=${device_memory_suite}.*)

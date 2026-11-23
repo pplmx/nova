@@ -106,6 +106,11 @@ protected:
     void SetUp() override { reset(); }
 };
 
+class HealthMonitorSerialTest : public ::testing::Test {
+protected:
+    void SetUp() override { reset(); }
+};
+
 TEST_F(HealthMonitorTest, GetHealthSnapshot) {
     cuda::production::HealthMonitor monitor;
 
@@ -135,7 +140,11 @@ TEST_F(HealthMonitorTest, GetHealthSnapshot) {
 // roughly the amount allocated. A snapshot reporting FREE memory moves the wrong way -- it goes
 // down as memory is consumed -- so the sign of the change distinguishes the two implementations
 // regardless of what the rest of the machine is doing.
-TEST_F(HealthMonitorTest, MemoryUsedTracksAllocationRatherThanMovingWithFreeMemory) {
+// Moved out of HealthMonitorTest into a serial suite: this case reads device-wide memory
+// snapshots, and cudaMemGetInfo aggregates every process on the device, so a concurrent test's
+// allocation is indistinguishable from the counter it is checking. See the RUN_SERIAL
+// registration in tests/CMakeLists.txt.
+TEST_F(HealthMonitorSerialTest, MemoryUsedTracksAllocationRatherThanMovingWithFreeMemory) {
     cuda::production::HealthMonitor monitor;
 
     // Baseline. Nothing can make the difference between two readings of the same field as large
