@@ -26,6 +26,31 @@ namespace cuda::algo::test {
         }
 
         std::unique_ptr<stream::Stream> stream_;
+
+        /// Attention output is the weighted average of V over the visible keys, and those weights
+        /// sum to one, so a CONSTANT V must come back unchanged whatever Q and K hold. A missing
+        /// 1/sqrt(head_dim) scale, a softmax that is not normalised, or a mis-applied causal mask
+        /// all move the result away from it -- and EXPECT_NO_THROW, which used to be the only
+        /// check in these cases, detects none of those.
+        static void expect_constant_v_is_reproduced(const memory::Buffer<float>& output, size_t elements, float expected, const char* what) {
+            std::vector<float> got(elements);
+            output.copy_to(got.data(), elements);
+            float worst = 0.0f;
+            for (size_t i = 0; i < elements; ++i) {
+                worst = std::max(worst, std::fabs(got[i] - expected));
+            }
+            EXPECT_LE(worst, 1e-4f) << what << ": constant V=" << expected << " must be reproduced; worst deviation " << worst;
+        }
+
+        /// When no single expected value exists -- dropout rescales randomly, an iota input spans
+        /// the whole range -- the result must still be a real number rather than NaN or infinity.
+        static void expect_all_finite(const memory::Buffer<float>& buffer, size_t elements, const char* what) {
+            std::vector<float> got(elements);
+            buffer.copy_to(got.data(), elements);
+            for (size_t i = 0; i < elements; ++i) {
+                ASSERT_TRUE(std::isfinite(got[i])) << what << ": element " << i << " is " << got[i];
+            }
+        }
     };
 
     TEST_F(FlashAttentionEdgeCaseTest, ZeroDropoutRate) {
@@ -64,6 +89,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_all_finite(output, elements, "FullDropoutRate");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, SingleHead) {
@@ -82,6 +109,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_constant_v_is_reproduced(output, elements, 0.5f, "SingleHead");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, LargeHeadDim) {
@@ -100,6 +129,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_constant_v_is_reproduced(output, elements, 0.1f, "LargeHeadDim");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, SmallSequenceLength) {
@@ -118,6 +149,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_constant_v_is_reproduced(output, elements, 1.0f, "SmallSequenceLength");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, LargeSequenceLength) {
@@ -162,6 +195,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_all_finite(output, elements, "BatchSizeGreaterThanOne");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, DifferentQKVDimensions) {
@@ -184,6 +219,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_constant_v_is_reproduced(output, q_elements, 1.0f, "DifferentQKVDimensions");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, OutputSumToOne) {
@@ -296,6 +333,10 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->backward(dq, dk, dv, output, dout, query, key, value, softmax_lse, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_all_finite(dq, elements, "BackwardPassWithDropout dq");
+        expect_all_finite(dk, elements, "BackwardPassWithDropout dk");
+        expect_all_finite(dv, elements, "BackwardPassWithDropout dv");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, WorkspaceGrowth) {
@@ -336,6 +377,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_constant_v_is_reproduced(output, q_elements, 1.0f, "MultiQueryAttention");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, CausalWithLengthOne) {
@@ -354,6 +397,8 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        expect_constant_v_is_reproduced(output, elements, 1.0f, "CausalWithLengthOne");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, DeterministicWithSameSeed) {
