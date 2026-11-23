@@ -15,9 +15,16 @@ namespace cuda::production {
 
         size_t free_mem = 0, total_mem = 0;
         if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess) {
-            metrics.memory_used_mb = static_cast<float>((total_mem - free_mem) / (1024 * 1024));
             metrics.memory_total_mb = static_cast<float>(total_mem / (1024 * 1024));
-            metrics.memory_used_mb = metrics.memory_total_mb - metrics.memory_used_mb;
+            // memory_used_mb was assigned three times here: (total - free), then total, then
+            // `memory_total_mb - memory_used_mb`, which evaluates to free. The field reported
+            // FREE memory under a name that says used. Measured on this host with a 2 GiB
+            // allocation held: the driver reported used=2472.8 MiB / free=78679.9 MiB, and this
+            // returned memory_used_mb=78680.0 -- matching free to within 0.1 MiB and differing
+            // from used by 76207. to_json() emits this next to get_memory_snapshot()'s
+            // allocated_bytes (which is computed correctly as total - free), so the two figures
+            // in one payload contradicted each other.
+            metrics.memory_used_mb = static_cast<float>((total_mem - free_mem) / (1024 * 1024));
         }
 
         cudaDeviceProp prop;
