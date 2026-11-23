@@ -307,6 +307,27 @@ namespace nova::preemption {
 
         std::condition_variable shutdown_cv;
         std::mutex shutdown_mutex;
+
+        /// The begin -> checkpoint -> finalize worker started by request_shutdown().
+        ///
+        /// This used to be a detached thread, so nothing ever waited for it. That made
+        /// ~Impl() destroy shutdown_cv while the worker could still be inside
+        /// finalize_shutdown() calling notify_all() on it -- ThreadSanitizer reports exactly that
+        /// pair:
+        ///
+        ///   Write  pthread_cond_destroy   ~Impl()
+        ///   Prior  pthread_cond_broadcast finalize_shutdown()
+        ///
+        /// Holding the thread here means the destructor can wait for it. request_shutdown()
+        /// joins a previous round before starting another, because assigning over a joinable
+        /// std::thread calls std::terminate.
+        std::thread shutdown_thread;
+
+        ~Impl() {
+            if (shutdown_thread.joinable()) {
+                shutdown_thread.join();
+            }
+        }
     };
 
     ShutdownCoordinator& ShutdownCoordinator::instance() {
@@ -348,11 +369,18 @@ namespace nova::preemption {
         impl_->timeout_remaining.store(impl_->config.shutdown_timeout.count());
         impl_->shutdown_in_progress.store(true);
 
-        std::thread([this, signal]() {
+        // Wait for a previous round to finish before replacing the handle. The guard above
+        // returns while a shutdown is in progress, and shutdown() only resets a completed one,
+        // so the previous worker has normally already finished and this join returns at once;
+        // it is here because overwriting a joinable std::thread would terminate the process.
+        if (impl_->shutdown_thread.joinable()) {
+            impl_->shutdown_thread.join();
+        }
+        impl_->shutdown_thread = std::thread([this, signal]() {
             begin_graceful_shutdown();
             checkpoint_coordinated();
             finalize_shutdown();
-        }).detach();
+        });
     }
 
     void ShutdownCoordinator::begin_graceful_shutdown() {

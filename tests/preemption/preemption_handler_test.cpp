@@ -315,4 +315,26 @@ namespace nova::preemption::test {
         ShutdownCoordinator::instance().shutdown();  // leave the singleton reusable
     }
 
+    // The begin -> checkpoint -> finalize worker used to be a detached thread, so nothing ever
+    // waited for it: ThreadSanitizer reported ~Impl() destroying shutdown_cv while that worker
+    // was still calling notify_all() on it. It is now a member joined by the destructor.
+    //
+    // That turns overwriting the handle into a hazard of its own -- assigning to a joinable
+    // std::thread calls std::terminate -- so this pins that the singleton can serve several
+    // shutdown rounds in a row (request, complete, reset, request again).
+    TEST(PreemptionHandlerTest, ConsecutiveShutdownRoundsDoNotTerminate) {
+        ShutdownCoordinator& c = ShutdownCoordinator::instance();
+        ShutdownConfig cfg;
+        cfg.checkpoint_on_shutdown = false;
+        cfg.shutdown_timeout = std::chrono::seconds {5};
+        c.initialize(cfg);
+
+        for (int round = 0; round < 3; ++round) {
+            EXPECT_NO_THROW(c.request_shutdown(15)) << "round " << round << " terminated instead of starting a worker";
+            wait_complete(c);
+            EXPECT_TRUE(c.is_shutdown_complete()) << "round " << round << " never reached Complete";
+            c.shutdown();  // reset so the next round can start
+        }
+    }
+
 }  // namespace nova::preemption::test
