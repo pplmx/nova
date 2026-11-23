@@ -9,52 +9,13 @@
 
 namespace cuda::numeric {
 
-    namespace {
-
-        __global__ void trap_kernel(float* results, size_t n, float h, float a, float (*func)(float)) {
-            const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            if (idx >= n) {
-                return;
-            }
-
-            float x = a + idx * h;
-            results[idx] = func(x);
-        }
-
-        __global__ void simpson_kernel(float* f0, float* f1, float* f2, size_t n, float h, float a, float (*func)(float)) {
-            const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            if (idx >= n) {
-                return;
-            }
-
-            float x0 = a + (2 * idx) * h;
-            float x1 = x0 + h;
-            float x2 = x0 + 2 * h;
-
-            f0[idx] = func(x0);
-            f1[idx] = func(x1);
-            f2[idx] = func(x2);
-        }
-
-        __global__ void linear_interp_kernel(const float* x, const float* y, const float* coeffs, float* result, size_t n, size_t out_len, float x_min, float x_max) {
-            const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            if (idx >= out_len) {
-                return;
-            }
-
-            float xv = x_min + (x_max - x_min) * idx / out_len;
-
-            for (size_t i = 0; i < n - 1; ++i) {
-                if (xv >= x[i] && xv <= x[i + 1]) {
-                    float t = (xv - x[i]) / (x[i + 1] - x[i]);
-                    result[idx] = y[i] + t * (y[i + 1] - y[i]);
-                    return;
-                }
-            }
-            result[idx] = 0.0f;
-        }
-
-    }  // namespace
+    // Three device kernels used to live here: trap_kernel, simpson_kernel and
+    // linear_interp_kernel. None of them was ever launched -- every entry point in this file
+    // computes on the host and then uses cudaMemcpy plus a device reduction -- and the first
+    // two could not have worked: both took `float (*func)(float)`, a HOST function pointer,
+    // and called it from device code. That compiles and launches, then fails at run time with
+    // cudaErrorInvalidProgramCounter (718), measured. Evaluating the integrand on the host and
+    // reducing on the device is the correct shape, and is what the live code does.
 
     MonteCarloResult monte_carlo_integration(float (*func)(float), float a, float b, size_t samples, float tolerance) {
         MonteCarloResult result;
