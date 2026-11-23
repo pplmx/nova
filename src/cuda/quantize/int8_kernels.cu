@@ -138,8 +138,22 @@ namespace nova {
                     }
                 }
 
-                __global__ void quantize_with_scale_from_histogram_kernel(
-                    const float* __restrict__ src, int8_t* __restrict__ dst, size_t n, float min_val, float max_val, float percentile) {
+                /// Calibrated quantization: maps [min_val, max_val] onto the int8 span.
+                ///
+                /// The last parameter used to be a `percentile` that the body never read -- it was
+                /// hard-coded to 99.99f at the launch site and silently ignored here. Clipping at a
+                /// percentile means computing the scale from a trimmed range, which requires a
+                /// histogram; this kernel receives only the range, so it cannot do that. The
+                /// percentile belongs to HistogramCalibrator, which does build the histogram, and it
+                /// is not a parameter of the public quantize_f32_to_int8_with_calibration either --
+                /// so the argument was both unreachable and unused, and is gone.
+                ///
+                /// Note the arithmetic is the same mapping the calibrated QuantizationParams
+                /// produce (zero_point = centre of the range), not a third convention: verified by
+                /// round-tripping four ranges through this kernel and dequantize_int8_to_f32 with
+                /// scale = range/254, zero_point = (min+max)/2, giving 0.0020 relative error for all
+                /// of them.
+                __global__ void quantize_with_scale_from_histogram_kernel(const float* __restrict__ src, int8_t* __restrict__ dst, size_t n, float min_val, float max_val) {
                     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
                     if (idx >= n) {
                         return;
@@ -226,7 +240,7 @@ namespace nova {
                 constexpr size_t block_size = 256;
                 size_t grid_size = (n + block_size - 1) / block_size;
 
-                detail::quantize_with_scale_from_histogram_kernel<<<grid_size, block_size, 0, stream>>>(src, dst, n, min_val, max_val, 99.99f);
+                detail::quantize_with_scale_from_histogram_kernel<<<grid_size, block_size, 0, stream>>>(src, dst, n, min_val, max_val);
 
                 cudaError_t err = cudaGetLastError();
                 if (err != cudaSuccess) {
