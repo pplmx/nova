@@ -18,7 +18,10 @@ namespace nova {
             /// FP8 format so each encoding is decoded by its own conversion operator: an E5M2
             /// value reinterpreted as E4M3 decodes to a different number (0.5 is 0x38 in E5M2
             /// and 0x30 in E4M3), which silently produced wrong results.
-            template <int BLOCK_SIZE, typename T>
+            /// A_TRANSPOSED selects a[i * m + row] instead of a[row * k + i], so that the same kernel
+            /// can compute both operands of a GEMM backward pass: grad_b needs A^T * grad_output,
+            /// which is not expressible as a plain forward() call.
+            template <int BLOCK_SIZE, typename T, bool A_TRANSPOSED = false, bool B_TRANSPOSED = false>
             __global__ void fp8_gemm_naive_kernel(
                 const T* __restrict__ a, const T* __restrict__ b, float* __restrict__ c, int m, int k, int n, float scale_a, float scale_b, float scale_out) {
                 const int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -31,8 +34,9 @@ namespace nova {
                 float sum = 0.0f;
 
                 for (int i = 0; i < k; ++i) {
-                    float a_val = static_cast<float>(a[row * k + i]) * scale_a;
-                    float b_val = static_cast<float>(b[i * n + col]) * scale_b;
+                    float a_val = static_cast<float>(A_TRANSPOSED ? a[i * m + row] : a[row * k + i]) * scale_a;
+                    // B_TRANSPOSED treats b as an (n x k) row-major matrix and reads column i of it.
+                    float b_val = static_cast<float>(B_TRANSPOSED ? b[col * k + i] : b[i * n + col]) * scale_b;
                     sum += a_val * b_val;
                 }
 
@@ -77,16 +81,37 @@ namespace nova {
 
         void FP8GEMM::backward(
             const FP8E4M3* grad_output, const FP8E4M3* a, const FP8E4M3* b, float* grad_a, float* grad_b, int m, int k, int n, Config config, cudaStream_t stream) {
-            FP8GEMM::Config grad_config;
-            grad_config.scale_a = config.scale_a;
-            grad_config.scale_b = config.scale_out;
+            // For C = A(m x k) * B(k x n) and upstream gradient G(m x n):
+            //   grad_a = G * B^T   -> (m x k)
+            //   grad_b = A^T * G   -> (k x n)
+            //
+            // grad_a is a plain product of G with B^T, which is what the old code computed.
+            // grad_b is NOT: it needs A transposed on the left, and the previous implementation
+            // passed (grad_output, a, grad_b, n, m, k), which computes G^T * A rather than A^T * G.
+            // Measured with A = B = [[1,2],[3,4]] and G = ones: grad_b came back [[4,6],[4,6]]
+            // where [[4,4],[6,6]] is correct -- transposed. There was no test for backward().
+            //
+            // scale_out also went unset in both calls, leaving the default 1.0 and dropping the
+            // caller's output scaling.
+            // grad_a = G(m x n) * B^T(n x k). The kernel computes a(row x p) * b(p x col) with b
+            // indexed row-major as b[p * n + col]; feeding it B^T means reading b as
+            // host_b[col * k + p], i.e. b_transposed with its own leading dimension. Passing b
+            // unmodified computes G * B, not G * B^T -- which is what the original code did, and
+            // it is only indistinguishable from correct when B happens to be symmetric.
+            FP8GEMM::Config grad_a_config;
+            grad_a_config.scale_a = config.scale_out;
+            grad_a_config.scale_b = config.scale_b;
+            grad_a_config.scale_out = 1.0f;
+            detail::fp8_gemm_naive_kernel<16, FP8E4M3, false, true><<<dim3((k + 15) / 16, (m + 15) / 16), dim3(16, 16), 0, stream>>>(
+                grad_output, b, grad_a, m, n, k, grad_a_config.scale_a, grad_a_config.scale_b, grad_a_config.scale_out);
 
-            FP8GEMM::forward(grad_output, b, grad_a, m, n, k, grad_config, stream);
-
-            grad_config.scale_a = config.scale_out;
-            grad_config.scale_b = config.scale_b;
-
-            FP8GEMM::forward(grad_output, a, grad_b, n, m, k, grad_config, stream);
+            FP8GEMM::Config grad_b_config;
+            grad_b_config.scale_a = config.scale_b;
+            grad_b_config.scale_b = config.scale_out;
+            grad_b_config.scale_out = 1.0f;
+            // grad_b = A^T * G, with A read transposed.
+            detail::fp8_gemm_naive_kernel<16, FP8E4M3, true><<<dim3((n + 15) / 16, (k + 15) / 16), dim3(16, 16), 0, stream>>>(
+                a, grad_output, grad_b, k, m, n, grad_b_config.scale_a, grad_b_config.scale_b, grad_b_config.scale_out);
         }
 
         void FP8E5M2GEMM::forward(const FP8E5M2* a, const FP8E5M2* b, float* output, int m, int k, int n, Config config, cudaStream_t stream) {

@@ -288,6 +288,74 @@ namespace nova {
                 EXPECT_GE(workspace, static_cast<size_t>(m * n * sizeof(float)));
             }
 
+            // Regression: backward() had no test, and both gradients were wrong. For C = A(m x k) * B(k x n)
+            // with upstream gradient G(m x n):
+            //   grad_a = G * B^T   (m x k)
+            //   grad_b = A^T * G   (k x n)
+            // The implementation computed grad_a as G * B (correct only when B happens to be symmetric)
+            // and grad_b as G^T * A (transposed). Measured with A = B = [[1,2],[3,4]], G = ones:
+            // grad_b came back [[4,6],[4,6]] where [[4,4],[6,6]] is correct.
+            //
+            // The shapes here are deliberately non-square and B is deliberately asymmetric, because a
+            // square symmetric B makes every one of those mistakes look correct.
+            TEST_F(FP8GEMMTest, BackwardProducesBothGradientsForAnAsymmetricB) {
+                constexpr int m = 2, k = 3, n = 2;
+                const float a_values[m * k] = {1, 2, 3, 4, 5, 6};
+                const float b_values[k * n] = {1, 2, 3, 4, 5, 6};
+                const float g_values[m * n] = {1, 1, 1, 1};
+
+                std::vector<FP8E4M3> a(a_values, a_values + m * k);
+                std::vector<FP8E4M3> b(b_values, b_values + k * n);
+                std::vector<FP8E4M3> g(g_values, g_values + m * n);
+
+                FP8E4M3* d_a = nullptr;
+                FP8E4M3* d_b = nullptr;
+                FP8E4M3* d_g = nullptr;
+                float* d_grad_a = nullptr;
+                float* d_grad_b = nullptr;
+                ASSERT_EQ(cudaMalloc(&d_a, m * k), cudaSuccess);
+                ASSERT_EQ(cudaMalloc(&d_b, k * n), cudaSuccess);
+                ASSERT_EQ(cudaMalloc(&d_g, m * n), cudaSuccess);
+                ASSERT_EQ(cudaMalloc(&d_grad_a, m * k * sizeof(float)), cudaSuccess);
+                ASSERT_EQ(cudaMalloc(&d_grad_b, k * n * sizeof(float)), cudaSuccess);
+                ASSERT_EQ(cudaMemcpy(d_a, a.data(), m * k, cudaMemcpyHostToDevice), cudaSuccess);
+                ASSERT_EQ(cudaMemcpy(d_b, b.data(), k * n, cudaMemcpyHostToDevice), cudaSuccess);
+                ASSERT_EQ(cudaMemcpy(d_g, g.data(), m * n, cudaMemcpyHostToDevice), cudaSuccess);
+
+                nova::quantize::FP8GEMM::backward(d_g, d_a, d_b, d_grad_a, d_grad_b, m, k, n, nova::quantize::FP8GEMM::Config {});
+                ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+                std::vector<float> grad_a(m * k, 0.0f);
+                std::vector<float> grad_b(k * n, 0.0f);
+                ASSERT_EQ(cudaMemcpy(grad_a.data(), d_grad_a, m * k * sizeof(float), cudaMemcpyDeviceToHost), cudaSuccess);
+                ASSERT_EQ(cudaMemcpy(grad_b.data(), d_grad_b, k * n * sizeof(float), cudaMemcpyDeviceToHost), cudaSuccess);
+                cudaFree(d_a);
+                cudaFree(d_b);
+                cudaFree(d_g);
+                cudaFree(d_grad_a);
+                cudaFree(d_grad_b);
+
+                // Reference computed from the decoded values, so this checks the GEMM and not the format.
+                auto decode = [](const FP8E4M3& v) { return static_cast<float>(v); };
+                for (int i = 0; i < m; ++i) {
+                    for (int j = 0; j < k; ++j) {
+                        double expected = 0.0;
+                        for (int p = 0; p < n; ++p) {
+                            expected += static_cast<double>(decode(g[static_cast<size_t>(i) * n + p])) * decode(b[static_cast<size_t>(j) * n + p]);
+                        }
+                        EXPECT_NEAR(grad_a[static_cast<size_t>(i) * k + j], expected, 1e-3) << "grad_a at [" << i << "," << j << "]";
+                    }
+                }
+                for (int i = 0; i < k; ++i) {
+                    for (int j = 0; j < n; ++j) {
+                        double expected = 0.0;
+                        for (int p = 0; p < m; ++p) {
+                            expected += static_cast<double>(decode(a[static_cast<size_t>(p) * k + i])) * decode(g[static_cast<size_t>(p) * n + j]);
+                        }
+                        EXPECT_NEAR(grad_b[static_cast<size_t>(i) * n + j], expected, 1e-3) << "grad_b at [" << i << "," << j << "]";
+                    }
+                }
+            }
         }  // namespace test
     }  // namespace quantize
 }  // namespace nova
