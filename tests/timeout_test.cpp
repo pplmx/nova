@@ -186,12 +186,24 @@ TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
 
     auto id = manager.start_operation("test_op", std::chrono::milliseconds {5});
 
-    std::this_thread::sleep_for(std::chrono::milliseconds {30});
+    // A fixed 30 ms sleep assumed the watchdog thread would get scheduled and fire within it.
+    // Under load it does not: this case failed in a full-suite run at load average 870 and passed
+    // when run alone. Poll for the condition instead, so the case tests whether delivery happens
+    // rather than whether the machine was idle.
+    //
+    // The allowance is 15 s, far above the ~30 ms the watchdog needs, because the callback is
+    // delivered by a background thread that competes with the rest of the machine: measured on
+    // this host a run of the same case took between 4.4 s and 16.4 s wall time while the device
+    // was under a load average of 750-870. A shorter cap turns host contention into a failure.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds {15};
+    while (!callback_invoked && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds {2});
+    }
 
     // The case is named for the callback being invoked; guarding the only assertion with
     // `if (callback_invoked)` meant a callback that never fired asserted nothing and the case
     // still passed. Callback delivery is the whole subject here.
-    EXPECT_TRUE(callback_invoked) << "the watchdog should have expired a 5 ms operation during a 30 ms wait";
+    EXPECT_TRUE(callback_invoked) << "the watchdog should have expired a 5 ms operation within the 15 s allowance";
     if (callback_invoked) {
         EXPECT_EQ(callback_id, id) << "the callback must receive the id of the operation that expired";
     }
