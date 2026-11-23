@@ -29,7 +29,22 @@ namespace nova {
                 /** @brief Quantization scale */
                 float scale {1.0f};
 
-                /** @brief Zero point for asymmetric quantization */
+                /**
+                 * @brief Zero point for asymmetric quantization, expressed in the DATA's units
+                 *
+                 * The kernels compute
+                 *
+                 *     quantize:    q = round((v - zero_point) / scale)
+                 *     dequantize:  v = q * scale + zero_point
+                 *
+                 * so zero_point is a value in the signal's own range, not an integer code. For a
+                 * calibrated asymmetric range it is the centre of [min, max], which maps min to
+                 * code -127 and max to +127.
+                 *
+                 * This is stated explicitly because three different conventions were previously in
+                 * use (this one, an integer zero point paired with q = v/scale + zp, and a third
+                 * in the calibrators) and asymmetric round trips did not return their input.
+                 */
                 float zero_point {0.0f};
 
                 /** @brief Use symmetric quantization (no zero point) */

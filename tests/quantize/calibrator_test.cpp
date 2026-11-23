@@ -345,7 +345,20 @@ namespace nova {
             TEST_F(CalibratorTest, DegenerateDataCalibratesToAFiniteUsableRange) {
                 const std::vector<float> zeros(64, 0.0f);
                 const std::vector<float> constant(64, 3.0f);
-                const std::pair<const char*, const std::vector<float>*> cases[] = {{"all zeros", &zeros}, {"constant 3", &constant}};
+                // A range that actually exercises asymmetric quantization. The two degenerate
+                // vectors above have min == max, which takes the calibrator's special-case branch
+                // and never tests the general formula -- which is how an asymmetric path that did
+                // not round trip survived this case.
+                std::vector<float> non_negative(64);
+                for (size_t i = 0; i < non_negative.size(); ++i) {
+                    non_negative[i] = static_cast<float>(i) / 63.0f;
+                }
+                std::vector<float> offset_negative(64);
+                for (size_t i = 0; i < offset_negative.size(); ++i) {
+                    offset_negative[i] = -10.0f + 12.0f * static_cast<float>(i) / 63.0f;
+                }
+                const std::pair<const char*, const std::vector<float>*> cases[] = {
+                    {"all zeros", &zeros}, {"constant 3", &constant}, {"[0,1] non-negative", &non_negative}, {"[-10,2] offset", &offset_negative}};
 
                 for (const auto& [label, data] : cases) {
                     for (bool symmetric : {true, false}) {
@@ -363,6 +376,11 @@ namespace nova {
                         cuda::QuantizationParams params;
                         params.scale = result.scale;
                         params.zero_point = result.zero_point;
+                        // result.symmetric has to be carried through: leaving it at its default
+                        // (true) means the kernels ignore zero_point entirely, so this block was
+                        // only ever exercising the symmetric path no matter which calibrator was
+                        // being tested.
+                        params.symmetric = result.symmetric;
 
                         float* d_src = nullptr;
                         int8_t* d_quantized = nullptr;
@@ -378,9 +396,16 @@ namespace nova {
                         std::vector<float> round_trip(data->size());
                         ASSERT_EQ(cudaMemcpy(round_trip.data(), d_back, data->size() * sizeof(float), cudaMemcpyDeviceToHost), cudaSuccess);
 
+                        // The allowance follows the quantisation step, not a constant. A fixed
+                        // 1e-3 is below half a step for data spanning [0, 1] (step = 1/254 =
+                        // 3.9e-3), so it demands sub-step accuracy that a uniform int8 grid cannot
+                        // provide. Half a step plus slack is the tightest honest bound, and it is
+                        // still tight enough to catch a scale or zero point that is wrong: the
+                        // asymmetric bug this case now covers produced errors of the full range.
+                        const float tolerance = std::max(1e-3f, std::fabs(result.scale) * 1.5f);
                         for (size_t i = 0; i < round_trip.size(); ++i) {
                             EXPECT_TRUE(std::isfinite(round_trip[i])) << label << " symmetric=" << symmetric << ": element " << i << " is not finite";
-                            EXPECT_NEAR(round_trip[i], (*data)[i], 1e-3f) << label << " symmetric=" << symmetric << ": element " << i << " did not survive the round trip";
+                            EXPECT_NEAR(round_trip[i], (*data)[i], tolerance) << label << " symmetric=" << symmetric << ": element " << i << " did not survive the round trip";
                         }
 
                         cudaFree(d_src);
