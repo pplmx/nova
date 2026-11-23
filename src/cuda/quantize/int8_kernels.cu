@@ -260,9 +260,27 @@ namespace nova {
 
                 // Dynamic shared memory must cover every possible bin: the
                 // calibrator's default num_bins=2048 previously overran a fixed 256-entry
-                // shared buffer. 2048 bins * 4B is comfortably within the 48KB static
-                // shared-memory limit per block.
+                // shared buffer.
+                //
+                // The old note here claimed 2048 bins were "comfortably within the 48KB static
+                // shared-memory limit", which understated the boundary: this is DYNAMIC shared
+                // memory, whose per-block ceiling is 48KB unless raised with
+                // cudaFuncSetAttribute, and it is allocated per block as num_bins * 4 bytes. At
+                // num_bins = 16384 that is 64KB, the launch is rejected with "invalid argument",
+                // and the failure was invisible: the error only reached stderr, the function
+                // returned normally, and the destination histogram stayed all zero. Measured:
+                // with n = 4096 samples, num_bins = 12288 (48KB) sums to 4096 as expected, while
+                // num_bins = 16384 and 32768 both sum to 0. A calibrator reading that histogram
+                // computes its threshold from nothing.
                 const size_t shared_bytes = static_cast<size_t>(num_bins) * sizeof(uint32_t);
+                constexpr size_t kMaxDynamicShared = 48u * 1024u;
+                if (shared_bytes > kMaxDynamicShared) {
+                    throw ::std::invalid_argument(
+                        "build_histogram: num_bins=" + ::std::to_string(num_bins) + " needs " + ::std::to_string(shared_bytes)
+                        + " bytes of dynamic shared memory, above the " + ::std::to_string(kMaxDynamicShared)
+                        + "-byte per-block limit; reduce num_bins (a histogram with more bins than samples carries no extra "
+                          "information)");
+                }
                 detail::build_histogram_kernel<<<grid_size, block_size, shared_bytes, stream>>>(d_data, histogram, n, min_val, max_val, num_bins);
 
                 if (stream == 0) {
@@ -271,10 +289,10 @@ namespace nova {
                     cudaStreamSynchronize(stream);
                 }
 
-                cudaError_t err = cudaGetLastError();
-                if (err != cudaSuccess) {
-                    fprintf(stderr, "CUDA error in build_histogram: %s\n", cudaGetErrorString(err));
-                }
+                // A launch can also fail for reasons this function cannot predict, so the error is
+                // still reported -- but it is now raised rather than printed, because returning
+                // successfully with a histogram that was never written is worse than failing.
+                CUDA_CHECK(cudaGetLastError());
             }
 
             void compute_minmax(const float* data, size_t n, float* min_val, float* max_val, cudaStream_t stream) {

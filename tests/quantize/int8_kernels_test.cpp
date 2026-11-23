@@ -269,6 +269,74 @@ namespace nova {
                 cudaFree(d_hist);
             }
 
+            // Regression: the kernel's bins live in DYNAMIC shared memory, sized num_bins * 4 and
+            // allocated per block, so the per-block ceiling is 48KB. Past it the launch is
+            // rejected -- and that used to be invisible: the error only reached stderr, the
+            // function returned normally, and the destination histogram was left all zero. A
+            // calibrator reading it would compute its threshold from nothing.
+            //
+            // Measured before the guard, with n = 4096 samples: num_bins = 12288 (48KB exactly)
+            // summed to 4096, while num_bins = 16384 and 32768 both summed to 0 with no error
+            // raised.
+            TEST_F(INT8KernelsTest, HistogramRejectsMoreBinsThanSharedMemoryCanHold) {
+                const size_t n = 1024;
+                std::vector<float> src(n);
+                for (size_t i = 0; i < n; ++i) {
+                    src[i] = static_cast<float>(i) / static_cast<float>(n);
+                }
+
+                float* d_src = nullptr;
+                cudaMalloc(&d_src, n * sizeof(float));
+                ASSERT_NE(d_src, nullptr);
+                cudaMemcpy(d_src, src.data(), n * sizeof(float), cudaMemcpyHostToDevice);
+
+                // 16384 bins * 4B = 64KB, over the 48KB limit.
+                const int oversized = 16384;
+                uint32_t* d_hist = nullptr;
+                cudaMalloc(&d_hist, static_cast<size_t>(oversized) * sizeof(uint32_t));
+                ASSERT_NE(d_hist, nullptr);
+
+                EXPECT_THROW(cuda::build_histogram(d_src, d_hist, n, 0.0f, 1.0f, oversized), std::invalid_argument)
+                    << "a histogram that cannot fit in shared memory must be refused, not silently left empty";
+
+                cudaFree(d_src);
+                cudaFree(d_hist);
+            }
+
+            // The largest bin count that still fits must keep working, so the guard is a boundary
+            // and not an accidental blanket rejection.
+            TEST_F(INT8KernelsTest, HistogramAcceptsTheLargestBinCountThatFits) {
+                const size_t n = 4096;
+                const int bins = 12288;  // 12288 * 4 == 48KB exactly
+                std::vector<float> src(n);
+                for (size_t i = 0; i < n; ++i) {
+                    src[i] = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(n);
+                }
+
+                float* d_src = nullptr;
+                uint32_t* d_hist = nullptr;
+                cudaMalloc(&d_src, n * sizeof(float));
+                cudaMalloc(&d_hist, static_cast<size_t>(bins) * sizeof(uint32_t));
+                ASSERT_NE(d_src, nullptr);
+                ASSERT_NE(d_hist, nullptr);
+                cudaMemcpy(d_src, src.data(), n * sizeof(float), cudaMemcpyHostToDevice);
+                cudaMemset(d_hist, 0, static_cast<size_t>(bins) * sizeof(uint32_t));
+
+                ASSERT_NO_THROW(cuda::build_histogram(d_src, d_hist, n, -1.0f, 1.0f, bins));
+                ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+                std::vector<uint32_t> histogram(static_cast<size_t>(bins), 0);
+                cudaMemcpy(histogram.data(), d_hist, static_cast<size_t>(bins) * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+                uint64_t total = 0;
+                for (uint32_t v : histogram) {
+                    total += v;
+                }
+                EXPECT_EQ(total, n) << "every sample must land in some bin";
+
+                cudaFree(d_src);
+                cudaFree(d_hist);
+            }
+
         }  // namespace test
     }  // namespace quantize
 }  // namespace nova
