@@ -138,15 +138,31 @@ namespace nova::preemption::test {
         cfg.shutdown_timeout = std::chrono::seconds(30);
         c.initialize(cfg);
 
-        // A blocking checkpoint callback parks the detached shutdown thread inside
-        // checkpoint_coordinated for a deterministic window.
+        // A blocking checkpoint callback parks the shutdown worker inside
+        // checkpoint_coordinated for a deterministic window. (The worker is joined, not detached,
+        // since that change: a detached worker let ~Impl destroy the condvar underneath it.)
         c.set_checkpoint_callback([]() {
             std::this_thread::sleep_for(std::chrono::milliseconds(400));
             return true;
         });
 
         c.request_shutdown(SIGTERM);
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // Wait for the worker to actually leave Idle before asserting anything about its phase.
+        // A fixed 50 ms sleep assumed it got scheduled that fast; under a load average in the
+        // hundreds it does not, and this case failed in a full-suite run while passing alone.
+        //
+        // The condition is get_phase() != Idle, NOT is_shutdown_in_progress(): request_shutdown
+        // publishes shutdown_in_progress before it even starts the worker thread (deliberately, so
+        // that a reader seeing it also sees the deadline fields), whereas phase only becomes
+        // Signaling once the thread runs. Waiting on in_progress therefore returns while phase is
+        // still Idle, which is exactly the assertion below -- I made that mistake first and the
+        // case then failed on every run.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (c.get_phase() == ShutdownPhase::Idle && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_NE(c.get_phase(), ShutdownPhase::Idle) << "the shutdown worker never left Idle within the allowance";
 
         // Regression: the old unconditional reset raced the
         // finalizing thread. A mid-flight coordinator must refuse the reset.
