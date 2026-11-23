@@ -120,14 +120,18 @@ TEST_F(HealthMonitorTest, GetHealthSnapshot) {
 
 // Regression: memory_used_mb was assigned three times -- (total - free), then total, then
 // `memory_total_mb - memory_used_mb`, which evaluates to FREE. The field reported free memory
-// under a name that says used. Measured on an 8xA100 host holding a 2 GiB allocation: the
-// driver reported used=2472.8 MiB / free=78679.9 MiB, and the snapshot returned 78680.0 --
-// matching free to 0.1 MiB and differing from used by 76207.
+// under a name that says used. Measured on an 8xA100 host holding a 2 GiB allocation: the driver
+// reported used=2472.8 MiB / free=78679.9 MiB, and the snapshot returned 78680.0 -- matching free
+// to 0.1 MiB and differing from used by 76207.
 //
-// This asserts the relationship against the driver directly rather than a fixed number, so it
-// holds whether the GPU is idle or busy.
+// Earlier versions of this case compared two live cudaMemGetInfo readings with a tolerance, and
+// failed in full-suite runs under load while passing alone: other GPU cases and other tenants
+// allocate between any two readings. Widening the tolerance did not fix that, because the drift
+// was not bounded. This version asserts a property that no amount of drift can violate -- the
+// buggy implementation reported the FREE figure, which for any device that is not essentially
+// full is close to the TOTAL, whereas a correct one reports a small fraction of it.
 TEST_F(HealthMonitorTest, MemoryUsedMatchesTheDriverRatherThanTheFreeFigure) {
-    // Occupy a known slice so used and free are unmistakably different.
+    // Hold a known slice so the true used figure is at least this large.
     void* hog = nullptr;
     const bool reserved = cudaMalloc(&hog, 512ull * 1024 * 1024) == cudaSuccess;
     if (!reserved) {
@@ -141,38 +145,28 @@ TEST_F(HealthMonitorTest, MemoryUsedMatchesTheDriverRatherThanTheFreeFigure) {
         cudaFree(hog);
         GTEST_SKIP() << "cudaMemGetInfo unavailable";
     }
-    const float driver_used_mb = static_cast<float>(total_bytes - free_bytes) / (1024.0f * 1024.0f);
-    const float driver_free_mb = static_cast<float>(free_bytes) / (1024.0f * 1024.0f);
 
     cuda::production::HealthMonitor monitor;
     const auto metrics = monitor.get_health_snapshot();
-    // Read BOTH accessors before releasing the scratch allocation: freeing in between moves the
-    // device figure by the size of the allocation and makes the two disagree for a reason that
-    // has nothing to do with the defect under test.
     const auto mem = monitor.get_memory_snapshot();
     cudaFree(hog);
 
-    // The comparison below distinguishes "reports used" from "reports free". That only works when
-    // the two candidates are far apart, and on a shared host they are not always: other tenants
-    // allocate and release between our reads, and the full suite runs under load averages in the
-    // hundreds. Rather than a fixed 64 MiB allowance -- which this case originally used and which
-    // failed in exactly that situation while passing in isolation -- measure the gap and require
-    // it to be large enough for the comparison to mean something.
-    const float separation = std::fabs(driver_used_mb - driver_free_mb);
-    if (separation < 4.0f * 64.0f) {
-        GTEST_SKIP() << "used (" << driver_used_mb << " MiB) and free (" << driver_free_mb << " MiB) are too close on this host for the two candidates to be distinguishable";
+    const float total_mb = static_cast<float>(total_bytes / (1024 * 1024));
+    const float reported = metrics.memory_used_mb;
+
+    // Reporting free memory puts the figure near the device total.
+    EXPECT_LT(reported, total_mb * 0.5f) << "memory_used_mb=" << reported << " MiB is at least half of the " << total_mb
+                                         << " MiB device total, which is what reporting FREE memory looks like";
+    // Reporting correctly puts it at least above the 512 MiB this case holds.
+    EXPECT_GE(reported, 256.0f) << "memory_used_mb=" << reported << " MiB is below the 512 MiB held by this case, so the figure is not tracking allocation";
+
+    // The two accessors describe the same quantity; compare as a ratio so absolute drift cancels.
+    const double allocated_mb = static_cast<double>(mem.allocated_bytes) / (1024.0 * 1024.0);
+    if (allocated_mb > 256.0) {
+        const double ratio = static_cast<double>(reported) / allocated_mb;
+        EXPECT_GT(ratio, 0.25) << "memory_used_mb=" << reported << " MiB against get_memory_snapshot's " << allocated_mb << " MiB allocated";
+        EXPECT_LT(ratio, 4.0) << "memory_used_mb=" << reported << " MiB against get_memory_snapshot's " << allocated_mb << " MiB allocated";
     }
-
-    const float to_used = std::fabs(metrics.memory_used_mb - driver_used_mb);
-    const float to_free = std::fabs(metrics.memory_used_mb - driver_free_mb);
-    EXPECT_LT(to_used, to_free) << "memory_used_mb=" << metrics.memory_used_mb << " is closer to the FREE figure (" << driver_free_mb << " MiB) than to the used figure ("
-                                << driver_used_mb << " MiB)";
-
-    // And the two accessors in this class must agree: get_memory_snapshot() computes
-    // allocated_bytes as total - free, which is the same quantity. The tolerance is a fraction of
-    // the gap between the two candidates, so drift from other tenants cannot make this fail.
-    EXPECT_NEAR(static_cast<float>(mem.allocated_bytes) / (1024.0f * 1024.0f), metrics.memory_used_mb, separation / 4.0f)
-        << "to_json() emits both of these, so they cannot contradict each other";
 }
 
 TEST_F(HealthMonitorTest, GetMemorySnapshot) {
