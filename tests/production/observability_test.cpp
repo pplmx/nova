@@ -124,49 +124,50 @@ TEST_F(HealthMonitorTest, GetHealthSnapshot) {
 // reported used=2472.8 MiB / free=78679.9 MiB, and the snapshot returned 78680.0 -- matching free
 // to 0.1 MiB and differing from used by 76207.
 //
-// Earlier versions of this case compared two live cudaMemGetInfo readings with a tolerance, and
-// failed in full-suite runs under load while passing alone: other GPU cases and other tenants
-// allocate between any two readings. Widening the tolerance did not fix that, because the drift
-// was not bounded. This version asserts a property that no amount of drift can violate -- the
-// buggy implementation reported the FREE figure, which for any device that is not essentially
-// full is close to the TOTAL, whereas a correct one reports a small fraction of it.
-TEST_F(HealthMonitorTest, MemoryUsedMatchesTheDriverRatherThanTheFreeFigure) {
-    // Hold a known slice so the true used figure is at least this large.
-    void* hog = nullptr;
-    const bool reserved = cudaMalloc(&hog, 512ull * 1024 * 1024) == cudaSuccess;
-    if (!reserved) {
-        (void)cudaGetLastError();
-        GTEST_SKIP() << "could not reserve scratch memory";
-    }
-
-    size_t free_bytes = 0, total_bytes = 0;
-    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess) {
-        (void)cudaGetLastError();
-        cudaFree(hog);
-        GTEST_SKIP() << "cudaMemGetInfo unavailable";
-    }
-
+// Two earlier versions of this case tried to compare against absolute figures and both failed in
+// full-suite runs while passing alone. The first used a fixed 64 MiB tolerance; the second
+// asserted the reported value was under half the device total, which breaks down because other
+// GPU cases hold memory concurrently -- measured, six concurrent 6 GiB allocations put the real
+// used figure at 46% of the device, close enough to the threshold that the seventh crosses it.
+//
+// This version measures the thing the defect actually gets wrong. It records the reported figure,
+// takes a large allocation, records it again, and requires the reported figure to have moved by
+// roughly the amount allocated. A snapshot reporting FREE memory moves the wrong way -- it goes
+// down as memory is consumed -- so the sign of the change distinguishes the two implementations
+// regardless of what the rest of the machine is doing.
+TEST_F(HealthMonitorTest, MemoryUsedTracksAllocationRatherThanMovingWithFreeMemory) {
     cuda::production::HealthMonitor monitor;
-    const auto metrics = monitor.get_health_snapshot();
-    const auto mem = monitor.get_memory_snapshot();
+
+    // Baseline. Nothing can make the difference between two readings of the same field as large
+    // as the allocation below unless the field is actually tracking allocation.
+    const size_t hold_bytes = 2ull * 1024 * 1024 * 1024;  // 2 GiB
+    const float hold_mb = static_cast<float>(hold_bytes / (1024 * 1024));
+
+    const float before = monitor.get_health_snapshot().memory_used_mb;
+
+    void* hog = nullptr;
+    if (cudaMalloc(&hog, hold_bytes) != cudaSuccess) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "could not reserve 2 GiB to measure the delta";
+    }
+    const float after = monitor.get_health_snapshot().memory_used_mb;
     cudaFree(hog);
 
-    const float total_mb = static_cast<float>(total_bytes / (1024 * 1024));
-    const float reported = metrics.memory_used_mb;
+    const float delta = after - before;
+    RecordProperty("used_before_mb", std::to_string(before));
+    RecordProperty("used_after_mb", std::to_string(after));
+    RecordProperty("delta_mb", std::to_string(delta));
 
-    // Reporting free memory puts the figure near the device total.
-    EXPECT_LT(reported, total_mb * 0.5f) << "memory_used_mb=" << reported << " MiB is at least half of the " << total_mb
-                                         << " MiB device total, which is what reporting FREE memory looks like";
-    // Reporting correctly puts it at least above the 512 MiB this case holds.
-    EXPECT_GE(reported, 256.0f) << "memory_used_mb=" << reported << " MiB is below the 512 MiB held by this case, so the figure is not tracking allocation";
+    // A correct implementation reports this allocation, so the figure must rise by about its
+    // size. Other processes may also allocate or free meanwhile, which is why the window is wide
+    // rather than exact -- but no amount of unrelated churn makes the figure rise by ~2 GiB
+    // unless it is tracking allocation.
+    EXPECT_GT(delta, hold_mb * 0.5f) << "memory_used_mb went from " << before << " to " << after << " MiB while this case allocated " << hold_mb
+                                     << " MiB; a field reporting USED memory must rise by about that much";
 
-    // The two accessors describe the same quantity; compare as a ratio so absolute drift cancels.
-    const double allocated_mb = static_cast<double>(mem.allocated_bytes) / (1024.0 * 1024.0);
-    if (allocated_mb > 256.0) {
-        const double ratio = static_cast<double>(reported) / allocated_mb;
-        EXPECT_GT(ratio, 0.25) << "memory_used_mb=" << reported << " MiB against get_memory_snapshot's " << allocated_mb << " MiB allocated";
-        EXPECT_LT(ratio, 4.0) << "memory_used_mb=" << reported << " MiB against get_memory_snapshot's " << allocated_mb << " MiB allocated";
-    }
+    // And the direction is the giveaway: reporting free memory means the figure FALLS when memory
+    // is consumed. This assertion is the one that fails against the original bug.
+    EXPECT_GE(delta, 0.0f) << "memory_used_mb fell from " << before << " to " << after << " MiB when memory was consumed, which is what a field reporting FREE memory does";
 }
 
 TEST_F(HealthMonitorTest, GetMemorySnapshot) {
