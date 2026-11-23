@@ -450,10 +450,13 @@ TEST_F(TensorParallelAttentionMultiGpuTest, MultiGpu_MiniTransformer_MatchesSing
     // the reference implementation in this file expects -- they cannot simply be
     // rescaled to whatever GPUs are present. Skip instead of failing a shape check the
     // case is not about.
-    if (device_count > 1 && ((4 * 2) % device_count != 0 || 16 % device_count != 0)) {
-        GTEST_SKIP() << "this case pins a 4-head/hd=2 attention and a 16-wide MLP, neither of "
-                        "which the "
-                     << device_count << " visible devices can shard evenly";
+    // The attention sharding divides HEADS, not the projected width. Checking (4 * 2) -- qkv --
+    // was wrong and let the case through on 8 devices: 8 % 8 == 0 looks fine, but 4 heads do not
+    // divide by 8, and the case then failed inside the layer constructor with "num_heads must
+    // divide evenly by the TP degree" instead of skipping. Both the head count and the MLP width
+    // have to divide.
+    if (device_count > 1 && (4 % device_count != 0 || 16 % device_count != 0)) {
+        GTEST_SKIP() << "this case pins 4 attention heads and a 16-wide MLP, neither of which the " << device_count << " visible devices can shard evenly";
     }
     const int m = 12, hidden = 8, heads = 4, hd = 2, inter = 16, K = 12;
     const int qkv = heads * hd;  // == hidden

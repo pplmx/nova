@@ -127,10 +127,19 @@ namespace {
         }
         auto& ctx = cuda::nccl::NcclContext::instance();
 
-        // inter is sharded by the TP degree, so the device count must divide it. Skip
-        // rather than fail a shape check the case is not about.
+        // Two things are sharded by the TP degree: the MLP intermediate width and the attention
+        // head count. This case pins inter = 16 and heads = 4, so both must divide evenly.
+        //
+        // The heads check was missing. On an 8-device host inter divides (16 % 8 == 0) but heads
+        // does not (4 % 8 != 0), so the guard let the case through and it failed inside the layer
+        // constructor with "num_heads must divide evenly by the TP degree" -- a shape rejection
+        // this case is not about, reported as a test failure. Only visible with NCCL enabled:
+        // without it the case skips before reaching that line.
         if (device_count > 1 && 16 % device_count != 0) {
             GTEST_SKIP() << "this case pins a 16-wide MLP, which the " << device_count << " visible devices cannot shard";
+        }
+        if (device_count > 1 && 4 % device_count != 0) {
+            GTEST_SKIP() << "this case pins 4 attention heads, which the " << device_count << " visible devices cannot shard";
         }
         const int m = 12, hidden = 8, heads = 4, hd = 2, inter = 16, K = 12;
         const int blocks = 3;
