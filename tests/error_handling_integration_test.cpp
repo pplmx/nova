@@ -16,6 +16,15 @@ protected:
 
 TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {
     auto& degrade_mgr = degradation_manager::instance();
+    degrade_mgr.reset();  // process-wide singleton: do not inherit another case's scores
+
+    // The chain this case is named for is timeout -> retry -> degrade, so the degrade step has
+    // to actually happen. It never did: without a recorded quality score, should_degrade()
+    // returns false, so trigger_degradation() was never reached and the callback never fired.
+    // The old assertion was `EXPECT_TRUE(degraded || !degraded)` -- true either way -- so the
+    // missing step was invisible. Record a score below the threshold to arm it, which is what
+    // a real caller does before asking whether to degrade.
+    degrade_mgr.record_quality("matmul", 0.1);
 
     bool degraded = false;
     degrade_mgr.set_callback([&](const degradation_event& event) { degraded = true; });
@@ -47,7 +56,10 @@ TEST_F(ErrorHandlingIntegrationTest, TimeoutRetryDegradeChain) {
     } catch (...) {}
 
     EXPECT_EQ(attempts, 2);
-    EXPECT_TRUE(degraded || !degraded);
+    EXPECT_TRUE(degraded) << "the degradation callback never fired, so the chain stopped at retry";
+    EXPECT_EQ(precision, precision_level::medium) << "degrade() moves high one step down to medium";
+
+    degrade_mgr.reset();
 }
 
 TEST_F(ErrorHandlingIntegrationTest, CircuitBreakerUnderConcurrentLoad) {

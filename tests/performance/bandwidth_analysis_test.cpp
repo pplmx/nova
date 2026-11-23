@@ -136,16 +136,31 @@ namespace cuda::performance::bandwidth::test {
         CacheAnalyzer analyzer;
     };
 
+    // `bool available = analyzer.is_available(); EXPECT_TRUE(available || !available);` asserted
+    // nothing -- both halves of the disjunction are the same fact. Two entry points answer the
+    // same question here, so the useful check is that they agree.
     TEST_F(CacheAnalyzerTest, CheckAvailability) {
-        bool available = analyzer.is_available();
-        EXPECT_TRUE(available || !available);
+        EXPECT_EQ(analyzer.is_available(), CacheAnalyzer::check_cupti_availability()) << "the cached instance flag must match the static probe";
+
+        const auto metrics = analyzer.analyze(0);
+        EXPECT_EQ(metrics.available, analyzer.is_available()) << "analyze() must not claim counters the analyzer knows it cannot read";
     }
 
+    // This case only asserted anything when counters happened to be available, so on a build
+    // without CUPTI it verified nothing at all. Both branches now have a requirement: real
+    // numbers when available, and an explanation when not.
     TEST_F(CacheAnalyzerTest, Analyze) {
         auto metrics = analyzer.analyze(0);
         if (metrics.available) {
             EXPECT_GE(metrics.l1_hit_rate, 0.0);
             EXPECT_LE(metrics.l1_hit_rate, 1.0);
+            EXPECT_GE(metrics.l2_hit_rate, 0.0);
+            EXPECT_LE(metrics.l2_hit_rate, 1.0);
+        } else {
+            EXPECT_FALSE(metrics.error_message.empty()) << "an unavailable analysis must say why, not return silent zeroes";
+            // Unavailable means no measurement was taken; a hit rate would be invented.
+            EXPECT_DOUBLE_EQ(metrics.l1_hit_rate, 0.0) << "no counters were read, so no hit rate may be reported";
+            EXPECT_DOUBLE_EQ(metrics.l2_hit_rate, 0.0);
         }
     }
 

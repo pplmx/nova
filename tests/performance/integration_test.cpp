@@ -87,7 +87,16 @@ namespace cuda::performance::test {
         bandwidth::CacheAnalyzer analyzer;
         auto metrics = analyzer.analyze(0);
 
-        EXPECT_TRUE(metrics.available || !metrics.available);
+        // The original assertion was `EXPECT_TRUE(metrics.available || !metrics.available)`,
+        // which is true regardless. What this pipeline can actually promise is that its two
+        // reporting paths agree and that an unavailable analysis explains itself.
+        EXPECT_EQ(analyzer.is_available(), metrics.available) << "is_available() and analyze().available must report the same thing";
+        if (!metrics.available) {
+            EXPECT_FALSE(metrics.error_message.empty()) << "an unavailable analyzer must say why";
+        } else {
+            EXPECT_GE(metrics.l1_hit_rate, 0.0);
+            EXPECT_LE(metrics.l1_hit_rate, 1.0);
+        }
     }
 
     TEST_F(PerformanceToolingIntegrationTest, DashboardExportPipeline) {
