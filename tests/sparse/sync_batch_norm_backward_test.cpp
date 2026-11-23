@@ -118,6 +118,12 @@ namespace cuda::neural::test {
     ///
     /// The cases that only check argument validation would not hang, but they belong to
     /// the same suite and read better with one rule than two.
+    /// Fixture for the cases that need to actually run the kernel on one rank.
+    ///
+    /// The validation cases below deliberately do NOT use it. This fixture skips whenever the
+    /// host has more than one device, and on an 8-GPU machine that meant three contracts about
+    /// argument checking -- which never touch a device -- were skipped as well. Measured before
+    /// separating them: five cases in this file, all five SKIPPED on this host.
     class SyncBatchNormBackwardTest : public ::testing::Test {
     protected:
         void SetUp() override {
@@ -130,11 +136,9 @@ namespace cuda::neural::test {
         }
     };
 
-    TEST_F(SyncBatchNormBackwardTest, EmptyBatchIsRejected) {
-        if (!device_available()) {
-            GTEST_SKIP() << "no CUDA device";
-        }
-
+    // Rejecting bad extents happens before any device work, so it holds on any host and is not
+    // tied to the single-rank restriction above.
+    TEST(SyncBatchNormBackwardValidation, EmptyBatchIsRejected) {
         SyncBatchNorm norm(2);
         const std::string message = message_from([&] { norm.backward(nullptr, nullptr, nullptr, nullptr, nullptr, 0, 4, nullptr); });
 
@@ -145,11 +149,7 @@ namespace cuda::neural::test {
     }
 
     // Regression: same failure through the other extent.
-    TEST_F(SyncBatchNormBackwardTest, EmptySpatialExtentIsRejected) {
-        if (!device_available()) {
-            GTEST_SKIP() << "no CUDA device";
-        }
-
+    TEST(SyncBatchNormBackwardValidation, EmptySpatialExtentIsRejected) {
         SyncBatchNorm norm(2);
         const std::string message = message_from([&] { norm.backward(nullptr, nullptr, nullptr, nullptr, nullptr, 1, 0, nullptr); });
 
@@ -158,11 +158,7 @@ namespace cuda::neural::test {
         (void)cudaGetLastError();
     }
 
-    TEST_F(SyncBatchNormBackwardTest, NegativeExtentsAreRejected) {
-        if (!device_available()) {
-            GTEST_SKIP() << "no CUDA device";
-        }
-
+    TEST(SyncBatchNormBackwardValidation, NegativeExtentsAreRejected) {
         SyncBatchNorm norm(2);
         EXPECT_THROW(norm.backward(nullptr, nullptr, nullptr, nullptr, nullptr, -1, 4, nullptr), std::invalid_argument);
         EXPECT_THROW(norm.backward(nullptr, nullptr, nullptr, nullptr, nullptr, 2, -3, nullptr), std::invalid_argument);
