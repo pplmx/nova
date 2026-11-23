@@ -52,37 +52,15 @@ namespace nova {
                     dst[idx] = dequantized;
                 }
 
-                template <bool SYMMETRIC>
-                __global__ void quantize_f32_to_int8_vectorized_kernel(const float4* __restrict__ src, int4* __restrict__ dst, size_t n4, float scale, float zero_point) {
-                    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-                    if (idx >= n4) {
-                        return;
-                    }
-
-                    float4 vals = src[idx];
-
-                    int32_t qx, qy, qz, qw;
-
-                    if (SYMMETRIC) {
-                        qx = static_cast<int32_t>(__float2int_rn(vals.x / scale));
-                        qy = static_cast<int32_t>(__float2int_rn(vals.y / scale));
-                        qz = static_cast<int32_t>(__float2int_rn(vals.z / scale));
-                        qw = static_cast<int32_t>(__float2int_rn(vals.w / scale));
-                    } else {
-                        qx = static_cast<int32_t>(__float2int_rn((vals.x - zero_point) / scale));
-                        qy = static_cast<int32_t>(__float2int_rn((vals.y - zero_point) / scale));
-                        qz = static_cast<int32_t>(__float2int_rn((vals.z - zero_point) / scale));
-                        qw = static_cast<int32_t>(__float2int_rn((vals.w - zero_point) / scale));
-                    }
-
-                    qx = max(-127, min(127, qx));
-                    qy = max(-127, min(127, qy));
-                    qz = max(-127, min(127, qz));
-                    qw = max(-127, min(127, qw));
-
-                    dst[idx] = make_int4(qx, qy, qz, qw);
-                }
-
+                // A `quantize_f32_to_int8_vectorized_kernel` used to live here. It was never
+                // launched from anywhere, and it could not have been: it took `int4* dst` and
+                // wrote `make_int4(qx, qy, qz, qw)` -- 16 bytes -- for the 4 int8 codes that one
+                // float4 of input produces, which occupy 4 bytes. Measured for n = 1024: the
+                // destination needs 1024 bytes and that write pattern spans 4096, so wiring it up
+                // would have run 3072 bytes past the end of the buffer and stored int32 codes
+                // where packed int8 was expected. Removed rather than fixed because there is no
+                // caller to serve; a vectorised path should be added together with a test that
+                // compares it against the scalar kernel.
                 __global__ void build_histogram_kernel(const float* __restrict__ data, uint32_t* __restrict__ histogram, size_t n, float min_val, float max_val, int num_bins) {
                     // Dynamic shared memory sized to num_bins at launch: the old
                     // fixed __shared__ uint32_t[256] wrote smem[bin] for bin up to num_bins-1
