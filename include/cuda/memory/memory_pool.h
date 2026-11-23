@@ -78,6 +78,11 @@ namespace cuda::memory {
         struct AllocationInfo {
             size_t block_idx;
             int stream_id;
+            /// Bytes handed out by the matching allocate(). Recorded so deallocate() does not
+            /// have to trust the size the caller passes back: the pool frees by subtracting
+            /// from the block's bump offset, and an overstated size underflows that offset
+            /// into a huge value that later reads as free space.
+            size_t bytes;
         };
 
         Config config_;

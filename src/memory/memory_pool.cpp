@@ -122,7 +122,7 @@ namespace cuda::memory {
         }
 
         void* result = static_cast<char*>(block->ptr) + block->offset;
-        allocation_map_[result] = {static_cast<size_t>(block - blocks_.data()), stream_id};
+        allocation_map_[result] = {static_cast<size_t>(block - blocks_.data()), stream_id, bytes};
         block->offset += bytes;
         block->stream_id = stream_id;
         total_allocated_ += bytes;
@@ -151,10 +151,31 @@ namespace cuda::memory {
         }
 
         Block& block = blocks_[block_idx];
+
+        // Release the size that was actually handed out, not the one reported back. The pool
+        // frees by walking the block's bump offset backwards, so an overstated `bytes`
+        // underflowed it into a huge value: measured with a 100-byte allocation released as
+        // 200 bytes, total_allocated became 18446744073709551516 and the NEXT allocate()
+        // computed (block.size - block.offset) on wrapped arithmetic, believed the block had
+        // thousands of free bytes, and returned a pointer 100 bytes BEFORE the block start --
+        // outside the cudaMalloc'd region.
+        //
+        // `bytes` is kept in the signature for source compatibility; the recorded value is what
+        // the accounting uses, so a caller that confuses element count with byte count can no
+        // longer corrupt the pool.
+        (void)bytes;
+        const size_t released = it->second.bytes;
+
         if (ptr >= block.ptr && ptr < static_cast<char*>(block.ptr) + block.size) {
-            block.offset -= bytes;
-            total_allocated_ -= bytes;
-            total_available_ += bytes;
+            // A block whose offset is already below the recorded size means the accounting no
+            // longer matches (a non-LIFO release); clamp instead of wrapping.
+            block.offset = (block.offset >= released) ? (block.offset - released) : 0;
+            if (total_allocated_ >= released) {
+                total_allocated_ -= released;
+            } else {
+                total_allocated_ = 0;
+            }
+            total_available_ += released;
 
             // A fully released block keeps its allocation so it can serve the next
             // request; that is the point of pooling. The pointer must NOT be cleared

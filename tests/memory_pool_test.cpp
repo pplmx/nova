@@ -256,6 +256,59 @@ TEST_F(MemoryPoolTest, AllocateFromPool) {
     EXPECT_NE(ptr1, ptr2);
 }
 
+// Regression: deallocate() subtracted the CALLER'S byte count from the block's bump offset
+// without recording what allocate() had handed out. Releasing a 100-byte pointer as 200 bytes
+// underflowed size_t -- total_allocated became 18446744073709551516 -- and because
+// find_block_for_size() computes (block.size - block.offset), the wrapped offset read as
+// thousands of free bytes. The next allocate() then returned a pointer BEFORE the block start,
+// outside the cudaMalloc'd region.
+//
+// A caller confusing element count with byte count, or releasing twice with a different size,
+// is exactly the mistake this must survive.
+TEST_F(MemoryPoolTest, DeallocateUsesTheSizeThatWasAllocatedNotTheSizeReported) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 1;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* first = pool.allocate(100);
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(pool.total_allocated(), 100u);
+    EXPECT_EQ(pool.num_allocations(), 1u);
+
+    // Overstated release size.
+    pool.deallocate(first, 200);
+
+    EXPECT_EQ(pool.total_allocated(), 0u) << "accounting must return to zero, not wrap";
+    EXPECT_EQ(pool.total_available(), 4096u) << "the whole block is free again";
+    EXPECT_EQ(pool.num_allocations(), 0u);
+
+    // And the block must still be usable from its start, not from a wrapped offset.
+    void* second = pool.allocate(4000);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(second, first) << "a fully released block must serve the next request from its beginning";
+    pool.deallocate(second, 4000);
+    EXPECT_EQ(pool.total_allocated(), 0u);
+}
+
+// The other direction: reporting less than was allocated must not leave the block believing it
+// has space it already gave away.
+TEST_F(MemoryPoolTest, DeallocateToleratesAnUnderstatedSize) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 1;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* p = pool.allocate(1000);
+    ASSERT_NE(p, nullptr);
+    pool.deallocate(p, 10);  // caller under-reports
+
+    EXPECT_EQ(pool.total_allocated(), 0u) << "the allocation is gone regardless of the reported size";
+    EXPECT_EQ(pool.total_available(), 4096u);
+}
+
 TEST_F(MemoryPoolTest, DeallocateReturnsMemory) {
     cuda::memory::MemoryPool::Config config;
     config.block_size = 4096;
