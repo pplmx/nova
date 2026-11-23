@@ -234,12 +234,26 @@ TEST_F(DistributedMemoryPoolTest, FreeMemoryMetricMatchesTheDriver) {
 
     const auto metrics = pool_->get_device_metrics(0);
 
-    // 64 MB of slack: the pool's own bookkeeping and driver granularity move the number.
-    const size_t slack = size_t(64) << 20;
+    // The two figures are separate cudaMemGetInfo calls -- this test reads one, then
+    // get_device_metrics() reads another -- so the allowance has to cover whatever the host does
+    // between them. A flat 64 MB failed in a full-suite run at load average 753 while passing
+    // alone: ctest -j8 runs the inference suites concurrently and they allocate and release
+    // multi-gigabyte buffers.
+    //
+    // The check that matters is directional, and it survives any allowance that stays well below
+    // the 2 GB allocation above: free_memory must DROP when that memory was taken, and it must
+    // stay near the driver's figure rather than near total - pool_allocations. Both bounds are
+    // therefore derived from the allocation that distinguishes them.
+    const size_t slack = size_t(512) << 20;
     EXPECT_LE(metrics.free_memory, driver_free + slack) << "reported free_memory " << metrics.free_memory << " exceeds the driver's " << driver_free
                                                         << ": the field is not free memory";
     EXPECT_GE(metrics.free_memory + slack, driver_free) << "reported free_memory " << metrics.free_memory << " is below the driver's " << driver_free;
     EXPECT_EQ(metrics.total_memory, driver_total) << "total_memory must be the device's total, not its free memory";
+
+    // And the figure is genuinely free memory, not the pool's own allocation count: the 2 GB
+    // outsider allocation is invisible to the pool, so a field computed as total - own_allocations
+    // would sit about that much ABOVE the driver's free figure.
+    EXPECT_LT(metrics.free_memory, driver_free + (outsider_bytes / 2)) << "free_memory is far above the driver's free figure, which is what total - own_allocations looks like";
 
     cudaSetDevice(0);
     cudaFree(outsider);
