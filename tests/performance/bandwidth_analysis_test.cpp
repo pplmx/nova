@@ -36,16 +36,26 @@ namespace cuda::performance::bandwidth::test {
         EXPECT_GE(peaks.hbm_bandwidth_gbs, 0.0);
     }
 
+    // `EXPECT_GE(points.size(), 0u)` was tautological for a size_t, and the input made it worse:
+    // 1024 flops over 64 bytes is an intensity of 16, which is ABOVE the ridge point (9.56 on the
+    // default peaks), so this kernel is compute-bound. get_memory_bound_points() therefore
+    // returned zero points and the case named "MemoryBoundClassification" verified nothing about
+    // memory-bound classification at all.
     TEST_F(RooflineModelTest, MemoryBoundClassification) {
-        model.add_point("kernel1", 1024, 64, 1000);
-        auto points = model.get_memory_bound_points();
-        EXPECT_GE(points.size(), 0u);
+        // Intensity 64/1024 = 0.0625, comfortably below the ridge point.
+        model.add_point("kernel1", 64, 1024, 1000);
+        auto memory_bound = model.get_memory_bound_points();
+        auto compute_bound = model.get_compute_bound_points();
+        EXPECT_EQ(memory_bound.size(), 1u) << "a kernel with intensity below the ridge point is memory-bound";
+        EXPECT_EQ(compute_bound.size(), 0u) << "and must not also be reported as compute-bound";
     }
 
     TEST_F(RooflineModelTest, ComputeBoundClassification) {
         model.add_point("kernel1", 1024000, 64, 1000);
-        auto points = model.get_compute_bound_points();
-        EXPECT_GE(points.size(), 0u);
+        auto compute_bound = model.get_compute_bound_points();
+        auto memory_bound = model.get_memory_bound_points();
+        EXPECT_EQ(compute_bound.size(), 1u) << "a kernel far above the ridge point is compute-bound";
+        EXPECT_EQ(memory_bound.size(), 0u);
     }
 
     TEST_F(RooflineModelTest, Clear) {

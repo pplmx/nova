@@ -78,7 +78,9 @@ namespace cuda::performance::dashboard::test {
 
         EXPECT_EQ(flame_graph.name, "root");
         EXPECT_EQ(flame_graph.value, 100u);
-        EXPECT_GE(flame_graph.children.size(), 0u);
+        // `>= 0u` on a size_t is always true. One event was added, so the root has exactly one
+        // child; zero children would mean the event was dropped on the way into the tree.
+        EXPECT_EQ(flame_graph.children.size(), 1u) << "the single added event must appear as one child of the root";
     }
 
     TEST_F(FlameGraphTest, ToJson) {

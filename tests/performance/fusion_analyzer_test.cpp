@@ -134,7 +134,10 @@ namespace cuda::performance::fusion::test {
         auto opportunities = analyzer.detect_opportunities();
         auto recommendations = engine.generate_recommendations(opportunities);
 
-        EXPECT_GE(recommendations.size(), 0u);
+        // `>= 0u` on a size_t asserts nothing. A matmul followed by a bias is the textbook
+        // fusible pair, so the engine must produce at least one recommendation; asserting only
+        // non-negativity let a generator that returned nothing pass this case.
+        EXPECT_GE(recommendations.size(), 1u) << "a matmul plus bias must yield at least one fusion recommendation";
     }
 
     TEST_F(FusionRecommendationTest, RecommendationsSortedByScore) {
