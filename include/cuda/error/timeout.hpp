@@ -335,7 +335,12 @@ namespace nova::error {
         operation_id next_id_ {1};
         std::chrono::milliseconds default_timeout_ {30000};
         timeout_callback callback_;
-        bool watchdog_running_ {false};
+        /// Written under mutex_ by start/stop/reset and read WITHOUT the lock by watchdog_loop(),
+        /// which is the loop's exit condition. As a plain bool that was a data race -- one thread
+        /// writing, another reading, no synchronisation -- confirmed by ThreadSanitizer:
+        /// "data race ... in nova::error::timeout_manager::watchdog_loop()". The neighbouring
+        /// watchdog_interval_ms_ is already atomic for the same reason.
+        std::atomic<bool> watchdog_running_ {false};
         std::vector<std::jthread> watchdog_threads_;
         std::atomic<int64_t> watchdog_interval_ms_ {100};
         size_t max_concurrent_ {10000};
