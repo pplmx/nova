@@ -36,14 +36,11 @@ namespace cuda::neural::test {
 
     namespace {
 
-        bool device_available() {
-            int count = 0;
-            if (cudaGetDeviceCount(&count) != cudaSuccess) {
-                (void)cudaGetLastError();
-                return false;
-            }
-            return count > 0;
-        }
+        // A device_available() helper used to live here, guarding each case with
+        // `GTEST_SKIP() << "no CUDA device"`. It never fired (cudaGetDeviceCount returns 8 on this
+        // host), so the guard was decorative and the real skip came from the fixture, which is
+        // what made the message misleading. With the cases split by whether they need the
+        // single-rank path, nothing calls it any more.
 
         /// Owns a device float array.
         class DeviceArray {
@@ -136,6 +133,33 @@ namespace cuda::neural::test {
         }
     };
 
+    // Cases that must actually run the kernels. SyncBatchNorm takes its collective path only when
+    // DeviceMesh::device_count() > 1, and device_count() stays 0 until DeviceMesh::initialize() is
+    // called -- so an uninitialised mesh selects the single-rank path even on a multi-GPU host.
+    //
+    // The gradient values were checked independently before these were enabled: finite differences
+    // over forward_training agree with backward()'s d_input to 3e-4 at h=1e-3, and d_beta matches
+    // the per-channel sum of d_output exactly.
+    class SyncBatchNormBackwardSingleRank : public ::testing::Test {
+    protected:
+        void SetUp() override {
+            // SyncBatchNorm picks its path from DeviceMesh::device_count(), and once the mesh has
+            // been initialised it cannot be reset (there is no such API). So "the mesh is not
+            // initialised" is an assumption about test ORDER, which is exactly the kind of thing
+            // that turns a passing suite into a failing one when cases are added or reordered.
+            // Measured: these two cases pass alone and fail after SyncBatchNormTest's cases have
+            // run, because those initialise the mesh and the collective path then demands one
+            // process per rank (it throws NcclException rather than falling back).
+            //
+            // Rather than depend on the order, state the requirement: if the mesh already reports
+            // more than one device, the single-rank path is unavailable in this process.
+            const int devices = cuda::mesh::DeviceMesh::instance().device_count();
+            if (devices > 1) {
+                GTEST_SKIP() << "DeviceMesh already initialised with " << devices << " devices; the collective path needs one process per rank and cannot be reset";
+            }
+        }
+    };
+
     // Rejecting bad extents happens before any device work, so it holds on any host and is not
     // tied to the single-rank restriction above.
     TEST(SyncBatchNormBackwardValidation, EmptyBatchIsRejected) {
@@ -165,11 +189,7 @@ namespace cuda::neural::test {
         (void)cudaGetLastError();
     }
 
-    TEST_F(SyncBatchNormBackwardTest, ProducesFiniteGradients) {
-        if (!device_available()) {
-            GTEST_SKIP() << "no CUDA device";
-        }
-
+    TEST_F(SyncBatchNormBackwardSingleRank, ProducesFiniteGradients) {
         const int batch = 2, features = 3, spatial = 4;
         const size_t count = static_cast<size_t>(batch) * features * spatial;
 
@@ -205,11 +225,7 @@ namespace cuda::neural::test {
         }
     }
 
-    TEST_F(SyncBatchNormBackwardTest, ConstantInputHasZeroInputGradient) {
-        if (!device_available()) {
-            GTEST_SKIP() << "no CUDA device";
-        }
-
+    TEST_F(SyncBatchNormBackwardSingleRank, ConstantInputHasZeroInputGradient) {
         // Batch norm subtracts the batch mean, so a constant input carries no
         // information: the gradient with respect to it must vanish. An infinite or
         // NaN inv_n would show up here immediately.
