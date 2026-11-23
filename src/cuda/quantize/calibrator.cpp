@@ -6,6 +6,8 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #include <numeric>
 #include <cuda_runtime.h>
 
@@ -109,6 +111,24 @@ namespace nova {
               symmetric_(symmetric),
               min_val_(0.0f),
               max_val_(0.0f) {
+            // Neither parameter was validated, and both failures were unpleasant rather than
+            // merely wrong. Measured:
+            //   num_bins = -5      -> std::length_error from vector::_M_fill_insert, a message
+            //                         that names neither the parameter nor this class
+            //   num_bins = 0       -> constructed fine, then calibrate() threw out of
+            //                         build_histogram on a call the caller had already made
+            //   percentile = -10   -> accepted, calibrate() succeeded
+            //   percentile = 150   -> accepted, calibrate() succeeded
+            //   percentile = NaN   -> accepted, calibrate() succeeded
+            // A percentile outside (0, 100] silently produced a threshold computed from an
+            // out-of-range target. Rejecting at construction keeps the error next to the
+            // argument that caused it.
+            if (num_bins <= 0) {
+                throw ::std::invalid_argument("HistogramCalibrator: num_bins must be positive, got " + ::std::to_string(num_bins));
+            }
+            if (!std::isfinite(percentile) || percentile <= 0.0f || percentile > 100.0f) {
+                throw ::std::invalid_argument("HistogramCalibrator: percentile must be in (0, 100], got " + std::to_string(percentile));
+            }
             histogram_.resize(num_bins_, 0);
         }
 

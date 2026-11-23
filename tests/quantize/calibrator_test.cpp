@@ -202,6 +202,39 @@ namespace nova {
                 EXPECT_NEAR(calibrator.get_percentile(), 99.9f, 0.01f);
             }
 
+            // Regression: neither constructor argument was validated, so the failures landed far
+            // from their cause. Measured before the fix:
+            //   num_bins = -5     -> std::length_error out of vector::_M_fill_insert
+            //   num_bins = 0      -> constructed fine, threw later from inside calibrate()
+            //   percentile = -10  -> accepted; calibrate() returned a scale as if nothing happened
+            //   percentile = 150  -> accepted; same
+            //   percentile = NaN  -> accepted; same
+            TEST_F(CalibratorTest, HistogramCalibratorRejectsNonPositiveBinCount) {
+                EXPECT_THROW(HistogramCalibrator(0), std::invalid_argument);
+                EXPECT_THROW(HistogramCalibrator(-5), std::invalid_argument);
+                // A negative count used to surface as std::length_error from inside std::vector,
+                // which named neither the parameter nor this class.
+                try {
+                    HistogramCalibrator rejected(-5);
+                    FAIL() << "a negative bin count must be rejected";
+                } catch (const std::length_error&) {
+                    FAIL() << "the failure must be invalid_argument naming num_bins, not a vector detail";
+                } catch (const std::invalid_argument&) {
+                    // expected
+                }
+            }
+
+            TEST_F(CalibratorTest, HistogramCalibratorRejectsPercentileOutsideZeroToOneHundred) {
+                EXPECT_THROW(HistogramCalibrator(256, 0.0f), std::invalid_argument);
+                EXPECT_THROW(HistogramCalibrator(256, -10.0f), std::invalid_argument);
+                EXPECT_THROW(HistogramCalibrator(256, 150.0f), std::invalid_argument);
+                EXPECT_THROW(HistogramCalibrator(256, std::nanf("")), std::invalid_argument);
+                EXPECT_THROW(HistogramCalibrator(256, std::numeric_limits<float>::infinity()), std::invalid_argument);
+                // The valid endpoints must still construct.
+                EXPECT_NO_THROW(HistogramCalibrator(256, 100.0f));
+                EXPECT_NO_THROW(HistogramCalibrator(256, 0.1f));
+            }
+
             TEST_F(CalibratorTest, MSECalibratorConstantData) {
                 size_t n = 100;
                 std::vector<float> data(n, 1.0f);
