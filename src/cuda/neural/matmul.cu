@@ -17,19 +17,10 @@ namespace cuda::neural {
         return g_cublas_handle;
     }
 
-    __global__ void matmul_kernel(const float* A, const float* B, float* C, int m, int n, int k) {
-        int row = blockIdx.y * blockDim.y + threadIdx.y;
-        int col = blockIdx.x * blockDim.x + threadIdx.x;
-
-        if (row < m && col < n) {
-            float sum = 0.0f;
-            for (int i = 0; i < k; ++i) {
-                sum += A[row * k + i] * B[i * n + col];
-            }
-            C[row * n + col] = sum;
-        }
-    }
-
+    // A naive `matmul_kernel` used to live here. Nothing launched it: both matmul() and
+    // matmul_batch() go through cuBLAS (cublasSgemm / cublasSgemmBatched), which is what this
+    // module exists for. Kept a plain implementation would only invite someone to call it and
+    // lose the library performance without noticing.
     void matmul(const float* A, const float* B, float* C, int m, int n, int k, MatmulOptions options) {
         cublasHandle_t handle = options.handle ? options.handle : get_cublas_handle();
 

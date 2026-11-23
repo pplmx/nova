@@ -16,13 +16,12 @@ namespace cuda::neural::fusion {
 
     namespace {
 
-        template <typename T>
-        __global__ void apply_bias_kernel(T* data, const T* bias, int num_elements) {
-            int idx = blockIdx.x * blockDim.x + threadIdx.x;
-            if (idx < num_elements) {
-                data[idx] += bias[idx % (blockDim.x * gridDim.x)];
-            }
-        }
+        // An `apply_bias_kernel(data, bias, num_elements)` used to live here. Nothing launched
+        // it, and its bias index was wrong: `bias[idx % (blockDim.x * gridDim.x)]` ties the
+        // broadcast position to the launch geometry rather than to the column, so it read a
+        // different bias element than the caller supplied (and ran off the end whenever the bias
+        // was shorter than the thread count). The live path is apply_bias_kernel_row below, which
+        // indexes `bias[col]` -- the arrangement a per-column bias requires.
 
         template <typename T>
         __global__ void apply_bias_kernel_row(T* data, const T* bias, int rows, int cols) {
