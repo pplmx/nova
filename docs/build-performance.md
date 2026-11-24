@@ -204,11 +204,11 @@ Typical build times on a 32-core machine:
 
 ## CI Integration
 
-For CI systems, use the `ci` preset:
+For CI systems, use the `ci` preset -- but note it does not build on this tree yet:
 
 ```bash
 cmake --preset ci
-cmake --build --preset ci
+cmake --build --preset ci   # fails, see below
 ctest --preset ci
 ```
 
@@ -217,6 +217,31 @@ The `ci` preset:
 - Enables unity builds
 - Keeps the compiler cache on, so a runner that installs sccache reuses it
 - Fails on missing tests
+
+### The `ci` preset currently fails to build
+
+`ci` sets `CMAKE_UNITY_BUILD=ON`, which concatenates several .cpp files into one translation unit.
+Two things that compile fine separately collide when merged:
+
+```text
+tensor_parallel_layers.cpp:39:  error: redefinition of
+    'void cuda::neural::{anonymous}::throw_shape_error(const char*)'
+tensor_parallel_attention.cpp:36: error: redefinition of
+    'void cuda::neural::{anonymous}::throw_no_weight(const char*)'
+```
+
+Both names are defined in an anonymous namespace in two files each. The anonymous namespace makes
+them internal to a translation unit, which is enough when every .cpp is its own unit -- and not enough
+when unity builds merge those units.
+
+Behind those, unity also surfaces missing includes that the per-file build was masking:
+`src/matrix/add.cu` and `src/convolution/conv2d.cu` use `cuda::algo::detail::KernelLauncher` and
+`calc_grid_2d` without including `cuda/algo/kernel_launcher.h`, which compiled only because some other
+file in the same unity blob supplied it.
+
+Renaming the two helpers fixes the first two errors; the include gaps are a separate, wider change.
+`.github/workflows/` does not invoke this preset -- its jobs use their own CMake invocations -- so the
+default build is unaffected. Use the `dev` preset or a plain `cmake -B build` until this is resolved.
 
 To make the cache actually pay off in CI, give sccache a shared backend so
 runners do not each start cold:
