@@ -243,6 +243,39 @@ Renaming the two helpers fixes the first two errors; the include gaps are a sepa
 `.github/workflows/` does not invoke this preset -- its jobs use their own CMake invocations -- so the
 default build is unaffected. Use the `dev` preset or a plain `cmake -B build` until this is resolved.
 
+### Why unity also breaks `std::` inside `namespace cuda::`
+
+The largest group of errors in a unity `ci` build is not about includes at all:
+
+```text
+nccl_context.h(285): error: namespace "cuda::std" has no member "mutex"
+nccl_context.h(285): error: namespace "cuda::std" has no member "lock_guard"
+nccl_context.h(75):  error: namespace "cuda::std" has no member class "runtime_error"
+```
+
+`nccl_context.h` writes `std::lock_guard<std::mutex>` inside `namespace cuda::nccl`. Unqualified lookup
+for `std` searches the enclosing namespaces first, so once `cuda::std` exists anywhere in the same
+translation unit it wins over `::std` -- and libcu++ does create `cuda::std`. In a per-file build
+nothing in that unit includes `<cuda/std/...>`, so `cuda::std` does not exist and the name resolves to
+`::std`. Unity merges `quantize/fp8_types.hpp` (which includes `<cuda/std/cstdint>`) into the same unit
+and the resolution changes.
+
+Minimal reproduction, with no project headers involved:
+
+```cpp
+#include <cuda/std/cstdint>
+#include <mutex>
+namespace cuda { namespace std_shim { } }   // any cuda::std makes it happen
+namespace cuda::nccl {
+    void check() { std::lock_guard<std::mutex> lock(*new std::mutex); }
+}
+```
+
+compiled with nvcc reports "namespace cuda::std has no member lock_guard". Qualifying every use as
+`::std::` makes the same file compile with 0 errors, so the fix is known and mechanical -- but it is a
+sweep across every `cuda::` namespace in the tree, which is why this page records the state instead of
+one header carrying a local patch while the others still shadow.
+
 To make the cache actually pay off in CI, give sccache a shared backend so
 runners do not each start cold:
 
