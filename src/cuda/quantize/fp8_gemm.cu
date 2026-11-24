@@ -31,16 +31,32 @@ namespace nova {
                     return;
                 }
 
+                // Address arithmetic is done in size_t, not int. Every index below is a product of
+                // two dimensions, and with m * k (or k * n, or m * n) past INT_MAX those products
+                // wrapped inside a signed int and the kernel read or wrote outside its own buffers.
+                // Measured with all three dimensions legal and every buffer allocated by the
+                // caller at its full 4 GiB: m = 2, k = INT_MAX, n = 2 -- `row * k + i` is
+                // 1 * 2147483647 + i for row 1, so it goes negative for every i >= 1, and the
+                // launch died with "an illegal memory access was encountered". The row/col
+                // comparisons above stay int because they compare against m and n, which are the
+                // tile bounds and fit.
+                const size_t row_offset = static_cast<size_t>(row);
+                const size_t col_offset = static_cast<size_t>(col);
+                const size_t k_size = static_cast<size_t>(k);
+                const size_t m_size = static_cast<size_t>(m);
+                const size_t n_size = static_cast<size_t>(n);
+
                 float sum = 0.0f;
 
                 for (int i = 0; i < k; ++i) {
-                    float a_val = static_cast<float>(A_TRANSPOSED ? a[i * m + row] : a[row * k + i]) * scale_a;
+                    const size_t i_size = static_cast<size_t>(i);
+                    float a_val = static_cast<float>(A_TRANSPOSED ? a[i_size * m_size + row_offset] : a[row_offset * k_size + i_size]) * scale_a;
                     // B_TRANSPOSED treats b as an (n x k) row-major matrix and reads column i of it.
-                    float b_val = static_cast<float>(B_TRANSPOSED ? b[col * k + i] : b[i * n + col]) * scale_b;
+                    float b_val = static_cast<float>(B_TRANSPOSED ? b[col_offset * k_size + i_size] : b[i_size * n_size + col_offset]) * scale_b;
                     sum += a_val * b_val;
                 }
 
-                c[row * n + col] = sum * scale_out;
+                c[row_offset * n_size + col_offset] = sum * scale_out;
             }
 
             // fp8_gemm_row_kernel and fp8_gemm_reduce_kernel used to live here, a two-stage

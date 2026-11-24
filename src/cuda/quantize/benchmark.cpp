@@ -202,16 +202,6 @@ namespace nova {
                 }
                 result.batch_size = static_cast<int>(total_elements);
 
-                // FP8GEMM::forward takes the dimensions as int and indexes with them, so an operand
-                // whose 64-bit element count exceeds INT_MAX cannot be handled by the kernel even
-                // though the allocation above succeeded. Measured: 65536 x 65536 x 8 reserved its
-                // 4 GiB operand correctly and then died inside the kernel with "an illegal memory
-                // access was encountered". Refusing here names the real limit.
-                const auto max_int = static_cast<size_t>(std::numeric_limits<int>::max());
-                if (elements_a > max_int || elements_b > max_int || elements_c > max_int) {
-                    throw std::invalid_argument("benchmark_fp8_gemm: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n)
-                                                + " exceeds what FP8GEMM::forward can index (int-sized extents)");
-                }
                 result.num_samples = config_.benchmark_runs;
 
                 std::vector<FP8E4M3> a(elements_a);
@@ -437,16 +427,6 @@ namespace nova {
                 if (elements_c > static_cast<size_t>(std::numeric_limits<int>::max())) {
                     throw std::invalid_argument("benchmark_fp8_gemm_throughput: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n) + " needs "
                                                 + std::to_string(elements_c) + " output elements, which does not fit BenchmarkResult::batch_size");
-                }
-                // FP8GEMM::forward takes the dimensions as int and indexes with them, so an operand
-                // whose 64-bit element count exceeds INT_MAX cannot be handled by the kernel even
-                // when the allocation would succeed. Sizing the buffers correctly is not enough:
-                // 65536 x 65536 x 8 allocates 4 GiB of FP8E4M3 and the kernel then walks past it.
-                // Refusing here turns that into a message instead of a device-side fault.
-                const auto max_int = static_cast<size_t>(std::numeric_limits<int>::max());
-                if (elements_a > max_int || elements_b > max_int || elements_c > max_int) {
-                    throw std::invalid_argument("benchmark_fp8_gemm_throughput: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n)
-                                                + " exceeds what FP8GEMM::forward can index (int-sized extents)");
                 }
 
                 BenchmarkResult result;

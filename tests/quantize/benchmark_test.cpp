@@ -336,15 +336,22 @@ namespace nova {
 
                 // benchmark_fp8_gemm_throughput had no validation at all and repeated the same int
                 // products, so it wrapped identically: measured before the fix, (65536, 65536, 8, 1)
-                // died with "CUDA error: an illegal memory access was encountered". A second limit
-                // is guarded here too -- FP8GEMM::forward indexes with int, so an operand whose
-                // 64-bit element count exceeds INT_MAX faults inside the kernel even when its
-                // allocation succeeded.
-                TEST_F(QuantizationBenchmarkIntegrationTest, Fp8GemmThroughputRejectsUnindexableShapes) {
-                    EXPECT_THROW(benchmark_fp8_gemm_throughput(65536, 65536, 8, 1), std::invalid_argument)
-                        << "m * k wraps to 0 as an int; the shape must be refused, not allocated";
+                // threw "CUDA error: an illegal memory access was encountered" from inside the
+                // kernel. Two limits remain and are what this pins:
+                //
+                //  - a non-positive dimension has no meaning;
+                //  - batch_size is an int on the result, so a shape whose element total does not
+                //    fit it cannot be reported and is refused rather than narrowed.
+                //
+                // The earlier version of this case also required 65536 x 65536 x 8 to be refused
+                // because FP8GEMM::forward indexed with int. That limitation is fixed -- the kernel
+                // addresses in size_t now -- so requiring the refusal would pin behaviour that no
+                // longer holds, and it did start failing (after allocating 16 GiB) once the kernel
+                // was corrected.
+                TEST_F(QuantizationBenchmarkIntegrationTest, Fp8GemmThroughputRejectsInvalidShapes) {
                     EXPECT_THROW(benchmark_fp8_gemm_throughput(0, 8, 8, 1), std::invalid_argument) << "a zero dimension must be refused";
                     EXPECT_THROW(benchmark_fp8_gemm_throughput(-4, 8, 8, 1), std::invalid_argument) << "a negative dimension must be refused";
+                    EXPECT_THROW(benchmark_fp8_gemm_throughput(65536, 65536, 65536, 1), std::invalid_argument) << "the element total does not fit BenchmarkResult::batch_size";
                 }
 
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkCalibrationProducesResult) {
