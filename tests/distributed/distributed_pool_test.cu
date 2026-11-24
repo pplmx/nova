@@ -133,7 +133,12 @@ TEST_F(DistributedMemoryPoolTest, GetBestDeviceReturnsValidId) {
 // agrees with the driver by accident, so this case has to CREATE the contention. It takes a
 // large block on the device the driver calls emptiest and holds it while asking again; only a
 // live query moves its answer.
-TEST_F(DistributedMemoryPoolTest, GetBestDevicePicksTheDeviceWithTheMostFreeMemory) {
+// Serial for the same reason as FreeMemoryMetricMatchesTheDriver: the case snapshots free memory
+// on every device and then asks the pool the same question, and cudaMemGetInfo aggregates every
+// process. Under ctest -j8 another test allocating on any device between the two makes the answer
+// look wrong. Measured in a full run: "get_best_device() returned device 5 while the driver
+// reported device 1 as emptiest, after 62492344320 bytes were taken from device 7".
+TEST_F(DistributedMemoryPoolSerialTest, GetBestDevicePicksTheDeviceWithTheMostFreeMemory) {
     const int device_count = pool_->device_count();
     if (device_count < 2) {
         GTEST_SKIP() << "needs at least two devices to have a wrong answer";
