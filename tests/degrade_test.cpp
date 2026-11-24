@@ -24,6 +24,13 @@ TEST_F(DegradationTest, PrecisionLevelName) {
     EXPECT_STREQ(precision_level_name(precision_level::high), "FP64");
     EXPECT_STREQ(precision_level_name(precision_level::medium), "FP32");
     EXPECT_STREQ(precision_level_name(precision_level::low), "FP16");
+
+    // precision_level::count is a sentinel, not a level. It used to name itself "unknown" like a
+    // value outside the enum entirely, so a log line saying "unknown" could not distinguish
+    // "iterated one past the levels" from "bit pattern that is not a precision at all". Measured
+    // before: index 3 and index 4 both reported "unknown".
+    EXPECT_STREQ(precision_level_name(precision_level::count), "count") << "the sentinel must name itself, not hide among invalid values";
+    EXPECT_STREQ(precision_level_name(static_cast<precision_level>(4)), "unknown") << "a genuinely out-of-range value still reports unknown";
 }
 
 TEST_F(DegradationTest, DefaultPrecisionIsHigh) {

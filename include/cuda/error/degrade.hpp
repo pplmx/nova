@@ -83,7 +83,10 @@ namespace nova::error {
             case precision_level::low:
                 return "FP16";
             default:
-                return "unknown";
+                // The sentinel is not a level and reports so distinctly: "count" in a log means
+                // someone iterated one past the levels, while "unknown" means a value that is not
+                // in the enum at all. Both used to say "unknown", which hid the first case.
+                return level == precision_level::count ? "count" : "unknown";
         }
     }
 
