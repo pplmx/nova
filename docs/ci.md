@@ -54,6 +54,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure -j16
 
 # Static analysis
+# (see the note below: this target does not currently complete on this tree)
 make lint
 
 # Compiler warnings, as errors
@@ -64,6 +65,27 @@ cmake --build build --parallel
 # ASan + UBSan
 make sanitize
 ```
+
+### `make lint` does not complete
+
+`.clang-tidy` enables `readability-*`, `cppcoreguidelines-*` and `modernize-*` in full, which
+produces roughly 22,600 diagnostics on this tree -- magic numbers, uppercase literal suffixes,
+identifier length -- and `ninja` stops at the first translation unit that fails. Measured: the target
+exits 2 without ever reporting anything a developer can act on.
+
+Of those diagnostics, 30 are `clang-analyzer-*` (the passes that find real bugs). Two of them are in
+product code and both are false positives:
+
+- `include/cuda/error/timeout.hpp` -- `message(int ev)` casts a runtime value to `timeout_error_code`
+  and has a `default` arm. Out-of-range is the intended input, not a defect.
+- `src/cuda/quantize/calibrator.cpp` -- a `float` loop counter (`candidate_scale *= 2.0f`). Doubling
+  is exact in binary floating point and the loop always terminates (worst case 138 iterations), so
+  there is no drift and no hang.
+
+Rather than leave the command above as an instruction that cannot succeed, this note records the
+state. Narrowing the check set is a project decision about what static analysis should mean here, not
+a fix to make quietly: it changes which diagnostics are considered an error, and the answer belongs
+with whoever owns that policy.
 
 `NOVA_ENABLE_WARNINGS` defaults on and applies `-Wall -Wextra` to host code and, through
 `-Xcompiler`, to CUDA translation units as well. Two warnings are exempt for reasons
