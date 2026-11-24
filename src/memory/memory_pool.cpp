@@ -152,24 +152,13 @@ namespace cuda::memory {
 
         Block& block = blocks_[block_idx];
 
-        // Release the size that was actually handed out, not the one reported back. The pool
-        // frees by walking the block's bump offset backwards, so an overstated `bytes`
-        // underflowed it into a huge value: measured with a 100-byte allocation released as
-        // 200 bytes, total_allocated became 18446744073709551516 and the NEXT allocate()
-        // computed (block.size - block.offset) on wrapped arithmetic, believed the block had
-        // thousands of free bytes, and returned a pointer 100 bytes BEFORE the block start --
-        // outside the cudaMalloc'd region.
-        //
-        // `bytes` is kept in the signature for source compatibility; the recorded value is what
-        // the accounting uses, so a caller that confuses element count with byte count can no
-        // longer corrupt the pool.
+        // Release the size that was actually handed out, not the one reported back. The pool records
+        // it per allocation so an overstated `bytes` cannot corrupt the accounting; `bytes` is kept
+        // in the signature for source compatibility only.
         (void)bytes;
         const size_t released = it->second.bytes;
 
         if (ptr >= block.ptr && ptr < static_cast<char*>(block.ptr) + block.size) {
-            // A block whose offset is already below the recorded size means the accounting no
-            // longer matches (a non-LIFO release); clamp instead of wrapping.
-            block.offset = (block.offset >= released) ? (block.offset - released) : 0;
             if (total_allocated_ >= released) {
                 total_allocated_ -= released;
             } else {
@@ -177,19 +166,41 @@ namespace cuda::memory {
             }
             total_available_ += released;
 
-            // A fully released block keeps its allocation so it can serve the next
-            // request; that is the point of pooling. The pointer must NOT be cleared
-            // here: clear() and the destructor release blocks by checking block.ptr,
-            // so nulling it leaked the whole block. Measured with
-            // compute-sanitizer --tool memcheck --leak-check full: a pool that had one
-            // block allocated and fully released leaked 4096 bytes, while a pool that
-            // only preallocated without ever allocating released nothing.
-            if (block.offset == 0) {
+            allocation_map_.erase(it);
+
+            // offset is rewound only when this release empties the block.
+            //
+            // It used to be rewound unconditionally (block.offset -= released), which made the bump
+            // pointer the block's only notion of free space. That is wrong for any release that is
+            // not the most recent allocation. Measured with a 4096-byte block:
+            //
+            //   a = allocate(256) -> 0x...000
+            //   b = allocate(256) -> 0x...100
+            //   c = allocate(256) -> 0x...200
+            //   deallocate(a)                        // offset stepped back to 0x200
+            //   d = allocate(256) -> 0x...200        // the address c is still using
+            //
+            // Two live allocations then shared memory, and the next write through one corrupted the
+            // other. Counting the block's surviving allocations fixes that without giving up reuse:
+            // while any allocation inside the block lives, the offset stays put and later requests
+            // go to another block; once none survive the block is empty and its offset returns to
+            // zero, which is the pooling behaviour callers already rely on.
+            //
+            // The block keeps its cudaMalloc. The pointer must NOT be cleared here: clear() and the
+            // destructor release blocks by checking block.ptr, so nulling it leaked the whole block.
+            size_t live_in_block = 0;
+            for (const auto& entry : allocation_map_) {
+                if (entry.second.block_idx == block_idx) {
+                    ++live_in_block;
+                }
+            }
+            if (live_in_block == 0) {
+                block.offset = 0;
                 block.stream_id = -1;
             }
+        } else {
+            allocation_map_.erase(it);
         }
-
-        allocation_map_.erase(it);
     }
 
     void MemoryPool::clear() {

@@ -884,3 +884,61 @@ TEST_F(UniquePtrIntegrationTest, SwapWorks) {
     EXPECT_EQ(ptr1.get(), data2);
     EXPECT_EQ(ptr2.get(), data1);
 }
+
+// deallocate() used to rewind the block's bump offset unconditionally, so releasing anything but the
+// most recent allocation made the next allocate() hand back memory that was still live. Measured
+// with a 4096-byte block:
+//
+//   a = allocate(256) -> 0x...000
+//   b = allocate(256) -> 0x...100
+//   c = allocate(256) -> 0x...200
+//   deallocate(a)                        // offset stepped back to 0x200
+//   d = allocate(256) -> 0x...200        // exactly c
+//
+// Two live allocations sharing memory is data corruption the moment either is written. The block's
+// offset now moves only when its last allocation is released.
+TEST(MemoryPoolReuseTest, ReleasingAnInteriorAllocationDoesNotHandOutLiveMemory) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 4;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* a = pool.allocate(256);
+    void* b = pool.allocate(256);
+    void* c = pool.allocate(256);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    ASSERT_NE(c, nullptr);
+    ASSERT_NE(a, b);
+    ASSERT_NE(b, c);
+
+    pool.deallocate(a, 256);
+    void* d = pool.allocate(256);
+    ASSERT_NE(d, nullptr);
+    EXPECT_NE(d, b) << "the new allocation landed on a live block";
+    EXPECT_NE(d, c) << "the new allocation landed on a live block";
+
+    pool.deallocate(b, 256);
+    pool.deallocate(c, 256);
+    pool.deallocate(d, 256);
+}
+
+// The reuse that IS safe must still happen: a block whose allocations have all been released serves
+// the next request from its beginning, which is what pooling is for.
+TEST(MemoryPoolReuseTest, AnEmptyBlockIsReusedFromItsBeginning) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 1;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* first = pool.allocate(256);
+    ASSERT_NE(first, nullptr);
+    pool.deallocate(first, 256);
+
+    void* second = pool.allocate(4000);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(second, first) << "an emptied block must serve the next request from offset zero";
+    pool.deallocate(second, 4000);
+}
