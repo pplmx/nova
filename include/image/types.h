@@ -4,7 +4,12 @@
 #include <memory>
 #include <cstddef>
 #include <cstdint>
-#include "cuda/device/device_utils.h"
+
+// CUDA_CHECK lives here. This header used to include cuda/device/device_utils.h instead, which
+// happens to include error.h transitively -- but it also uses threadIdx and __syncthreads, so it
+// cannot be compiled by a host translation unit at all. Including the header that actually provides
+// the macro keeps this one usable from plain g++.
+#include "cuda/device/error.h"
 
 struct ImageDimensions {
     size_t width;

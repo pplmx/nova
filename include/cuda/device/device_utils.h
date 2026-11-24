@@ -2,6 +2,11 @@
 
 #include <cstddef>
 
+// Device-only. This header uses threadIdx, blockDim, __syncthreads and __shfl, which are nvcc
+// language extensions rather than declarations from any header, so a host translation unit cannot
+// compile it and no include would change that. Do not include it from a host-only header -- that is
+// exactly what went wrong in image/types.h, which is a plain host header and pulled this in without
+// using any of it.
 #include "error.h"
 
 namespace cuda::device {
