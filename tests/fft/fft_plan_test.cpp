@@ -80,3 +80,27 @@ TEST_F(FFTPlanTest, MultiplePlansCanExist) {
         EXPECT_TRUE(static_cast<bool>(plan));
     }
 }
+
+// create_plan_2d() and create_plan_3d() handled only the two real-input transform types; the two
+// complex ones fell through to a default that threw. create_plan_1d() handled all four, so the
+// ranks disagreed, and cuFFT itself supports C2R and C2C for cufftPlan2d/cufftPlan3d -- the
+// restriction was this file's, not the library's.
+//
+// Measured before: the matrix below was ok/ok for the real types and THROWS for ComplexToReal and
+// ComplexToComplex on 2D and 3D, while 1D accepted everything. The existing suite only ever built
+// the complex types with a 1D plan, which is why nothing noticed.
+TEST(FFTPlanTransformCoverageTest, EveryTransformTypeWorksAtEveryRank) {
+    const cuda::fft::TransformType types[] = {
+        cuda::fft::TransformType::RealToComplex,
+        cuda::fft::TransformType::DoubleRealToComplex,
+        cuda::fft::TransformType::ComplexToReal,
+        cuda::fft::TransformType::ComplexToComplex,
+    };
+
+    for (const auto type : types) {
+        const int as_int = static_cast<int>(type);
+        EXPECT_NO_THROW({ cuda::fft::FFTPlan plan(64, cuda::fft::Direction::Forward, type); }) << "1D rejected transform type " << as_int;
+        EXPECT_NO_THROW({ cuda::fft::FFTPlan plan(16, 16, cuda::fft::Direction::Forward, type); }) << "2D rejected transform type " << as_int;
+        EXPECT_NO_THROW({ cuda::fft::FFTPlan plan(8, 8, 8, cuda::fft::Direction::Forward, type); }) << "3D rejected transform type " << as_int;
+    }
+}

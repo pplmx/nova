@@ -98,6 +98,12 @@ namespace cuda::fft {
             case TransformType::DoubleRealToComplex:
                 cufft_type = CUFFT_D2Z;
                 break;
+            case TransformType::ComplexToReal:
+                cufft_type = CUFFT_C2R;
+                break;
+            case TransformType::ComplexToComplex:
+                cufft_type = CUFFT_C2C;
+                break;
             default:
                 throw std::invalid_argument("Unsupported transform type for 2D");
         }
@@ -121,6 +127,12 @@ namespace cuda::fft {
                 break;
             case TransformType::DoubleRealToComplex:
                 cufft_type = CUFFT_D2Z;
+                break;
+            case TransformType::ComplexToReal:
+                cufft_type = CUFFT_C2R;
+                break;
+            case TransformType::ComplexToComplex:
+                cufft_type = CUFFT_C2C;
                 break;
             default:
                 throw std::invalid_argument("Unsupported transform type for 3D");
