@@ -1,10 +1,133 @@
 #include <cuda/performance/dashboard/flame_graph.h>
 
 #include <algorithm>
+#include <fstream>
 #include <sstream>
 #include <iomanip>
 
 namespace cuda::performance::dashboard {
+
+    namespace {
+
+        /// Pull the string value of `"key"` out of one JSON object fragment, or "" when absent.
+        std::string json_string(const std::string& object, const std::string& key) {
+            const std::string needle = "\"" + key + "\"";
+            const auto at = object.find(needle);
+            if (at == std::string::npos) {
+                return {};
+            }
+            auto colon = object.find(':', at + needle.size());
+            if (colon == std::string::npos) {
+                return {};
+            }
+            auto open = object.find('"', colon);
+            if (open == std::string::npos) {
+                return {};
+            }
+            // Walk to the closing quote, honouring backslash escapes so an escaped quote inside a
+            // kernel name does not terminate the value early.
+            std::string value;
+            for (size_t i = open + 1; i < object.size(); ++i) {
+                if (object[i] == '\\' && i + 1 < object.size()) {
+                    value.push_back(object[++i]);
+                    continue;
+                }
+                if (object[i] == '"') {
+                    return value;
+                }
+                value.push_back(object[i]);
+            }
+            return {};
+        }
+
+        /// Pull the numeric value of `"key"` out of one JSON object fragment, or fallback.
+        uint64_t json_number(const std::string& object, const std::string& key, uint64_t fallback) {
+            const std::string needle = "\"" + key + "\"";
+            const auto at = object.find(needle);
+            if (at == std::string::npos) {
+                return fallback;
+            }
+            auto colon = object.find(':', at + needle.size());
+            if (colon == std::string::npos) {
+                return fallback;
+            }
+            size_t i = colon + 1;
+            while (i < object.size() && (object[i] == ' ' || object[i] == '\t')) {
+                ++i;
+            }
+            const size_t start = i;
+            if (i < object.size() && object[i] == '-') {
+                ++i;
+            }
+            while (i < object.size() && std::isdigit(static_cast<unsigned char>(object[i]))) {
+                ++i;
+            }
+            if (i == start) {
+                return fallback;
+            }
+            try {
+                return static_cast<uint64_t>(std::stoll(object.substr(start, i - start)));
+            } catch (const std::exception&) {
+                return fallback;
+            }
+        }
+
+        /// Every balanced {...} object in the document, in order.
+        std::vector<std::string> json_objects(const std::string& json) {
+            std::vector<std::string> objects;
+            int depth = 0;
+            size_t start = std::string::npos;
+            bool in_string = false;
+            for (size_t i = 0; i < json.size(); ++i) {
+                const char c = json[i];
+                if (in_string) {
+                    if (c == '\\') {
+                        ++i;
+                        continue;
+                    }
+                    if (c == '"') {
+                        in_string = false;
+                    }
+                    continue;
+                }
+                if (c == '"') {
+                    in_string = true;
+                } else if (c == '{') {
+                    if (depth == 0) {
+                        start = i;
+                    }
+                    ++depth;
+                } else if (c == '}') {
+                    if (depth > 0 && --depth == 0 && start != std::string::npos) {
+                        objects.push_back(json.substr(start, i - start + 1));
+                        start = std::string::npos;
+                    }
+                }
+            }
+            return objects;
+        }
+
+        std::vector<ChromeTraceEvent> parse_events(const std::string& json) {
+            std::vector<ChromeTraceEvent> events;
+            for (const auto& object : json_objects(json)) {
+                ChromeTraceEvent e;
+                e.name = json_string(object, "name");
+                // An object with no name is not an event; the array may carry metadata records.
+                if (e.name.empty()) {
+                    continue;
+                }
+                e.category = json_string(object, "cat");
+                e.ph = json_string(object, "ph");
+                e.ts = json_number(object, "ts", 0);
+                e.dur = json_number(object, "dur", 0);
+                e.pid = static_cast<int>(json_number(object, "pid", 0));
+                e.tid = static_cast<int>(json_number(object, "tid", 0));
+                events.push_back(e);
+            }
+            return events;
+        }
+
+    }  // namespace
 
     std::string FlameGraphNode::to_json(int indent) const {
         std::ostringstream oss;
@@ -126,20 +249,31 @@ namespace cuda::performance::dashboard {
     }
 
     FlameGraphGenerator FlameGraphGenerator::from_chrome_trace(const std::string& trace_json) {
+        // This used to return a default-constructed generator and drop the argument, so the inverse
+        // of to_chrome_trace() silently produced an empty graph. Measured: two events written by
+        // to_chrome_trace() (277 bytes of JSON) came back as event_count() == 0, which is
+        // indistinguishable from a trace that legitimately held nothing.
         FlameGraphGenerator generator;
+        generator.add_events(parse_events(trace_json));
         return generator;
     }
 
     NVTraceParser::NVTraceParser() {}
 
     std::vector<ChromeTraceEvent> NVTraceParser::parse_file(const std::string& path) const {
-        std::vector<ChromeTraceEvent> events;
-        return events;
+        // A missing or unreadable file yields an empty vector, which is the same answer this always
+        // gave -- but it is now an honest empty rather than a stub that never looked at the file.
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            return {};
+        }
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        return parse_events(buffer.str());
     }
 
     std::vector<ChromeTraceEvent> NVTraceParser::parse_json(const std::string& json) const {
-        std::vector<ChromeTraceEvent> events;
-        return events;
+        return parse_events(json);
     }
 
     std::string NVTraceParser::get_nvtx_domain(const std::string& category) {

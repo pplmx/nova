@@ -9,6 +9,8 @@ namespace cuda::performance::dashboard::test {
         DashboardExporter exporter;
     };
 
+    class FlameGraphGeneratorTest : public ::testing::Test {};
+
     TEST_F(DashboardExporterTest, DefaultConfig) {
         auto config = exporter.get_config();
         EXPECT_TRUE(config.include_roofline);
@@ -40,6 +42,60 @@ namespace cuda::performance::dashboard::test {
         EXPECT_EQ(data.kernels.kernel_count, 7u);
         EXPECT_FALSE(data.header.version.empty()) << "populate_header still has to run";
         EXPECT_FALSE(data.header.timestamp.empty());
+    }
+
+    // from_chrome_trace() is the declared inverse of to_chrome_trace(), and the three parsers that
+    // exist alongside it accepted their argument and threw it away:
+    //
+    //     FlameGraphGenerator FlameGraphGenerator::from_chrome_trace(const std::string& trace_json) {
+    //         FlameGraphGenerator generator;
+    //         return generator;                 // trace_json never read
+    //     }
+    //
+    // Measured before the fix: two events serialised by to_chrome_trace() (277 bytes) came back
+    // through from_chrome_trace() as event_count() == 0 -- the same answer a legitimately empty
+    // trace gives, so nothing could tell the difference.
+    TEST_F(FlameGraphGeneratorTest, ChromeTraceRoundTripsThroughItsInverse) {
+        FlameGraphGenerator source;
+        ChromeTraceEvent e;
+        e.name = "matmul_kernel";
+        e.category = "gpu";
+        e.ph = "X";
+        e.ts = 1234;
+        e.dur = 567;
+        e.pid = 3;
+        e.tid = 9;
+        source.add_event(e);
+
+        const std::string trace = source.to_chrome_trace();
+        ASSERT_FALSE(trace.empty());
+
+        const auto recovered = FlameGraphGenerator::from_chrome_trace(trace);
+        EXPECT_EQ(recovered.event_count(), 1u) << "the inverse must recover the events it was given";
+
+        // Values, not just the count: the duration is what build_flame_graph() sums.
+        const auto node = recovered.build_flame_graph();
+        EXPECT_EQ(node.value, 567u) << "the duration must survive the round trip";
+    }
+
+    TEST_F(FlameGraphGeneratorTest, ParserReadsJsonIntoEvents) {
+        NVTraceParser parser;
+        const std::string json = R"([
+            {"name": "kernel_a", "cat": "gpu", "ph": "X", "ts": 10, "dur": 100, "pid": 1, "tid": 2},
+            {"name": "kernel_b", "cat": "gpu", "ph": "X", "ts": 20, "dur": 200, "pid": 1, "tid": 2}
+        ])";
+
+        const auto events = parser.parse_json(json);
+        ASSERT_EQ(events.size(), 2u) << "parse_json used to return an empty vector without reading its argument";
+        EXPECT_EQ(events[0].name, "kernel_a");
+        EXPECT_EQ(events[0].dur, 100u);
+        EXPECT_EQ(events[1].name, "kernel_b");
+        EXPECT_EQ(events[1].tid, 2);
+    }
+
+    TEST_F(FlameGraphGeneratorTest, ParserReportsNothingForAMissingFile) {
+        NVTraceParser parser;
+        EXPECT_TRUE(parser.parse_file("/tmp/nova-no-such-trace-file.json").empty());
     }
 
     TEST_F(DashboardExporterTest, EmptyExporter) {
