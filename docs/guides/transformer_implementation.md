@@ -46,12 +46,15 @@ pos_enc.forward(input.data(), output.data(), batch_size, seq_len, stream);
 
 ```cpp
 #include <cuda/neural/loss/loss_functions.h>
+#include <vector>
 
 cuda::neural::loss::CrossEntropyConfig config;
 config.num_classes = 10;
 config.reduction_mean = true;
 
 std::vector<float> output(batch_size);
+// targets is const int* (class indices), not float: the signature is
+// cross_entropy_loss(const float* predictions, const int* targets, float* output, ...)
 float loss = cuda::neural::loss::cross_entropy_loss(
     predictions.data(), targets.data(), output.data(),
     batch_size, 10, config, stream
