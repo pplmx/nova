@@ -73,6 +73,16 @@ namespace nova::checkpoint::test {
                 return it == files_.end() ? 0u : it->second.size();
             }
 
+            /// Flip one byte of a stored blob, simulating bit rot on the backup medium.
+            bool corrupt_byte_at(const std::string& path, size_t offset) {
+                const auto it = files_.find(path);
+                if (it == files_.end() || offset >= it->second.size()) {
+                    return false;
+                }
+                it->second[offset] ^= 0xFF;
+                return true;
+            }
+
             bool exists(const std::string& path) const override {
                 if (files_.count(path) > 0 || directories_.count(path) > 0) {
                     return true;
@@ -196,6 +206,35 @@ namespace nova::checkpoint::test {
             EXPECT_EQ(loaded_model[name], values) << "tensor " << name << " round-tripped wrong";
         }
         EXPECT_EQ(loaded_optimizer.size(), optimizer.size());
+    }
+
+    // A checkpoint whose bytes no longer match what was written is damaged and must not be loaded:
+    // the alternative is putting rotten weights into a training run and calling it a restore.
+    // save_checkpoint() has always computed a per-tensor SHA-256; until it was serialised into the
+    // manifest, load_checkpoint() had nothing to compare against.
+    TEST(CheckpointManagerTest, LoadRejectsACheckpointWhosePayloadNoLongerMatches) {
+        auto& manager = CheckpointManager::instance();
+        auto backend = std::make_shared<InMemoryBackend>();
+        manager.initialize(backend, nullptr);
+
+        const auto model = sample_tensors();
+        const auto optimizer = sample_tensors();
+        EXPECT_NO_THROW(manager.save_checkpoint(1, model, optimizer));
+
+        std::map<std::string, std::vector<float>> ok_model;
+        std::map<std::string, std::vector<float>> ok_optimizer;
+        ASSERT_TRUE(manager.load_checkpoint("ckpt_1", ok_model, ok_optimizer)) << "the freshly written checkpoint must load";
+
+        // Flip a bit in the LAST byte of the blob. The stream is [len][name_len][name][shape_len]
+        // [shape][dtype][count][payload], so the final byte is the low byte of the last float: the
+        // frame stays intact and only a value changes. Corrupting an earlier offset risks hitting a
+        // length or shape field, which makes the decoder fail for a different reason and would not
+        // distinguish "decoded fine, checksum disagrees" from "could not decode at all".
+        const size_t length = backend->size("ckpt_1/model.bin");
+        ASSERT_GT(length, sizeof(size_t) + 1) << "the blob is only a length prefix";
+        ASSERT_TRUE(backend->corrupt_byte_at("ckpt_1/model.bin", length - 1)) << "could not corrupt the payload";
+        // A corrupt payload can still decode; the checksum is what must catch it.
+        EXPECT_FALSE(manager.load_checkpoint("ckpt_1", ok_model, ok_optimizer)) << "a payload that no longer matches its checksum must be refused";
     }
 
     TEST(CheckpointManagerTest, LoadReturnsFalseForAMissingCheckpoint) {

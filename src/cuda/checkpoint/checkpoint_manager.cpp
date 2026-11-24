@@ -228,7 +228,7 @@ namespace nova::checkpoint {
             std::memcpy(tensor.data.data(), data.data(), tensor.size_bytes);
 
             std::string checksum = compute_hash(tensor.data.data(), tensor.size_bytes);
-            manifest.checksums[name] = checksum;
+            manifest.checksums["model/" + name] = checksum;
 
             manifest.model_tensors.push_back(std::move(tensor));
         }
@@ -241,11 +241,21 @@ namespace nova::checkpoint {
             tensor.size_bytes = data.size() * sizeof(float);
             tensor.data.resize(tensor.size_bytes);
             std::memcpy(tensor.data.data(), data.data(), tensor.size_bytes);
+            manifest.checksums["optimizer/" + name] = compute_hash(tensor.data.data(), tensor.size_bytes);
             manifest.optimizer_tensors.push_back(std::move(tensor));
         }
 
         std::string manifest_json = std::to_string(manifest.version) + "\n" + std::to_string(manifest.step) + "\n" + std::to_string(manifest.timestamp) + "\n"
                                     + std::to_string(manifest.model_tensors.size()) + "\n" + std::to_string(manifest.optimizer_tensors.size());
+        // The per-tensor SHA-256 lived only in this local object: computed, stored in a map, and
+        // dropped when the function returned, so nothing on disk ever recorded what the payload was
+        // supposed to hash to and load_checkpoint() had nothing to check. Written out as a trailing
+        // section of "<key> <hex>" lines, keyed by section because a model tensor and an optimizer
+        // entry may share a name. The five leading lines are unchanged, so a reader that stops after
+        // them is unaffected.
+        for (const auto& [key, hex] : manifest.checksums) {
+            manifest_json += "\n" + key + " " + hex;
+        }
 
         impl.backend->write(ckpt_dir + "/manifest.txt", manifest_json.data(), manifest_json.size());
 
@@ -326,6 +336,40 @@ namespace nova::checkpoint {
     }
 
     namespace {
+
+        /// Parse the "<key> <hex>" checksum lines save_checkpoint() appends to the manifest.
+        std::map<std::string, std::string> read_manifest_checksums(StorageBackend& backend, const std::string& path) {
+            std::string text;
+            const size_t bytes = backend.size(path);
+            if (bytes > 0) {
+                std::vector<char> buffer(bytes);
+                try {
+                    backend.read(path, buffer.data(), buffer.size());
+                    text.assign(buffer.begin(), buffer.end());
+                } catch (const std::exception&) {
+                    return {};
+                }
+            }
+            if (text.empty()) {
+                return {};
+            }
+
+            std::map<std::string, std::string> checksums;
+            std::istringstream lines(text);
+            std::string line;
+            int index = 0;
+            while (std::getline(lines, line)) {
+                if (index++ < 5) {
+                    continue;  // version, step, timestamp, model count, optimizer count
+                }
+                const auto space = line.find(' ');
+                if (space == std::string::npos || space + 1 >= line.size()) {
+                    continue;
+                }
+                checksums[line.substr(0, space)] = line.substr(space + 1);
+            }
+            return checksums;
+        }
 
         /// True when `count` bytes at `offset` are inside `blob`.
         bool in_bounds(const std::vector<char>& blob, size_t offset, size_t count) {
@@ -484,6 +528,31 @@ namespace nova::checkpoint {
         std::map<std::string, std::vector<float>> decoded_optimizer;
         if (!decode_tensor_stream(model_file, decoded_model) || !decode_tensor_stream(optimizer_file, decoded_optimizer)) {
             return false;
+        }
+
+        // Verify the decoded payload against the checksums save_checkpoint() records. Before they
+        // were written to disk there was nothing to verify -- the hash was computed into a local map
+        // and dropped -- so a checkpoint whose bits had rotted loaded successfully. Measured:
+        // flipping the low byte of the last float in model.bin leaves the stream frame perfectly
+        // decodable and used to return true.
+        //
+        // A manifest with no checksum lines is accepted: those were written by an older build and
+        // carry nothing to compare against, and refusing them would break restores that worked
+        // before this change. One that has them must match.
+        const auto expected = read_manifest_checksums(*impl.backend, path + "/manifest.txt");
+        if (!expected.empty()) {
+            const auto matches = [&](const std::map<std::string, std::vector<float>>& tensors, const char* section) {
+                for (const auto& [name, values] : tensors) {
+                    const auto it = expected.find(std::string(section) + "/" + name);
+                    if (it != expected.end() && compute_hash(values.data(), values.size() * sizeof(float)) != it->second) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (!matches(decoded_model, "model") || !matches(decoded_optimizer, "optimizer")) {
+                return false;
+            }
         }
 
         model_params = std::move(decoded_model);
