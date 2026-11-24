@@ -67,12 +67,14 @@ config.jitter_enabled = true;
 
 retry_executor executor(config);
 
+// execute() retries the lambda and returns its value, so the lambda must return the operation's
+// own result -- returning `result` here made the definition depend on itself.
 auto result = executor.execute([&]() {
     auto status = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToDevice, stream);
     if (status != cudaSuccess) {
         throw std::runtime_error(cudaGetErrorString(status));
     }
-    return result;
+    return status;
 });
 ```
 

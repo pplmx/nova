@@ -94,6 +94,12 @@ jobs:
       - name: Check README includes resolve
         run: python3 scripts/check_readme_includes.py
 
+      # Nine rounds of checking these blocks by hand found nine defects, none of them visible by
+      # reading: a nonexistent cg() function, a nine-argument call to a six-argument forward(),
+      # a private CheckpointManager constructor used as if public. This runs the same check.
+      - name: Check doc examples compile
+        run: python3 scripts/check_doc_examples.py --skip docs/superpowers/ --skip docs/CHANGELOG
+
   fuzz-corpus-baseline:
     name: Fuzz Corpus Baseline
     # Pure file inspection, no GPU, but it ran on a self-hosted runner and

@@ -19,16 +19,14 @@ Calibration determines optimal quantization scales from real data.
 
 ```cpp
 #include "cuda/quantize/calibrator.hpp"
+#include <iostream>
+#include <vector>
 
 nova::quantize::MinMaxCalibrator calibrator;
 
-// Collect statistics from representative data
-for (const auto& batch : calibration_data) {
-    calibrator.collect_data(batch.data(), batch.size());
-}
-
-// Compute scale
-auto result = calibrator.compute();
+// calibrate() takes the whole representative sample at once and returns the result; there is no
+// accumulate-then-compute pair and no collect_data().
+auto result = calibrator.calibrate(calibration_data.data(), calibration_data.size());
 std::cout << "Scale: " << result.scale << "\n";
 std::cout << "Range: [" << result.min_val << ", " << result.max_val << "]\n";
 ```
@@ -57,11 +55,13 @@ The calibrators this tree provides are `MinMaxCalibrator`, `HistogramCalibrator`
 #include "cuda/quantize/quantize_tensor.hpp"
 
 // Create quantization parameters
-nova::quantize::cuda::QuantizationParams params{
-    .scale = calibration_result.scale,
-    .zero_point = calibration_result.zero_point,
-    .symmetric = false
-};
+// QuantizationParams declares constructors, so it is not an aggregate; use the (scale, zero_point)
+// form instead of designated initialisers.
+nova::quantize::cuda::QuantizationParams params(
+    calibration_result.scale,
+    calibration_result.zero_point,
+    /*symmetric=*/false
+);
 
 // Quantize FP32 to INT8
 std::vector<int8_t> int8_data(size);
@@ -112,11 +112,9 @@ using FP8E5M2 = nova::quantize::FP8E5M2;
 ```cpp
 #include "cuda/quantize/fp8_gemm.hpp"
 
-nova::quantize::FP8GEMM::Config config{
-    .scale_a = scale_activation,
-    .scale_b = scale_weights,
-    .scale_out = scale_output
-};
+// Config declares two constructors, so it is not an aggregate and designated initialisers do not
+// apply. The five-argument form is (scale_a, scale_b, scale_out, use_tensor_core, num_streams).
+nova::quantize::FP8GEMM::Config config(scale_activation, scale_weights, scale_output);
 
 FP8GEMM gemm;
 gemm.configure(config);

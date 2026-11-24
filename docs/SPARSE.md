@@ -26,7 +26,7 @@ auto matrix = nova::sparse::SparseMatrix<float>::FromDense(
     dense.data(), rows, cols, 1e-6f);
 
 // Or from explicit CSR data
-auto matrix = nova::sparse::SparseMatrix<float>::FromHostData(
+auto csr_matrix = nova::sparse::SparseMatrix<float>::FromHostData(
     values, row_offsets, col_indices, rows, cols);
 ```
 

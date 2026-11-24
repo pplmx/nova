@@ -56,15 +56,14 @@ int main() {
 cuda::memory::Buffer<float> local_data(size);
 initialize_data(local_data);
 
-// All-reduce across GPUs
-cuda::distributed::all_reduce(
-    local_data.device_data(),  // Input/output buffer
-    size,                      // Element count
-    0,                         // Root rank (or any for broadcast result)
-    mesh.get_stream()           // CUDA stream for async ops
+// All-reduce across GPUs. all_reduce is a static method on DistributedReduce, not a free function
+// in cuda::distributed, and it takes (send, recv, count, op, dtype) -- there is no root rank.
+cuda::distributed::DistributedReduce::all_reduce(
+    local_data.device_data(),                  // send buffer
+    local_data.device_data(),                  // recv buffer (in place)
+    size,                                      // element count
+    cuda::distributed::ReductionOp::Sum        // reduction operator
 );
-
-// Now all GPUs have the same summed result
 ```
 
 ## Peer Memory Access
@@ -90,13 +89,11 @@ if (mesh.can_access_peer(src_device, dst_device)) {
 ```cpp
 #include <cuda/distributed/matmul.h>
 
-// Split matrix across GPUs by rows
-int rows_per_gpu = matrix_height / device_count;
-int local_start_row = local_rank * rows_per_gpu;
-
+// Row-wise split is handled by DistributedMatmul itself: it splits the output rows across the
+// devices it sees and gathers the result. There is no split_rows()/execute() pair to drive.
 cuda::distributed::DistributedMatmul matmul;
-matmul.split_rows(rows_per_gpu, local_start_row);
-matmul.execute(local_A, local_B, local_C);
+cuda::distributed::DistributedMatmulOptions opts;
+matmul.matmul(local_A, local_B, local_C, m, n, k, opts);
 
 // Results are distributed across GPUs
 ```

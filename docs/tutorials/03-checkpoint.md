@@ -16,10 +16,12 @@ Nova provides `CheckpointManager` for saving:
 ```cpp
 #include <cuda/checkpoint/checkpoint_manager.h>
 
-// Create checkpoint manager
-nova::checkpoint::CheckpointManager manager;
-manager.set_storage_backend("checkpoints/");
-manager.set_interval(std::chrono::minutes(10));  // Auto-save every 10 minutes
+// CheckpointManager is a singleton -- its constructor is private. Storage is supplied through
+// initialize(backend, stream); the interval is in STEPS, not a duration.
+auto& manager = nova::checkpoint::CheckpointManager::instance();
+auto backend = std::make_shared<nova::checkpoint::FileStorageBackend>("checkpoints/");
+manager.initialize(backend, nullptr);
+manager.set_checkpoint_interval(1000);  // auto-save every 1000 steps
 ```
 
 ## Saving State
@@ -55,41 +57,41 @@ TrainingState state = deserialize_from_bytes<TrainingState>(bytes);
 
 ```cpp
 #include <cuda/checkpoint/checkpoint_manager.h>
-#include <cuda/algo/reduce.h>
-#include <cuda/memory/buffer.h>
 #include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 
 class Trainer {
 public:
-    Trainer() {
-        manager.set_storage_backend("checkpoints/");
-        manager.set_interval(std::chrono::minutes(5));
+    Trainer()
+        : manager(nova::checkpoint::CheckpointManager::instance()) {
+        // initialize() takes the backend; the interval is a step count, not a duration.
+        auto backend = std::make_shared<nova::checkpoint::FileStorageBackend>("checkpoints/");
+        manager.initialize(backend, nullptr);
+        manager.set_checkpoint_interval(500);
     }
 
     void train(int epochs) {
-        for (int epoch = 0; epoch < epochs; epoch++) {
-            // Training step
-            float loss = training_step(epoch);
-            std::cout << "Epoch " << epoch << " loss: " << loss << "\n";
+        for (int epoch = 0; epoch < epochs; ++epoch) {
+            // ... one training step, updating model_state / optimizer_state ...
 
-            // Auto-save if interval reached
-            if (manager.should_checkpoint()) {
-                save_checkpoint(epoch, loss);
-            }
+            // on_step_complete() decides whether to save; there is no should_checkpoint().
+            manager.on_step_complete(epoch);
         }
     }
 
     void resume() {
-        if (manager.checkpoint_exists("latest")) {
-            std::cout << "Loading checkpoint...\n";
-            auto state = load_checkpoint();
-            restore_state(state);
+        // load_latest_checkpoint() returns false when there is nothing to load.
+        if (manager.load_latest_checkpoint(model_state, optimizer_state)) {
+            std::cout << "Loaded the latest checkpoint\n";
         }
     }
 
 private:
-    nova::checkpoint::CheckpointManager manager;
-    // ... model state
+    nova::checkpoint::CheckpointManager& manager;
+    std::map<std::string, std::vector<float>> model_state;
+    std::map<std::string, std::vector<float>> optimizer_state;
 };
 ```
 
@@ -98,12 +100,10 @@ private:
 ```cpp
 #include <cuda/checkpoint/checkpoint_manager.h>  // FileStorageBackend lives here
 
-// Use file-based storage
-auto backend = std::make_unique<nova::checkpoint::FileStorageBackend>();
-backend->set_base_path("/tmp/nova_checkpoints");
-backend->set_atomic_writes(true);  // Safe writes
+// The base path is a constructor argument; there is no set_base_path() and no set_atomic_writes().
+auto backend = std::make_shared<nova::checkpoint::FileStorageBackend>("/tmp/nova_checkpoints");
 
-manager.set_storage_backend(std::move(backend));
+manager.initialize(backend, nullptr);
 ```
 
 ## Key Features
