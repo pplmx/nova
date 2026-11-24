@@ -22,7 +22,7 @@ namespace cuda::memory {
     }
 
     MemoryPool::~MemoryPool() {
-        clear();
+        release_noexcept();
     }
 
     MemoryPool::MemoryPool(MemoryPool&& other) noexcept
@@ -39,7 +39,7 @@ namespace cuda::memory {
 
     MemoryPool& MemoryPool::operator=(MemoryPool&& other) noexcept {
         if (this != &other) {
-            clear();
+            release_noexcept();
             config_ = other.config_;
             blocks_ = std::move(other.blocks_);
             allocation_map_ = std::move(other.allocation_map_);
@@ -195,9 +195,40 @@ namespace cuda::memory {
     void MemoryPool::clear() {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        // The first failing cudaFree used to abort the loop, so every block after it was leaked
+        // while the pool went on reporting itself as holding them. The error is recorded and
+        // rethrown once the list has been walked, so a single bad pointer cannot strand the rest.
+        cudaError_t first_error = cudaSuccess;
         for (auto& block : blocks_) {
             if (block.ptr) {
-                CUDA_CHECK(cudaFree(block.ptr));
+                const cudaError_t status = cudaFree(block.ptr);
+                if (status != cudaSuccess && first_error == cudaSuccess) {
+                    first_error = status;
+                }
+            }
+        }
+
+        blocks_.clear();
+        allocation_map_.clear();
+        total_allocated_ = 0;
+        total_available_ = 0;
+        hits_ = 0;
+        misses_ = 0;
+
+        if (first_error != cudaSuccess) {
+            throw ::cuda::device::CudaException(first_error, __FILE__, __LINE__);
+        }
+    }
+
+    void MemoryPool::release_noexcept() noexcept {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        for (auto& block : blocks_) {
+            if (block.ptr) {
+                // Deliberately not CUDA_CHECK: see the header. A context that has already been
+                // destroyed makes this return cudaErrorInvalidValue, and throwing here runs into
+                // std::terminate.
+                (void)cudaFree(block.ptr);
             }
         }
 

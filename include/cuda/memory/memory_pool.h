@@ -65,7 +65,24 @@ namespace cuda::memory {
         void set_throw_on_failure(bool throw_on_failure);
         bool get_throw_on_failure() const { return throw_on_failure_; }
 
+        /**
+         * @brief Release every block, reporting failures through a CUDA exception
+         *
+         * Safe to call from ordinary code, where a failed cudaFree is worth surfacing.
+         */
         void clear();
+
+        /**
+         * @brief Release every block without throwing
+         *
+         * The destructor and the move assignment operator are the callers: both are noexcept, so an
+         * exception escaping them calls std::terminate. clear() throws on a cudaFree error, which
+         * is reachable -- measured, a cudaFree of a block allocated before cudaDeviceReset() returns
+         * "invalid argument". Freeing during teardown must not be able to kill the process, so the
+         * error is dropped here. The blocks are released either way; a cudaFree that fails leaves
+         * memory owned by a context that is already gone.
+         */
+        void release_noexcept() noexcept;
 
     private:
         struct Block {

@@ -19,6 +19,28 @@ TEST_F(MemoryPoolMetricsTest, InitialMetricsAreZero) {
     EXPECT_EQ(metrics.misses, 0);
 }
 
+// The destructor is implicitly noexcept, and clear() throws when cudaFree fails. A cudaFree can
+// fail -- measured, freeing a block allocated before cudaDeviceReset() returns "invalid argument"
+// -- so the old destructor could reach std::terminate during teardown. Destroying a pool whose
+// blocks belong to a torn-down context must not kill the process.
+TEST_F(MemoryPoolMetricsTest, DestructorDoesNotThrowWhenTheContextIsGone) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 2;
+    config.preallocate = false;
+
+    auto* pool = new cuda::memory::MemoryPool(config);
+    pool->allocate(1024);  // now owns a real block
+
+    // Destroy the context the block belongs to, so the pool's cudaFree is bound to fail.
+    (void)cudaDeviceReset();
+
+    EXPECT_NO_THROW(delete pool) << "teardown must not throw out of a noexcept destructor";
+
+    // Leave the process in a state the remaining cases can use.
+    (void)cudaFree(nullptr);
+}
+
 TEST_F(MemoryPoolMetricsTest, AllocateIncrementsMisses) {
     cuda::memory::MemoryPool::Config config;
     config.block_size = 1024;
