@@ -20,6 +20,7 @@
  * Nothing in the tree called any of these, so no existing test noticed.
  */
 
+#include <cuda/device/error.h>
 #include <cuda/testing/memory_safety.h>
 
 #include <gtest/gtest.h>
@@ -170,6 +171,33 @@ namespace memory_safety_validator_test {
         EXPECT_TRUE(validator.validate().valid);
 
         validator.enable();
+    }
+
+    // validate_allocation() answers "is this a live device pointer", not "is this range in
+    // bounds". The size argument is not used because cudaPointerGetAttributes() carries no length
+    // and CUDA has no query for one; measured, a 1 KiB cudaMalloc validated true when presented as
+    // 1 GiB and as 0 bytes.
+    //
+    // This case exists so that contract is visible: if someone later makes the size matter -- by
+    // tracking allocations in this class, say -- these expectations change and the warning on the
+    // declaration has to change with them.
+    TEST_F(MemorySafetyValidatorTest, AllocationValidationIgnoresTheSizeArgument) {
+        auto& validator = cuda::testing::MemorySafetyValidator::instance();
+        validator.reset();
+        validator.enable();
+
+        void* ptr = nullptr;
+        ASSERT_EQ(cudaMalloc(&ptr, 1024), cudaSuccess);
+
+        EXPECT_TRUE(validator.validate_allocation(ptr, 1024)) << "the real size must validate";
+        EXPECT_TRUE(validator.validate_allocation(ptr, 1024ull * 1024 * 1024)) << "a size far beyond the allocation must validate too: only the pointer is examined";
+        EXPECT_TRUE(validator.validate_allocation(ptr, 0)) << "zero is not rejected either";
+
+        // What it does reject is a pointer the runtime does not recognise.
+        EXPECT_FALSE(validator.validate_allocation(nullptr, 1024));
+
+        CUDA_CHECK(cudaFree(ptr));
+        validator.reset();
     }
 
 }  // namespace memory_safety_validator_test

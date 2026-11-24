@@ -22,6 +22,20 @@ namespace cuda::testing {
 
         static MemorySafetyValidator& instance();
 
+        /**
+         * @brief Check that @p ptr is a device pointer the runtime recognises
+         *
+         * @warning @p size is IGNORED, and cannot be otherwise. cudaPointerGetAttributes() returns
+         * type, device and the device/host aliases; it carries no length, and CUDA exposes no way
+         * to ask how large an allocation is. Measured: a 1 KiB cudaMalloc validated successfully
+         * when presented as 1 GiB and when presented as 0 bytes, because only the pointer is
+         * examined.
+         *
+         * So this answers "is this a live device pointer", not "is this range in bounds". An
+         * out-of-bounds access on a valid pointer passes. Use compute-sanitizer for bounds; the
+         * parameter is kept because removing it is an interface change and callers pass a real
+         * size, but do not read a true result as a bounds check.
+         */
         bool validate_allocation(const void* ptr, size_t size);
         bool validate_access(const void* ptr, size_t size);
         bool check_uninitialized(const void* ptr, size_t size);

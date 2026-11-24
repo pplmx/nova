@@ -14,6 +14,11 @@ namespace cuda::testing {
     }
 
     bool MemorySafetyValidator::validate_allocation(const void* ptr, size_t size) {
+        // size is not used: cudaPointerGetAttributes carries no length and CUDA has no query for
+        // one. See the warning on the declaration -- a true result means "live device pointer", not
+        // "this range is in bounds".
+        (void)size;
+
         if (!enabled_) {
             return true;
         }
