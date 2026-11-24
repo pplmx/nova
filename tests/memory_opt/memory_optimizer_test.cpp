@@ -34,6 +34,27 @@ namespace cuda::memory_opt::test {
         EXPECT_EQ(decompressed_size, input.size() * sizeof(float));
     }
 
+    // is_ready_to_apply() compares `current_step_ >= max_accumulation_steps_ - 1`, so a max of 0
+    // makes the bound -1 and the accumulator reports ready after the very first add_gradient().
+    // Measured at step 0 with one 2-element gradient: max = 0 and max = -3 both returned true,
+    // which silently disables gradient accumulation -- every microbatch is applied on its own.
+    TEST_F(MemoryOptimizerTest, GradientAccumulatorRejectsNonPositiveAccumulationCount) {
+        EXPECT_THROW(GradientAccumulator(0), std::invalid_argument);
+        EXPECT_THROW(GradientAccumulator(-3), std::invalid_argument);
+    }
+
+    TEST_F(MemoryOptimizerTest, GradientAccumulatorBecomesReadyOnlyOnTheLastMicrobatch) {
+        GradientAccumulator accumulator(4);
+        const float gradient[2] = {1.0f, 2.0f};
+
+        for (int step = 0; step < 3; ++step) {
+            accumulator.add_gradient(step, gradient, 2);
+            EXPECT_FALSE(accumulator.is_ready_to_apply()) << "ready too early at step " << step << " of 4";
+        }
+        accumulator.add_gradient(3, gradient, 2);
+        EXPECT_TRUE(accumulator.is_ready_to_apply()) << "must be ready on the fourth microbatch";
+    }
+
     TEST_F(MemoryOptimizerTest, CheckpointCompressorStats) {
         auto& compressor = CheckpointCompressor::instance();
 

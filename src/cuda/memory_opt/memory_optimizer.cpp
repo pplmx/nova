@@ -1,3 +1,5 @@
+#include <stdexcept>
+#include <string>
 #include "cuda/memory_opt/memory_optimizer.h"
 
 #include <algorithm>
@@ -131,7 +133,18 @@ namespace cuda::memory_opt {
 
     GradientAccumulator::GradientAccumulator(int max_accumulation_steps)
         : max_accumulation_steps_(max_accumulation_steps),
-          accumulated_gradients_(0) {}
+          accumulated_gradients_(0) {
+        // A non-positive accumulation count is not a smaller accumulation, it is a different
+        // behaviour: is_ready_to_apply() compares `current_step_ >= max_accumulation_steps_ - 1`,
+        // and with max == 0 that bound is -1, so the very first add_gradient() makes the
+        // accumulator report ready. Measured at step 0 with a single 2-element gradient:
+        // max=-3 and max=0 both returned ready=true, meaning gradient accumulation is silently
+        // disabled and every microbatch is applied on its own. Rejecting it here keeps the
+        // comparison away from a bound the caller cannot have meant.
+        if (max_accumulation_steps < 1) {
+            throw ::std::invalid_argument("GradientAccumulator: max_accumulation_steps must be at least 1, got " + ::std::to_string(max_accumulation_steps));
+        }
+    }
 
     GradientAccumulator::~GradientAccumulator() {}
 
