@@ -170,9 +170,14 @@ namespace cuda::observability::test {
         std::remove(path.c_str());
 
         ASSERT_FALSE(json.empty());
-        // The pair is recorded as one event that ends up with phase 'E'.
-        EXPECT_TRUE(contains(json, "\"ph\": \"E\"")) << json;
         EXPECT_TRUE(contains(json, "\"name\": \"span\"")) << json;
+        // What this case is named for: the pair yields a MEASURED duration. It used to assert
+        // phase 'E' instead, which is the implementation detail the old body produced -- one record
+        // whose 'B' had been overwritten by 'E', leaving a trace that Chrome could not pair. The
+        // phase is now 'X' (a complete event carrying its own duration), so assert the duration
+        // rather than the letter, which is what "ProducesMeasuredDuration" claims.
+        EXPECT_TRUE(contains(json, "\"ph\": \"X\"")) << json;
+        EXPECT_TRUE(contains(json, "\"dur\": ")) << json;
     }
 
     TEST(TimelineExporterTest, EndEventWithoutBeginIsHarmless) {
