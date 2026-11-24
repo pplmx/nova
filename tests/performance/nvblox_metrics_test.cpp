@@ -104,7 +104,13 @@ namespace cuda::performance::test {
         }
 
         EXPECT_EQ(collector.total_kernel_count(), 0u);
-        EXPECT_GE(collector.registered_metric_count(), 0u);
+        // There is no useful assertion on registered_metric_count() here. The previous line said
+        // `EXPECT_GE(..., 0u)`, which is always true for a size_t, and the obvious tightening --
+        // requiring it to be non-zero -- is also wrong: add_sample() records samples, not metrics,
+        // so the count is legitimately 0 after this case. Asserting either would be noise, so the
+        // line is removed rather than made to look meaningful. What this case actually checks is
+        // that four threads hammering add_sample() concurrently leave total_kernel_count() at zero,
+        // which the line above does.
     }
 
     TEST_F(NVBloxMetricsTest, ToJson) {
