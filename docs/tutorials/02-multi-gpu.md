@@ -107,35 +107,70 @@ matmul.matmul(local_A, local_B, local_C, m, n, k, opts);
 
 ## Complete Example
 
+!!! warning "This example needs a build with NCCL"
+    `DistributedReduce::all_reduce` requires a context created by `NcclContext::initialize()`, and
+    that method only creates communicators when the library was built with `-DNOVA_ENABLE_NCCL=ON`.
+    In the default build the example throws `NcclException` and terminates. On a host with a single
+    visible device the call falls back to a copy and needs no context.
+
 ```cpp
 #include <cuda/algo/reduce.h>
 #include <cuda/distributed/reduce.h>
 #include <cuda/mesh/device_mesh.h>
 #include <cuda/memory/buffer.h>
+#include <cuda/nccl/nccl_context.h>
 #include <stdio.h>
+#include <thread>
 #include <vector>
 
 int main() {
-    const int device_count = cuda::mesh::DeviceMesh::instance().device_count();
+    // cudaGetDeviceCount, not DeviceMesh::device_count(): the mesh singleton reports 0 before a
+    // CUDA context exists, which is the state main() starts in.
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 1) {
+        fprintf(stderr, "no CUDA device available\n");
+        return 1;
+    }
     const size_t size = 1024 * 1024;
 
-    // Each rank reduces its own shard first. reduce_sum() takes a device pointer and a count and
-    // returns the scalar on the host; it does not take an output buffer.
-    std::vector<float> host_shard(size, 1.0f);
-    cuda::memory::Buffer<float> local_shard(size);
-    local_shard.copy_from(host_shard.data(), size);
-    cuda::memory::Buffer<float> partial(1);
-    partial.copy_from(std::vector<float> {cuda::algo::reduce_sum(local_shard.data(), size)}.data(), 1);
+    // all_reduce is a blocking collective: EVERY rank enters it, each from its own thread pinned
+    // with cudaSetDevice. A single call from the main thread does not participate, and the context
+    // must be initialised first. Both are why the shape below is a thread per device rather than
+    // one straight-line call. Requires -DNOVA_ENABLE_NCCL=ON; the default build has no
+    // communicators, so initialize() returns having created none.
+    if (device_count > 1) {
+        try {
+            cuda::nccl::NcclContext::instance().initialize();
+        } catch (const std::exception& e) {
+            fprintf(stderr, "NCCL initialisation failed: %s\n", e.what());
+            return 1;
+        }
+    }
 
-    // All-reduce across ranks. all_reduce takes (send, recv, count, op); there is no root-rank
-    // argument and no stream argument on the synchronous form. Both pointers must be device
-    // allocations, and passing the same pointer twice performs the operation in place.
-    cuda::distributed::DistributedReduce::all_reduce(partial.data(), partial.data(), 1, cuda::distributed::ReductionOp::Sum);
+    std::vector<std::thread> ranks;
+    for (int device = 0; device < device_count; ++device) {
+        ranks.emplace_back([device, size]() {
+            CUDA_CHECK(cudaSetDevice(device));
 
-    // Every rank now holds the global sum, so no rank check is needed to print it.
-    std::vector<float> total(1);
-    partial.copy_to(total.data(), 1);
-    printf("Global sum from %d device(s): %f\n", device_count, total[0]);
+            // Each rank contributes ones, so the global sum is size * device_count.
+            std::vector<float> host_shard(size, 1.0f);
+            cuda::memory::Buffer<float> local_shard(size);
+            local_shard.copy_from(host_shard.data(), size);
+
+            cuda::memory::Buffer<float> partial(1);
+            partial.copy_from(std::vector<float> {cuda::algo::reduce_sum(local_shard.data(), size)}.data(), 1);
+
+            // all_reduce takes (send, recv, count, op); no root rank, no stream on the sync form.
+            // Passing the same pointer twice performs the operation in place.
+            cuda::distributed::DistributedReduce::all_reduce(partial.data(), partial.data(), 1,
+                                                             cuda::distributed::ReductionOp::Sum);
+
+            std::vector<float> total(1);
+            partial.copy_to(total.data(), 1);
+            printf("rank %d: global sum = %f\n", device, total[0]);
+        });
+    }
+    for (auto& t : ranks) t.join();
 
     return 0;
 }
