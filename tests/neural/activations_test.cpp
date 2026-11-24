@@ -38,7 +38,7 @@ namespace {
 
 TEST_F(ActivationTest, ReLUZeroesNegativesAndPassesPositives) {
     const std::vector<float> input {-5.0f, -0.5f, -0.0f, 0.0f, 0.5f, 5.0f, 100.0f};
-    const auto out = run_activation(input, [](const float* in, float* out, int n) { relu(in, out, n); });
+    const auto out = run_activation(input, [](const float* in, float* dst, int n) { relu(in, dst, n); });
     ASSERT_EQ(out.size(), input.size());
     for (size_t i = 0; i < input.size(); ++i) {
         EXPECT_EQ(out[i], std::max(0.0f, input[i])) << "relu at index " << i << " (input " << input[i] << ")";
@@ -48,7 +48,7 @@ TEST_F(ActivationTest, ReLUZeroesNegativesAndPassesPositives) {
 TEST_F(ActivationTest, LeakyReLUScalesNegativesByAlpha) {
     const std::vector<float> input {-100.0f, -5.0f, -1.0f, 0.0f, 1.0f, 5.0f, 100.0f};
     for (const float alpha : {0.01f, 0.1f}) {
-        const auto out = run_activation(input, [alpha](const float* in, float* out, int n) { leaky_relu(in, out, n, alpha); });
+        const auto out = run_activation(input, [alpha](const float* in, float* dst, int n) { leaky_relu(in, dst, n, alpha); });
         ASSERT_EQ(out.size(), input.size());
         for (size_t i = 0; i < input.size(); ++i) {
             const float expected = input[i] > 0.0f ? input[i] : alpha * input[i];
@@ -60,14 +60,14 @@ TEST_F(ActivationTest, LeakyReLUScalesNegativesByAlpha) {
 // A wrong alpha would still produce the right sign, so pin the magnitude explicitly.
 TEST_F(ActivationTest, LeakyReLUHonoursACustomAlpha) {
     const std::vector<float> input {-5.0f};
-    const auto out = run_activation(input, [](const float* in, float* out, int n) { leaky_relu(in, out, n, 0.1f); });
+    const auto out = run_activation(input, [](const float* in, float* dst, int n) { leaky_relu(in, dst, n, 0.1f); });
     ASSERT_EQ(out.size(), 1u);
     EXPECT_NEAR(out[0], -0.5f, 1e-6f) << "alpha=0.1 applied to -5 must give -0.5, not -0.05";
 }
 
 TEST_F(ActivationTest, SigmoidIsHalfAtZeroAndSaturatesAtTheBounds) {
     const std::vector<float> input {-10.0f, 0.0f, 10.0f};
-    const auto out = run_activation(input, [](const float* in, float* out, int n) { sigmoid(in, out, n); });
+    const auto out = run_activation(input, [](const float* in, float* dst, int n) { sigmoid(in, dst, n); });
     ASSERT_EQ(out.size(), 3u);
     EXPECT_NEAR(out[0], 0.0f, 1e-4f) << "sigmoid(-10) saturates low";
     EXPECT_NEAR(out[1], 0.5f, 1e-6f) << "sigmoid(0) is exactly one half";
@@ -80,7 +80,7 @@ TEST_F(ActivationTest, SigmoidIsHalfAtZeroAndSaturatesAtTheBounds) {
 
 TEST_F(ActivationTest, TanhMatchesTheAnalyticValue) {
     const std::vector<float> input {-10.0f, -1.0f, 0.0f, 1.0f, 10.0f};
-    const auto out = run_activation(input, [](const float* in, float* out, int n) { tanh_activation(in, out, n); });
+    const auto out = run_activation(input, [](const float* in, float* dst, int n) { tanh_activation(in, dst, n); });
     ASSERT_EQ(out.size(), input.size());
     for (size_t i = 0; i < input.size(); ++i) {
         EXPECT_NEAR(out[i], std::tanh(static_cast<double>(input[i])), 1e-5f) << "tanh at index " << i;
