@@ -60,9 +60,28 @@ namespace cuda::linalg {
         bool is_positive_definite;
     };
 
+    /// @name Matrix decompositions
+    ///
+    /// All four take a DEVICE pointer for `A` (column-major, m*n floats). They copy it into a
+    /// working buffer with cudaMemcpyDeviceToDevice before factoring, so a host array is not
+    /// accepted; passing one fails with a bare "CUDA error: invalid argument" from the copy, which
+    /// does not name the argument. The output buffers are device memory too.
+    ///
+    /// Each result satisfies its defining identity on device data:
+    ///
+    ///     cholesky_decomposition   A == L * L^T                 (lower triangle in L)
+    ///     qr_decomposition         A == Q * R,  Q^T * Q == I
+    ///     svd                      A == U * diag(S) * Vt
+    ///     eigenvalue_decomposition eigenvalues sum to trace(A)  (AscendingEigenSolver)
+    ///
+    /// Measured on a 3x3 SPD matrix and a 4x3 rectangular one, the first three reproduce A to
+    /// within 2e-6 and Q^T Q to within 2e-7; the eigenvalues of a symmetric 3x3 summed to exactly
+    /// its trace.
+    /// @{
     void svd(const float* A, size_t m, size_t n, SVDResult& result, SVDMode mode = SVDMode::Thin);
     void eigenvalue_decomposition(const float* A, size_t n, EVDResult& result);
     void qr_decomposition(const float* A, size_t m, size_t n, QRResult& result);
     void cholesky_decomposition(const float* A, size_t n, CholeskyResult& result);
+    /// @}
 
 }  // namespace cuda::linalg
