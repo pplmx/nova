@@ -11,8 +11,12 @@
  *
  * Example usage:
  * @code
- * SolverConfig config{.max_iterations = 1000, .tolerance = 1e-6};
- * auto result = cg(A, b, x, config);
+ * SolverConfig<float> config{
+ *     .relative_tolerance = 1e-6f,
+ *     .max_iterations = 1000,
+ * };
+ * ConjugateGradient<float> solver(config);
+ * auto result = solver.solve(A, b, x);
  * if (result.converged) {
  *     std::cout << "Converged in " << result.iterations << " iterations\n";
  * }

@@ -76,14 +76,14 @@ For symmetric positive definite matrices:
 ```cpp
 #include "cuda/sparse/krylov.hpp"
 
-nova::sparse::SolverConfig config{
+nova::sparse::SolverConfig<float> config{
+    .relative_tolerance = 1e-6f,
     .max_iterations = 1000,
-    .tolerance = 1e-6f,
     .verbose = true
 };
 
-nova::sparse::SolverResult<float> result =
-    nova::sparse::cg(A, b, x, config);
+nova::sparse::ConjugateGradient<float> solver(config);
+nova::sparse::SolverResult<float> result = solver.solve(A, b, x);
 
 if (result.converged) {
     std::cout << "Converged in " << result.iterations << " iterations\n";
