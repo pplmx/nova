@@ -284,7 +284,7 @@ The v2.x release adds production features for inference and scientific computing
 
 ## Testing
 
-**505 tests across multiple test suites, 99%+ passing:**
+**2668 registered tests across multiple test suites, all passing:**
 
 ```sh
 # Full test suite

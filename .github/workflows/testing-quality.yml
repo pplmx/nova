@@ -63,6 +63,31 @@ jobs:
       - name: Compile the tutorial examples
         run: python3 scripts/check_tutorial_snippets.py --include /usr/local/cuda/include
 
+  readme-facts:
+    name: README Facts Match The Tree
+    # README's Testing section said "505 tests ... 99%+ passing" while `ctest -N` reported 2668 --
+    # a factor of five, and nothing compared the two. A reader had no way to tell which number was
+    # current without running ctest. This job configures a build without a GPU (ctest -N only needs
+    # the test registry, not a device) and checks the count in README.md against it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget cmake ninja-build
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-nvcc-12-6
+
+      - name: Configure to obtain the test registry
+        run: cmake -G Ninja -B build-ninja -DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+
+      - name: Check README against ctest
+        run: python3 scripts/check_readme_facts.py build-ninja
+
   fuzz-corpus-baseline:
     name: Fuzz Corpus Baseline
     # Pure file inspection, no GPU, but it ran on a self-hosted runner and
