@@ -120,4 +120,32 @@ namespace cuda::observability::test {
         EXPECT_EQ(TimelineExporter::instance().event_count(), 0);
     }
 
+    // end_event() used to overwrite the record begin_event() had opened, setting ph = 'E' on it and
+    // storing the duration there. Chrome's B/E form needs a matching "B" for every "E", so a trace
+    // built from begin/end pairs contained only "E" records with nothing to pair them with. Measured
+    // before the fix: two nested pairs exported as two entries, both ph "E", no "B" anywhere.
+    //
+    // The records are 'X' now -- one complete event carrying its own duration -- which needs no
+    // pairing and cannot be left half-closed.
+    TEST_F(TimelineTest, BeginEndProduceCompleteEventsNotUnpairedEnds) {
+        auto& timeline = TimelineExporter::instance();
+        timeline.begin_event("outer", "gpu");
+        timeline.begin_event("inner", "gpu");
+        timeline.end_event("inner", "gpu");
+        timeline.end_event("outer", "gpu");
+
+        ASSERT_TRUE(timeline.export_to_file("/tmp/nova_timeline_complete.json"));
+        std::ifstream in("/tmp/nova_timeline_complete.json");
+        ASSERT_TRUE(in.good());
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        const std::string json = buffer.str();
+
+        EXPECT_NE(json.find("\"ph\": \"X\""), std::string::npos) << "records must be complete events: " << json;
+        EXPECT_EQ(json.find("\"ph\": \"E\""), std::string::npos) << "no end may be left unpaired: " << json;
+        EXPECT_NE(json.find("\"dur\": "), std::string::npos) << "the duration must be exported: " << json;
+        EXPECT_NE(json.find("outer"), std::string::npos);
+        EXPECT_NE(json.find("inner"), std::string::npos);
+    }
+
 }  // namespace cuda::observability::test

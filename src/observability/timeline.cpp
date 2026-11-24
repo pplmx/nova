@@ -78,12 +78,23 @@ namespace cuda::observability {
 
     void TimelineExporter::end_event(const char* name, const char* category) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!event_stack_.empty()) {
-            size_t idx = event_stack_.back();
-            event_stack_.pop_back();
-            events_[idx].dur = get_timestamp_ns() - events_[idx].ts;
-            events_[idx].ph = 'E';
+        if (event_stack_.empty()) {
+            return;
         }
+        // name is still unused, but the record it closes is no longer mislabelled.
+        (void)name;
+        (void)category;
+
+        const size_t idx = event_stack_.back();
+        event_stack_.pop_back();
+        // 'X' is a complete event with a duration, which is what this record now holds. The body
+        // used to set ph = 'E' and leave dur on the same record, so begin_event's 'B' was
+        // overwritten: a trace of two nested pairs contained two "E" entries and no "B" at all, and
+        // Chrome's B/E pairing therefore had nothing to close. 'X' carries the same information in
+        // one record and needs no pairing, which also makes the mismatch between a stack-discipline
+        // bug and the trace impossible to express.
+        events_[idx].dur = get_timestamp_ns() - events_[idx].ts;
+        events_[idx].ph = 'X';
     }
 
     void TimelineExporter::record_event(const char* name, const char* category, int64_t duration_ns) {
