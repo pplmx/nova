@@ -22,13 +22,20 @@ to:
 
 Adopt a five-layer architecture:
 
-| Layer | Namespace                   | Responsibility                                    |
-| ----- | --------------------------- | ------------------------------------------------- |
-| 0     | `cuda::memory`              | RAII buffers, memory pools, distributed pools     |
-| 1     | `cuda::device`              | Pure CUDA kernels, warp primitives                |
-| 2     | `cuda::algo`                | Algorithm orchestration, device memory management |
-| 3     | `cuda::api`                 | STL-style containers (DeviceVector, Stream)       |
-| 4     | `cuda::sparse/quantize/gnn` | Domain-specific operations                        |
+| Layer | Namespace                                     | Responsibility                                          |
+| ----- | --------------------------------------------- | ------------------------------------------------------- |
+| 0     | `cuda::memory`                                | RAII buffers, memory pools, distributed pools           |
+| 1     | `cuda::device`                                | Pure CUDA kernels, warp primitives                      |
+| 2     | `cuda::algo`                                  | Algorithm orchestration, device memory management       |
+| 3     | `cuda::stream`, `cuda::memory`                | Stream/event wrappers; device buffers (no DeviceVector) |
+| 4     | `nova::sparse`, `nova::quantize`, `nova::gnn` | Domain-specific operations                              |
+
+Two corrections to this table, both found by checking it against the headers. Layer 3 was
+listed as `cuda::api`, a namespace that does not exist (`include/cuda/api/` is absent); the
+STL-style layer is `cuda::stream` plus `cuda::memory`, and the ADR's own DeviceVector was
+never built. Layer 4 was listed under `cuda::`, while all 26 headers in those three
+directories declare `nova::` -- `matrix.hpp` uses `namespace nova::sparse`, and the quantize
+and gnn headers use the nested `namespace nova { namespace quantize {` form.
 
 Dependencies flow strictly upward: Layer N may only depend on Layers
 0..N-1. No layer may depend on a higher layer.

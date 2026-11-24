@@ -20,19 +20,19 @@ need these resilience patterns built in — not bolted on per-deployment.
 Include three production-hardening primitives as first-class library
 features:
 
-1. **Timeout management** (`cuda::error::timeout_manager`):
+1. **Timeout management** (`nova::error::timeout_manager`):
    RAII `timeout_guard` with background watchdog thread. Configurable
    per-operation timeouts with callbacks.
 
-2. **Retry with exponential backoff** (`cuda::error::retry_executor`):
+2. **Retry with exponential backoff** (`nova::error::retry_executor`):
    Configurable base delay, multiplier, max delay, max attempts, and
    jitter. Pluggable into any callable.
 
-3. **Circuit breaker** (`cuda::error::circuit_breaker`):
+3. **Circuit breaker** (`nova::error::circuit_breaker`):
    Failure threshold → open → half-open probe → close. Per-operation
    type configuration. Prevents cascading GPU failures.
 
-4. **Graceful degradation** (`cuda::error::degradation_manager`):
+4. **Graceful degradation** (`nova::error::degradation_manager`):
    Precision levels (high/medium/low). Quality thresholds with
    auto-degradation triggers (e.g., memory pressure).
 
