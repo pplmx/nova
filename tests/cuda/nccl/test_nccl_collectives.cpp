@@ -430,6 +430,64 @@ namespace cuda::nccl {
         });
     }
 
+    // The two cases above check operation_count() and result.ok(), neither of which notices a
+    // group that batches nothing: a collective issued outside its group still succeeds, and an
+    // ncclGroupEnd() that closes an empty group is not an error either.
+    //
+    // This one checks the number that comes back. NcclGroupHandle used to call ncclGroupEnd()
+    // BEFORE invoking the queued lambdas, so the group was already closed when each collective was
+    // issued and the batch degenerated to a sequence of independent calls. With correct ordering
+    // the same two operations still have to produce the same values, so the value check alone does
+    // not distinguish them -- what it does do is fail loudly if a future reordering breaks the
+    // collectives outright, and it is the only case in this suite that reads recv at all.
+    TEST_F(NcclCollectivesTest, GroupHandleProducesTheReducedValues) {
+        const int ndev = context_->device_count();
+
+        run_per_rank(ndev, [&](int d) {
+            cudaStream_t stream;
+            CUDA_CHECK(cudaStreamCreate(&stream));
+
+            cuda::memory::Buffer<float> send(kCount);
+            cuda::memory::Buffer<float> recv(kCount);
+            // Every rank contributes (d + 1), so the sum over the group is 1 + 2 + ... + ndev.
+            const float mine = static_cast<float>(d + 1);
+            std::vector<float> h_send(kCount, mine);
+            send.copy_from(h_send.data(), kCount);
+
+            float expected = 0.0f;
+            for (int r = 0; r < ndev; ++r) {
+                expected += static_cast<float>(r + 1);
+            }
+
+            cuda::memory::Buffer<float> recv2(kCount);
+            {
+                NcclGroupHandle group(*context_, stream);
+                // Two collectives in one group. A single operation cannot distinguish a working
+                // batch from no batch at all, because one collective outside a group is also
+                // correct; NCCL only refuses the launch when collectives that belong together are
+                // issued out of step across ranks, which needs more than one operation to notice.
+                group.add_all_reduce(send.data(), recv.data(), kCount, ncclFloat32, ncclSum);
+                group.add_all_reduce(send.data(), recv2.data(), kCount, ncclFloat32, ncclSum);
+                ASSERT_EQ(group.operation_count(), 2u);
+                auto result = group.execute();
+                EXPECT_TRUE(result.ok()) << result.error_message;
+            }
+
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+
+            std::vector<float> h_recv(kCount);
+            recv.copy_to(h_recv.data(), kCount);
+            std::vector<float> h_recv2(kCount);
+            recv2.copy_to(h_recv2.data(), kCount);
+            for (size_t i = 0; i < kCount; ++i) {
+                ASSERT_FLOAT_EQ(h_recv[i], expected) << "first collective, element " << i << " on rank " << d;
+                ASSERT_FLOAT_EQ(h_recv2[i], expected) << "second collective, element " << i << " on rank " << d;
+            }
+
+            CUDA_CHECK(cudaStreamDestroy(stream));
+        });
+    }
+
     TEST_F(NcclCollectivesTest, GroupHandleExplicitExecute) {
         const int ndev = context_->device_count();
 

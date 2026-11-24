@@ -128,9 +128,11 @@ namespace cuda::nccl {
             return NcclResult {.code = ncclInternalError, .error_message = "NCCL not initialized"};
         }
 
-        ncclGroupEnd();
-        executed_ = true;
-
+        // The operations must be issued BETWEEN ncclGroupStart() and ncclGroupEnd(). Each queued
+        // lambda is what calls ncclAllReduce/ncclBroadcast/ncclAllGather/ncclReduceScatter, so
+        // calling ncclGroupEnd() first ended an empty group and then launched the collectives
+        // one at a time -- batching, the whole point of this class, did nothing. The order below
+        // is the one NCCL documents: start, enqueue everything, end.
         NcclResult result {.code = ncclSuccess, .error_message = ""};
         for (auto& op : operations_) {
             auto op_result = op();
@@ -138,6 +140,9 @@ namespace cuda::nccl {
                 result = op_result;
             }
         }
+
+        ncclGroupEnd();
+        executed_ = true;
 
         if (result.ok()) {
             cudaError_t sync_err = cudaStreamSynchronize(stream_);
