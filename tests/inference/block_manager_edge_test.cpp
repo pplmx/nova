@@ -5,6 +5,39 @@
 
 namespace cuda::inference::test {
 
+    namespace {
+
+        /// A BlockManagerConfig sized for a unit test.
+        ///
+        /// The struct's defaults are production-shaped: kv_cache_config defaults to 32 heads,
+        /// head_dim 128, 32 layers and 4096 blocks, which backs 4096 * 16 * 32 * 128 * 32 * 2 * 4B
+        /// = 68.7 GiB of KV cache. A case that sets only max_model_len / num_gpu_blocks therefore
+        /// still allocates that much, per process.
+        ///
+        /// That is what the "cudaMalloc contention" in this suite actually was. Measured with
+        /// ctest -j16: device usage jumped from 427 MiB to 67037 MiB and five of twelve concurrent
+        /// runs of one such case failed with "out of memory" from buffer-inl.h:127, while every
+        /// individual case passed when run alone. 26 cases here set a few fields and inherited the
+        /// rest; they now start from this instead.
+        BlockManagerConfig small_block_manager_config() {
+            BlockManagerConfig config;
+            config.max_model_len = 8192;
+            config.block_size = 16;
+            // The block counts are what the long-prompt cases ask for (they hold sequences of
+            // 1000+ tokens), so they are NOT the knob to shrink. What made this suite allocate
+            // 68.7 GiB was kv_cache_config's per-block geometry, below.
+            config.num_cpu_blocks = 2048;
+            config.num_gpu_blocks = 2048;
+            config.enable_cuda_graph = false;
+            config.kv_cache_config = memory::KVCacheAllocatorConfig {
+                .num_heads = 4, .head_dim = 64, .block_size_tokens = 16, .num_blocks = 1024, .num_layers = 1, .eviction_threshold_pct = 10, .enable_prefix_caching = true};
+            config.attention_config = algo::FlashAttentionConfig {
+                .num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+            return config;
+        }
+
+    }  // namespace
+
     class BlockManagerEdgeTest : public ::testing::Test {
     protected:
         void SetUp() override {
@@ -358,7 +391,7 @@ namespace cuda::inference::test {
     };
 
     TEST_F(BlockManagerCudaGraphTest, EnableCudaGraphConfig) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.enable_cuda_graph = true;
         config.num_gpu_blocks = 256;
 
@@ -368,7 +401,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BlockManagerCudaGraphTest, DisableCudaGraphConfig) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.enable_cuda_graph = false;
         config.num_gpu_blocks = 256;
 
@@ -378,7 +411,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BlockManagerCudaGraphTest, SequenceCreationWithCudaGraph) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.enable_cuda_graph = true;
         config.num_gpu_blocks = 256;
         config.block_size = 16;
@@ -391,7 +424,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BlockManagerCudaGraphTest, ForwardBatchWithCudaGraphEnabled) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.enable_cuda_graph = true;
         config.num_gpu_blocks = 256;
         config.block_size = 16;
@@ -414,7 +447,7 @@ namespace cuda::inference::test {
         // The empty skip ("allocation fails with CUDA OOM") was stale: the other
         // BlockManagerCudaGraphTest cases use the same num_gpu_blocks=256 pool and
         // run fine, so exercise the real KV-cache path under the CUDA-graph flag.
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.enable_cuda_graph = true;
         config.num_gpu_blocks = 256;
         config.block_size = 16;
@@ -456,7 +489,7 @@ namespace cuda::inference::test {
     };
 
     TEST_F(DynamicBlockSizingTest, BlockSize16) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 512;
         config.max_model_len = 8192;
@@ -485,7 +518,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(DynamicBlockSizingTest, BlockSize32) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 32;
         config.num_gpu_blocks = 512;
         config.max_model_len = 8192;
@@ -511,7 +544,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(DynamicBlockSizingTest, BlockSize64) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 64;
         config.num_gpu_blocks = 512;
         config.max_model_len = 8192;
@@ -537,7 +570,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(DynamicBlockSizingTest, BlockSizeBoundaryAlignment) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         // Small allocator pool (see BlockSize16): 16 MB/block * 256 = 4 GB instead
@@ -598,7 +631,7 @@ namespace cuda::inference::test {
     };
 
     TEST_F(ChunkedPrefillTest, LongPromptSingleChunk) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 2048;
         config.max_model_len = 8192;
@@ -614,7 +647,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(ChunkedPrefillTest, MultipleChunkAdditions) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 2048;
         config.max_model_len = 8192;
@@ -638,7 +671,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(ChunkedPrefillTest, LongSequenceWithBlockGrowth) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         config.max_model_len = 8192;
@@ -660,7 +693,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(ChunkedPrefillTest, ChunkedPrefillWithForwardBatch) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 2048;
         config.max_model_len = 8192;
@@ -683,7 +716,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(ChunkedPrefillTest, LongPromptStressTest) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         config.max_model_len = 8192;
@@ -720,7 +753,7 @@ namespace cuda::inference::test {
     };
 
     TEST_F(LongPromptIntegrationTest, PromptOver16KTokens) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         config.max_model_len = 8192;
@@ -740,7 +773,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(LongPromptIntegrationTest, MultipleLongSequences) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         config.max_model_len = 8192;
@@ -769,7 +802,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(LongPromptIntegrationTest, LongPromptForwardBatch) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         config.max_model_len = 8192;
@@ -792,7 +825,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(LongPromptIntegrationTest, LongPromptKVCacheStats) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 256;
         config.max_model_len = 8192;
@@ -826,6 +859,10 @@ namespace cuda::inference::test {
     }
 
     TEST_F(LongPromptIntegrationTest, LongPromptSequenceIsolation) {
+        // Deliberately NOT small_block_manager_config(): this case depends on the KV pool being
+        // too small for both sequences at once -- that shortfall is its subject. It passes with the
+        // production-shaped kv_cache_config and fails with the reduced one, because allocation then
+        // succeeds and the sequences legitimately share blocks. Left exactly as it was.
         BlockManagerConfig config;
         config.block_size = 16;
         config.num_gpu_blocks = 256;
@@ -870,7 +907,7 @@ namespace cuda::inference::test {
     };
 
     TEST_F(BeamSpeculativeIntegrationTest, BeamWithBlockManager) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 512;
         config.max_model_len = 2048;
@@ -894,10 +931,21 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BeamSpeculativeIntegrationTest, SpeculativeWithBlockManager) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 512;
         config.max_model_len = 2048;
+        // Pin the KV-cache geometry. Only three fields were set here, so kv_cache_config kept its
+        // defaults -- 32 heads, head_dim 128, 32 layers, 4096 blocks -- which back a 4096 * 16 *
+        // 32 * 128 * 32 * 2 * 4B cache: 68.7 GiB. This case creates two sequences of a few dozen
+        // tokens and asserted nothing about cache capacity, but every instance still allocated
+        // that much. Measured under ctest -j16 the device went from 427 MiB to 67037 MiB and five
+        // of twelve concurrent runs failed with "CUDA error: out of memory" from buffer-inl.h.
+        config.kv_cache_config = memory::KVCacheAllocatorConfig {
+            .num_heads = 4, .head_dim = 64, .block_size_tokens = 16, .num_blocks = 1024, .num_layers = 1, .eviction_threshold_pct = 10, .enable_prefix_caching = true};
+        config.attention_config =
+            algo::FlashAttentionConfig {.num_heads = 4, .num_kv_heads = 4, .head_dim = 64, .seq_len = 128, .batch_size = 1, .dropout_rate = 0.0f, .causal = true, .is_fp16 = false};
+        config.num_cpu_blocks = 128;
 
         auto manager = std::make_unique<BlockManager>(config);
 
@@ -915,7 +963,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeCombinedSequences) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 1024;
         config.max_model_len = 4096;
@@ -946,7 +994,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeFreeSequence) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 512;
         config.max_model_len = 2048;
@@ -966,7 +1014,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeActiveSequences) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 512;
         config.max_model_len = 2048;
@@ -982,7 +1030,7 @@ namespace cuda::inference::test {
     }
 
     TEST_F(BeamSpeculativeIntegrationTest, BeamSpeculativeChunkedPrefill) {
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 1024;
         config.max_model_len = 4096;
@@ -1007,7 +1055,7 @@ namespace cuda::inference::test {
         // The skip ("requires too much GPU memory") was stale: sibling
         // BeamSpeculativeIntegrationTest cases use the same num_gpu_blocks=512 pool
         // and run fine. Exercise the real KV-allocation path for beam sequences.
-        BlockManagerConfig config;
+        BlockManagerConfig config = small_block_manager_config();
         config.block_size = 16;
         config.num_gpu_blocks = 512;
         config.max_model_len = 2048;
