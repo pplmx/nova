@@ -3,8 +3,10 @@
 #include "cuda/memory/buffer-inl.h"
 #include "cuda/memory/memory_pool.h"
 #include "cuda/memory/unique_ptr.h"
-#include <vector>
+#include <atomic>
 #include <numeric>
+#include <thread>
+#include <vector>
 #include "cuda/device/error.h"
 
 namespace {
@@ -941,4 +943,47 @@ TEST(MemoryPoolReuseTest, AnEmptyBlockIsReusedFromItsBeginning) {
     ASSERT_NE(second, nullptr);
     EXPECT_EQ(second, first) << "an emptied block must serve the next request from offset zero";
     pool.deallocate(second, 4000);
+}
+
+// get_metrics() used to lock metrics_mutex_ while walking blocks_, which allocate_block() grows
+// under mutex_. Two locks over one vector means a concurrent get_metrics() could iterate it
+// mid-reallocation, and metrics_mutex_ had exactly one user -- get_metrics() itself -- so it
+// protected nothing. The accessors were unsynchronised reads of counters written under mutex_.
+//
+// This case cannot prove the absence of a race, but it does exercise the paths concurrently, which
+// is what a future change would have to keep working.
+TEST(MemoryPoolConcurrencyTest, MetricsAndAllocationCanRunAtTheSameTime) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 256;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    std::atomic<bool> stop {false};
+    std::atomic<long> reads {0};
+    std::thread reader([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            const auto metrics = pool.get_metrics();
+            (void)metrics;
+            (void)pool.total_allocated();
+            (void)pool.total_available();
+            (void)pool.num_blocks();
+            ++reads;
+        }
+    });
+
+    std::thread worker([&] {
+        for (int i = 0; i < 2000; ++i) {
+            void* p = pool.allocate(64);
+            if (p != nullptr) {
+                pool.deallocate(p, 64);
+            }
+        }
+    });
+    worker.join();
+    stop = true;
+    reader.join();
+
+    EXPECT_GT(reads.load(), 0L) << "the reader must have observed at least one snapshot";
+    EXPECT_EQ(pool.total_allocated(), 0u) << "everything was released";
 }

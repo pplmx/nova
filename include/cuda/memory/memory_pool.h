@@ -42,9 +42,26 @@ namespace cuda::memory {
         void* allocate(size_t bytes, int stream_id = -1);
         void deallocate(void* ptr, size_t bytes);
 
-        size_t total_allocated() const { return total_allocated_; }
-        size_t total_available() const { return total_available_; }
-        size_t num_blocks() const { return blocks_.size(); }
+        /// Bytes currently handed out. Reads total_allocated_, which allocate() and deallocate()
+        /// update under mutex_, so this takes the same lock: an unsynchronised read of a non-atomic
+        /// size_t against a concurrent write is a data race, and this class already locks in
+        /// num_allocations() for exactly that reason.
+        size_t total_allocated() const {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return total_allocated_;
+        }
+
+        /// Bytes still available in preallocated blocks. Same locking rationale as above.
+        size_t total_available() const {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return total_available_;
+        }
+
+        /// Size of the block list. blocks_ is grown by allocate_block() under mutex_.
+        size_t num_blocks() const {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return blocks_.size();
+        }
         /// Number of live allocations.
         ///
         /// allocation_map_ is written by allocate() and deallocate() under mutex_; reading
@@ -121,7 +138,6 @@ namespace cuda::memory {
         std::vector<Block> blocks_;
         std::unordered_map<void*, AllocationInfo> allocation_map_;
         mutable std::mutex mutex_;
-        mutable std::mutex metrics_mutex_;
         size_t total_allocated_ = 0;
         size_t total_available_ = 0;
         size_t peak_allocated_bytes_ = 0;

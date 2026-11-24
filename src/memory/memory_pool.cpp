@@ -252,7 +252,11 @@ namespace cuda::memory {
     }
 
     MemoryPool::PoolMetrics MemoryPool::get_metrics() const {
-        std::lock_guard<std::mutex> lock(metrics_mutex_);
+        // mutex_, not metrics_mutex_. This walks blocks_, and allocate_block() grows that vector
+        // under mutex_; taking a different lock here meant the two could run at the same time, so a
+        // concurrent get_metrics() could iterate a vector mid-reallocation. metrics_mutex_ had
+        // exactly one user -- this function -- so it protected nothing; it is gone.
+        std::lock_guard<std::mutex> lock(mutex_);
 
         PoolMetrics metrics;
         metrics.hits = hits_;
