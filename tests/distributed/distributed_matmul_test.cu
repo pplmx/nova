@@ -668,14 +668,22 @@ namespace {
     }
 
     // DistributedMatmul::matmul_async() took a cudaStream_t and ignored it -- the parameter was
-    // commented out in the signature -- so the GEMM always ran on the null stream. The root cause
-    // was one layer down: cuda::neural::MatmulOptions had no stream field and cublasSetStream was
-    // called nowhere in the tree, so no layer of the chain could accept one.
+    // commented out -- because no layer below could accept one: cuda::neural::MatmulOptions had no
+    // stream field and cublasSetStream was called nowhere in the tree. That is now threaded through.
     //
-    // Measured before the fix: after matmul_async(..., stream, ...), cudaStreamQuery(stream)
-    // returned cudaSuccess -- the queue was empty. After: cudaErrorNotReady, i.e. the work really
-    // is on the stream the caller named.
-    TEST_F(DistributedMatmulTest, MatmulAsyncSubmitsOnTheStreamItIsGiven) {
+    // What this case does NOT do is prove the stream is honoured. I tried three times and could not
+    // find a scheduling arrangement that distinguishes the two implementations reliably in-process:
+    // querying the passed stream races a GEMM that finishes inside the submission call, blocking the
+    // passed stream does not order against the null stream, and blocking the null stream does not
+    // either on this driver. Each attempt passed against a build with cublasSetStream removed, so
+    // each would have been a test that reported coverage it did not have.
+    //
+    // What is checked here is only what is checkable in-process on this host: the call accepts a
+    // stream, leaves it drained, and still produces the right product. The stream binding itself is
+    // covered by cudaSetStream being applied in neural::matmul() and by the scoped-restore case
+    // below; a real check needs a second stream blocking the default one, which this harness cannot
+    // arrange without a host-side synchronisation the point of async scheduling is to avoid.
+    TEST_F(DistributedMatmulTest, MatmulAsyncAcceptsAStreamAndProducesTheProduct) {
         const int m = 8, n = 8, k = 8;
 
         cuda::memory::Buffer<float> d_A(m * k);
@@ -685,7 +693,6 @@ namespace {
         d_A.copy_from(h_A.data(), h_A.size());
         d_B.copy_from(h_B.data(), h_B.size());
         CUDA_CHECK(cudaMemset(d_C.data(), 0, m * n * sizeof(float)));
-        CUDA_CHECK(cudaDeviceSynchronize());
 
         cudaStream_t stream;
         CUDA_CHECK(cudaStreamCreate(&stream));
@@ -693,15 +700,9 @@ namespace {
         DistributedMatmul mm;
         mm.matmul_async(d_A.data(), d_B.data(), d_C.data(), m, n, k, stream, DistributedMatmulOptions {});
 
-        // The work must be visible on the stream the caller passed. Querying a stream that has no
-        // work returns cudaSuccess; a stream with pending work returns cudaErrorNotReady.
-        const cudaError_t pending = cudaStreamQuery(stream);
-        EXPECT_EQ(pending, cudaErrorNotReady) << "matmul_async queued nothing on the stream it was given (got: " << cudaGetErrorString(pending) << ")";
-
         CUDA_CHECK(cudaStreamSynchronize(stream));
-        EXPECT_EQ(cudaStreamQuery(stream), cudaSuccess) << "the stream must drain once synchronised";
+        EXPECT_EQ(cudaStreamQuery(stream), cudaSuccess) << "the stream must be drained after the caller synchronises it";
 
-        // And the result is still correct: 8x8 of 1.0 times 8x8 of 1.0 is 8.0 everywhere.
         std::vector<float> h_C(m * n, 0.0f);
         d_C.copy_to(h_C.data(), h_C.size());
         for (int i = 0; i < m * n; ++i) {
