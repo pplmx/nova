@@ -227,42 +227,52 @@ namespace cuda::memory_opt {
         }
     }
 
-    size_t MemoryDefragmenter::get_total_fragmentation() const {
-        if (blocks_.empty()) {
-            return 0;
-        }
-
-        size_t total_free = 0;
-        size_t prev_end = 0;
-
+    /// Gaps between the registered blocks, in address order.
+    ///
+    /// Only the space BETWEEN blocks is fragmentation. Both accessors below used to seed the walk
+    /// with prev_end = 0, so the first block's own address counted as free space: with two live
+    /// 1000-byte allocations and nothing free between them, get_total_fragmentation() returned
+    /// 93866660274872 and get_largest_free_block() 93866660274864 -- the process's virtual address
+    /// of the first allocation, read as free bytes. Measured on this host.
+    ///
+    /// Shared because the two accessors had the same bug in the same shape and would otherwise drift.
+    std::vector<size_t> MemoryDefragmenter::free_gaps() const {
+        std::vector<std::pair<size_t, size_t>> ranges;
+        ranges.reserve(blocks_.size());
         for (const auto& block : blocks_) {
-            size_t block_start = reinterpret_cast<size_t>(block.ptr);
-            if (block_start > prev_end) {
-                total_free += block_start - prev_end;
-            }
-            prev_end = block_start + block.size;
+            const auto start = reinterpret_cast<size_t>(block.ptr);
+            ranges.emplace_back(start, start + block.size);
         }
+        std::sort(ranges.begin(), ranges.end());
 
-        return total_free;
+        std::vector<size_t> gaps;
+        if (ranges.empty()) {
+            return gaps;
+        }
+        size_t prev_end = ranges.front().second;
+        for (size_t i = 1; i < ranges.size(); ++i) {
+            if (ranges[i].first > prev_end) {
+                gaps.push_back(ranges[i].first - prev_end);
+            }
+            prev_end = std::max(prev_end, ranges[i].second);
+        }
+        return gaps;
+    }
+
+    size_t MemoryDefragmenter::get_total_fragmentation() const {
+        size_t total = 0;
+        for (const size_t gap : free_gaps()) {
+            total += gap;
+        }
+        return total;
     }
 
     size_t MemoryDefragmenter::get_largest_free_block() const {
-        if (blocks_.empty()) {
-            return 0;
+        size_t largest = 0;
+        for (const size_t gap : free_gaps()) {
+            largest = std::max(largest, gap);
         }
-
-        size_t max_free = 0;
-        size_t prev_end = 0;
-
-        for (const auto& block : blocks_) {
-            size_t block_start = reinterpret_cast<size_t>(block.ptr);
-            if (block_start > prev_end) {
-                max_free = std::max(max_free, block_start - prev_end);
-            }
-            prev_end = block_start + block.size;
-        }
-
-        return max_free;
+        return largest;
     }
 
     int MemoryDefragmenter::get_fragment_count() const {

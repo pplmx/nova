@@ -55,6 +55,33 @@ namespace cuda::memory_opt::test {
         EXPECT_TRUE(accumulator.is_ready_to_apply()) << "must be ready on the fourth microbatch";
     }
 
+    // Both accessors walked the blocks with prev_end seeded to 0, so the first block's own address
+    // counted as free space. Measured with two live 1000-byte allocations and nothing free between
+    // them: get_total_fragmentation() returned 93866660274872 and get_largest_free_block()
+    // 93866660274864, i.e. the process's virtual address of the first allocation reported as free
+    // bytes. Anything sizing a defragmentation step from that number would have been wildly wrong.
+    TEST_F(MemoryOptimizerTest, FragmentationCountsOnlyTheGapsBetweenLiveBlocks) {
+        MemoryDefragmenter defragmenter(0);
+        // One slab, two registered sub-ranges with a deliberate hole of exactly 1000 bytes between.
+        std::vector<char> slab(3000);
+        defragmenter.register_allocation(slab.data(), 1000);
+        defragmenter.register_allocation(slab.data() + 2000, 1000);
+
+        EXPECT_EQ(defragmenter.get_total_fragmentation(), 1000u) << "only the gap between the two blocks is free";
+        EXPECT_EQ(defragmenter.get_largest_free_block(), 1000u);
+    }
+
+    TEST_F(MemoryOptimizerTest, AdjacentBlocksReportNoFragmentation) {
+        MemoryDefragmenter defragmenter(0);
+        // Two blocks that touch: no gap, so no fragmentation regardless of where the slab lives.
+        std::vector<char> slab(2000);
+        defragmenter.register_allocation(slab.data(), 1000);
+        defragmenter.register_allocation(slab.data() + 1000, 1000);
+
+        EXPECT_EQ(defragmenter.get_total_fragmentation(), 0u) << "the address of the first block is not free space";
+        EXPECT_EQ(defragmenter.get_largest_free_block(), 0u);
+    }
+
     TEST_F(MemoryOptimizerTest, CheckpointCompressorStats) {
         auto& compressor = CheckpointCompressor::instance();
 

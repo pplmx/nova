@@ -130,6 +130,12 @@ namespace cuda::memory_opt {
 
         size_t get_total_fragmentation() const;
         size_t get_largest_free_block() const;
+
+    private:
+        /// Address ranges not covered by any registered block, between the outermost ones.
+        [[nodiscard]] std::vector<size_t> free_gaps() const;
+
+    public:
         int get_fragment_count() const;
 
         using ReallocateCallback = std::function<void(void* old_ptr, size_t old_size, void*& new_ptr, size_t& new_size)>;
