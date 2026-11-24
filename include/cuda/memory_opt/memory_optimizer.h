@@ -22,11 +22,17 @@ namespace cuda::memory_opt {
      *
      * @par This build may have no codec
      * The implementation selects a backend with `NOVA_USE_ZSTD`, else `NOVA_USE_LZ4`, else
-     * falls back to a straight copy. Nothing in this project's build sets either macro, so the
-     * fallback is what is compiled: compress() and decompress() are memcpy and every ratio is
-     * exactly 1.0. `enable_compression` therefore has no effect in a default build, and the
-     * two implementations are indistinguishable -- measured, a 64 KiB buffer of easily
-     * compressible data came back byte-identical with the flag both on and off.
+     * falls back to a straight copy.
+     *
+     * The macros are set by the build: `-DNOVA_USE_ZSTD=ON` or `-DNOVA_USE_LZ4=ON`. Both default
+     * to OFF, so a default build compiles the memcpy fallback, compress() and decompress() are
+     * straight copies, every ratio is exactly 1.0, and `enable_compression` has no effect --
+     * measured, a 64 KiB buffer of easily compressible data came back byte-identical with the flag
+     * both on and off. Asking for a codec the system does not have is a configure-time error rather
+     * than a silent fallback, so a build that says it compresses does.
+     *
+     * `has_compression_backend()` answers this at compile time; consult it before presenting a
+     * ratio to a user.
      *
      * That is stated here because it cannot be inferred from the return value: compress()
      * reports the number of bytes it WROTE, and a copy writes all of them. Use

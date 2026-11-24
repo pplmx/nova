@@ -151,6 +151,16 @@ option(NOVA_USE_LLD "Link with lld when it is available (used only without mold)
 # unavoidable in the NCCL stubs compiled when NOVA_ENABLE_NCCL=OFF, and the CUDA
 # runtime still marks the shared-memory bank config calls deprecated even though a
 # guard legitimately saves and restores them.
+# Checkpoint compression codec. memory_optimizer.cpp selects a backend with
+# -DNOVA_USE_ZSTD / -DNOVA_USE_LZ4, and until now nothing defined either macro, so the "compressed"
+# path always fell through to the verbatim memcpy branch and has_compression_backend() was
+# permanently false. The code was written as an optional capability; these options make it one.
+#
+# Both stay OFF by default: turning them on changes what compress() writes to disk, and a checkpoint
+# produced with a codec must be read by a build with the same codec.
+option(NOVA_USE_ZSTD "Compress checkpoints with zstd (requires libzstd)" OFF)
+option(NOVA_USE_LZ4 "Compress checkpoints with lz4 (requires liblz4)" OFF)
+
 option(NOVA_ENABLE_WARNINGS "Enable compiler warnings for host code" ON)
 option(NOVA_WARNINGS_AS_ERRORS "Treat the enabled warnings as errors" OFF)
 
@@ -826,6 +836,32 @@ target_link_libraries(cuda_preemption PUBLIC
 )
 
 add_library(cuda_impl STATIC ${ALL_CUDA_SOURCES})
+
+# Resolve the codec selected above. A missing library is an error when the option was asked for, not
+# a silent fallback: quietly dropping back to verbatim storage would leave a caller who enabled
+# compression with uncompressed checkpoints and no indication.
+if(NOVA_USE_ZSTD AND NOVA_USE_LZ4)
+        message(FATAL_ERROR "NOVA_USE_ZSTD and NOVA_USE_LZ4 are mutually exclusive; set at most one")
+endif()
+if(NOVA_USE_ZSTD)
+        find_path(ZSTD_INCLUDE_DIR zstd.h)
+        find_library(ZSTD_LIBRARY NAMES zstd)
+        if(NOT ZSTD_INCLUDE_DIR OR NOT ZSTD_LIBRARY)
+                message(FATAL_ERROR "NOVA_USE_ZSTD=ON but zstd was not found (need zstd.h and libzstd)")
+        endif()
+        target_include_directories(cuda_impl PRIVATE ${ZSTD_INCLUDE_DIR})
+        target_link_libraries(cuda_impl PRIVATE ${ZSTD_LIBRARY})
+        target_compile_definitions(cuda_impl PRIVATE NOVA_USE_ZSTD=1)
+elseif(NOVA_USE_LZ4)
+        find_path(LZ4_INCLUDE_DIR lz4.h)
+        find_library(LZ4_LIBRARY NAMES lz4)
+        if(NOT LZ4_INCLUDE_DIR OR NOT LZ4_LIBRARY)
+                message(FATAL_ERROR "NOVA_USE_LZ4=ON but lz4 was not found (need lz4.h and liblz4)")
+        endif()
+        target_include_directories(cuda_impl PRIVATE ${LZ4_INCLUDE_DIR})
+        target_link_libraries(cuda_impl PRIVATE ${LZ4_LIBRARY})
+        target_compile_definitions(cuda_impl PRIVATE NOVA_USE_LZ4=1)
+endif()
 # BUILD_INTERFACE for the source-tree paths, INSTALL_INTERFACE for the installed
 # tree. Without the split, exporting the target fails with "INTERFACE_INCLUDE_
 # DIRECTORIES property contains path ... which is prefixed in the source

@@ -331,4 +331,16 @@ namespace cuda::memory_opt::test {
         }
     }
 
+    // The build exposes NOVA_USE_ZSTD / NOVA_USE_LZ4; has_compression_backend() reports whether one
+    // was compiled in. Anything that reasons about ratios has to branch on it, so pin the invariant
+    // that the two agree: a build that set a codec macro must report true, and a build with neither
+    // must report false. This is what catches a CMake option that never reached the compiler.
+    TEST_F(MemoryOptimizerTest, CompressionBackendFlagAgreesWithTheSelectedCodec) {
+#if defined(NOVA_USE_ZSTD) || defined(NOVA_USE_LZ4)
+        EXPECT_TRUE(CheckpointCompressor::has_compression_backend()) << "a codec macro is defined but the class reports no backend";
+#else
+        EXPECT_FALSE(CheckpointCompressor::has_compression_backend()) << "no codec macro is defined yet the class claims one";
+#endif
+    }
+
 }  // namespace cuda::memory_opt::test
