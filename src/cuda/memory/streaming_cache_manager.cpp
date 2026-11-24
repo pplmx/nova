@@ -47,9 +47,13 @@ namespace cuda::memory {
     }
 
     // Queue a prefetch request for a sequence
-    // This is async - the request is queued and executed later during sync_prefetch()
-    // The purpose is to start KV cache allocation before the sequence actually needs it
+    // This is deferred - the request is queued and executed later during sync_prefetch(). The
+    // purpose is to start KV cache allocation before the sequence actually needs it.
+    //
+    // Nothing is enqueued on the stream: this is a locked push_back onto an in-process vector. See
+    // the warning on the declaration.
     void StreamingCacheManager::prefetch_async(int64_t sequence_id, int num_tokens_ahead, const stream::Stream& stream) {
+        (void)stream;
         // Prefetch is optional - skip if disabled in config
         if (!config_.enable_prefetch) {
             return;
@@ -167,10 +171,14 @@ namespace cuda::memory {
         return it != importance_weights_.end() ? it->second : 1.0f;
     }
 
-    // Execute all pending prefetch requests on specified stream
-    // Called at synchronization points (e.g., between phases of generation)
-    // This is where prefetch requests actually become allocations
+    // Execute all pending prefetch requests. Called at synchronization points (e.g. between phases
+    // of generation); this is where prefetch requests actually become allocations.
+    //
+    // The stream argument is not used and cannot be: the work below is KVCacheAllocator::append(),
+    // which allocates from a host-side free list and launches nothing. The old comment said "on
+    // specified stream", which was never true. See the warning on the declaration.
     void StreamingCacheManager::sync_prefetch(const stream::Stream& stream) {
+        (void)stream;
         std::lock_guard<std::mutex> lock(prefetch_mutex_);
 
         // Execute pending requests and mark as completed

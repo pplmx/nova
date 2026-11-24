@@ -34,6 +34,15 @@ namespace cuda::memory {
         StreamingCacheManager(StreamingCacheManager&&) = default;
         StreamingCacheManager& operator=(StreamingCacheManager&&) = default;
 
+        /// Queue a prefetch request for a later sync_prefetch().
+        ///
+        /// @warning @p stream is IGNORED. Queuing is a locked push_back onto an in-process vector;
+        /// no CUDA work is enqueued, so there is no stream for it to go on. The name says "async"
+        /// because the request is deferred to sync_prefetch(), not because it runs on the device
+        /// concurrently with the caller.
+        ///
+        /// The parameter is kept because it is part of the signature callers compile against, and
+        /// because a real asynchronous prefetch would need it.
         void prefetch_async(int64_t sequence_id, int num_tokens_ahead, const stream::Stream& stream);
 
         void evict_importance_weighted(int num_blocks);
@@ -44,6 +53,13 @@ namespace cuda::memory {
 
         float get_importance(int64_t sequence_id) const;
 
+        /// Allocate every queued prefetch request and empty the queue.
+        ///
+        /// @warning @p stream is IGNORED. The work is KVCacheAllocator::append(), a host-side
+        /// operation returning a vector of block pointers; it takes no stream and launches no
+        /// kernel, so nothing runs "on" the stream passed here. The comment at the definition used
+        /// to say "Execute all pending prefetch requests on specified stream", which no part of the
+        /// implementation does.
         void sync_prefetch(const stream::Stream& stream);
 
         /// Number of prefetch requests queued but not yet executed.

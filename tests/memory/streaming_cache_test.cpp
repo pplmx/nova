@@ -92,6 +92,34 @@ namespace cuda::memory {
         ASSERT_EQ(blocks.size(), 3);
     }
 
+    // Neither prefetch_async() nor sync_prefetch() uses the stream it is given. Queuing is a locked
+    // push_back onto an in-process vector, and processing is KVCacheAllocator::append(), a host-side
+    // allocation from a free list that launches no kernel. The definition's comment claimed
+    // sync_prefetch() executes the requests "on specified stream", which no part of the
+    // implementation does.
+    //
+    // The point of this case is to pin that the result is the SAME whichever streams are passed: a
+    // future implementation that really did schedule device work would have to keep it that way or
+    // change this case deliberately.
+    TEST_F(StreamingCacheTest, PrefetchOutcomeDoesNotDependOnTheStreamArgument) {
+        stream::Stream stream_a;
+        stream::Stream stream_b;
+
+        allocator->allocate(1, 16);
+        manager->prefetch_async(1, 16, stream_a);
+        manager->sync_prefetch(stream_b);  // deliberately a different stream from the queued one
+
+        auto blocks = allocator->get_blocks(1);
+        ASSERT_EQ(blocks.size(), 3) << "the request must be processed regardless of which stream is passed";
+
+        // A second sequence through a different pair of streams must produce the same shape.
+        auto manager2 = std::make_unique<StreamingCacheManager>(allocator.get(), StreamingCacheConfig {});
+        allocator->allocate(2, 16);
+        manager2->prefetch_async(2, 16, stream_b);
+        manager2->sync_prefetch(stream_a);
+        EXPECT_EQ(allocator->get_blocks(2).size(), 3);
+    }
+
     TEST_F(StreamingCacheTest, SyncPrefetchClearsPendingRequests) {
         stream::Stream stream;
 
