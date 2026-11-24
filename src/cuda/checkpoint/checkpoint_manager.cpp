@@ -610,7 +610,37 @@ namespace nova::checkpoint {
         CheckpointInfo info {};
         info.step = step;
         info.path = ckpt_dir;
+        // The timestamp save_checkpoint() writes into the manifest, read back. It used to be a
+        // hard-coded 0: the manifest carried the real value and nothing consumed it, so a caller
+        // showing or sorting checkpoints by age saw every one of them dated to the epoch. The
+        // existing test asserted `timestamp >= 0`, which 0 satisfies, so nothing noticed.
         info.timestamp = 0;
+        {
+            const std::string manifest_path = ckpt_dir + "/manifest.txt";
+            const size_t manifest_size = impl.backend->size(manifest_path);
+            if (manifest_size > 0) {
+                std::vector<char> buffer(manifest_size);
+                try {
+                    impl.backend->read(manifest_path, buffer.data(), buffer.size());
+                    std::istringstream lines(std::string(buffer.begin(), buffer.end()));
+                    std::string line;
+                    int index = 0;
+                    while (std::getline(lines, line)) {
+                        if (index == 2) {  // version, step, timestamp
+                            try {
+                                info.timestamp = std::stoll(line);
+                            } catch (const std::exception&) {
+                                info.timestamp = 0;
+                            }
+                            break;
+                        }
+                        ++index;
+                    }
+                } catch (const std::exception&) {
+                    info.timestamp = 0;
+                }
+            }
+        }
         // Size comes from the length prefix the save path writes, so this works for
         // any backend rather than only ones backed by a real filesystem.
         size_t model_size = 0;

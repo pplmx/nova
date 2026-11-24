@@ -258,10 +258,18 @@ namespace nova::checkpoint::test {
         ASSERT_TRUE(info.has_value());
         EXPECT_EQ(info->step, 7);
         EXPECT_EQ(info->path, "ckpt_7");
-        // Reading an uninitialised field is undefined behaviour; these assertions
-        // pin that the values are defined, whatever they are.
-        EXPECT_GE(info->timestamp, 0);
-        EXPECT_GE(info->size_bytes, 0u);
+        // Reading an uninitialised field is undefined behaviour; these assertions pin that the
+        // values are defined. They used to read `EXPECT_GE(info->timestamp, 0)`, which a hard-coded
+        // 0 satisfies -- and a hard-coded 0 is exactly what get_checkpoint_info() returned, so the
+        // real timestamp in the manifest was written and never read.
+        EXPECT_GT(info->timestamp, 0) << "the timestamp save_checkpoint() records must be read back, not replaced with 0";
+
+        // It must be a plausible wall-clock reading for a checkpoint written moments ago, in
+        // nanoseconds since the epoch like the manifest stores it.
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        EXPECT_LT(info->timestamp, now_ns + 60LL * 1000 * 1000 * 1000) << "timestamp is in the future";
+        EXPECT_GT(info->timestamp, now_ns - 3600LL * 1000 * 1000 * 1000) << "timestamp is more than an hour old for a checkpoint just written";
+        EXPECT_GT(info->size_bytes, 0u) << "a checkpoint with tensors has a non-zero payload";
     }
 
     TEST(CheckpointManagerTest, UnknownStepHasNoInfo) {
