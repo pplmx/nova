@@ -5,13 +5,20 @@
 
 namespace cuda::testing {
 
-    static constexpr std::array<const char*, 3> LEVEL_NAMES = {
+    /// Number of DeterminismLevel values. The tables below are indexed by the enum, and that
+    /// indexing had no bound: determinism_level_name(static_cast<DeterminismLevel>(4)) read past the
+    /// 3-entry table and returned a string from the neighbouring LEVEL_DESCRIPTIONS array, while
+    /// index 3 returned a null pointer. Measured before the guard below.
+    static constexpr size_t kLevelCount = static_cast<size_t>(DeterminismLevel::GpuToGpu) + 1;
+    static_assert(kLevelCount == 3, "DeterminismLevel gained a value: extend LEVEL_NAMES and LEVEL_DESCRIPTIONS to match");
+
+    static constexpr std::array<const char*, kLevelCount> LEVEL_NAMES = {
         "not_guaranteed",
         "run_to_run",
         "gpu_to_gpu",
     };
 
-    static constexpr std::array<const char*, 3> LEVEL_DESCRIPTIONS = {
+    static constexpr std::array<const char*, kLevelCount> LEVEL_DESCRIPTIONS = {
         "No determinism guarantees between runs",
         "Results are reproducible across runs on the same GPU",
         "Results are reproducible across different GPUs",
@@ -27,11 +34,13 @@ namespace cuda::testing {
     }
 
     const char* FPDeterminismControl::level_name() const {
-        return LEVEL_NAMES[static_cast<size_t>(level_)];
+        const auto idx = static_cast<size_t>(level_);
+        return idx < kLevelCount ? LEVEL_NAMES[idx] : "unknown";
     }
 
     const char* FPDeterminismControl::level_description() const {
-        return LEVEL_DESCRIPTIONS[static_cast<size_t>(level_)];
+        const auto idx = static_cast<size_t>(level_);
+        return idx < kLevelCount ? LEVEL_DESCRIPTIONS[idx] : "unknown determinism level";
     }
 
     // FTZ and DAZ are floating-point modes. They are selected per compilation unit with
@@ -105,11 +114,13 @@ namespace cuda::testing {
     }
 
     const char* determinism_level_name(DeterminismLevel level) {
-        return LEVEL_NAMES[static_cast<size_t>(level)];
+        const auto idx = static_cast<size_t>(level);
+        return idx < kLevelCount ? LEVEL_NAMES[idx] : "unknown";
     }
 
     const char* determinism_level_description(DeterminismLevel level) {
-        return LEVEL_DESCRIPTIONS[static_cast<size_t>(level)];
+        const auto idx = static_cast<size_t>(level);
+        return idx < kLevelCount ? LEVEL_DESCRIPTIONS[idx] : "unknown determinism level";
     }
 
     ScopedDeterminism::ScopedDeterminism(DeterminismLevel level)

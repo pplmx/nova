@@ -158,4 +158,34 @@ namespace cuda::testing::test {
         }
     }
 
+    // The level tables are indexed straight from the enum with no bound. Measured before the guard:
+    //
+    //     level 2 -> "gpu_to_gpu"
+    //     level 3 -> (null)                                  <- read past a 3-entry array
+    //     level 4 -> "No determinism guarantees between runs" <- the NEIGHBOURING array's string
+    //
+    // Index 4 returning a sentence from LEVEL_DESCRIPTIONS is the visible proof that the read left
+    // the table. Note this one is not caught by a sanitiser in a normal build: both arrays live in
+    // the same translation unit and the access lands inside defined static storage.
+    TEST(DeterminismLevelNameTest, OutOfRangeLevelsReportUnknownInsteadOfReadingPastTheTable) {
+        EXPECT_STREQ(determinism_level_name(DeterminismLevel::NotGuaranteed), "not_guaranteed");
+        EXPECT_STREQ(determinism_level_name(DeterminismLevel::RunToRun), "run_to_run");
+        EXPECT_STREQ(determinism_level_name(DeterminismLevel::GpuToGpu), "gpu_to_gpu");
+
+        // One past the end, and further.
+        EXPECT_STREQ(determinism_level_name(static_cast<DeterminismLevel>(3)), "unknown");
+        EXPECT_STREQ(determinism_level_name(static_cast<DeterminismLevel>(4)), "unknown");
+
+        EXPECT_STREQ(determinism_level_description(static_cast<DeterminismLevel>(3)), "unknown determinism level");
+        EXPECT_STREQ(determinism_level_description(static_cast<DeterminismLevel>(4)), "unknown determinism level");
+
+        // Every valid level still has a non-empty description.
+        for (int i = 0; i <= 2; ++i) {
+            const char* desc = determinism_level_description(static_cast<DeterminismLevel>(i));
+            ASSERT_NE(desc, nullptr);
+            EXPECT_STRNE(desc, "") << "level " << i << " has no description";
+            EXPECT_STRNE(desc, "unknown determinism level") << "level " << i << " fell through the guard";
+        }
+    }
+
 }  // namespace cuda::testing::test
