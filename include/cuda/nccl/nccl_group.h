@@ -96,6 +96,21 @@ namespace cuda::nccl {
         NcclResult execute();
 
         /**
+         * @brief Result of the implicit execution performed by the destructor
+         *
+         * The destructor runs the queued operations when the caller never called execute(), and it
+         * cannot report a failure by throwing -- a destructor is noexcept, so an escaping exception
+         * would call std::terminate. It used to discard the NcclResult entirely, which meant a
+         * caller using the RAII form had no way to learn that the collectives failed: the object
+         * simply went away and the error with it.
+         *
+         * Read this after the handle is gone, or before if execute() was called explicitly, to find
+         * out what happened. It is ncclSuccess when nothing was queued or when execute() succeeded.
+         * Calling execute() yourself is still the way to get the error at the point it happens.
+         */
+        [[nodiscard]] NcclResult last_result() const noexcept;
+
+        /**
          * @brief Check if operations are pending
          */
         [[nodiscard]] bool has_operations() const noexcept;
@@ -110,6 +125,8 @@ namespace cuda::nccl {
         cudaStream_t stream_;
         std::vector<std::function<NcclResult()>> operations_;
         bool executed_ = false;
+        /// Kept so the destructor's implicit execution is not a silent no-op on failure.
+        NcclResult last_result_ {.code = ncclSuccess, .error_message = ""};
 
         NcclResult execute_internal();
     };

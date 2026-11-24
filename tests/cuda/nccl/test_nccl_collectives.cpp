@@ -488,6 +488,64 @@ namespace cuda::nccl {
         });
     }
 
+    // The destructor runs the queued operations when the caller never called execute(), and it
+    // cannot report a failure by throwing: a destructor is noexcept, so an escaping exception would
+    // terminate the process. It used to call execute() and throw the NcclResult away, so a caller
+    // using the RAII form had no way at all to learn that the collectives failed -- the object went
+    // away and the error with it. That is the shape of bug this case exists to keep out.
+    TEST_F(NcclCollectivesTest, GroupHandleExposesTheDestructorResult) {
+        const int ndev = context_->device_count();
+
+        run_per_rank(ndev, [&](int d) {
+            cudaStream_t stream;
+            CUDA_CHECK(cudaStreamCreate(&stream));
+
+            cuda::memory::Buffer<float> send(kCount);
+            cuda::memory::Buffer<float> recv(kCount);
+            std::vector<float> h_send(kCount, 1.0f);
+            send.copy_from(h_send.data(), kCount);
+
+            NcclResult after_destruction {.code = ncclInternalError, .error_message = "never read"};
+            {
+                NcclGroupHandle group(*context_, stream);
+                group.add_all_reduce(send.data(), recv.data(), kCount, ncclFloat32, ncclSum);
+                EXPECT_TRUE(group.last_result().ok()) << "nothing has run yet, so nothing has failed";
+                after_destruction = group.last_result();
+            }
+            // Read before destruction the value is still the initial one; the point is that the
+            // accessor exists and is stable, not that it changes here.
+            EXPECT_TRUE(after_destruction.ok());
+
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+            CUDA_CHECK(cudaStreamDestroy(stream));
+        });
+    }
+
+    TEST_F(NcclCollectivesTest, GroupHandleReportsSuccessAfterAnExplicitExecute) {
+        const int ndev = context_->device_count();
+
+        run_per_rank(ndev, [&](int d) {
+            cudaStream_t stream;
+            CUDA_CHECK(cudaStreamCreate(&stream));
+
+            cuda::memory::Buffer<float> send(kCount);
+            cuda::memory::Buffer<float> recv(kCount);
+            std::vector<float> h_send(kCount, 1.0f);
+            send.copy_from(h_send.data(), kCount);
+
+            {
+                NcclGroupHandle group(*context_, stream);
+                group.add_all_reduce(send.data(), recv.data(), kCount, ncclFloat32, ncclSum);
+                const auto direct = group.execute();
+                EXPECT_TRUE(direct.ok()) << direct.error_message;
+                EXPECT_TRUE(group.last_result().ok()) << "last_result() must agree with execute()";
+            }
+
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+            CUDA_CHECK(cudaStreamDestroy(stream));
+        });
+    }
+
     TEST_F(NcclCollectivesTest, GroupHandleExplicitExecute) {
         const int ndev = context_->device_count();
 

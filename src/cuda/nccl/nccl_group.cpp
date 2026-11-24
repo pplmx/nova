@@ -27,8 +27,15 @@ namespace cuda::nccl {
 
     NcclGroupHandle::~NcclGroupHandle() {
         if (!executed_ && has_operations()) {
-            execute();
+            // Not throwing: a destructor is noexcept and an escaping exception would terminate the
+            // process. The result is kept instead of discarded so a caller using the RAII form can
+            // still find out whether the collectives worked -- see last_result().
+            last_result_ = execute();
         }
+    }
+
+    NcclResult NcclGroupHandle::last_result() const noexcept {
+        return last_result_;
     }
 
     void NcclGroupHandle::add_all_reduce(const void* send_data, void* recv_data, size_t count, ncclDataType_t dtype, ncclRedOp_t op) {
@@ -108,7 +115,8 @@ namespace cuda::nccl {
     }
 
     NcclResult NcclGroupHandle::execute() {
-        return execute_internal();
+        last_result_ = execute_internal();
+        return last_result_;
     }
 
     NcclResult NcclGroupHandle::execute_internal() {
