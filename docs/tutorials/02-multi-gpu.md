@@ -46,11 +46,11 @@ int main() {
 #include <cuda/distributed/reduce.h>
 
 // Each GPU has partial data
-nova::memory::Buffer<float> local_data(size);
+cuda::memory::Buffer<float> local_data(size);
 initialize_data(local_data);
 
 // All-reduce across GPUs
-nova::distributed::all_reduce(
+cuda::distributed::all_reduce(
     local_data.device_data(),  // Input/output buffer
     size,                      // Element count
     0,                         // Root rank (or any for broadcast result)
@@ -87,7 +87,7 @@ if (mesh.can_access_peer(src_device, dst_device)) {
 int rows_per_gpu = matrix_height / device_count;
 int local_start_row = local_rank * rows_per_gpu;
 
-nova::distributed::DistributedMatmul matmul;
+cuda::distributed::DistributedMatmul matmul;
 matmul.split_rows(rows_per_gpu, local_start_row);
 matmul.execute(local_A, local_B, local_C);
 
@@ -117,16 +117,16 @@ int main() {
     const size_t size = 1024 * 1024;
 
     // Each GPU computes partial sum
-    nova::memory::Buffer<float> local_data(size);
+    cuda::memory::Buffer<float> local_data(size);
     initialize_data(local_data);
 
-    nova::memory::Buffer<float> partial_sum(1);
-    nova::algo::reduce(local_data.device_data(), 
+    cuda::memory::Buffer<float> partial_sum(1);
+    cuda::algo::reduce(local_data.device_data(), 
                        partial_sum.device_data(), 
                        size);
 
     // All-reduce to get global sum
-    nova::distributed::all_reduce(
+    cuda::distributed::all_reduce(
         partial_sum.device_data(), 1, 0, mesh.get_stream()
     );
 

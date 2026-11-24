@@ -35,27 +35,22 @@ Create `hello_nova.cpp`:
 #include <cuda/memory/buffer.h>
 #include <cuda/algo/reduce.h>
 #include <stdio.h>
+#include <vector>
 
 int main() {
-    // Create a buffer on GPU
-    size_t size = 1024;
-    nova::memory::Buffer<float> input(size);
+    const size_t size = 1024;
 
-    // Initialize with data
-    for (size_t i = 0; i < size; i++) {
-        input.host_data()[i] = 1.0f;
-    }
-    input.sync_to_device();
+    // Build the data on the host; Buffer owns device memory only.
+    std::vector<float> host_input(size, 1.0f);
 
-    // Create output buffer
-    nova::memory::Buffer<float> output(1);
+    // Create a buffer on the GPU and upload. copy_from() takes the host pointer and a count.
+    cuda::memory::Buffer<float> input(size);
+    input.copy_from(host_input.data(), size);
 
-    // Sum reduction
-    nova::algo::reduce(input.device_data(), output.device_data(), size);
-
-    // Get result
-    output.sync_to_host();
-    printf("Sum: %f\n", output.host_data()[0]);
+    // reduce_sum() takes the device pointer and the element count and returns the scalar directly:
+    // it synchronises internally, so no separate download is needed for the result.
+    const float sum = cuda::algo::reduce_sum(input.data(), size);
+    printf("Sum: %f\n", sum);
 
     return 0;
 }
@@ -72,11 +67,11 @@ g++ -std=c++23 -I include -I /usr/local/cuda/include \
 
 ### Buffers
 
-`nova::memory::Buffer<T>` manages GPU memory:
+`cuda::memory::Buffer<T>` manages GPU memory:
 
 ```cpp
 // Create buffer
-nova::memory::Buffer<float> buffer(size);
+cuda::memory::Buffer<float> buffer(size);
 
 // Access host memory
 float* host = buffer.host_data();
@@ -102,10 +97,10 @@ NOVA_CHECK(cudaMemcpy(dst, src, size, cudaMemcpyDeviceToDevice));
 
 Available algorithms:
 
-- `nova::algo::reduce` - Sum/min/max reduction
-- `nova::algo::scan` - Prefix sum (inclusive/exclusive)
-- `nova::algo::sort` - Bitonic/odd-even merge sort
-- `nova::algo::histogram` - Histogram computation
+- `cuda::algo::reduce` - Sum/min/max reduction
+- `cuda::algo::scan` - Prefix sum (inclusive/exclusive)
+- `cuda::algo::sort` - Bitonic/odd-even merge sort
+- `cuda::algo::histogram` - Histogram computation
 
 ## Next Steps
 
