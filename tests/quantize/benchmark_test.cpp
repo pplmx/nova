@@ -319,6 +319,21 @@ namespace nova {
                     EXPECT_GT(result.batch_size, 0);
                 }
 
+                // The element counts were int products widened afterwards, so they wrapped before
+                // the widening. With m = k = 65536, `m * k` is exactly 0: cudaMalloc was asked for
+                // zero bytes while the kernel ran over the full extent, and the failure surfaced as
+                // "CUDA error: an illegal memory access was encountered" from a later, unrelated
+                // line. Measured before the fix: benchmark_fp8_gemm(65536, 65536, 8) terminated with
+                // that CUDA error; after it, the call is refused up front with the element total in
+                // the message.
+                TEST_F(QuantizationBenchmarkIntegrationTest, Fp8GemmRejectsShapesThatOverflowTheElementCount) {
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 0, 1, false, false});
+
+                    EXPECT_THROW(bench.benchmark_fp8_gemm(65536, 65536, 8), std::invalid_argument) << "m * k wraps to 0 as an int; the shape must be refused, not allocated";
+                    EXPECT_THROW(bench.benchmark_fp8_gemm(0, 8, 8), std::invalid_argument) << "a zero dimension must be refused";
+                    EXPECT_THROW(bench.benchmark_fp8_gemm(-4, 8, 8), std::invalid_argument) << "a negative dimension must be refused";
+                }
+
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkCalibrationProducesResult) {
                     QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
                     auto data = bench.generate_random_data(256);
