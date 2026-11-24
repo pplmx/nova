@@ -150,6 +150,10 @@ int main() {
     std::vector<std::thread> ranks;
     for (int device = 0; device < device_count; ++device) {
         ranks.emplace_back([device, size]() {
+            // An exception escaping a thread body calls std::terminate. This matters here: in a
+            // build without NCCL, all_reduce below throws, and without this catch the example dies
+            // with "terminate called recursively" instead of reporting what went wrong.
+            try {
             CUDA_CHECK(cudaSetDevice(device));
 
             // Each rank contributes ones, so the global sum is size * device_count.
@@ -168,6 +172,9 @@ int main() {
             std::vector<float> total(1);
             partial.copy_to(total.data(), 1);
             printf("rank %d: global sum = %f\n", device, total[0]);
+            } catch (const std::exception& e) {
+                fprintf(stderr, "rank %d failed: %s\n", device, e.what());
+            }
         });
     }
     for (auto& t : ranks) t.join();
