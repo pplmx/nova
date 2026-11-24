@@ -7,7 +7,7 @@ Nova uses a five-layer architecture designed for education, research, and produc
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  Layer 4: Domain-Specific (Sparse, Quantize, GNN)               │
-│  cuda::sparse, cuda::quantize, cuda::gnn                        │
+│  nova::sparse, nova::quantize, nova::gnn                        │
 └─────────────────────────────────────────────────────────────────┘
                               ▲
 ┌─────────────────────────────────────────────────────────────────┐
@@ -39,11 +39,11 @@ Nova uses a five-layer architecture designed for education, research, and produc
 | **Layer 1** | `cuda::device`                 | Pure CUDA kernels, warp primitives                      | Layer 0        |
 | **Layer 2** | `cuda::algo`                   | Algorithm orchestration, device memory management       | Layers 0, 1    |
 | **Layer 3** | `cuda::stream`, `cuda::memory` | Stream/event wrappers; device buffers (no DeviceVector) | Layers 0, 1, 2 |
-| **Layer 4** | `cuda::sparse/quantize/gnn`    | Domain-specific operations                              | Layers 0-3     |
+| **Layer 4** | `nova::sparse/quantize/gnn`    | Domain-specific operations                              | Layers 0-3     |
 
 ## Domain Modules
 
-### cuda::sparse
+### nova::sparse
 
 Sparse matrix operations including:
 
@@ -52,7 +52,7 @@ Sparse matrix operations including:
 - Iterative solvers: CG, GMRES, BiCGSTAB
 - Preconditioners: Jacobi, ILU(0)
 
-### cuda::quantize
+### nova::quantize
 
 Quantization support:
 
@@ -61,7 +61,7 @@ Quantization support:
 - Quantization-aware training (QAT)
 - Quantized GEMM operations
 
-### cuda::gnn
+### nova::gnn
 
 Graph neural network operations:
 
@@ -106,7 +106,7 @@ src/cuda/
 - **cuda::memory::Buffer**: Not thread-safe; use external synchronization
 - **cuda::memory::DistributedMemoryPool**: Thread-safe via mutex
 - **cuda::memory::MemoryPool**: Thread-safe per-device pools
-- **cuda::error::timeout_manager**: Thread-safe singleton
+- **nova::error::timeout_manager**: Thread-safe singleton
 
 ## Memory Model
 
@@ -134,9 +134,12 @@ All Nova functions use structured error handling:
 // Throws on error with context
 NOVA_CHECK(cudaMalloc(&ptr, size));
 
-// Or returns error codes
-std::error_code ec = cuda::error::make_error_code(err);
+// Or returns error codes. The namespace is nova::error, not cuda::error: every header under
+// include/cuda/error/ declares nova::error, which is why this snippet did not compile.
+std::error_code ec = nova::error::make_error_code(err);
 
-// With recovery hints
-std::string hint = cuda::error::cuda_category().recovery_hint(static_cast<int>(err));
+// Recovery hints live on timeout_error_category. Both cuda_category() and timeout_category()
+// return std::error_category&, which has no recovery_hint(), so the concrete type is needed.
+const auto& category = static_cast<const nova::error::timeout_error_category&>(nova::error::timeout_category());
+std::string_view hint = category.recovery_hint(static_cast<int>(err));
 ```
