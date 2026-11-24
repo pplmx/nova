@@ -17,6 +17,31 @@ namespace cuda::performance::dashboard::test {
         EXPECT_EQ(config.output_format, "json");
     }
 
+    // add_kernel_count() wrote into the exporter's own DashboardData, and get_data() built its
+    // result from a fresh one that never incorporated it. Measured before the fix:
+    // add_kernel_count(12345) flipped is_empty() to false -- so the value was stored -- while
+    // get_data().kernels.kernel_count stayed 0 and to_json() emitted "count": 0. A caller's kernel
+    // count reached nothing, which is the kind of report that silently understates a run.
+    TEST_F(DashboardExporterTest, KernelCountReachesTheExportedData) {
+        exporter.add_kernel_count(12345);
+
+        EXPECT_EQ(exporter.get_data().kernels.kernel_count, 12345u) << "the count must survive into get_data()";
+        const std::string json = exporter.to_json();
+        EXPECT_NE(json.find("12345"), std::string::npos) << "the count must appear in the JSON, got: " << json;
+    }
+
+    TEST_F(DashboardExporterTest, KernelCountDoesNotHideTheComputedSections) {
+        // Starting get_data() from the stored accumulators must not stop the populate_* passes from
+        // running: the roofline/bandwidth/fusion sections are computed from the registered models,
+        // not stored in that struct.
+        exporter.add_kernel_count(7);
+        const auto data = exporter.get_data();
+
+        EXPECT_EQ(data.kernels.kernel_count, 7u);
+        EXPECT_FALSE(data.header.version.empty()) << "populate_header still has to run";
+        EXPECT_FALSE(data.header.timestamp.empty());
+    }
+
     TEST_F(DashboardExporterTest, EmptyExporter) {
         EXPECT_TRUE(exporter.is_empty());
     }

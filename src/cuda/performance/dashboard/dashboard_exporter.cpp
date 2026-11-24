@@ -94,10 +94,24 @@ namespace cuda::performance::dashboard {
         }
     }
 
-    void DashboardExporter::populate_kernels(DashboardData& data) const {}
+    void DashboardExporter::populate_kernels(DashboardData& data) const {
+        // add_kernel_count() writes straight into data_.kernels, and get_data() used to build its
+        // result from a fresh DashboardData that never incorporated data_, so the count the caller
+        // supplied reached nothing. Measured: add_kernel_count(12345) made is_empty() report false
+        // -- the value was stored -- while get_data().kernels.kernel_count stayed 0 and to_json()
+        // emitted "count": 0.
+        //
+        // There is no per-kernel data structure to aggregate here (the other three fields of
+        // KernelSection have no source at all), so this only has to not discard what was recorded.
+        // Keeping the max rather than assigning makes it safe whichever order the sections are
+        // filled in.
+        data.kernels.kernel_count = std::max(data.kernels.kernel_count, data_.kernels.kernel_count);
+    }
 
     DashboardData DashboardExporter::get_data() const {
-        DashboardData d;
+        // Start from the accumulators the add_* accessors write into, then let the populate_*
+        // passes fill in the sections computed from the registered models and trackers.
+        DashboardData d = data_;
         populate_header(d);
         populate_roofline(d);
         populate_fusion(d);
