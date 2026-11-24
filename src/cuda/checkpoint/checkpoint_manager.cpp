@@ -507,15 +507,27 @@ namespace nova::checkpoint {
             // stream: it cannot be loaded. Turning that into `false` here keeps the
             // documented contract of this function (a bool) instead of letting a
             // backend-specific exception escape into the caller's training loop.
-            size_t model_size = 0;
-            impl.backend->read(path + "/model.bin", &model_size, sizeof(size_t));
-            model_file.resize(sizeof(size_t) + model_size);
-            impl.backend->read(path + "/model.bin", model_file.data(), model_file.size());
-
-            size_t optimizer_size = 0;
-            impl.backend->read(path + "/optimizer.bin", &optimizer_size, sizeof(size_t));
-            optimizer_file.resize(sizeof(size_t) + optimizer_size);
-            impl.backend->read(path + "/optimizer.bin", optimizer_file.data(), optimizer_file.size());
+            // The length prefix is read FROM the file and used to size an allocation before
+            // anything has been validated, so a corrupted or hostile blob could claim 2^63 bytes
+            // and drive resize() into bad_alloc or a huge reservation. The blob's real length is
+            // now available from the backend, so the prefix is checked against it instead of being
+            // trusted.
+            const auto read_blob = [&](const std::string& blob_path, std::vector<char>& out) {
+                const size_t actual = impl.backend->size(blob_path);
+                if (actual < sizeof(size_t)) {
+                    throw std::runtime_error("checkpoint blob too short to hold a length prefix: " + blob_path);
+                }
+                size_t declared = 0;
+                impl.backend->read(blob_path, &declared, sizeof(size_t));
+                if (declared != actual - sizeof(size_t)) {
+                    throw std::runtime_error("checkpoint blob " + blob_path + " declares " + std::to_string(declared) + " payload bytes but holds "
+                                             + std::to_string(actual - sizeof(size_t)));
+                }
+                out.resize(actual);
+                impl.backend->read(blob_path, out.data(), out.size());
+            };
+            read_blob(path + "/model.bin", model_file);
+            read_blob(path + "/optimizer.bin", optimizer_file);
         } catch (const std::exception&) {
             return false;
         }

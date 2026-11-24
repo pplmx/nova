@@ -73,6 +73,11 @@ namespace nova::checkpoint::test {
                 return it == files_.end() ? 0u : it->second.size();
             }
 
+            std::vector<char> read_all(const std::string& path) const {
+                const auto it = files_.find(path);
+                return it == files_.end() ? std::vector<char> {} : it->second;
+            }
+
             /// Flip one byte of a stored blob, simulating bit rot on the backup medium.
             bool corrupt_byte_at(const std::string& path, size_t offset) {
                 const auto it = files_.find(path);
@@ -235,6 +240,32 @@ namespace nova::checkpoint::test {
         ASSERT_TRUE(backend->corrupt_byte_at("ckpt_1/model.bin", length - 1)) << "could not corrupt the payload";
         // A corrupt payload can still decode; the checksum is what must catch it.
         EXPECT_FALSE(manager.load_checkpoint("ckpt_1", ok_model, ok_optimizer)) << "a payload that no longer matches its checksum must be refused";
+    }
+
+    // The length prefix is read from the file and used to size an allocation before anything is
+    // validated. A blob claiming more bytes than it holds would drive resize() to an arbitrary
+    // size; it is now checked against the backend's actual length.
+    TEST(CheckpointManagerTest, LoadRejectsALengthPrefixThatDisagreesWithTheBlobSize) {
+        auto& manager = CheckpointManager::instance();
+        auto backend = std::make_shared<InMemoryBackend>();
+        manager.initialize(backend, nullptr);
+
+        EXPECT_NO_THROW(manager.save_checkpoint(2, sample_tensors(), sample_tensors()));
+
+        std::map<std::string, std::vector<float>> model;
+        std::map<std::string, std::vector<float>> optimizer;
+        ASSERT_TRUE(manager.load_checkpoint("ckpt_2", model, optimizer)) << "the fresh checkpoint must load";
+
+        // Rewrite only the 8-byte prefix, leaving the payload untouched.
+        auto blob = backend->read_all("ckpt_2/model.bin");
+        ASSERT_GT(blob.size(), sizeof(size_t));
+        const size_t lie = size_t(1) << 40;  // 1 TiB, far past anything this blob could hold
+        std::memcpy(blob.data(), &lie, sizeof(size_t));
+        backend->write("ckpt_2/model.bin", blob.data(), blob.size());
+
+        std::map<std::string, std::vector<float>> model_after;
+        std::map<std::string, std::vector<float>> optimizer_after;
+        EXPECT_FALSE(manager.load_checkpoint("ckpt_2", model_after, optimizer_after)) << "a length prefix larger than the blob must be refused, not allocated";
     }
 
     TEST(CheckpointManagerTest, LoadReturnsFalseForAMissingCheckpoint) {
