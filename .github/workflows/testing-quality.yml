@@ -33,6 +33,36 @@ jobs:
   # -------------------------------------------------------------------------
   # Fuzz Corpus Baseline Check
   # -------------------------------------------------------------------------
+  # -------------------------------------------------------------------------
+  # Tutorial Examples Must Compile
+  # -------------------------------------------------------------------------
+  tutorial-snippets:
+    name: Tutorial Examples Compile
+    # docs/tutorials/01-quick-start.md shipped for a long time with an example that could not be
+    # built: it qualified types as nova::memory::Buffer when the real namespace is cuda::memory, and
+    # it called Buffer::host_data(), Buffer::sync_to_device() and algo::reduce(), none of which
+    # exist. Nothing compiled the tutorials, so nothing noticed. This job extracts every fenced cpp
+    # block that is a standalone program (#include and int main) and syntax-checks it.
+    #
+    # -fsyntax-only, so no GPU, no device linking and no second build tree: the CUDA headers are
+    # enough. That keeps the job at well under a minute while still catching wrong namespaces,
+    # renamed or removed members, and call signatures that no longer match.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CUDA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-nvcc-12-6
+
+      - name: Compile the tutorial examples
+        run: python3 scripts/check_tutorial_snippets.py --include /usr/local/cuda/include
+
   fuzz-corpus-baseline:
     name: Fuzz Corpus Baseline
     # Pure file inspection, no GPU, but it ran on a self-hosted runner and

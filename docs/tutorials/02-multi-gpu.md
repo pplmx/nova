@@ -19,20 +19,27 @@ Nova provides `DeviceMesh` for easy multi-GPU coordination:
 ## Basic Multi-GPU Setup
 
 ```cpp
+#include <cuda/device/error.h>
 #include <cuda/mesh/device_mesh.h>
+#include <stdio.h>
 
 int main() {
-    // Initialize device mesh
-    auto& mesh = nova::DeviceMesh::instance();
+    // The mesh is a process-wide singleton and lives in cuda::mesh, not nova::.
+    // DeviceMesh describes the topology; it does not own a rank or set the current device.
+    auto& mesh = cuda::mesh::DeviceMesh::instance();
+    mesh.initialize();
 
-    // Get local device count
-    int device_count = mesh.device_count();
-    int local_rank = mesh.local_rank();
+    const int device_count = mesh.device_count();
+    printf("Mesh has %d device(s)\n", device_count);
 
-    printf("Using %d GPU(s), this is GPU %d\n", device_count, local_rank);
+    // Enumerate what the mesh knows about each device.
+    for (const auto& peer : mesh.get_mesh_devices()) {
+        printf("  device %d\n", peer.device_id);
+    }
 
-    // Set device for current rank
-    mesh.set_device(local_rank);
+    // Bind this thread to a device before any CUDA call. That is a CUDA runtime call, not a
+    // DeviceMesh one: the mesh reports topology, choosing a rank is the launcher's job.
+    CUDA_CHECK(cudaSetDevice(0));
 
     // Your computation here...
 
@@ -104,37 +111,34 @@ matmul.execute(local_A, local_B, local_C);
 ## Complete Example
 
 ```cpp
-#include <cuda/mesh/device_mesh.h>
-#include <cuda/distributed/reduce.h>
 #include <cuda/algo/reduce.h>
+#include <cuda/distributed/reduce.h>
+#include <cuda/mesh/device_mesh.h>
+#include <cuda/memory/buffer.h>
 #include <stdio.h>
+#include <vector>
 
 int main() {
-    auto& mesh = nova::DeviceMesh::instance();
-    int local_rank = mesh.local_rank();
-    int device_count = mesh.device_count();
-
+    const int device_count = cuda::mesh::DeviceMesh::instance().device_count();
     const size_t size = 1024 * 1024;
 
-    // Each GPU computes partial sum
-    cuda::memory::Buffer<float> local_data(size);
-    initialize_data(local_data);
+    // Each rank reduces its own shard first. reduce_sum() takes a device pointer and a count and
+    // returns the scalar on the host; it does not take an output buffer.
+    std::vector<float> host_shard(size, 1.0f);
+    cuda::memory::Buffer<float> local_shard(size);
+    local_shard.copy_from(host_shard.data(), size);
+    cuda::memory::Buffer<float> partial(1);
+    partial.copy_from(std::vector<float> {cuda::algo::reduce_sum(local_shard.data(), size)}.data(), 1);
 
-    cuda::memory::Buffer<float> partial_sum(1);
-    cuda::algo::reduce(local_data.device_data(), 
-                       partial_sum.device_data(), 
-                       size);
+    // All-reduce across ranks. all_reduce takes (send, recv, count, op); there is no root-rank
+    // argument and no stream argument on the synchronous form. Both pointers must be device
+    // allocations, and passing the same pointer twice performs the operation in place.
+    cuda::distributed::DistributedReduce::all_reduce(partial.data(), partial.data(), 1, cuda::distributed::ReductionOp::Sum);
 
-    // All-reduce to get global sum
-    cuda::distributed::all_reduce(
-        partial_sum.device_data(), 1, 0, mesh.get_stream()
-    );
-
-    // Print result (only on root GPU)
-    if (local_rank == 0) {
-        partial_sum.sync_to_host();
-        printf("Global sum: %f\n", partial_sum.host_data()[0]);
-    }
+    // Every rank now holds the global sum, so no rank check is needed to print it.
+    std::vector<float> total(1);
+    partial.copy_to(total.data(), 1);
+    printf("Global sum from %d device(s): %f\n", device_count, total[0]);
 
     return 0;
 }
