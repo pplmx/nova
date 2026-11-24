@@ -45,9 +45,10 @@ namespace cuda::neural::fusion {
         cudaError_t err = cudaGetDevice(&device_id);
         cuda_fusion_available_ = (err == cudaSuccess);
 
-        if (config_.use_cuda_fusion && cuda_fusion_available_) {
-            CUBLAS_CHECK(cublasLtCreate(&lt_handle_));
-        }
+        // No handle is created for the "fused" path: cublasLtMatmul is never called (forward()
+        // always routes to forward_fallback), so lt_handle_ would be created and destroyed unused
+        // while enable_cuda_fusion() made the object look like it had a second path. The member and
+        // its cublasLtDestroy stay so the destructor needs no branch, but nothing creates it now.
 
         // Own a private handle unless the caller injected one; see the member
         // comment in the header for why we never touch the global handle.
@@ -73,11 +74,12 @@ namespace cuda::neural::fusion {
     }
 
     void FusedMatmulBiasAct::forward(const float* A, const float* B, const float* bias, float* C, int m, int n, int k, cudaStream_t stream) {
-        if (config_.use_cuda_fusion && cuda_fusion_available_) {
-            forward_fallback(A, B, bias, C, m, n, k, stream);
-        } else {
-            forward_fallback(A, B, bias, C, m, n, k, stream);
-        }
+        // Both branches of the old `if (config_.use_cuda_fusion && cuda_fusion_available_)` called
+        // forward_fallback, so the flag changed nothing: measured, the same inputs gave C[0]=4.500
+        // with fusion on and off, and the only observable difference was is_cuda_fusion_enabled()
+        // reporting true. There is no fused kernel to route to -- cublasLtMatmul is called nowhere
+        // in this file -- so the branch is gone rather than left as a decision that decides nothing.
+        forward_fallback(A, B, bias, C, m, n, k, stream);
     }
 
     void FusedMatmulBiasAct::forward_fallback(const float* A, const float* B, const float* bias, float* C, int m, int n, int k, cudaStream_t stream) {

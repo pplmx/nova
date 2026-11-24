@@ -29,9 +29,19 @@ namespace cuda::neural::fusion {
         void set_activation(ActivationType activation);
         ActivationType get_activation() const;
 
+        /// Sets a flag that forward() does not consult.
+        ///
+        /// @warning There is no fused kernel to route to: cublasLtMatmul is called nowhere in this
+        /// file and forward() always runs forward_fallback (cuBLAS GEMM + bias + activation). The
+        /// flag used to gate a branch whose two arms were the same call, so enabling this changed
+        /// nothing observable except what is_cuda_fusion_enabled() reported -- measured, identical
+        /// output with fusion on and off.
+        ///
+        /// Kept because callers compile against it; do not read it as a performance switch, and do
+        /// not use is_cuda_fusion_enabled() to decide whether work will be fused.
         void enable_cuda_fusion();
         void disable_cuda_fusion();
-        bool is_cuda_fusion_enabled() const;
+        [[nodiscard]] bool is_cuda_fusion_enabled() const;
 
     private:
         void forward_fallback(const float* A, const float* B, const float* bias, float* C, int m, int n, int k, cudaStream_t stream);
