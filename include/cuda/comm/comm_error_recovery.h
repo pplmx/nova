@@ -178,14 +178,39 @@ namespace nova::comm {
     public:
         static CommErrorRecovery& instance();
 
+        /**
+         * @brief Wire this object to the health monitor and start it
+         *
+         * @warning @p error_callback is IGNORED. The monitor is given an internal lambda that calls
+         * on_comm_error() instead, so a caller's callback is never invoked. Passing one has looked
+         * like registering your handler since this was written; it does not. Use on_comm_error()
+         * through HealthMonitor::set_error_callback() yourself if you need your own handler.
+         */
         void initialize(HealthMonitor::ErrorCallback error_callback);
         void shutdown();
 
         void on_comm_error(const CommError& error);
         bool should_retry(const CommError& error);
 
+        /**
+         * @brief Reset the retry circuit breaker
+         *
+         * @warning This does NOT recreate a communicator, and cannot: CommErrorRecovery holds no
+         * communicator, only the health monitor, retry handler and error classifier singletons (see
+         * Impl). The body is a single reset_circuit_breaker() call, identical to on_comm_error()'s
+         * recoverable branch. @p device_id is unused.
+         *
+         * The name is kept because callers compile against it, but nothing in this tree calls it and
+         * nothing in this tree can initialise a communicator, so the promise was never deliverable.
+         * A caller that needs a fresh communicator has to create one itself.
+         */
         void recreate_communicator(int device_id);
 
+        /// Runs @p func under the retry policy.
+        ///
+        /// @warning @p device_id and @p stream are IGNORED. This wrapper never touches a device or a
+        /// stream; it exists for the retry policy alone. It is safe to call with any values, but do
+        /// not read it as pinning the work to a device or scheduling it on a stream.
         template <typename CollectiveFunc>
         auto wrap_collective(CollectiveFunc&& func, int device_id, cudaStream_t stream, const std::string& operation_name) -> std::invoke_result_t<CollectiveFunc> {
             // Same reason as execute_with_retry: the definition has to be visible.

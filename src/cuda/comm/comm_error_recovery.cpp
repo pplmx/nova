@@ -346,6 +346,8 @@ namespace nova::comm {
     }
 
     void CommErrorRecovery::initialize(HealthMonitor::ErrorCallback error_callback) {
+        // error_callback is dropped: the monitor is handed the lambda below instead, so a caller's
+        // own handler is never invoked. Documented on the declaration.
         impl_->health_monitor = &HealthMonitor::instance();
         impl_->retry_handler = &RetryHandler::instance();
         impl_->error_classifier = &ErrorClassifier::instance();
@@ -380,6 +382,11 @@ namespace nova::comm {
     }
 
     void CommErrorRecovery::recreate_communicator(int device_id) {
+        // No communicator is recreated, because this object holds none -- Impl carries the health
+        // monitor, retry handler and error classifier only. The body is on_comm_error()'s recoverable
+        // branch under a different name. Documented on the declaration so the name cannot go on
+        // implying a rebuild; see the warning there.
+        (void)device_id;
         impl_->retry_handler->reset_circuit_breaker();
     }
 

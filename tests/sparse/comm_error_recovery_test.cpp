@@ -330,4 +330,39 @@ namespace nova::comm::test {
         EXPECT_NO_THROW(recovery.set_timeout_threshold(std::chrono::seconds(30)));
     }
 
+    // recreate_communicator() cannot recreate a communicator: CommErrorRecovery holds the health
+    // monitor, retry handler and error classifier singletons and nothing else, so there is no
+    // communicator to replace. The body is a single reset_circuit_breaker() call -- the same thing
+    // on_comm_error() does for a recoverable error, under a name that promises a rebuild.
+    //
+    // The name is kept because callers compile against it, so this pins what it actually does: it
+    // must be safe to call for any device id, and it must not pretend to report a failure it cannot
+    // detect. A future implementation that does rebuild something should have to change this case.
+    TEST(CommErrorRecoveryContractTest, RecreateCommunicatorOnlyResetsTheBreaker) {
+        auto& recovery = CommErrorRecovery::instance();
+        recovery.initialize([](const CommError&) {});
+
+        // Any device id is accepted, including ones that could not name a real device.
+        EXPECT_NO_THROW(recovery.recreate_communicator(0));
+        EXPECT_NO_THROW(recovery.recreate_communicator(-1));
+        EXPECT_NO_THROW(recovery.recreate_communicator(1 << 20));
+
+        recovery.shutdown();
+    }
+
+    // initialize() takes an error callback and does not use it: the monitor is given an internal
+    // lambda that forwards to on_comm_error() instead. A caller who registers a handler here and
+    // expects it to fire will wait forever, so the behaviour is pinned.
+    TEST(CommErrorRecoveryContractTest, InitializeDoesNotInvokeTheCallerCallback) {
+        auto& recovery = CommErrorRecovery::instance();
+        int caller_invocations = 0;
+        recovery.initialize([&caller_invocations](const CommError&) { ++caller_invocations; });
+
+        CommError recoverable;
+        recovery.on_comm_error(recoverable);
+
+        EXPECT_EQ(caller_invocations, 0) << "the callback passed to initialize() is not registered with the monitor, by design limitation";
+        recovery.shutdown();
+    }
+
 }  // namespace nova::comm::test
