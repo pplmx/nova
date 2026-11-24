@@ -24,6 +24,12 @@ cmake -B build -DNOVA_ENABLE_NCCL=OFF
 cmake --build build --parallel
 ```
 
+> **Include order matters.** Put Nova's headers before any `<cuda/std/...>` or Thrust header in a
+> translation unit. Nova declares its types inside `namespace cuda::`, and libcu++ also defines
+> `cuda::std`, so a libcu++ include that comes first makes unqualified `std::` inside Nova resolve to
+> `cuda::std` and the header stops compiling. See [docs/include-order.md](docs/include-order.md) for
+> the reproduction, the scope (99 of 177 headers) and the workaround.
+
 ### Basic Sparse Matrix-Vector Multiply
 
 ```cpp
