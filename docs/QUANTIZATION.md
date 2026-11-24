@@ -83,10 +83,12 @@ quantize_f32_to_int8(
 nova::quantize::QuantizedInt8 a_quant, b_quant;
 // ... quantization setup ...
 
-nova::quantize::QuantizedMatmul::forward(
-    a_quant, b_quant, c_int32, m, n, k,
-    scale_a, scale_b, scale_c
-);
+// forward takes six arguments: both operands, the INT8 output, and m, k, n. There is no
+// separate scale_c parameter and no int32 accumulation buffer -- the signature in
+// quantize_ops.hpp is forward(const QuantizedInt8&, const QuantizedInt8&, QuantizedInt8&,
+// int m, int k, int n).
+nova::quantize::QuantizedInt8 c_quant;
+nova::quantize::QuantizedMatmul::forward(a_quant, b_quant, c_quant, m, k, n);
 ```
 
 ## FP8 Quantization (H100/H200)
