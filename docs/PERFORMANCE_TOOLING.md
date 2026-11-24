@@ -20,6 +20,7 @@ The performance tooling module provides:
 #include <cuda/performance/nvblox_metrics.h>
 #include <cuda/performance/bandwidth/roofline_model.h>
 #include <cuda/performance/dashboard/dashboard_exporter.h>
+#include <string>
 
 // Collect kernel metrics
 auto& collector = cuda::performance::NVBloxMetricsCollector::instance();
@@ -33,8 +34,7 @@ roofline.add_point("matmul", 1024, 64, 1000);
 // Export dashboard
 cuda::performance::dashboard::DashboardExporter exporter;
 exporter.add_roofline_data(roofline);
-std::string json = exporter.to_json();
-```
+std::string json = exporter.to_json();```
 
 ## NVBlox Metrics
 
@@ -44,6 +44,9 @@ Thread-safe metric collection with JSON/CSV export.
 
 ```cpp
 #include <cuda/performance/nvblox_metrics.h>
+
+#include <string>
+using namespace cuda::performance;
 
 auto& collector = NVBloxMetricsCollector::instance();
 
@@ -64,8 +67,7 @@ collector.record_kernel(km);
 
 // Export
 std::string json = collector.to_json();
-std::string csv = collector.to_csv();
-```
+std::string csv = collector.to_csv();```
 
 ### KernelProfiler
 
@@ -73,6 +75,8 @@ CUDA event-based kernel profiling.
 
 ```cpp
 #include <cuda/performance/kernel_profiler.h>
+
+using namespace cuda::performance;
 
 auto& profiler = KernelProfiler::instance();
 profiler.enable();
@@ -86,8 +90,7 @@ profiler.record_end("my_kernel", stream);
 uint64_t latency = profiler.get_kernel_latency_ns("my_kernel");
 
 // Estimate occupancy
-float occ = profiler.estimate_occupancy(256, 4);
-```
+float occ = profiler.estimate_occupancy(256, 4);```
 
 ## Kernel Fusion Analysis
 
@@ -97,6 +100,9 @@ Detects fusion opportunities in operation graphs.
 
 ```cpp
 #include <cuda/performance/fusion/kernel_fusion_analyzer.h>
+
+#include <iostream>
+using namespace cuda::performance::fusion;
 
 KernelFusionAnalyzer analyzer;
 
@@ -110,8 +116,7 @@ auto opportunities = analyzer.detect_opportunities();
 for (const auto& opp : opportunities) {
     std::cout << opp.pattern().name << "\n";
     std::cout << "Potential latency saved: " << opp.potential_latency_saved_ns() << "ns\n";
-}
-```
+}```
 
 ### FusionRecommendationEngine
 
@@ -119,6 +124,9 @@ Generates actionable recommendations with confidence levels.
 
 ```cpp
 #include <cuda/performance/fusion/fusion_profitability.h>
+
+#include <iostream>
+using namespace cuda::performance::fusion;
 
 FusionProfitabilityConfig config;
 config.launch_overhead_us = 100.0;  // 100us launch overhead threshold
@@ -131,8 +139,7 @@ for (const auto& rec : recommendations) {
     std::cout << "Confidence: " << to_string(rec.confidence()) << "\n";
     std::cout << "Speedup: " << rec.speedup_factor() << "x\n";
     std::cout << "Suggestion: " << rec.suggestion() << "\n";
-}
-```
+}```
 
 ### Known Fusion Patterns
 
@@ -153,6 +160,10 @@ Memory bandwidth roofline analysis.
 ```cpp
 #include <cuda/performance/bandwidth/roofline_model.h>
 
+#include <iostream>
+#include <string>
+using namespace cuda::performance::bandwidth;
+
 RooflineModel model;
 
 // Add kernel data
@@ -171,8 +182,7 @@ auto compute_bound = model.get_compute_bound_points();
 
 // Export
 std::string json = model.to_json();
-std::string csv = model.to_csv();
-```
+std::string csv = model.to_csv();```
 
 ### BandwidthUtilizationTracker
 
@@ -180,6 +190,9 @@ Track memory bandwidth utilization.
 
 ```cpp
 #include <cuda/performance/bandwidth/roofline_model.h>
+
+#include <iostream>
+using namespace cuda::performance::bandwidth;
 
 BandwidthUtilizationTracker tracker;
 tracker.set_peak_bandwidth(20.0, 20.0, 900.0);  // H2D, D2H, D2D
@@ -195,8 +208,7 @@ std::cout << "Utilization: " << tracker.utilization_percent() << "%\n";
 // Warning check
 if (tracker.has_low_utilization_warning()) {
     std::cout << "WARNING: Low utilization detected\n";
-}
-```
+}```
 
 ### CacheAnalyzer
 
@@ -205,14 +217,16 @@ Cache hit rate analysis.
 ```cpp
 #include <cuda/performance/bandwidth/cache_analyzer.h>
 
+#include <iostream>
+using namespace cuda::performance::bandwidth;
+
 CacheAnalyzer analyzer;
 auto metrics = analyzer.analyze(0);
 
 if (metrics.available) {
     std::cout << "L1 hit rate: " << metrics.l1_hit_rate * 100 << "%\n";
     std::cout << "L2 hit rate: " << metrics.l2_hit_rate * 100 << "%\n";
-}
-```
+}```
 
 ## Dashboard Export
 
@@ -223,6 +237,9 @@ Unified dashboard data export.
 ```cpp
 #include <cuda/performance/dashboard/dashboard_exporter.h>
 
+#include <string>
+using namespace cuda::performance::dashboard;
+
 DashboardExporter exporter;
 exporter.add_roofline_data(roofline);
 exporter.add_fusion_data(recommendations);
@@ -231,8 +248,7 @@ exporter.add_kernel_count(collector.total_kernel_count());
 
 // Export
 std::string json = exporter.to_json();
-std::string csv = exporter.to_csv();
-```
+std::string csv = exporter.to_csv();```
 
 ### FlameGraphGenerator
 
@@ -240,6 +256,9 @@ Generate flame graphs from NVTX traces.
 
 ```cpp
 #include <cuda/performance/dashboard/flame_graph.h>
+
+#include <string>
+using namespace cuda::performance::dashboard;
 
 FlameGraphGenerator generator;
 
@@ -257,8 +276,7 @@ auto flame_graph = generator.build_flame_graph();
 
 // Export
 std::string json = generator.to_json();
-std::string trace = generator.to_chrome_trace();
-```
+std::string trace = generator.to_chrome_trace();```
 
 ## CMake Configuration
 
