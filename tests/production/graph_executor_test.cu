@@ -212,7 +212,7 @@ TEST_F(MemoryNodeTest, DeviceAllocation) {
     cuda::production::GraphMemoryManager manager;
 
     executor.begin_capture();
-    auto node = manager.add_device_allocation(executor, executor.end_capture(), 1024);
+    auto node = manager.add_device_allocation(executor.end_capture(), 1024);
 
     EXPECT_EQ(node.type(), cuda::production::MemoryType::Device);
     EXPECT_NE(node.ptr(), nullptr);
@@ -227,7 +227,7 @@ TEST_F(MemoryNodeTest, HostAllocation) {
     cuda::production::GraphMemoryManager manager;
 
     executor.begin_capture();
-    auto node = manager.add_host_allocation(executor, executor.end_capture(), 2048);
+    auto node = manager.add_host_allocation(executor.end_capture(), 2048);
 
     EXPECT_EQ(node.type(), cuda::production::MemoryType::HostPinned);
     EXPECT_NE(node.ptr(), nullptr);
@@ -241,7 +241,7 @@ TEST_F(MemoryNodeTest, ManagedAllocation) {
     cuda::production::GraphMemoryManager manager;
 
     executor.begin_capture();
-    auto node = manager.add_managed_allocation(executor, executor.end_capture(), 4096);
+    auto node = manager.add_managed_allocation(executor.end_capture(), 4096);
 
     EXPECT_EQ(node.type(), cuda::production::MemoryType::Managed);
     EXPECT_NE(node.ptr(), nullptr);
@@ -259,8 +259,8 @@ TEST_F(MemoryNodeTest, TotalAllocatedTracking) {
     // end_capture() a second time throws (the executor is no longer capturing).
     cudaGraph_t graph = executor.end_capture();
     // Called for the side effect; the assertions below read the manager's totals.
-    (void)manager.add_device_allocation(executor, graph, 1024);
-    (void)manager.add_device_allocation(executor, graph, 2048);
+    (void)manager.add_device_allocation(graph, 1024);
+    (void)manager.add_device_allocation(graph, 2048);
 
     EXPECT_GE(manager.total_allocated(), 1024u + 2048u);
 
@@ -273,7 +273,7 @@ TEST_F(MemoryNodeTest, Cleanup) {
 
     {
         executor.begin_capture();
-        (void)manager.add_device_allocation(executor, executor.end_capture(), 1024);
+        (void)manager.add_device_allocation(executor.end_capture(), 1024);
     }
 
     EXPECT_EQ(manager.allocation_count(), 1u);
@@ -323,4 +323,32 @@ TEST_F(MemoryNodeTest, ScopedGraphBufferMove) {
     (void)cudaGetLastError();
     (void)cudaDeviceSynchronize();
     ASSERT_EQ(cudaGetLastError(), cudaSuccess);
+}
+
+// The three add_*_allocation entry points took a GraphExecutor& that none of them read: the handle
+// they need is the cudaGraph_t the caller already obtained from executor.end_capture(). The executor
+// argument was there from the commit that introduced CUDA Graphs and was never used.
+//
+// This case pins the contract that replaced it: a bare cudaGraph_t is sufficient, so a caller
+// holding a graph handle can anchor nodes without an executor in scope at all.
+TEST_F(MemoryNodeTest, AllocationNeedsOnlyTheGraphHandle) {
+    cuda::production::GraphExecutor executor;
+    cuda::production::GraphMemoryManager manager;
+
+    executor.begin_capture();
+    const cudaGraph_t graph = executor.end_capture();
+    ASSERT_NE(graph, nullptr);
+
+    auto device_node = manager.add_device_allocation(graph, 512);
+    auto host_node = manager.add_host_allocation(graph, 256);
+    auto managed_node = manager.add_managed_allocation(graph, 128);
+
+    EXPECT_EQ(device_node.type(), cuda::production::MemoryType::Device);
+    EXPECT_EQ(host_node.type(), cuda::production::MemoryType::HostPinned);
+    EXPECT_EQ(managed_node.type(), cuda::production::MemoryType::Managed);
+    EXPECT_NE(device_node.ptr(), nullptr);
+    EXPECT_NE(host_node.ptr(), nullptr);
+    EXPECT_NE(managed_node.ptr(), nullptr);
+
+    manager.cleanup();
 }

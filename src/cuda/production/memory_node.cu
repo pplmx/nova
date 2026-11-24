@@ -2,7 +2,7 @@
 
 namespace cuda::production {
 
-    MemoryNode GraphMemoryManager::add_device_allocation(GraphExecutor& graph, cudaGraph_t cuda_graph, size_t size) {
+    MemoryNode GraphMemoryManager::add_device_allocation(cudaGraph_t cuda_graph, size_t size) {
         void* ptr = nullptr;
         CUDA_CHECK(cudaMalloc(&ptr, size));
 
@@ -23,7 +23,7 @@ namespace cuda::production {
         return MemoryNode(node, MemoryType::Device, ptr, size);
     }
 
-    MemoryNode GraphMemoryManager::add_host_allocation(GraphExecutor& graph, cudaGraph_t cuda_graph, size_t size) {
+    MemoryNode GraphMemoryManager::add_host_allocation(cudaGraph_t cuda_graph, size_t size) {
         void* host_ptr = nullptr;
         CUDA_CHECK(cudaMallocHost(&host_ptr, size));
 
@@ -40,7 +40,7 @@ namespace cuda::production {
         return MemoryNode(node, MemoryType::HostPinned, host_ptr, size);
     }
 
-    MemoryNode GraphMemoryManager::add_managed_allocation(GraphExecutor& graph, cudaGraph_t cuda_graph, size_t size) {
+    MemoryNode GraphMemoryManager::add_managed_allocation(cudaGraph_t cuda_graph, size_t size) {
         void* ptr = nullptr;
         CUDA_CHECK(cudaMallocManaged(&ptr, size));
 

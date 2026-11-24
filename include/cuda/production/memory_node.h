@@ -42,11 +42,18 @@ namespace cuda::production {
     public:
         GraphMemoryManager() = default;
 
-        [[nodiscard]] MemoryNode add_device_allocation(GraphExecutor& graph, cudaGraph_t cuda_graph, size_t size);
+        /// Allocate and anchor a node in @p cuda_graph, tracked by this manager.
+        ///
+        /// The no-op node is what keeps the allocation associated with the graph; the graph handle
+        /// is all that is needed for that, which is why there is no GraphExecutor parameter. All
+        /// three of these used to take one and never read it -- the caller had to obtain the handle
+        /// via executor.end_capture() and pass it separately, so the executor argument was pure
+        /// ceremony. Removed rather than documented since only the two tests below called them.
+        [[nodiscard]] MemoryNode add_device_allocation(cudaGraph_t cuda_graph, size_t size);
 
-        [[nodiscard]] MemoryNode add_host_allocation(GraphExecutor& graph, cudaGraph_t cuda_graph, size_t size);
+        [[nodiscard]] MemoryNode add_host_allocation(cudaGraph_t cuda_graph, size_t size);
 
-        [[nodiscard]] MemoryNode add_managed_allocation(GraphExecutor& graph, cudaGraph_t cuda_graph, size_t size);
+        [[nodiscard]] MemoryNode add_managed_allocation(cudaGraph_t cuda_graph, size_t size);
 
         void free_device(void* ptr);
         void free_host(void* ptr);
@@ -78,7 +85,7 @@ namespace cuda::production {
               executor_(&executor),
               graph_(graph),
               count_(count) {
-            auto node = manager_->add_device_allocation(*executor_, graph_, count * sizeof(T));
+            auto node = manager_->add_device_allocation(graph_, count * sizeof(T));
             ptr_ = static_cast<T*>(node.ptr());
         }
 
