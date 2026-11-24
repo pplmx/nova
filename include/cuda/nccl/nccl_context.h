@@ -204,6 +204,18 @@ namespace cuda::nccl {
          * @brief Initialize with default configuration (all devices)
          *
          * Uses DeviceMesh::instance() to discover available devices.
+         *
+         * @warning In a build with NOVA_ENABLE_NCCL=OFF this returns normally, sets the
+         * initialized flag and fills in the device count, but creates no communicators: the body
+         * of create_streams_and_comms() is inside `#if NOVA_NCCL_ENABLED`. Measured on such a
+         * build: initialize() did not throw, initialized() returned 1 and device_count() returned
+         * 8, while any collective then failed with "multi-GPU all-reduce requires an initialized
+         * NCCL context" -- from a context the caller had just been told was initialized.
+         *
+         * Treat initialized() as "initialize() has been called", not as "collectives can be
+         * issued". Contract-wise this is the wrong place to make the check meaningful without a
+         * design change (creating zero communicators cannot be distinguished from a single-device
+         * mesh), so it is documented rather than changed.
          */
         void initialize();
 

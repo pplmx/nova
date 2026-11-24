@@ -89,7 +89,10 @@ architecture (no MPI):
   every rank verifies it ends with the group sum
 
 ```bash
-# Needs >= 2 visible GPUs for a real NCCL collective:
+# Needs >= 2 visible GPUs AND a build configured with -DNOVA_ENABLE_NCCL=ON.
+# In the default NOVA_ENABLE_NCCL=OFF build, initialize() returns normally and reports the
+# context as initialized while creating no communicators, so the rank threads fail with
+# "multi-GPU all-reduce requires an initialized NCCL context" and the program exits 1.
 CUDA_VISIBLE_DEVICES=1,2 ./build/bin/distributed_training --chunk 1024
 ```
 
