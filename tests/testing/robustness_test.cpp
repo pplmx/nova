@@ -107,4 +107,28 @@ namespace cuda::testing::test {
         EXPECT_EQ(FPDeterminismControl::instance().level(), DeterminismLevel::NotGuaranteed);
     }
 
+    // The bounds checks in layer_error_injection.cpp used a literal 6 in eleven places, decoupled
+    // from LayerBoundary and from the injector array's size. Adding a seventh layer would have left
+    // them silently ignoring it -- a new layer whose injector could never fire, with no error to
+    // show for it. They are derived from the enum now, with a static_assert that fails the build if
+    // the two disagree.
+    //
+    // This case covers the runtime half that survives the change: every valid layer is addressable
+    // and an out-of-range value is refused rather than reading past the array.
+    TEST(LayerBoundaryRangeTest, EveryValidLayerWorksAndOutOfRangeIsRefused) {
+        constexpr size_t kCount = static_cast<size_t>(LayerBoundary::Production) + 1;
+        EXPECT_EQ(kCount, 6u) << "LayerBoundary gained a value: this case and the .cpp both need updating";
+
+        for (size_t i = 0; i < kCount; ++i) {
+            const auto layer = static_cast<LayerBoundary>(i);
+            EXPECT_STRNE(layer_boundary_name(layer), "Unknown") << "layer " << i << " has no name";
+            // Round trip through the parser.
+            EXPECT_EQ(parse_layer_boundary(layer_boundary_name(layer)), layer);
+        }
+
+        // Past the enum: the name must say Unknown rather than indexing LAYER_NAMES out of bounds.
+        const auto past_the_end = static_cast<LayerBoundary>(kCount);
+        EXPECT_STREQ(layer_boundary_name(past_the_end), "Unknown");
+    }
+
 }  // namespace cuda::testing::test

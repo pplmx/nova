@@ -4,7 +4,11 @@
 
 namespace cuda::testing {
 
-    static constexpr std::array<const char*, 6> LAYER_NAMES = {
+    /// Derived from the enum, so a new LayerBoundary cannot leave these loops short.
+    static constexpr size_t kLayerCount = static_cast<size_t>(LayerBoundary::Production) + 1;
+    static_assert(kLayerCount == 6, "LayerBoundary gained a value: extend LAYER_NAMES to match");
+
+    static constexpr std::array<const char*, kLayerCount> LAYER_NAMES = {
         "Memory",
         "Device",
         "Algorithm",
@@ -20,42 +24,42 @@ namespace cuda::testing {
 
     void LayerAwareErrorInjector::inject_at_layer(LayerBoundary layer, cuda::production::ErrorTarget target, cudaError_t error) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6 && layer_enabled_[idx]) {
+        if (idx < kLayerCount && layer_enabled_[idx]) {
             injectors_[idx].inject_always(target, error);
         }
     }
 
     void LayerAwareErrorInjector::inject_once_at_layer(LayerBoundary layer, cuda::production::ErrorTarget target, cudaError_t error) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6 && layer_enabled_[idx]) {
+        if (idx < kLayerCount && layer_enabled_[idx]) {
             injectors_[idx].inject_once(target, error);
         }
     }
 
     void LayerAwareErrorInjector::inject_random_at_layer(LayerBoundary layer, cuda::production::ErrorTarget target, cudaError_t error, double probability) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6 && layer_enabled_[idx]) {
+        if (idx < kLayerCount && layer_enabled_[idx]) {
             injectors_[idx].inject_random(target, error, probability);
         }
     }
 
     void LayerAwareErrorInjector::enable_layer(LayerBoundary layer) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6) {
+        if (idx < kLayerCount) {
             layer_enabled_[idx] = true;
         }
     }
 
     void LayerAwareErrorInjector::disable_layer(LayerBoundary layer) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6) {
+        if (idx < kLayerCount) {
             layer_enabled_[idx] = false;
         }
     }
 
     bool LayerAwareErrorInjector::should_inject_at_layer(LayerBoundary layer, cuda::production::ErrorTarget target) const {
         size_t idx = static_cast<size_t>(layer);
-        if (idx >= 6 || !layer_enabled_[idx]) {
+        if (idx >= kLayerCount || !layer_enabled_[idx]) {
             return false;
         }
         return injectors_[idx].should_inject(target);
@@ -63,7 +67,7 @@ namespace cuda::testing {
 
     cudaError_t LayerAwareErrorInjector::get_error_at_layer(LayerBoundary layer, cuda::production::ErrorTarget target) const {
         size_t idx = static_cast<size_t>(layer);
-        if (idx >= 6) {
+        if (idx >= kLayerCount) {
             return cudaSuccess;
         }
         return injectors_[idx].get_error(target);
@@ -71,7 +75,7 @@ namespace cuda::testing {
 
     size_t LayerAwareErrorInjector::injection_count_at_layer(LayerBoundary layer, cuda::production::ErrorTarget target) const {
         size_t idx = static_cast<size_t>(layer);
-        if (idx >= 6) {
+        if (idx >= kLayerCount) {
             return 0;
         }
         return injectors_[idx].injection_count(target);
@@ -79,7 +83,7 @@ namespace cuda::testing {
 
     void LayerAwareErrorInjector::reset_layer(LayerBoundary layer) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6) {
+        if (idx < kLayerCount) {
             injectors_[idx].reset();
         }
     }
@@ -93,7 +97,7 @@ namespace cuda::testing {
     std::vector<LayerAwareErrorInjector::LayerStats> LayerAwareErrorInjector::get_stats() const {
         std::vector<LayerStats> stats;
 
-        for (size_t i = 0; i < 6; ++i) {
+        for (size_t i = 0; i < kLayerCount; ++i) {
             LayerStats stat;
             stat.layer_name = LAYER_NAMES[i];
             stat.layer_index = i;
@@ -106,14 +110,14 @@ namespace cuda::testing {
 
     const char* layer_boundary_name(LayerBoundary layer) {
         size_t idx = static_cast<size_t>(layer);
-        if (idx < 6) {
+        if (idx < kLayerCount) {
             return LAYER_NAMES[idx];
         }
         return "Unknown";
     }
 
     LayerBoundary parse_layer_boundary(const std::string& name) {
-        for (size_t i = 0; i < 6; ++i) {
+        for (size_t i = 0; i < kLayerCount; ++i) {
             if (name == LAYER_NAMES[i]) {
                 return static_cast<LayerBoundary>(i);
             }

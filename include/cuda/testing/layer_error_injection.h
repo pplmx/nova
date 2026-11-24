@@ -50,8 +50,18 @@ namespace cuda::testing {
         std::vector<LayerStats> get_stats() const;
 
     private:
-        cuda::production::ErrorInjector injectors_[6];
-        bool layer_enabled_[6] = {true, true, true, true, true, true};
+        /// One injector per LayerBoundary value.
+        ///
+        /// Sized from the enum rather than written as a literal: the bounds checks in the .cpp used
+        /// `< 6` in four places, decoupled from this array and from the enum. Adding a seventh
+        /// LayerBoundary would have left those checks silently ignoring the new layer -- no crash,
+        /// no error, just an injector that could never fire. static_assert below fails the build if
+        /// the two ever disagree.
+        static constexpr size_t kLayerCount = static_cast<size_t>(LayerBoundary::Production) + 1;
+        cuda::production::ErrorInjector injectors_[kLayerCount];
+        /// Every layer is enabled by default, matching the previous literal initialiser.
+        bool layer_enabled_[kLayerCount] = {true, true, true, true, true, true};
+        static_assert(kLayerCount == 6, "LayerBoundary gained a value: update the layer handling in layer_error_injection.cpp");
     };
 
     const char* layer_boundary_name(LayerBoundary layer);
