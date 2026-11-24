@@ -334,6 +334,19 @@ namespace nova {
                     EXPECT_THROW(bench.benchmark_fp8_gemm(-4, 8, 8), std::invalid_argument) << "a negative dimension must be refused";
                 }
 
+                // benchmark_fp8_gemm_throughput had no validation at all and repeated the same int
+                // products, so it wrapped identically: measured before the fix, (65536, 65536, 8, 1)
+                // died with "CUDA error: an illegal memory access was encountered". A second limit
+                // is guarded here too -- FP8GEMM::forward indexes with int, so an operand whose
+                // 64-bit element count exceeds INT_MAX faults inside the kernel even when its
+                // allocation succeeded.
+                TEST_F(QuantizationBenchmarkIntegrationTest, Fp8GemmThroughputRejectsUnindexableShapes) {
+                    EXPECT_THROW(benchmark_fp8_gemm_throughput(65536, 65536, 8, 1), std::invalid_argument)
+                        << "m * k wraps to 0 as an int; the shape must be refused, not allocated";
+                    EXPECT_THROW(benchmark_fp8_gemm_throughput(0, 8, 8, 1), std::invalid_argument) << "a zero dimension must be refused";
+                    EXPECT_THROW(benchmark_fp8_gemm_throughput(-4, 8, 8, 1), std::invalid_argument) << "a negative dimension must be refused";
+                }
+
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkCalibrationProducesResult) {
                     QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
                     auto data = bench.generate_random_data(256);

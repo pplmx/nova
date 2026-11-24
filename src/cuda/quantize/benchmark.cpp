@@ -201,6 +201,17 @@ namespace nova {
                                                 + std::to_string(total_elements) + " elements, which does not fit BenchmarkResult::batch_size");
                 }
                 result.batch_size = static_cast<int>(total_elements);
+
+                // FP8GEMM::forward takes the dimensions as int and indexes with them, so an operand
+                // whose 64-bit element count exceeds INT_MAX cannot be handled by the kernel even
+                // though the allocation above succeeded. Measured: 65536 x 65536 x 8 reserved its
+                // 4 GiB operand correctly and then died inside the kernel with "an illegal memory
+                // access was encountered". Refusing here names the real limit.
+                const auto max_int = static_cast<size_t>(std::numeric_limits<int>::max());
+                if (elements_a > max_int || elements_b > max_int || elements_c > max_int) {
+                    throw std::invalid_argument("benchmark_fp8_gemm: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n)
+                                                + " exceeds what FP8GEMM::forward can index (int-sized extents)");
+                }
                 result.num_samples = config_.benchmark_runs;
 
                 std::vector<FP8E4M3> a(elements_a);
@@ -405,22 +416,55 @@ namespace nova {
             }
 
             BenchmarkResult benchmark_fp8_gemm_throughput(int m, int k, int n, int num_runs) {
+                // Same int-product wrapping as benchmark_fp8_gemm(), and this entry point had no
+                // validation at all. Measured before the fix: benchmark_fp8_gemm_throughput(65536,
+                // 65536, 8, 1) died with "CUDA error: an illegal memory access was encountered" --
+                // `m * k` had wrapped to 0, so the FP8 operand was allocated as zero bytes.
+                if (m <= 0 || k <= 0 || n <= 0) {
+                    throw std::invalid_argument("benchmark_fp8_gemm_throughput: dimensions must be positive, got " + std::to_string(m) + "x" + std::to_string(k) + "x"
+                                                + std::to_string(n));
+                }
+                const auto elements_a = static_cast<size_t>(m) * static_cast<size_t>(k);
+                const auto elements_b = static_cast<size_t>(k) * static_cast<size_t>(n);
+                const auto elements_c = static_cast<size_t>(m) * static_cast<size_t>(n);
+                constexpr size_t max_elements = std::numeric_limits<size_t>::max() / sizeof(double) / 4;
+                if (elements_a > max_elements || elements_b > max_elements || elements_c > max_elements) {
+                    throw std::invalid_argument("benchmark_fp8_gemm_throughput: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n)
+                                                + " overflows the addressable element count");
+                }
+                // BenchmarkResult::batch_size is an int, so a total that does not fit it has to be
+                // refused rather than narrowed.
+                if (elements_c > static_cast<size_t>(std::numeric_limits<int>::max())) {
+                    throw std::invalid_argument("benchmark_fp8_gemm_throughput: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n) + " needs "
+                                                + std::to_string(elements_c) + " output elements, which does not fit BenchmarkResult::batch_size");
+                }
+                // FP8GEMM::forward takes the dimensions as int and indexes with them, so an operand
+                // whose 64-bit element count exceeds INT_MAX cannot be handled by the kernel even
+                // when the allocation would succeed. Sizing the buffers correctly is not enough:
+                // 65536 x 65536 x 8 allocates 4 GiB of FP8E4M3 and the kernel then walks past it.
+                // Refusing here turns that into a message instead of a device-side fault.
+                const auto max_int = static_cast<size_t>(std::numeric_limits<int>::max());
+                if (elements_a > max_int || elements_b > max_int || elements_c > max_int) {
+                    throw std::invalid_argument("benchmark_fp8_gemm_throughput: shape " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n)
+                                                + " exceeds what FP8GEMM::forward can index (int-sized extents)");
+                }
+
                 BenchmarkResult result;
                 result.name = "FP8 GEMM " + std::to_string(m) + "x" + std::to_string(k) + "x" + std::to_string(n);
-                result.batch_size = m * n;
+                result.batch_size = static_cast<int>(elements_c);
                 result.num_samples = num_runs;
 
-                std::vector<FP8E4M3> a(m * k);
-                std::vector<FP8E4M3> b(k * n);
-                std::vector<float> c(m * n, 0.0f);
+                std::vector<FP8E4M3> a(elements_a);
+                std::vector<FP8E4M3> b(elements_b);
+                std::vector<float> c(elements_c, 0.0f);
 
                 float *d_a, *d_b, *d_c;
-                CUDA_CHECK(cudaMalloc(&d_a, m * k * sizeof(FP8E4M3)));
-                CUDA_CHECK(cudaMalloc(&d_b, k * n * sizeof(FP8E4M3)));
-                CUDA_CHECK(cudaMalloc(&d_c, m * n * sizeof(float)));
+                CUDA_CHECK(cudaMalloc(&d_a, elements_a * sizeof(FP8E4M3)));
+                CUDA_CHECK(cudaMalloc(&d_b, elements_b * sizeof(FP8E4M3)));
+                CUDA_CHECK(cudaMalloc(&d_c, elements_c * sizeof(float)));
 
-                CUDA_CHECK(cudaMemcpy(d_a, a.data(), m * k * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
-                CUDA_CHECK(cudaMemcpy(d_b, b.data(), k * n * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpy(d_a, a.data(), elements_a * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpy(d_b, b.data(), elements_b * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
 
                 cudaEvent_t start, end;
                 CUDA_CHECK(cudaEventCreate(&start));
