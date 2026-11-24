@@ -59,7 +59,22 @@ namespace cuda::memory {
         PoolMetrics get_metrics() const;
         void defragment();
 
+        /// Bytes currently handed out, grouped by the stream_id each allocation was made with.
         std::unordered_map<int, size_t> get_allocations_by_stream() const;
+
+        /**
+         * @brief Synchronise the device
+         *
+         * @warning The @p stream_id argument has no effect, and cannot have one: the pool records a
+         * caller-supplied integer per allocation (see get_allocations_by_stream()) but never holds
+         * the cudaStream_t it names, so there is nothing to synchronise. The body has always
+         * ignored it and synchronised stream 0.
+         *
+         * Kept rather than changed because the parameter is part of the signature callers compile
+         * against, and because widening it to take a cudaStream_t is a design decision rather than
+         * a fix. What it does NOT do is synchronise "the stream you allocated on" -- do not read it
+         * that way. Pass the real stream to cudaStreamSynchronize instead.
+         */
         void synchronize_stream(int stream_id);
 
         void set_throw_on_failure(bool throw_on_failure);

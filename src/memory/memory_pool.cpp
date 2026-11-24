@@ -307,6 +307,12 @@ namespace cuda::memory {
     }
 
     void MemoryPool::synchronize_stream(int stream_id) {
+        // stream_id is unused by design limitation, not by oversight: the pool stores the integer a
+        // caller passed to allocate(), never the cudaStream_t it refers to, so there is no handle to
+        // hand to cudaStreamSynchronize. Synchronising stream 0 is the whole behaviour this method
+        // has ever had -- but a caller reading `synchronize_stream(my_stream_id)` would reasonably
+        // expect otherwise, which is why the header now says so.
+        (void)stream_id;
         CUDA_CHECK(cudaStreamSynchronize(nullptr));
     }
 

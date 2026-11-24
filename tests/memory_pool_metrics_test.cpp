@@ -41,6 +41,34 @@ TEST_F(MemoryPoolMetricsTest, DestructorDoesNotThrowWhenTheContextIsGone) {
     (void)cudaFree(nullptr);
 }
 
+// synchronize_stream(stream_id) ignores its argument: the pool records the integer a caller passed
+// to allocate() but never holds the cudaStream_t it names, so there is no handle to synchronise.
+// The body has always synchronised stream 0. This case pins that behaviour so a future change to it
+// is deliberate, and states the thing a caller must not assume.
+TEST_F(MemoryPoolMetricsTest, SynchronizeStreamIgnoresItsArgument) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 2;
+    config.preallocate = false;
+
+    cuda::memory::MemoryPool pool(config);
+    auto* p = pool.allocate(1024, /*stream_id=*/7);
+    ASSERT_NE(p, nullptr);
+
+    // Whatever id is passed, the call synchronises the device and returns; it must not throw and
+    // must not depend on the id naming anything real.
+    EXPECT_NO_THROW(pool.synchronize_stream(7));
+    EXPECT_NO_THROW(pool.synchronize_stream(0));
+    EXPECT_NO_THROW(pool.synchronize_stream(-1));
+
+    // The id IS recorded, which is what makes the ignored argument confusing in the first place.
+    const auto by_stream = pool.get_allocations_by_stream();
+    ASSERT_TRUE(by_stream.count(7)) << "the allocation was made on stream 7 and must be recorded there";
+    EXPECT_GT(by_stream.at(7), 0u);
+
+    pool.deallocate(p, 1024);
+}
+
 TEST_F(MemoryPoolMetricsTest, AllocateIncrementsMisses) {
     cuda::memory::MemoryPool::Config config;
     config.block_size = 1024;
