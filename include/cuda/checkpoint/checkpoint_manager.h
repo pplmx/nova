@@ -16,10 +16,31 @@ namespace nova::checkpoint {
         virtual void write(const std::string& path, const void* data, size_t size) = 0;
         virtual void read(const std::string& path, void* data, size_t size) = 0;
         virtual bool exists(const std::string& path) const = 0;
+
+        /**
+         * @brief Byte length of a stored blob
+         *
+         * `read()` requires the caller to know how many bytes to ask for, and the interface offered
+         * no way to find out: a caller wanting a whole file of unknown length had to guess a size
+         * and retry on failure, which for an in-memory backend that refuses over-long reads never
+         * succeeds. Callers ended up hard-coding a bound large enough for the files in question,
+         * which is a guess that breaks when they grow.
+         *
+         * Pure virtual, because a generic implementation cannot be correct: the only thing a
+         * backend-independent body could do is probe read lengths, and a probe reports the length it
+         * asked for rather than the file's, so a 1000-byte blob comes back as whatever power of two
+         * the backend happened to accept (measured: 512 against a map that rejects short reads).
+         * A wrong length is worse than a compile error -- callers size buffers with it. Backends
+         * must answer it themselves; FileStorageBackend uses the filesystem.
+         *
+         * @return the blob's length in bytes, or 0 when it does not exist
+         */
+        virtual size_t size(const std::string& path) = 0;
+
+        virtual std::string resolve_path(const std::string& path) const = 0;
         virtual void remove(const std::string& path) = 0;
         virtual std::vector<std::string> list(const std::string& dir) const = 0;
         virtual void create_directory(const std::string& path) = 0;
-        virtual std::string resolve_path(const std::string& path) const = 0;
     };
 
     class FileStorageBackend : public StorageBackend {
@@ -28,6 +49,7 @@ namespace nova::checkpoint {
 
         void write(const std::string& path, const void* data, size_t size) override;
         void read(const std::string& path, void* data, size_t size) override;
+        size_t size(const std::string& path) override;
         bool exists(const std::string& path) const override;
         void remove(const std::string& path) override;
         std::vector<std::string> list(const std::string& dir) const override;

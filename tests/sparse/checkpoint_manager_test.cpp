@@ -68,6 +68,11 @@ namespace nova::checkpoint::test {
                 std::memcpy(data, it->second.data(), size);
             }
 
+            size_t size(const std::string& path) override {
+                const auto it = files_.find(path);
+                return it == files_.end() ? 0u : it->second.size();
+            }
+
             bool exists(const std::string& path) const override {
                 if (files_.count(path) > 0 || directories_.count(path) > 0) {
                     return true;
@@ -267,6 +272,29 @@ namespace nova::checkpoint::test {
     }
 
     // Regression: the class was unconstructible from another translation unit.
+    // size() is the query the interface was missing: read() needs the caller to know the length,
+    // and there was no way to ask. Callers worked around it by guessing a bound and retrying, which
+    // against a backend that refuses over-long reads never converges.
+    TEST(CheckpointManagerTest, BackendReportsBlobSize) {
+        auto backend = std::make_shared<InMemoryBackend>();
+        const char payload[9] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+        backend->write("blob.bin", payload, sizeof(payload));
+
+        EXPECT_EQ(backend->size("blob.bin"), sizeof(payload)) << "a 9-byte blob must report 9";
+        EXPECT_EQ(backend->size("absent.bin"), 0u) << "a missing blob has no size, and 0 says so without throwing";
+    }
+
+    TEST(FileStorageBackendTest, SizeIsTheFileLength) {
+        const auto path = std::filesystem::temp_directory_path() / "nova_ckpt_size_probe";
+        std::filesystem::remove_all(path);
+        FileStorageBackend backend(path.string());
+        const std::string payload = "0123456789abcdef";  // 16 bytes, not just the common sizes
+        backend.write("f.bin", payload.data(), payload.size());
+
+        EXPECT_EQ(backend.size("f.bin"), payload.size());
+        EXPECT_EQ(backend.size("missing.bin"), 0u) << "a missing file reports 0 rather than throwing";
+    }
+
     TEST(FileStorageBackendTest, CanBeConstructedOutsideItsOwnSourceFile) {
         const auto path = std::filesystem::temp_directory_path() / "nova_ckpt_backend_test";
         std::filesystem::remove_all(path);

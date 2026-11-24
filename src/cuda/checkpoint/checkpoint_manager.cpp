@@ -97,6 +97,13 @@ namespace nova::checkpoint {
         }
     }
 
+    size_t FileStorageBackend::size(const std::string& path) {
+        const auto full_path = impl_->resolve_path(path);
+        std::error_code ec;
+        const auto bytes = fs::file_size(full_path, ec);
+        return ec ? 0u : static_cast<size_t>(bytes);
+    }
+
     bool FileStorageBackend::exists(const std::string& path) const {
         return fs::exists(impl_->resolve_path(path));
     }
