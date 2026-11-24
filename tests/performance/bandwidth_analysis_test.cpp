@@ -97,6 +97,37 @@ namespace cuda::performance::bandwidth::test {
         EXPECT_EQ(tracker.average_bandwidth_gbs(), 0.0);
     }
 
+    // Each utilization accessor must divide its OWN direction's mean by that link's peak. Before
+    // the fix all three divided the mean of every sample by their own peak, so mixing directions
+    // produced ratios that describe nothing. Measured: one H2D sample at 10 GB/s and one D2D sample
+    // at 450 GB/s, against peaks of 20/20/900, gave h2d_utilization_percent() = 1150% (the honest
+    // answer is 50%) and d2d_utilization_percent() = 25.56% (also 50%).
+    TEST_F(BandwidthUtilizationTest, DirectionalUtilizationsUseOnlyTheirOwnSamples) {
+        tracker.set_peak_bandwidth(20.0, 20.0, 900.0);
+        tracker.add_h2d_sample(10.0, 1000, 100);   // 50% of the 20 GB/s host link
+        tracker.add_d2d_sample(450.0, 1000, 100);  // 50% of the 900 GB/s device link
+
+        EXPECT_DOUBLE_EQ(tracker.h2d_utilization_percent(), 50.0);
+        EXPECT_DOUBLE_EQ(tracker.d2d_utilization_percent(), 50.0);
+        // No D2H sample was recorded, so there is nothing to report for that link.
+        EXPECT_DOUBLE_EQ(tracker.d2h_utilization_percent(), 0.0);
+    }
+
+    // A utilization cannot exceed 100%. With the default placeholder peaks a single sample above
+    // them used to produce one anyway, which is the visible symptom of dividing by the wrong peak.
+    TEST_F(BandwidthUtilizationTest, UtilizationStaysAtOrBelowOneHundredPercentForAPlausibleSample) {
+        tracker.set_peak_bandwidth(20.0, 900.0, 1555.0);
+        tracker.add_h2d_sample(12.0, 1000, 100);    // 60% of 20
+        tracker.add_d2d_sample(1200.0, 1000, 100);  // ~77% of 1555
+
+        const double h2d = tracker.h2d_utilization_percent();
+        const double d2d = tracker.d2d_utilization_percent();
+        EXPECT_GE(h2d, 0.0);
+        EXPECT_LE(h2d, 100.0) << "an interconnect cannot exceed its own peak";
+        EXPECT_GE(d2d, 0.0);
+        EXPECT_LE(d2d, 100.0) << "HBM cannot exceed its own peak";
+    }
+
     TEST_F(BandwidthUtilizationTest, AddSample) {
         tracker.add_sample(500.0, 1e9, 1e9);
         EXPECT_EQ(tracker.sample_count(), 1u);

@@ -186,21 +186,42 @@ namespace cuda::performance::bandwidth {
 
     BandwidthUtilizationTracker::BandwidthUtilizationTracker() {}
 
+    // The four adders used to store a single bool, and add_d2h_sample/add_d2d_sample both set it to
+    // the same value as add_h2d_sample, so the record could not say which link a sample came from.
+    // Nothing read the flag either. Each sample now carries its direction, which is what lets the
+    // per-direction accessors below select their own samples.
     void BandwidthUtilizationTracker::add_sample(double bandwidth_gbs, size_t bytes, uint64_t elapsed_ns) {
-        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, false});
+        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, TransferDirection::D2D});
     }
 
     void BandwidthUtilizationTracker::add_h2d_sample(double bandwidth_gbs, size_t bytes, uint64_t elapsed_ns) {
-        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, true});
+        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, TransferDirection::H2D});
     }
 
     void BandwidthUtilizationTracker::add_d2h_sample(double bandwidth_gbs, size_t bytes, uint64_t elapsed_ns) {
-        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, true});
+        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, TransferDirection::D2H});
     }
 
     void BandwidthUtilizationTracker::add_d2d_sample(double bandwidth_gbs, size_t bytes, uint64_t elapsed_ns) {
-        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, true});
+        samples_.push_back({bandwidth_gbs, bytes, elapsed_ns, TransferDirection::D2D});
     }
+
+    namespace {
+
+        /// Mean bandwidth of the samples in one direction, or 0 when that direction has none.
+        double mean_for(const std::vector<BandwidthSample>& samples, TransferDirection direction) {
+            double sum = 0.0;
+            size_t count = 0;
+            for (const auto& s : samples) {
+                if (s.direction == direction) {
+                    sum += s.bandwidth_gbs;
+                    ++count;
+                }
+            }
+            return count == 0 ? 0.0 : sum / static_cast<double>(count);
+        }
+
+    }  // namespace
 
     void BandwidthUtilizationTracker::reset() {
         samples_.clear();
@@ -239,24 +260,33 @@ namespace cuda::performance::bandwidth {
         if (peak_h2d_ <= 0.0) {
             return 0.0;
         }
-        double avg = average_bandwidth_gbs();
-        return (avg / peak_h2d_) * 100.0;
+        // Only this direction's samples: dividing the mean of everything by one link's peak gives a
+        // ratio that is not a utilization. Measured before: one H2D sample at 10 GB/s plus one D2D
+        // sample at 450 GB/s made h2d_utilization_percent() report 1150% while the honest answer was
+        // 50%.
+        return (mean_for(samples_, TransferDirection::H2D) / peak_h2d_) * 100.0;
     }
 
     double BandwidthUtilizationTracker::d2h_utilization_percent() const {
         if (peak_d2h_ <= 0.0) {
             return 0.0;
         }
-        double avg = average_bandwidth_gbs();
-        return (avg / peak_d2h_) * 100.0;
+        // Only this direction's samples: dividing the mean of everything by one link's peak gives a
+        // ratio that is not a utilization. Measured before: one H2D sample at 10 GB/s plus one D2D
+        // sample at 450 GB/s made h2d_utilization_percent() report 1150% while the honest answer was
+        // 50%.
+        return (mean_for(samples_, TransferDirection::D2H) / peak_d2h_) * 100.0;
     }
 
     double BandwidthUtilizationTracker::d2d_utilization_percent() const {
         if (peak_d2d_ <= 0.0) {
             return 0.0;
         }
-        double avg = average_bandwidth_gbs();
-        return (avg / peak_d2d_) * 100.0;
+        // Only this direction's samples: dividing the mean of everything by one link's peak gives a
+        // ratio that is not a utilization. Measured before: one H2D sample at 10 GB/s plus one D2D
+        // sample at 450 GB/s made h2d_utilization_percent() report 1150% while the honest answer was
+        // 50%.
+        return (mean_for(samples_, TransferDirection::D2D) / peak_d2d_) * 100.0;
     }
 
     void BandwidthUtilizationTracker::set_peak_bandwidth(double h2d, double d2h, double d2d) {
