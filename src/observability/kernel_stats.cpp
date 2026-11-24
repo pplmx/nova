@@ -94,13 +94,19 @@ namespace cuda::observability {
         CUDA_CHECK(cudaEventRecord(start_, collector.stream()));
     }
 
-    ScopedKernelTiming::~ScopedKernelTiming() {
+    ScopedKernelTiming::~ScopedKernelTiming() noexcept {
         // Not using CUDA_CHECK here: throwing in a destructor is undefined
         // behavior (C++11 destructors default to noexcept). Event cleanup
         // failures are non-critical during teardown.
         cudaEventRecord(end_, collector_.stream());
         cudaStreamSynchronize(collector_.stream());
-        collector_.record_kernel(name_, start_, end_, blocks_, threads_per_block_);
+        // record_kernel() is the exception: it throws from its own CUDA_CHECK on
+        // cudaEventElapsedTime, so the clean-up above being throw-free was not enough on its own.
+        try {
+            collector_.record_kernel(name_, start_, end_, blocks_, threads_per_block_);
+        } catch (...) {
+            // Same reasoning as above: one lost timing sample must not terminate the process.
+        }
         cudaEventDestroy(start_);
         cudaEventDestroy(end_);
     }

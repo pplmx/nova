@@ -33,6 +33,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <unistd.h>
 #include <string>
 
 namespace cuda::performance::test {
@@ -180,6 +181,50 @@ namespace cuda::performance::test {
         EXPECT_GT(block_size, 0);
         EXPECT_LE(block_size, prop.maxThreadsPerBlock);
         EXPECT_EQ(block_size % 32, 0) << "the sweep steps by 32 threads, so the result must be a multiple of 32";
+    }
+
+    // ScopedKernelProfile's destructor is noexcept, and the record_end() it calls reports failure by
+    // throwing: three CUDA_CHECK event calls, then the registered callback, which is arbitrary user
+    // code. An exception leaving the destructor reaches std::terminate.
+    TEST(KernelProfilerScopeTest, DestructorSurvivesAThrowingCallback) {
+        auto& profiler = KernelProfiler::instance();
+        profiler.enable();
+        profiler.set_callback([](const std::string&, uint64_t) { throw std::runtime_error("callback failed"); });
+
+        // A name no other case uses: record_end only fires the callback for a record that has a
+        // start event and has not already completed, and the profiler is a process-wide singleton.
+        const std::string name = "throwing_callback_kernel_" + std::to_string(::getpid());
+        EXPECT_NO_THROW({
+            ScopedKernelProfile scope(name, nullptr);
+            // Destruction at the end of this block invokes record_end, which calls the callback.
+        }) << "a throwing callback must not escape the profiling scope's destructor";
+
+        profiler.set_callback(nullptr);
+    }
+
+    // The profiler used to record nothing at all. get_or_create_record() returned
+    // std::move(records_[name]), which handed the unique_ptr to the caller and left null behind in
+    // the map; record_end() looks the name up again, found the null, and silently did nothing.
+    // Measured through the public API: a record_start/record_end pair around real GPU work left
+    // get_kernel_latency_ns() at 0 and never invoked the callback. After the fix the same sequence
+    // reports a non-zero latency and one callback.
+    //
+    // This case asserts the recording path itself, which the throwing-callback case above depends on
+    // and could not detect on its own: with nothing ever recorded, that case passed on the broken
+    // code too.
+    TEST(KernelProfilerScopeTest, StartAndEndProduceARecordedLatency) {
+        auto& profiler = KernelProfiler::instance();
+        profiler.enable();
+        int invocations = 0;
+        profiler.set_callback([&invocations](const std::string&, uint64_t) { ++invocations; });
+
+        const std::string name = "latency_round_trip_" + std::to_string(::getpid());
+        { ScopedKernelProfile scope(name, nullptr); }
+
+        EXPECT_GT(profiler.get_kernel_latency_ns(name), 0u) << "the pair must record a latency, not discard the record";
+        EXPECT_EQ(invocations, 1) << "the callback must run exactly once for one completed record";
+
+        profiler.set_callback(nullptr);
     }
 
 }  // namespace cuda::performance::test

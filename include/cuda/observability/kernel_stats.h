@@ -47,7 +47,12 @@ namespace cuda::observability {
     public:
         ScopedKernelTiming(const char* name, KernelStatsCollector& collector, size_t blocks = 0, size_t threads_per_block = 0);
 
-        ~ScopedKernelTiming();
+        /// Records the timing on destruction.
+        ///
+        /// Declared noexcept because a destructor is. The body avoids CUDA_CHECK on its own event
+        /// calls, but record_kernel() throws when cudaEventElapsedTime fails, and that exception
+        /// would otherwise escape into std::terminate.
+        ~ScopedKernelTiming() noexcept;
 
         void record_blocks(size_t blocks, size_t threads_per_block) {
             blocks_ = blocks;

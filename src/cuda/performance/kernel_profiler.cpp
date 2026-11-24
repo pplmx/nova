@@ -133,12 +133,21 @@ namespace cuda::performance {
         records_.clear();
     }
 
-    std::unique_ptr<KernelRecord> KernelProfiler::get_or_create_record(const std::string& kernel_name) {
-        auto it = records_.find(kernel_name);
-        if (it == records_.end()) {
-            records_[kernel_name] = std::make_unique<KernelRecord>();
+    KernelRecord* KernelProfiler::get_or_create_record(const std::string& kernel_name) {
+        // Returning std::move(records_[kernel_name]) handed ownership of the record to the caller
+        // and left a null unique_ptr in the map. record_start() then worked on a record the profiler
+        // no longer held, and record_end() -- which looks the name up again -- found the null and
+        // did nothing. Measured: record_start("x") followed by record_end("x") left
+        // get_kernel_latency_ns("x") at 0, so the profiler never reported a latency and never
+        // invoked its callback. The map owns the record; the caller borrows it.
+        // operator[] default-constructs on a missing key but leaves an EXISTING null entry alone, so
+        // a record that was emptied earlier stays null forever and every later lookup for that name
+        // returns nullptr.
+        auto& slot = records_[kernel_name];
+        if (!slot) {
+            slot = std::make_unique<KernelRecord>();
         }
-        return std::move(records_[kernel_name]);
+        return slot.get();
     }
 
     ScopedKernelProfile::ScopedKernelProfile(const std::string& kernel_name, cudaStream_t stream)
@@ -147,8 +156,16 @@ namespace cuda::performance {
         KernelProfiler::instance().record_start(kernel_name_, stream_);
     }
 
-    ScopedKernelProfile::~ScopedKernelProfile() {
-        KernelProfiler::instance().record_end(kernel_name_, stream_);
+    ScopedKernelProfile::~ScopedKernelProfile() noexcept {
+        // record_end() reports failure by throwing (CUDA_CHECK on three event calls, plus whatever
+        // a registered callback does). Letting that out of a destructor reaches std::terminate, so
+        // a profiling scope can kill the process it is only supposed to be measuring.
+        try {
+            KernelProfiler::instance().record_end(kernel_name_, stream_);
+        } catch (...) {
+            // A lost sample is preferable to a terminated process; the timer is scoped to one
+            // kernel launch and the profiler keeps whatever it already recorded.
+        }
     }
 
     float OccupancyCalculator::calculate_theoretical_occupancy(int threads_per_block, int registers_per_thread, int shared_mem_bytes, int device_id) {

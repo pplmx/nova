@@ -39,7 +39,7 @@ namespace cuda::performance {
         KernelProfiler(const KernelProfiler&) = delete;
         KernelProfiler& operator=(const KernelProfiler&) = delete;
 
-        std::unique_ptr<KernelRecord> get_or_create_record(const std::string& kernel_name);
+        KernelRecord* get_or_create_record(const std::string& kernel_name);
 
         ProfilerCallback callback_;
         bool enabled_ {true};
@@ -57,7 +57,13 @@ namespace cuda::performance {
     class ScopedKernelProfile {
     public:
         explicit ScopedKernelProfile(const std::string& kernel_name, cudaStream_t stream = 0);
-        ~ScopedKernelProfile();
+        /// Records the end of the measured region.
+        ///
+        /// Declared noexcept because a destructor is; record_end() calls CUDA_CHECK three times and
+        /// then invokes an arbitrary user callback, all of which can throw. An exception escaping a
+        /// destructor calls std::terminate, so the failure is dropped here instead of being turned
+        /// into a process abort. Use KernelProfiler::record_end() directly when the error matters.
+        ~ScopedKernelProfile() noexcept;
 
         ScopedKernelProfile(const ScopedKernelProfile&) = delete;
         ScopedKernelProfile& operator=(const ScopedKernelProfile&) = delete;
