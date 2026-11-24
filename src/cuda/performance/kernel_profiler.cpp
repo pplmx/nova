@@ -204,7 +204,7 @@ namespace cuda::performance {
         return static_cast<float>(active_threads) / static_cast<float>(prop.maxThreadsPerMultiProcessor);
     }
 
-    int OccupancyCalculator::recommended_block_size(int threads_per_block, int registers_per_thread, int shared_mem_bytes, int device_id) {
+    int OccupancyCalculator::recommended_block_size(int registers_per_thread, int shared_mem_bytes, int device_id) {
         cudaDeviceProp prop;
         if (cudaGetDeviceProperties(&prop, device_id) != cudaSuccess) {
             return 256;

@@ -77,9 +77,20 @@ namespace cuda::performance {
 
     class OccupancyCalculator {
     public:
+        /// Fraction of an SM's thread capacity that a block size can occupy, in [0, 1].
         [[nodiscard]] static float calculate_theoretical_occupancy(int threads_per_block, int registers_per_thread, int shared_mem_bytes, int device_id = 0);
 
-        [[nodiscard]] static int recommended_block_size(int threads_per_block, int registers_per_thread, int shared_mem_bytes, int device_id = 0);
+        /// Smallest block size that reaches the best achievable occupancy.
+        ///
+        /// There is no threads_per_block parameter: this searches every candidate itself and the
+        /// answer does not depend on one. The old signature had one and never read it -- measured,
+        /// recommended_block_size(32, 32, 0, 0) through recommended_block_size(99999, 32, 0, 0) all
+        /// returned 64. Nothing in the tree called it, so the parameter was removed rather than
+        /// documented as dead.
+        ///
+        /// Returns 256 when the device properties cannot be read, which is a conventional default
+        /// rather than a searched value.
+        [[nodiscard]] static int recommended_block_size(int registers_per_thread, int shared_mem_bytes, int device_id = 0);
     };
 
 }  // namespace cuda::performance

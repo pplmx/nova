@@ -249,7 +249,7 @@ namespace cuda::performance::test {
     }
 
     TEST_F(KernelProfilerTest, RecommendedBlockSize) {
-        int block_size = OccupancyCalculator::recommended_block_size(256, 32, 0, 0);
+        int block_size = OccupancyCalculator::recommended_block_size(32, 0, 0);
         EXPECT_GT(block_size, 0);
         EXPECT_LE(block_size, 1024);
     }

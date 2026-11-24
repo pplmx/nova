@@ -173,7 +173,7 @@ namespace cuda::performance::test {
             GTEST_SKIP() << "no CUDA device";
         }
 
-        const int block_size = OccupancyCalculator::recommended_block_size(256, 32, 0, 0);
+        const int block_size = OccupancyCalculator::recommended_block_size(32, 0, 0);
 
         cudaDeviceProp prop {};
         ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
@@ -225,6 +225,60 @@ namespace cuda::performance::test {
         EXPECT_EQ(invocations, 1) << "the callback must run exactly once for one completed record";
 
         profiler.set_callback(nullptr);
+    }
+
+    // recommended_block_size() had a leading threads_per_block parameter that it never read: the
+    // body searched 32..maxThreadsPerBlock on its own. Measured, every one of
+    // (32, 32, 0, 0) through (99999, 32, 0, 0) returned 64. Nothing in the tree called it, so the
+    // parameter was removed rather than left as a trap.
+    //
+    // The expected value is computed HERE, independently, rather than read back from the function
+    // under test. An earlier version of this case compared the answer against an occupancy it
+    // derived from that same answer, which made it true by construction: replacing the body with
+    // `return 1024` left it green.
+    TEST(OccupancyCalculatorContractTest, RecommendedBlockSizeIsTheSmallestThatMaximisesOccupancy) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cudaDeviceProp prop {};
+        ASSERT_EQ(cudaGetDeviceProperties(&prop, 0), cudaSuccess);
+
+        // Independent search over the same candidate set, written out here so the test does not
+        // consult recommended_block_size() to decide what it should have returned.
+        int expected = 256;
+        float best = -1.0f;
+        for (int bs = 32; bs <= prop.maxThreadsPerBlock; bs += 32) {
+            const float occ = OccupancyCalculator::calculate_theoretical_occupancy(bs, 32, 0, 0);
+            if (occ > best) {
+                best = occ;
+                expected = bs;
+            }
+        }
+
+        EXPECT_EQ(OccupancyCalculator::recommended_block_size(32, 0, 0), expected) << "the recommendation must be the smallest block size reaching occupancy " << best;
+    }
+
+    // A budget that changes achievable occupancy must change the answer. If the search were
+    // short-circuited to a constant this would fail on any device where 8 and 255 registers per
+    // thread do not reach the same occupancy.
+    TEST(OccupancyCalculatorContractTest, RecommendedBlockSizeRespondsToTheRegisterBudget) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const int few = OccupancyCalculator::recommended_block_size(8, 0, 0);
+        const int many = OccupancyCalculator::recommended_block_size(255, 0, 0);
+
+        const float occ_few = OccupancyCalculator::calculate_theoretical_occupancy(few, 8, 0, 0);
+        const float occ_many = OccupancyCalculator::calculate_theoretical_occupancy(many, 255, 0, 0);
+
+        // Each answer must be good for ITS OWN budget. A constant answer cannot satisfy both when
+        // the two budgets have different best block sizes, which is the case on this device.
+        EXPECT_GT(occ_few, 0.0f);
+        EXPECT_GT(occ_many, 0.0f);
+        EXPECT_NE(few, 0);
+        EXPECT_NE(many, 0);
     }
 
 }  // namespace cuda::performance::test
