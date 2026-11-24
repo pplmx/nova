@@ -24,6 +24,15 @@ namespace cuda::neural {
     void matmul(const float* A, const float* B, float* C, int m, int n, int k, MatmulOptions options) {
         cublasHandle_t handle = options.handle ? options.handle : get_cublas_handle();
 
+        // Bind the stream before the call and restore the handle afterwards. The handle is shared
+        // (get_cublas_handle() returns a process-wide one), so leaving this caller's stream on it
+        // would silently redirect the next caller that passes no stream.
+        cublasSetStream(handle, options.stream);
+        struct StreamRestore {
+            cublasHandle_t handle;
+            ~StreamRestore() { (void)cublasSetStream(handle, nullptr); }
+        } restore {handle};
+
         float alpha = options.alpha;
         float beta = options.beta;
 

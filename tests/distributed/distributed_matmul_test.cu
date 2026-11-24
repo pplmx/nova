@@ -667,4 +667,78 @@ namespace {
         EXPECT_TRUE(arrays_near(h_C_ref.data(), h_C.data(), m * n, kTolerance)) << "matmul_single_gpu test failed";
     }
 
+    // DistributedMatmul::matmul_async() took a cudaStream_t and ignored it -- the parameter was
+    // commented out in the signature -- so the GEMM always ran on the null stream. The root cause
+    // was one layer down: cuda::neural::MatmulOptions had no stream field and cublasSetStream was
+    // called nowhere in the tree, so no layer of the chain could accept one.
+    //
+    // Measured before the fix: after matmul_async(..., stream, ...), cudaStreamQuery(stream)
+    // returned cudaSuccess -- the queue was empty. After: cudaErrorNotReady, i.e. the work really
+    // is on the stream the caller named.
+    TEST_F(DistributedMatmulTest, MatmulAsyncSubmitsOnTheStreamItIsGiven) {
+        const int m = 8, n = 8, k = 8;
+
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        std::vector<float> h_A(m * k, 1.0f), h_B(k * n, 1.0f);
+        d_A.copy_from(h_A.data(), h_A.size());
+        d_B.copy_from(h_B.data(), h_B.size());
+        CUDA_CHECK(cudaMemset(d_C.data(), 0, m * n * sizeof(float)));
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
+
+        DistributedMatmul mm;
+        mm.matmul_async(d_A.data(), d_B.data(), d_C.data(), m, n, k, stream, DistributedMatmulOptions {});
+
+        // The work must be visible on the stream the caller passed. Querying a stream that has no
+        // work returns cudaSuccess; a stream with pending work returns cudaErrorNotReady.
+        const cudaError_t pending = cudaStreamQuery(stream);
+        EXPECT_EQ(pending, cudaErrorNotReady) << "matmul_async queued nothing on the stream it was given (got: " << cudaGetErrorString(pending) << ")";
+
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        EXPECT_EQ(cudaStreamQuery(stream), cudaSuccess) << "the stream must drain once synchronised";
+
+        // And the result is still correct: 8x8 of 1.0 times 8x8 of 1.0 is 8.0 everywhere.
+        std::vector<float> h_C(m * n, 0.0f);
+        d_C.copy_to(h_C.data(), h_C.size());
+        for (int i = 0; i < m * n; ++i) {
+            ASSERT_FLOAT_EQ(h_C[i], 8.0f) << "element " << i;
+        }
+
+        CUDA_CHECK(cudaStreamDestroy(stream));
+    }
+
+    // The handle is process-wide, so binding a stream to it must not persist past the call that
+    // asked for it. A caller that passes no stream has to land on the null stream again.
+    TEST_F(DistributedMatmulTest, MatmulDoesNotLeakItsStreamOntoTheSharedHandle) {
+        const int m = 4, n = 4, k = 4;
+
+        cuda::memory::Buffer<float> d_A(m * k);
+        cuda::memory::Buffer<float> d_B(k * n);
+        cuda::memory::Buffer<float> d_C(m * n);
+        std::vector<float> h_all(m * k, 1.0f);
+        d_A.copy_from(h_all.data(), m * k);
+        d_B.copy_from(h_all.data(), k * n);
+
+        cudaStream_t stream;
+        CUDA_CHECK(cudaStreamCreate(&stream));
+
+        cuda::neural::MatmulOptions opts;
+        opts.stream = stream;
+        cuda::neural::matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k, opts);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        // Now without a stream: this must go to the null stream, not to `stream` above.
+        cuda::neural::matmul(d_A.data(), d_B.data(), d_C.data(), m, n, k);
+
+        const cudaError_t on_old = cudaStreamQuery(stream);
+        EXPECT_EQ(on_old, cudaSuccess) << "the second call must not have queued work on the first call's stream";
+
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaStreamDestroy(stream));
+    }
+
 }  // namespace

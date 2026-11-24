@@ -155,20 +155,24 @@ namespace cuda::distributed {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    void DistributedMatmul::matmul_async(const float* A, const float* B, float* C, int m, int n, int k, cudaStream_t /*stream*/, DistributedMatmulOptions options) {
+    void DistributedMatmul::matmul_async(const float* A, const float* B, float* C, int m, int n, int k, cudaStream_t stream, DistributedMatmulOptions options) {
         auto& mesh = cuda::mesh::DeviceMesh::instance();
         mesh.initialize();
-
-        int device_count = mesh.device_count();
 
         // Single-GPU fallback (MGPU-13)
         // Always use single-GPU path for correctness in single-process execution
         // Multi-GPU operation requires proper multi-process execution
-        matmul_single_gpu(A, B, C, m, n, k, options);
+        //
+        // The stream now reaches cuBLAS. It used to be ignored -- the parameter was commented out
+        // in the signature -- so the work always went to the null stream regardless of what the
+        // caller passed. Measured before: cudaStreamQuery(passed_stream) returned cudaSuccess
+        // immediately after submission, i.e. nothing had been queued there.
+        matmul_single_gpu(A, B, C, m, n, k, options, stream);
     }
 
-    void DistributedMatmul::matmul_single_gpu(const float* A, const float* B, float* C, int m, int n, int k, DistributedMatmulOptions options) {
+    void DistributedMatmul::matmul_single_gpu(const float* A, const float* B, float* C, int m, int n, int k, DistributedMatmulOptions options, cudaStream_t stream) {
         cuda::neural::MatmulOptions neural_opts;
+        neural_opts.stream = stream;
         neural_opts.alpha = options.alpha;
         neural_opts.beta = options.beta;
         neural_opts.trans_a = options.trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;

@@ -137,7 +137,8 @@ namespace cuda::distributed {
          * @param k Inner dimension
          * @param options Operation options
          */
-        static void matmul_single_gpu(const float* A, const float* B, float* C, int m, int n, int k, DistributedMatmulOptions options = {});
+        /// Local GEMM on the current device, submitted on @p stream (nullptr = the null stream).
+        static void matmul_single_gpu(const float* A, const float* B, float* C, int m, int n, int k, DistributedMatmulOptions options = {}, cudaStream_t stream = nullptr);
 
         /**
          * @brief Check if multi-GPU execution is needed
