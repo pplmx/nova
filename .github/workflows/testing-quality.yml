@@ -88,6 +88,12 @@ jobs:
       - name: Check README against ctest
         run: python3 scripts/check_readme_facts.py build-ninja
 
+      # The blocks in README are fragments and cannot be compiled, but the bug that prompted this
+      # was a block that used cuda::memory::MemoryPool while including only buffer.h. Checking that
+      # every include resolves catches that class without needing a translation unit.
+      - name: Check README includes resolve
+        run: python3 scripts/check_readme_includes.py
+
   fuzz-corpus-baseline:
     name: Fuzz Corpus Baseline
     # Pure file inspection, no GPU, but it ran on a self-hosted runner and

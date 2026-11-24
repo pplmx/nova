@@ -216,14 +216,19 @@ CUDAToolkit, OpenSSL and Threads itself.
 
 ```cpp
 #include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
+#include "cuda/memory/memory_pool.h"
 
 // RAII memory management
 cuda::memory::Buffer<int> buf(1024);
 buf.copy_from(host_data.data(), 1024);
 
-// Memory pool for efficiency
-cuda::memory::MemoryPool pool({.block_size = 1 << 20});
-auto buf2 = pool.allocate(1024);
+// Memory pool for efficiency. Config is not an aggregate (it declares a default
+// constructor), so designated initialisers do not apply; set the fields and pass it in.
+cuda::memory::MemoryPool::Config cfg;
+cfg.block_size = 1 << 20;
+cuda::memory::MemoryPool pool(cfg);
+void* raw = pool.allocate(1024);
 ```
 
 ### Layer 2: Algorithm API
