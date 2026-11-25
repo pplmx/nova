@@ -60,21 +60,35 @@ namespace cuda::benchmark {
             std::vector<double> measurements;
             measurements.reserve(static_cast<size_t>(options_.measurement_iterations));
 
-            cudaEvent_t start, stop;
+            // Both events are released on every path out of this function. The first version created
+            // them and destroyed them at the end, past six CUDA_CHECKs -- the second create, the two
+            // record calls, the synchronise and the elapsed-time query all throw, and any of them
+            // leaked both events. A leaked cudaEvent_t is not reclaimed by cudaDeviceReset() being
+            // reached later, so repeated failing runs accumulate handles.
+            cudaEvent_t start = nullptr;
+            cudaEvent_t stop = nullptr;
             CUDA_CHECK(cudaEventCreate(&start));
-            CUDA_CHECK(cudaEventCreate(&stop));
+            try {
+                CUDA_CHECK(cudaEventCreate(&stop));
 
-            for (int i = 0; i < options_.measurement_iterations; ++i) {
-                CUDA_CHECK(cudaEventRecord(start, nullptr));
+                for (int i = 0; i < options_.measurement_iterations; ++i) {
+                    CUDA_CHECK(cudaEventRecord(start, nullptr));
 
-                kernel();
+                    kernel();
 
-                CUDA_CHECK(cudaEventRecord(stop, nullptr));
-                CUDA_CHECK(cudaEventSynchronize(stop));
+                    CUDA_CHECK(cudaEventRecord(stop, nullptr));
+                    CUDA_CHECK(cudaEventSynchronize(stop));
 
-                float elapsed_ms = 0.0f;
-                CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
-                measurements.push_back(static_cast<double>(elapsed_ms));
+                    float elapsed_ms = 0.0f;
+                    CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+                    measurements.push_back(static_cast<double>(elapsed_ms));
+                }
+            } catch (...) {
+                (void)cudaEventDestroy(start);
+                if (stop != nullptr) {
+                    (void)cudaEventDestroy(stop);
+                }
+                throw;
             }
 
             CUDA_CHECK(cudaEventDestroy(start));

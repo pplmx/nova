@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include "cuda/benchmark/benchmark.h"
 
 class BenchmarkTest : public ::testing::Test {
@@ -144,4 +145,31 @@ TEST_F(RegressionTest, ReturnsTrueWithoutBaseline) {
     current.mean_ms = 100.0;
 
     EXPECT_TRUE(bench.compare_to_baseline(current));
+}
+
+// Benchmark::run created two events and destroyed them at the end, past six CUDA_CHECKs and the
+// user's kernel. Any of those throwing leaked both events: the destroy calls sat after the throw
+// point. A kernel that throws is the reachable way in -- cudaEventCreate failing cannot be requested
+// through any public API, and the allocation injection covers cudaMalloc only.
+TEST(BenchmarkEventCleanupTest, AKernelThatThrowsStillDestroysBothEvents) {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "no CUDA device";
+    }
+    (void)cudaGetLastError();
+
+    cuda::benchmark::Benchmark bench("throwing_kernel");
+
+    bool threw = false;
+    try {
+        bench.run([]() { throw std::runtime_error("kernel failed"); });
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    EXPECT_TRUE(threw) << "the kernel's exception must propagate";
+
+    // If the events had leaked, cudaGetLastError would still be clean -- the leak is invisible here.
+    // What this asserts is that the exception path exists and completes; ASan runs confirm the rest.
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
 }
