@@ -28,9 +28,24 @@ namespace cuda::graph {
           d_row_offsets(nullptr),
           d_columns(nullptr),
           d_weights(nullptr) {
-        row_offsets = new int[num_vertices + 1];
-        columns = new int[num_edges];
-        weights = new float[num_edges];
+        // Three allocations in a row. If the second or third throws bad_alloc, this constructor never
+        // runs its destructor, so everything taken before the throw has no owner. The sizes come
+        // straight from the arguments, so a caller that asks for a graph larger than the host can hold
+        // reaches it -- and the first array is small next to the second when num_edges is large, which
+        // is exactly when the later ones fail.
+        try {
+            row_offsets = new int[static_cast<size_t>(num_vertices) + 1];
+            columns = new int[static_cast<size_t>(num_edges)];
+            weights = new float[static_cast<size_t>(num_edges)];
+        } catch (...) {
+            delete[] row_offsets;
+            delete[] columns;
+            delete[] weights;
+            row_offsets = nullptr;
+            columns = nullptr;
+            weights = nullptr;
+            throw;
+        }
     }
 
     CSRGraph::CSRGraph(CSRGraph&& other) noexcept
