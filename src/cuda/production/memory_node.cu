@@ -14,10 +14,18 @@ namespace cuda::production {
         // dangling capture stream). Graph memcpy nodes also cannot source host
         // memory, so no-op nodes are the correct placeholder for tracked
         // allocations.
-        cudaGraphNode_t node;
-        CUDA_CHECK(cudaGraphAddEmptyNode(&node, cuda_graph, nullptr, 0));
-
-        allocations_.push_back({ptr, size, MemoryType::Device});
+        // The node is added and the allocation recorded under a guard: both can throw, and until the
+        // push_back lands nothing but this frame knows about the memory cudaMalloc just handed out.
+        // cudaGraphAddEmptyNode failing on a graph that is mid-capture or already instantiated is the
+        // ordinary way to get here, and push_back itself can throw bad_alloc.
+        cudaGraphNode_t node {};
+        try {
+            CUDA_CHECK(cudaGraphAddEmptyNode(&node, cuda_graph, nullptr, 0));
+            allocations_.push_back({ptr, size, MemoryType::Device});
+        } catch (...) {
+            (void)cudaFree(ptr);
+            throw;
+        }
         total_allocated_ += size;
 
         return MemoryNode(node, MemoryType::Device, ptr, size);
@@ -28,13 +36,25 @@ namespace cuda::production {
         CUDA_CHECK(cudaMallocHost(&host_ptr, size));
 
         void* device_ptr = nullptr;
-        CUDA_CHECK(cudaMalloc(&device_ptr, size));
+        try {
+            CUDA_CHECK(cudaMalloc(&device_ptr, size));
+        } catch (...) {
+            (void)cudaFreeHost(host_ptr);
+            throw;
+        }
 
-        cudaGraphNode_t node;
-        CUDA_CHECK(cudaGraphAddEmptyNode(&node, cuda_graph, nullptr, 0));
-
-        allocations_.push_back({host_ptr, size, MemoryType::HostPinned});
-        allocations_.push_back({device_ptr, size, MemoryType::Device});
+        // Three things can fail after the two allocations land: the graph node, and either
+        // push_back. All three leaked both buffers before this guard.
+        cudaGraphNode_t node {};
+        try {
+            CUDA_CHECK(cudaGraphAddEmptyNode(&node, cuda_graph, nullptr, 0));
+            allocations_.push_back({host_ptr, size, MemoryType::HostPinned});
+            allocations_.push_back({device_ptr, size, MemoryType::Device});
+        } catch (...) {
+            (void)cudaFreeHost(host_ptr);
+            (void)cudaFree(device_ptr);
+            throw;
+        }
         total_allocated_ += size * 2;
 
         return MemoryNode(node, MemoryType::HostPinned, host_ptr, size);
@@ -44,10 +64,14 @@ namespace cuda::production {
         void* ptr = nullptr;
         CUDA_CHECK(cudaMallocManaged(&ptr, size));
 
-        cudaGraphNode_t node;
-        CUDA_CHECK(cudaGraphAddEmptyNode(&node, cuda_graph, nullptr, 0));
-
-        allocations_.push_back({ptr, size, MemoryType::Managed});
+        cudaGraphNode_t node {};
+        try {
+            CUDA_CHECK(cudaGraphAddEmptyNode(&node, cuda_graph, nullptr, 0));
+            allocations_.push_back({ptr, size, MemoryType::Managed});
+        } catch (...) {
+            (void)cudaFree(ptr);
+            throw;
+        }
         total_allocated_ += size;
 
         return MemoryNode(node, MemoryType::Managed, ptr, size);

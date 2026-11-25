@@ -352,3 +352,53 @@ TEST_F(MemoryNodeTest, AllocationNeedsOnlyTheGraphHandle) {
 
     manager.cleanup();
 }
+
+// add_*_allocation cudaMalloc first and register the buffer in allocations_ afterwards. Anything that
+// threw between the two -- cudaGraphAddEmptyNode on a graph that is mid-capture or already
+// instantiated, or push_back's bad_alloc -- leaked the allocation, because nothing but that stack
+// frame knew the pointer. A null graph makes the node call fail after the malloc succeeded.
+// The leak is not visible through total_allocated() or allocation_count(): the increment sits after
+// the throwing call, so a leaked buffer never reaches the accounting either way. Device memory is the
+// only place it shows, which makes this case sensitive to anything else on the device -- it passed
+// alone and failed in a full -j8 run where other tests were allocating. ctest serialises it via the
+// RUN_SERIAL property set below; do not relax that, and do not replace the measurement with an
+// accounting check, which reports zero whether or not the buffer was freed.
+TEST(GraphMemoryManagerExceptionSafetyTest, ADeviceAllocationThatCannotBeAnchoredIsReleased) {
+    cuda::production::GraphMemoryManager manager;
+
+    constexpr size_t kPerCall = size_t {4} << 20;
+    constexpr int kCalls = 64;
+
+    try {
+        (void)manager.add_device_allocation(nullptr, kPerCall);
+    } catch (...) {}
+
+    size_t free_before = 0;
+    size_t total = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
+
+    for (int i = 0; i < kCalls; ++i) {
+        EXPECT_THROW((void)manager.add_device_allocation(nullptr, kPerCall), std::exception);
+    }
+
+    size_t free_after = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
+
+    EXPECT_LT(free_before - free_after, kPerCall * 2) << "each failed call must release its buffer; " << kCalls << " leaks of " << kPerCall << " bytes would show up here";
+}
+
+TEST(GraphMemoryManagerExceptionSafetyTest, AManagedAllocationThatCannotBeAnchoredIsReleased) {
+    cuda::production::GraphMemoryManager manager;
+
+    EXPECT_THROW((void)manager.add_managed_allocation(nullptr, 4096), std::exception);
+
+    EXPECT_EQ(manager.total_allocated(), 0u);
+}
+
+TEST(GraphMemoryManagerExceptionSafetyTest, AHostAllocationThatCannotBeAnchoredReleasesBothBuffers) {
+    cuda::production::GraphMemoryManager manager;
+
+    EXPECT_THROW((void)manager.add_host_allocation(nullptr, 4096), std::exception);
+
+    EXPECT_EQ(manager.total_allocated(), 0u) << "both the pinned host buffer and its device mirror must be released";
+}

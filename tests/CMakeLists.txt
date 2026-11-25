@@ -464,7 +464,7 @@ if(TARGET cuda_nccl)
 endif()
 
 gtest_discover_tests(nova-tests
-    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*:BufferSerialTest.*:UniquePtrSerialTest.*:MemoryMetricsSerialTest.*:DistributedMemoryPoolSerialTest.*:HealthMonitorSerialTest.*"
+    TEST_FILTER "-RobustnessProfileSerialTest.*:TensorParallelSerialTest.*:BufferSerialTest.*:UniquePtrSerialTest.*:MemoryMetricsSerialTest.*:DistributedMemoryPoolSerialTest.*:HealthMonitorSerialTest.*:GraphMemoryManagerExceptionSafetyTest.*"
     PROPERTIES ENVIRONMENT "${NOVA_NCCL_TESTS_ENV}"
 )
 
@@ -475,6 +475,13 @@ set_tests_properties(robustness_profile_serial PROPERTIES RUN_SERIAL TRUE)
 add_test(NAME tensor_parallel_serial
          COMMAND nova-tests --gtest_filter=TensorParallelSerialTest.*)
 set_tests_properties(tensor_parallel_serial PROPERTIES RUN_SERIAL TRUE)
+
+# GraphMemoryManagerExceptionSafetyTest compares cudaMemGetInfo() across 64 failing allocations.
+# A concurrent test's allocation is indistinguishable from a leaked buffer, so it joins the serial
+# group above for the same reason: the case measures the device, not this process.
+add_test(NAME graph_memory_exception_safety_serial
+         COMMAND nova-tests --gtest_filter=GraphMemoryManagerExceptionSafetyTest.*)
+set_tests_properties(graph_memory_exception_safety_serial PROPERTIES RUN_SERIAL TRUE)
 
 # Three more suites that compare device-wide free-memory snapshots, for the same
 # reason as RobustnessProfileSerialTest above: cudaMemGetInfo aggregates every process
