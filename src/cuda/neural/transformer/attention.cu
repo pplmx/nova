@@ -194,9 +194,18 @@ namespace cuda::neural::transformer {
             }
         }
 
+        // Null before the free, and again before the allocation that replaces it.
+        //
+        // The old sequence freed the buffer and left the member pointing at it, then allocated into
+        // that same member. If the allocation failed the member kept the freed address, buffer_size_
+        // kept the old size, and the destructor or the next call to this function would cudaFree it a
+        // second time. A failed cudaMalloc (a large seq_len against a busy device) is the ordinary
+        // way in.
         if (d_encoding_buffer_) {
             cudaFree(d_encoding_buffer_);
+            d_encoding_buffer_ = nullptr;
         }
+        buffer_size_ = 0;
         CUDA_CHECK(cudaMalloc(&d_encoding_buffer_, seq_len * config_.embed_dim * sizeof(float)));
         CUDA_CHECK(cudaMemcpy(d_encoding_buffer_, h_encoding_buffer_.data(), seq_len * config_.embed_dim * sizeof(float), cudaMemcpyHostToDevice));
         buffer_size_ = seq_len * config_.embed_dim;

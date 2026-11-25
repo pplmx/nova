@@ -21,12 +21,26 @@ namespace nova {
                 result.batch_size = static_cast<int>(data.size());
                 result.num_samples = config_.benchmark_runs;
 
-                float* d_data;
+                // Both buffers are freed at the end of the block, but every CUDA_CHECK between them
+                // and the cudaFree throws -- and so does std::vector<FP8E4M3>'s own allocation. The
+                // first version allocated d_data, then d_quantized, then a vector: a failure at
+                // either later step stranded d_data with nothing holding it. The guards release in
+                // reverse order of acquisition, including on the throwing paths.
+                float* d_data = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_data, data.size() * sizeof(float)));
+                struct DeviceBufferGuard {
+                    float*& p;
+                    ~DeviceBufferGuard() {
+                        if (p != nullptr) {
+                            (void)cudaFree(p);
+                        }
+                    }
+                } data_guard {d_data};
 
                 std::vector<FP8E4M3> quantized(data.size());
-                float* d_quantized;
+                float* d_quantized = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_quantized, data.size() * sizeof(FP8E4M3)));
+                DeviceBufferGuard quantized_guard {d_quantized};
 
                 CUDA_CHECK(cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -67,8 +81,12 @@ namespace nova {
                 // thing it exists to do. Dividing by sqrt(n) gives the size-invariant RMSE.
                 result.relative_error = data.empty() ? 0.0f : compute_l2_error(data, recovered) / std::sqrt(static_cast<float>(data.size()));
 
-                CUDA_CHECK(cudaFree(d_data));
-                CUDA_CHECK(cudaFree(d_quantized));
+                // The guards above free both buffers on every path out of this block, including the
+                // throwing ones, so this no longer has to be the only exit that releases them.
+                (void)cudaFree(d_data);
+                d_data = nullptr;
+                (void)cudaFree(d_quantized);
+                d_quantized = nullptr;
 
                 results_.push_back(result);
                 return result;
