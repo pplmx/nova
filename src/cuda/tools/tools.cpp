@@ -132,13 +132,43 @@ namespace cuda::tools {
             return;
         }
 
-        cudaEvent_t start, end;
+        // Both creates, the record, and the three map inserts below can fail, and end_event() is the
+        // only place that destroys anything -- so a throw before the map entries are all in place used
+        // to leak whatever had been taken. The events were also uninitialised, so no cleanup could
+        // have told which existed.
+        //
+        // Ordering matters: each event is transferred to the guard's counterpart right before the map
+        // insert that makes end_event() responsible for it. That way a throw can never leave the maps
+        // holding a handle this guard also destroys.
+        cudaEvent_t start = nullptr;
+        cudaEvent_t end = nullptr;
+        struct PendingStart {
+            cudaEvent_t& event;
+            bool handed_off = false;
+            ~PendingStart() noexcept {
+                if (!handed_off && event != nullptr) {
+                    (void)cudaEventDestroy(event);
+                }
+            }
+        } pending_start {start};
+        struct PendingEnd {
+            cudaEvent_t& event;
+            bool handed_off = false;
+            ~PendingEnd() noexcept {
+                if (!handed_off && event != nullptr) {
+                    (void)cudaEventDestroy(event);
+                }
+            }
+        } pending_end {end};
+
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&end));
         CUDA_CHECK(cudaEventRecord(start));
 
         start_events_[name] = start;
+        pending_start.handed_off = true;
         end_events_[name] = end;
+        pending_end.handed_off = true;
         cpu_starts_[name] = std::chrono::steady_clock::now();
 
         if (base_timestamp_ == 0) {

@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "cuda_alloc_injection.h"
+
 #include "test_temp_paths.h"
 #include <fstream>
 #include <cuda_runtime.h>
@@ -89,6 +91,23 @@ namespace cuda::tools::test {
         TimelineVisualizer& visualizer = TimelineVisualizer::instance();
         visualizer.clear();
         EXPECT_EQ(visualizer.get_event_count(), 0);
+    }
+
+    // begin_event() creates two events and records the first, and end_event() is the only place
+    // that destroys them. A failure on the second create, or on the record, used to leave what had
+    // been taken with no owner -- and neither handle was initialised.
+    TEST_F(ToolsTest, AFailedSecondEventCreateInBeginEventLeavesNothingBehind) {
+        auto& visualizer = TimelineVisualizer::instance();
+        visualizer.enable();
+
+        cuda_test::reset_event_count();
+
+        // Let the first event through, fail the second.
+        cuda_test::fail_event_after(1);
+        EXPECT_THROW(visualizer.begin_event("probe"), std::exception);
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the event created before the failure must be destroyed";
     }
 
     TEST_F(ToolsTest, TimelineVisualizerRecordKernel) {
