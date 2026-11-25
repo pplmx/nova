@@ -178,3 +178,22 @@ sanitize:
 		LSAN_OPTIONS=$(NOVA_SANITIZE_LSAN_OPTIONS) \
 		UBSAN_OPTIONS=print_stacktrace=1 \
 		ctest --test-dir build-san --output-on-failure -j8
+
+# ThreadSanitizer. Separate from `sanitize` because TSan cannot be combined with ASan in one build.
+#
+# Note on scope: TSan only reports races in code it instruments. Linking a test against
+# libcuda_impl.a checks the test body and nothing else, which is why a race inside MemoryPool went
+# unnoticed for a while even with a concurrency case exercising it. The TSan build instruments the
+# library too, so races inside it are visible here.
+tsan:
+	@cmake -G Ninja -B build-tsan \
+		-DCMAKE_BUILD_TYPE=Debug \
+		-DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -g" \
+		-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+		-DNOVA_ENABLE_NCCL=OFF -DNOVA_ENABLE_MPI=OFF
+	@cmake --build build-tsan --parallel
+# -j2 rather than the -j8 the other targets use. MemoryPoolMetricsTest's context-gone case calls
+# cudaDeviceReset() on purpose, and a parallel TSan run let that reset land on another case's device.
+# Serial runs are clean: 99/99 for MemoryPool* and TimeoutTest at -j1.
+	@TSAN_OPTIONS="halt_on_error=0 second_deadlock_stack=1" \
+		ctest --test-dir build-tsan --output-on-failure -j2
