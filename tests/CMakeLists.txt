@@ -313,6 +313,9 @@ target_link_libraries(nova-tests
 # without it -- and is inert unless a case calls cuda_test::fail_allocation_after().
 target_link_options(nova-tests PRIVATE
     "LINKER:--wrap=cudaMalloc"
+    "LINKER:--wrap=cudaEventCreate"
+    "LINKER:--wrap=cudaEventDestroy"
+    "LINKER:--wrap=cudaFree"
 )
 target_include_directories(nova-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

@@ -37,4 +37,28 @@ namespace cuda_test {
     /// How many allocations have been attempted since the last fail_allocation_after/stop.
     int allocation_attempts();
 
+    /// CUDA events created minus destroyed since the last reset. Driver objects are not heap
+    /// allocations, so ASan says nothing about an event that is never destroyed and CUDA offers no
+    /// handle-count query -- counting them here is the only way a case can tell.
+    ///
+    /// Only useful for callers that live in a compiled translation unit. It does NOT see calls made
+    /// from a header-only template instantiated in the test itself: --wrap redirects unresolved
+    /// symbols at link time, and a template body compiled into the caller resolves cudaEventCreate
+    /// directly. Verified by trying to use it on Benchmark::run(), which is a template in
+    /// include/cuda/benchmark/benchmark.h -- the count stayed 0 through a mutation that created two
+    /// events and never destroyed them, so the case written for it was removed rather than left
+    /// green and meaningless.
+    int live_event_count();
+
+    /// Zeroes the event counter. Call before the code under test, then check live_event_count() after.
+    void reset_event_count();
+
+    /// Device allocations that went through the wrapper and have not been freed yet. Unlike
+    /// live_event_count() this does work for code compiled into the library, because the calls it
+    /// counts are in .cpp/.cu files rather than in a header-only template.
+    int live_allocation_count();
+
+    /// Zeroes the allocation counter.
+    void reset_allocation_count();
+
 }  // namespace cuda_test
