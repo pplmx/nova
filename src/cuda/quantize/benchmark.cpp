@@ -456,29 +456,60 @@ namespace nova {
                 std::vector<FP8E4M3> b(elements_b);
                 std::vector<float> c(elements_c, 0.0f);
 
-                float *d_a, *d_b, *d_c;
-                CUDA_CHECK(cudaMalloc(&d_a, elements_a * sizeof(FP8E4M3)));
-                CUDA_CHECK(cudaMalloc(&d_b, elements_b * sizeof(FP8E4M3)));
-                CUDA_CHECK(cudaMalloc(&d_c, elements_c * sizeof(float)));
+                // Three device buffers and two events, all released at the bottom behind the work
+                // below. Any throw in between -- a failed allocation, a failed create, a failing
+                // copy or a synchronize -- used to leak everything taken before it. The guard owns
+                // the handles the function works with and releases whatever exists on every exit.
+                struct ThroughputResources {
+                    FP8E4M3* d_a = nullptr;
+                    FP8E4M3* d_b = nullptr;
+                    float* d_c = nullptr;
+                    cudaEvent_t start = nullptr;
+                    cudaEvent_t end = nullptr;
+                    ~ThroughputResources() noexcept {
+                        if (start != nullptr) {
+                            cudaEventDestroy(start);
+                        }
+                        if (end != nullptr) {
+                            cudaEventDestroy(end);
+                        }
+                        if (d_a != nullptr) {
+                            cudaFree(d_a);
+                        }
+                        if (d_b != nullptr) {
+                            cudaFree(d_b);
+                        }
+                        if (d_c != nullptr) {
+                            cudaFree(d_c);
+                        }
+                    }
+                } owned;
+
+                CUDA_CHECK(cudaMalloc(&owned.d_a, elements_a * sizeof(FP8E4M3)));
+                CUDA_CHECK(cudaMalloc(&owned.d_b, elements_b * sizeof(FP8E4M3)));
+                CUDA_CHECK(cudaMalloc(&owned.d_c, elements_c * sizeof(float)));
+
+                FP8E4M3* d_a = owned.d_a;
+                FP8E4M3* d_b = owned.d_b;
+                float* d_c = owned.d_c;
 
                 CUDA_CHECK(cudaMemcpy(d_a, a.data(), elements_a * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpy(d_b, b.data(), elements_b * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
 
-                cudaEvent_t start, end;
-                CUDA_CHECK(cudaEventCreate(&start));
-                CUDA_CHECK(cudaEventCreate(&end));
+                CUDA_CHECK(cudaEventCreate(&owned.start));
+                CUDA_CHECK(cudaEventCreate(&owned.end));
 
                 FP8GEMM::Config config;
 
-                CUDA_CHECK(cudaEventRecord(start));
+                CUDA_CHECK(cudaEventRecord(owned.start));
                 for (int i = 0; i < num_runs; ++i) {
                     FP8GEMM::forward(reinterpret_cast<const FP8E4M3*>(d_a), reinterpret_cast<const FP8E4M3*>(d_b), d_c, m, k, n, config, 0);
                 }
-                CUDA_CHECK(cudaEventRecord(end));
-                CUDA_CHECK(cudaEventSynchronize(end));
+                CUDA_CHECK(cudaEventRecord(owned.end));
+                CUDA_CHECK(cudaEventSynchronize(owned.end));
 
                 float ms;
-                CUDA_CHECK(cudaEventElapsedTime(&ms, start, end));
+                CUDA_CHECK(cudaEventElapsedTime(&ms, owned.start, owned.end));
 
                 // cudaEventElapsedTime reports milliseconds, so bytes / ms * 1e3 = bytes/s and
                 // bytes/s / 1e9 = GB/s. The previous expression multiplied the FLOP count by
@@ -488,12 +519,6 @@ namespace nova {
                 const float total_bytes = static_cast<float>(operand_bytes) * num_runs;
                 result.throughput_gbps = total_bytes / ms * 1e3f / 1e9f;
                 result.latency_us = ms * 1000.0f / num_runs;
-
-                CUDA_CHECK(cudaEventDestroy(start));
-                CUDA_CHECK(cudaEventDestroy(end));
-                CUDA_CHECK(cudaFree(d_a));
-                CUDA_CHECK(cudaFree(d_b));
-                CUDA_CHECK(cudaFree(d_c));
 
                 return result;
             }

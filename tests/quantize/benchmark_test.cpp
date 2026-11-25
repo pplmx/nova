@@ -3,6 +3,8 @@
 #include "cuda/device/error.h"
 
 #include <gtest/gtest.h>
+#include "cuda_alloc_injection.h"
+#include <stdexcept>
 #include <vector>
 #include <cmath>
 #include <sstream>
@@ -383,6 +385,34 @@ namespace nova {
                     EXPECT_EQ(result.name, "FP8 Roundtrip");
                     EXPECT_EQ(result.batch_size, 4);
                     EXPECT_GE(result.relative_error, 0.0f);
+                }
+
+                // benchmark_fp8_gemm_throughput takes three device buffers, then two events, and only
+                // then does the work; all five releases sit at the bottom behind that work. Any throw
+                // in between leaks what came before, and this is the one site in the tree where both
+                // injection arms stack: the device buffers and the events are taken in one sequence.
+                TEST_F(StandaloneBenchmarkTest, AFailedDeviceAllocationReleasesTheBuffersAlreadyTaken) {
+                    cuda_test::reset_allocation_count();
+
+                    // Let one buffer through, fail the second.
+                    cuda_test::fail_allocation_after(1);
+                    EXPECT_THROW((void)benchmark_fp8_gemm_throughput(32, 64, 32, 1), std::exception);
+                    cuda_test::stop_failing_allocations();
+
+                    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the buffer taken before the failure must be released";
+                }
+
+                TEST_F(StandaloneBenchmarkTest, AFailedSecondEventCreateReleasesTheBuffersAndTheFirstEvent) {
+                    cuda_test::reset_allocation_count();
+                    cuda_test::reset_event_count();
+
+                    // All three buffers and the first event succeed; the second event fails.
+                    cuda_test::fail_event_after(1);
+                    EXPECT_THROW((void)benchmark_fp8_gemm_throughput(32, 64, 32, 1), std::exception);
+                    cuda_test::stop_failing_events();
+
+                    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the three device buffers must be released";
+                    EXPECT_EQ(cuda_test::live_event_count(), 0) << "the event created before the failure must be destroyed";
                 }
 
                 TEST_F(StandaloneBenchmarkTest, FP8GEMMThroughputMeasuresThroughput) {
