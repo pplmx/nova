@@ -30,6 +30,7 @@
 #pragma once
 
 #include <chrono>
+#include <mutex>
 #include <cstdint>
 #include <functional>
 #include <random>
@@ -96,6 +97,22 @@ namespace nova::error {
      */
     class circuit_breaker {
     public:
+        /// Copies settings and state under both locks.
+        ///
+        /// circuit_breaker owns a mutex now, which deletes the implicit copy assignment;
+        /// retry_executor::set_circuit_breaker needs it to keep working.
+        circuit_breaker& operator=(const circuit_breaker& other) {
+            if (this != &other) {
+                std::scoped_lock lock(mutex_, other.mutex_);
+                config_ = other.config_;
+                state_ = other.state_;
+                failure_count_ = other.failure_count_;
+                success_count_ = other.success_count_;
+                last_failure_time_ = other.last_failure_time_;
+            }
+            return *this;
+        }
+
         /**
          * @brief Construct a circuit breaker
          * @param config Circuit breaker configuration
@@ -117,13 +134,24 @@ namespace nova::error {
         void record_failure();
 
         /** @brief Get current circuit state */
-        [[nodiscard]] circuit_state state() const noexcept { return state_; }
+        [[nodiscard]] circuit_state state() const noexcept;
 
     private:
-        void transition_to_open();
-        void transition_to_half_open();
-        void transition_to_closed();
+        // Internal, called with mutex_ already held: the public entry points take the lock once and
+        // then call these, so a transition does not try to re-enter it.
+        bool allow_request_locked() const;
+        void transition_to_open_locked();
+        void transition_to_half_open_locked();
+        void transition_to_closed_locked();
 
+        /// Guards every member below.
+        ///
+        /// allow_request(), record_success() and record_failure() all read and write the same state,
+        /// and retry_executor calls them from whatever thread ran the operation. Without this lock
+        /// ThreadSanitizer reports a data race on state_ at retry.cpp:9 under
+        /// ErrorHandlingIntegrationTest.CircuitBreakerUnderConcurrentLoad, which is the case written
+        /// to exercise exactly that.
+        mutable std::mutex mutex_;
         circuit_breaker_config config_;
         circuit_state state_ {circuit_state::closed};
         int failure_count_ {0};
@@ -165,7 +193,11 @@ namespace nova::error {
         std::invoke_result_t<Func> execute(Func&& func);
 
         /** @brief Set circuit breaker for the executor */
-        void set_circuit_breaker(circuit_breaker cb);
+        /// Copies the settings and current state from @p cb.
+        ///
+        /// Takes a reference rather than a value: circuit_breaker holds a mutex now, so it is neither
+        /// copyable nor movable, and assigning through a by-value parameter would not compile.
+        void set_circuit_breaker(const circuit_breaker& cb);
 
         /** @brief Get number of attempts made in last execute */
         [[nodiscard]] int attempt_count() const noexcept { return attempts_; }

@@ -172,12 +172,15 @@ TEST_F(TimeoutTest, TimeoutGuardMoveSemantics) {
 TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
     auto& manager = timeout_manager::instance();
 
-    operation_id callback_id {0};
-    bool callback_invoked {false};
+    // Both are written by the watchdog thread and read here. As plain locals they are a data race,
+    // which ThreadSanitizer reports from TimeoutTest.TimeoutCallbackIsInvoked -- the poll below is
+    // exactly the read that races with the store.
+    std::atomic<operation_id> callback_id {0};
+    std::atomic<bool> callback_invoked {false};
 
     manager.set_callback([&](operation_id id, std::error_code) {
-        callback_id = id;
-        callback_invoked = true;
+        callback_id.store(id);
+        callback_invoked.store(true);
     });
 
     auto config = timeout_config {};
@@ -196,7 +199,7 @@ TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
     // this host a run of the same case took between 4.4 s and 16.4 s wall time while the device
     // was under a load average of 750-870. A shorter cap turns host contention into a failure.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds {15};
-    while (!callback_invoked && std::chrono::steady_clock::now() < deadline) {
+    while (!callback_invoked.load() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds {2});
     }
 
@@ -205,7 +208,7 @@ TEST_F(TimeoutTest, TimeoutCallbackIsInvoked) {
     // still passed. Callback delivery is the whole subject here.
     EXPECT_TRUE(callback_invoked) << "the watchdog should have expired a 5 ms operation within the 15 s allowance";
     if (callback_invoked) {
-        EXPECT_EQ(callback_id, id) << "the callback must receive the id of the operation that expired";
+        EXPECT_EQ(callback_id.load(), id) << "the callback must receive the id of the operation that expired";
     }
     manager.end_operation(id);
 }

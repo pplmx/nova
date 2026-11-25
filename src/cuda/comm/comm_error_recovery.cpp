@@ -19,7 +19,11 @@ namespace nova::comm {
         std::atomic<bool> running {false};
         std::thread monitor_thread;
         std::chrono::seconds timeout_threshold {60};
-        std::chrono::milliseconds check_interval {1000};
+        /// Milliseconds. Atomic because the monitor thread sleeps on it outside state_mutex while
+        /// set_check_interval() writes it under the lock: a plain member is a data race and
+        /// ThreadSanitizer reports one from
+        /// CommHealthMonitorTest.ReconfiguringWhileTheMonitorRunsDoesNotLoseTheCallback.
+        std::atomic<std::chrono::milliseconds::rep> check_interval_ms {1000};
         ErrorCallback error_callback;
 
         struct CommState {
@@ -114,7 +118,7 @@ namespace nova::comm {
                         callback(error);
                     }
                 }
-                std::this_thread::sleep_for(impl_->check_interval);
+                std::this_thread::sleep_for(std::chrono::milliseconds(impl_->check_interval_ms.load()));
             }
         });
     }
@@ -153,7 +157,8 @@ namespace nova::comm {
         // The monitor sleeps on check_interval outside the lock, so an interval shorter than
         // the monitor's own pass would spin; keep it positive.
         std::unique_lock lock(impl_->state_mutex);
-        impl_->check_interval = interval.count() > 0 ? interval : std::chrono::milliseconds(1);
+        const auto ms = interval.count() > 0 ? interval.count() : 1;
+        impl_->check_interval_ms.store(ms);
     }
 
     void HealthMonitor::set_stall_confirmations(int count) {

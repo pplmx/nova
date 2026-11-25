@@ -6,13 +6,18 @@ namespace nova::error {
         : config_(config) {}
 
     bool circuit_breaker::allow_request() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return allow_request_locked();
+    }
+
+    bool circuit_breaker::allow_request_locked() const {
         switch (state_) {
             case circuit_state::closed:
                 return true;
             case circuit_state::open: {
                 auto elapsed = std::chrono::steady_clock::now() - last_failure_time_;
                 if (elapsed >= config_.reset_timeout) {
-                    const_cast<circuit_breaker*>(this)->transition_to_half_open();
+                    const_cast<circuit_breaker*>(this)->transition_to_half_open_locked();
                     return true;
                 }
                 return false;
@@ -23,7 +28,13 @@ namespace nova::error {
         return false;
     }
 
+    circuit_state circuit_breaker::state() const noexcept {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return state_;
+    }
+
     void circuit_breaker::record_success() {
+        std::lock_guard<std::mutex> lock(mutex_);
         switch (state_) {
             case circuit_state::closed:
                 failure_count_ = 0;
@@ -31,7 +42,7 @@ namespace nova::error {
             case circuit_state::half_open:
                 ++success_count_;
                 if (success_count_ >= config_.half_open_success_threshold) {
-                    transition_to_closed();
+                    transition_to_closed_locked();
                 }
                 break;
             case circuit_state::open:
@@ -40,34 +51,35 @@ namespace nova::error {
     }
 
     void circuit_breaker::record_failure() {
+        std::lock_guard<std::mutex> lock(mutex_);
         last_failure_time_ = std::chrono::steady_clock::now();
 
         switch (state_) {
             case circuit_state::closed:
                 ++failure_count_;
                 if (failure_count_ >= config_.failure_threshold) {
-                    transition_to_open();
+                    transition_to_open_locked();
                 }
                 break;
             case circuit_state::half_open:
-                transition_to_open();
+                transition_to_open_locked();
                 break;
             case circuit_state::open:
                 break;
         }
     }
 
-    void circuit_breaker::transition_to_open() {
+    void circuit_breaker::transition_to_open_locked() {
         state_ = circuit_state::open;
         success_count_ = 0;
     }
 
-    void circuit_breaker::transition_to_half_open() {
+    void circuit_breaker::transition_to_half_open_locked() {
         state_ = circuit_state::half_open;
         success_count_ = 0;
     }
 
-    void circuit_breaker::transition_to_closed() {
+    void circuit_breaker::transition_to_closed_locked() {
         state_ = circuit_state::closed;
         failure_count_ = 0;
         success_count_ = 0;
@@ -78,8 +90,8 @@ namespace nova::error {
           circuit_breaker_({}),
           dist_(0, 1000) {}
 
-    void retry_executor::set_circuit_breaker(circuit_breaker cb) {
-        circuit_breaker_ = std::move(cb);
+    void retry_executor::set_circuit_breaker(const circuit_breaker& cb) {
+        circuit_breaker_ = cb;  // circuit_breaker::operator= takes both locks
     }
 
     std::chrono::milliseconds retry_executor::calculate_delay(int attempt) {
