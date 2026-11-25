@@ -7,6 +7,7 @@
 #include "cuda/memory/buffer-inl.h"
 #include <vector>
 #include <cmath>
+#include <stdexcept>
 
 using cuda::memory::Buffer;
 
@@ -246,4 +247,35 @@ TEST_F(ConvolutionTest, LargerKernel) {
     for (size_t i = 0; i < size; ++i) {
         EXPECT_NEAR(h_output_[i], 100.0f, 0.1f);
     }
+}
+
+// Both kernel loops walk -half..+half, which covers (2*half+1)^2 entries, while the buffer holds
+// size*size. Those agree for odd sizes. For an even one -- half = size/2 -- the walk is one row and
+// one column longer than the buffer: size 4 allocates 16 floats and indexes up to 20. Nothing checked
+// the argument and every case below passes 3 or 5, so nothing read past the end.
+TEST_F(ConvolutionTest, AnEvenKernelSizeIsRejected) {
+    const size_t size = width_ * height_;
+    Buffer<float> input(size);
+    Buffer<float> output(size);
+    Buffer<float> kernel(16);  // 4x4, what an even argument would need
+
+    EXPECT_THROW(cuda::algo::convolve2D(input, output, kernel, width_, height_, 4), std::invalid_argument);
+}
+
+TEST_F(ConvolutionTest, AnEmptyOrNegativeKernelSizeIsRejected) {
+    const size_t size = width_ * height_;
+    Buffer<float> input(size);
+    Buffer<float> output(size);
+    Buffer<float> kernel(9);
+
+    EXPECT_THROW(cuda::algo::convolve2D(input, output, kernel, width_, height_, 0), std::invalid_argument);
+    EXPECT_THROW(cuda::algo::convolve2D(input, output, kernel, width_, height_, -3), std::invalid_argument);
+}
+
+TEST_F(ConvolutionTest, AGaussianKernelNeedsAPositiveSigma) {
+    cuda::memory::Buffer<float> kernel;
+    // sigma 0 divides by zero in the exponent, giving NaN weights and a NaN normaliser.
+    EXPECT_THROW(cuda::algo::createGaussianKernel(kernel, 3, 0.0f), std::invalid_argument);
+    EXPECT_THROW(cuda::algo::createGaussianKernel(kernel, 3, -1.0f), std::invalid_argument);
+    EXPECT_NO_THROW(cuda::algo::createGaussianKernel(kernel, 3, 1.5f));
 }

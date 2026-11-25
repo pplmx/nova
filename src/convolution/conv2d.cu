@@ -1,4 +1,6 @@
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "convolution/conv2d.h"
@@ -36,7 +38,25 @@ namespace {
 
 namespace cuda::algo {
 
+    namespace {
+
+        /// Rejects kernel sizes the two loops below cannot honour.
+        ///
+        /// Both walk the kernel from -half to +half, which covers (2*half+1)^2 entries while the buffer
+        /// holds size*size. For an odd size those agree. For an even one half = size/2 makes the walk
+        /// one row and one column longer than the buffer: size 4 allocates 16 floats and indexes up to
+        /// 20, reading past the end into whatever the allocator put there. Nothing checked the
+        /// argument, and every existing case passes 3 or 5, so nothing noticed.
+        void require_odd_kernel_size(int size, const char* what) {
+            if (size <= 0 || size % 2 == 0) {
+                throw std::invalid_argument(std::string(what) + ": kernel size must be odd and positive, got " + std::to_string(size));
+            }
+        }
+
+    }  // namespace
+
     void convolve2D(const memory::Buffer<float>& input, memory::Buffer<float>& output, const memory::Buffer<float>& kernel, size_t width, size_t height, int kernel_size) {
+        require_odd_kernel_size(kernel_size, "convolve2D");
         const int half = kernel_size / 2;
 
         detail::KernelLauncher launcher;
@@ -49,6 +69,12 @@ namespace cuda::algo {
     }
 
     void createGaussianKernel(memory::Buffer<float>& kernel, int size, float sigma) {
+        require_odd_kernel_size(size, "createGaussianKernel");
+        // A zero or negative sigma divides by zero in the exponent below, which yields inf/NaN weights
+        // and a kernel whose sum is NaN, so every convolution with it produces NaN.
+        if (!(sigma > 0.0f)) {
+            throw std::invalid_argument("createGaussianKernel: sigma must be positive, got " + std::to_string(sigma));
+        }
         kernel = memory::Buffer<float>(size * size);
 
         int half = size / 2;
@@ -71,6 +97,7 @@ namespace cuda::algo {
     }
 
     void createBoxKernel(memory::Buffer<float>& kernel, int size) {
+        require_odd_kernel_size(size, "createBoxKernel");
         kernel = memory::Buffer<float>(size * size);
 
         std::vector<float> h_kernel(size * size, 1.0f / (size * size));
