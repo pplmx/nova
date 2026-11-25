@@ -234,10 +234,14 @@ Both names are defined in an anonymous namespace in two files each. The anonymou
 them internal to a translation unit, which is enough when every .cpp is its own unit -- and not enough
 when unity builds merge those units.
 
-Behind those, unity also surfaces missing includes that the per-file build was masking:
-`src/matrix/add.cu` and `src/convolution/conv2d.cu` use `cuda::algo::detail::KernelLauncher` and
+Behind those, unity also surfaced missing includes that the per-file build was masking:
+`src/matrix/add.cu` and `src/convolution/conv2d.cu` used `cuda::algo::detail::KernelLauncher` and
 `calc_grid_2d` without including `cuda/algo/kernel_launcher.h`, which compiled only because some other
 file in the same unity blob supplied it.
+
+`src/convolution/conv2d.cu` now includes that header directly (line 5). `src/matrix/add.cu` no longer
+exists: the whole of `src/matrix` was the project's original demo and was removed once nothing outside
+its own tests referenced it.
 
 Renaming the two helpers fixes the first two errors; the include gaps are a separate, wider change.
 `.github/workflows/` does not invoke this preset -- its jobs use their own CMake invocations -- so the
