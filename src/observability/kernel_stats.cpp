@@ -89,9 +89,24 @@ namespace cuda::observability {
           collector_(collector),
           blocks_(blocks),
           threads_per_block_(threads_per_block) {
-        CUDA_CHECK(cudaEventCreate(&start_));
-        CUDA_CHECK(cudaEventCreate(&end_));
-        CUDA_CHECK(cudaEventRecord(start_, collector.stream()));
+        // The destructor does not run when a constructor throws, so an event taken before the
+        // failure has no owner: failing the second create left the first alive (measured, one
+        // event). The members start null, so releasing only what was actually created is safe.
+        try {
+            CUDA_CHECK(cudaEventCreate(&start_));
+            CUDA_CHECK(cudaEventCreate(&end_));
+            CUDA_CHECK(cudaEventRecord(start_, collector.stream()));
+        } catch (...) {
+            if (start_ != nullptr) {
+                cudaEventDestroy(start_);
+                start_ = nullptr;
+            }
+            if (end_ != nullptr) {
+                cudaEventDestroy(end_);
+                end_ = nullptr;
+            }
+            throw;
+        }
     }
 
     ScopedKernelTiming::~ScopedKernelTiming() noexcept {

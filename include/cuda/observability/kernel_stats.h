@@ -62,8 +62,8 @@ namespace cuda::observability {
     private:
         const char* name_;
         KernelStatsCollector& collector_;
-        cudaEvent_t start_;
-        cudaEvent_t end_;
+        cudaEvent_t start_ = nullptr;
+        cudaEvent_t end_ = nullptr;
         size_t blocks_ = 0;
         size_t threads_per_block_ = 0;
     };

@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
+#include "cuda_alloc_injection.h"
 #include "cuda/observability/kernel_stats.h"
 
 namespace cuda::observability::test {
@@ -126,6 +129,34 @@ namespace cuda::observability::test {
 
         cudaEventDestroy(start);
         cudaEventDestroy(end);
+    }
+
+    // ScopedKernelTiming's constructor creates two events and then records the first. A throwing
+    // constructor does not run its destructor, so a failure on the second create leaves the first
+    // event with no owner -- and end_ is not initialised in the member list, so there is no safe
+    // value to destroy even if something tried.
+    //
+    // Reachable only through fail_event_after(): the event create count is what has to fail, and the
+    // wrapper ignored the allocation arm before that was added.
+    TEST_F(KernelStatsTest, AFailedSecondEventCreateDoesNotLeakTheFirst) {
+        cuda_test::reset_event_count();
+
+        // Let the first event through, fail the second.
+        cuda_test::fail_event_after(1);
+        EXPECT_THROW((void)ScopedKernelTiming("k", collector_, 1, 1), std::exception);
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the event created before the failure must be destroyed";
+    }
+
+    TEST_F(KernelStatsTest, AFailedFirstEventCreateLeavesNothingBehind) {
+        cuda_test::reset_event_count();
+
+        cuda_test::fail_event_after(0);
+        EXPECT_THROW((void)ScopedKernelTiming("k", collector_, 1, 1), std::exception);
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0);
     }
 
     TEST_F(KernelStatsTest, GetStatsReturnsEmptyForUnknown) {
