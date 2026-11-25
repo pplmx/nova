@@ -347,6 +347,14 @@ TEST_F(MemoryPoolTest, FirstFitAllocation) {
     EXPECT_NE(ptr2, nullptr);
 }
 
+// This case used to assert that a 2048-byte request against 1024-byte blocks returned a non-null
+// pointer. That is the defect, not the contract: the pool handed out a pointer into a 1024-byte block
+// and advanced the block's offset past its end, so the caller believed it owned 2048 bytes. Changing
+// the assertion rather than the code was not an option -- the assertion described memory the
+// allocation did not own.
+//
+// The contract now: a request larger than one block is refused, and the refusal is visible as a
+// throw (throw_on_failure defaults to true) rather than as a silent overrun.
 TEST_F(MemoryPoolTest, AllocateBeyondBlockSize) {
     cuda::memory::MemoryPool::Config config;
     config.block_size = 1024;
@@ -356,9 +364,11 @@ TEST_F(MemoryPoolTest, AllocateBeyondBlockSize) {
     cuda::memory::MemoryPool pool(config);
     EXPECT_EQ(pool.num_blocks(), 0);
 
-    void* ptr = pool.allocate(2048);
-    EXPECT_NE(ptr, nullptr);
-    EXPECT_EQ(pool.num_blocks(), 1);
+    EXPECT_THROW(pool.allocate(2048), std::runtime_error) << "a request larger than the block size must be refused, not handed a short block";
+
+    // Nothing was handed out, so nothing is accounted for.
+    EXPECT_EQ(pool.total_allocated(), 0u);
+    EXPECT_EQ(pool.total_available(), 0u) << "a refused request must not credit or debit availability";
 }
 
 TEST_F(MemoryPoolTest, ExhaustPoolThenAllocate) {
@@ -943,6 +953,31 @@ TEST(MemoryPoolReuseTest, AnEmptyBlockIsReusedFromItsBeginning) {
     ASSERT_NE(second, nullptr);
     EXPECT_EQ(second, first) << "an emptied block must serve the next request from offset zero";
     pool.deallocate(second, 4000);
+}
+
+// A request larger than a block cannot be served -- every block is config.block_size bytes -- and it
+// used to be served anyway. find_block_for_size() correctly reported no fit, allocate_block()
+// created a fresh block, and allocate() handed out a pointer into it while advancing offset past the
+// end: measured with block_size 4096 and a request of 8192, one block allocated, total_allocated
+// 8192, and total_available 2^64-4096 because the subtraction wrapped. The caller held a pointer to
+// twice the memory that existed.
+TEST(MemoryPoolReuseTest, ARequestLargerThanABlockIsRefused) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 2;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    EXPECT_THROW(pool.allocate(8192), std::runtime_error) << "a request bigger than one block must not be served from it";
+
+    EXPECT_EQ(pool.total_available(), 0u) << "no block should be allocated for a request that cannot be served";
+    EXPECT_EQ(pool.total_allocated(), 0u);
+    EXPECT_TRUE(pool.get_allocations_by_stream().empty()) << "a refused request must not leave a live allocation";
+
+    // A request that does fit must still be served.
+    void* ok = pool.allocate(4096);
+    ASSERT_NE(ok, nullptr);
+    pool.deallocate(ok, 4096);
 }
 
 // The shape most callers actually use: allocate, release, allocate the same size again. The

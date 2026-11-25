@@ -106,6 +106,15 @@ namespace cuda::memory {
             return nullptr;
         }
 
+        // Check the size before touching the block list. allocate_block() adds to total_available_,
+        // so refusing after it ran would leave a block allocated for a request that is never served.
+        if (bytes > config_.block_size) {
+            if (!throw_on_failure_) {
+                return nullptr;
+            }
+            throw std::runtime_error("MemoryPool: request of " + std::to_string(bytes) + " bytes exceeds the block size of " + std::to_string(config_.block_size) + " bytes");
+        }
+
         Block* block = find_block_for_size(bytes);
 
         if (block) {
