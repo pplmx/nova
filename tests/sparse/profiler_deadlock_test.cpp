@@ -28,6 +28,10 @@
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
+#include "cuda_alloc_injection.h"
+
 #include <cuda_runtime.h>
 
 #include <thread>
@@ -64,6 +68,27 @@ namespace profiler_deadlock_test {
 
         // Reaching this line is the test.
         SUCCEED();
+    }
+
+    // start_timer() creates two events and then inserts into a map; stop_timer() is the only place
+    // that destroys them. A failed second create used to leak the first, because the insert -- the
+    // point where stop_timer() becomes responsible for them -- is reached only on success.
+    TEST(ProfilerLeakTest, AFailedSecondEventCreateDoesNotLeakTheFirst) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        cuda::performance::Profiler& profiler = cuda::performance::Profiler::instance();
+        profiler.enable();
+
+        cuda_test::reset_event_count();
+
+        // Let the first event through, fail the second.
+        cuda_test::fail_event_after(1);
+        EXPECT_THROW(profiler.start_timer("leak-probe"), std::exception);
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the event created before the failure must be destroyed";
     }
 
     TEST(ProfilerDeadlockTest, StopTimerRecordsTheMeasurement) {

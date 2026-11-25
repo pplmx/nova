@@ -72,9 +72,11 @@ namespace cuda::performance {
         std::vector<KernelMetrics> kernel_metrics_;
         std::vector<CollectiveMetrics> collective_metrics_;
 
+        // The two handles start null so a partly-constructed timer is recognisable: start_timer()
+        // creates them one at a time and either create can fail.
         struct ActiveTimer {
-            cudaEvent_t start;
-            cudaEvent_t stop;
+            cudaEvent_t start = nullptr;
+            cudaEvent_t stop = nullptr;
             std::chrono::steady_clock::time_point cpu_start;
         };
         std::unordered_map<std::string, ActiveTimer> active_timers_;

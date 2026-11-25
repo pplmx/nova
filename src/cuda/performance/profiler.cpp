@@ -56,13 +56,35 @@ namespace cuda::performance {
 
         std::lock_guard lock(mutex_);
 
+        // start_timer() takes two events and then inserts the timer into a map, and stop_timer() is
+        // the only place that destroys them. A failed second create, a failed record, or a
+        // std::string/unordered_map allocation that throws bad_alloc therefore leaked what had
+        // already been created -- and neither handle was initialised, so cleanup could not tell.
+        //
+        // The guard owns them until the map insert has taken over.
         ActiveTimer timer;
+        struct PendingEvents {
+            ActiveTimer& timer;
+            bool handed_off = false;
+            ~PendingEvents() noexcept {
+                if (!handed_off) {
+                    if (timer.start != nullptr) {
+                        (void)cudaEventDestroy(timer.start);
+                    }
+                    if (timer.stop != nullptr) {
+                        (void)cudaEventDestroy(timer.stop);
+                    }
+                }
+            }
+        } pending {timer};
+
         CUDA_CHECK(cudaEventCreate(&timer.start));
         CUDA_CHECK(cudaEventCreate(&timer.stop));
         CUDA_CHECK(cudaEventRecord(timer.start, 0));
         timer.cpu_start = std::chrono::steady_clock::now();
 
         active_timers_[name] = std::move(timer);
+        pending.handed_off = true;
     }
 
     void Profiler::stop_timer(const char* name) {
