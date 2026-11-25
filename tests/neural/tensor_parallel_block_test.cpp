@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <stdexcept>
 #include <random>
 #include <vector>
 
@@ -537,6 +538,32 @@ TEST_F(TransformerBlockTest, BlockForwardMatchesHostReference) {
     d_y.copy_to(out.data(), out.size());
 
     EXPECT_TRUE(arrays_near(ref.data(), out.data(), out.size(), 2e-3f)) << "block forward differs from the host fp64 whole-block reference";
+}
+
+// forward() takes batch and seq separately and immediately multiplies them into a row count:
+//
+//     const int m = batch * seq;
+//     ensure_scratch(m);
+//     const int total = m * hidden_;
+//
+// Nothing rejects a negative argument or a product that does not fit an int. With
+// batch = seq = 65536 the product is exactly 0, and with 46341 * 46341 it wraps negative. A
+// negative m then passes ensure_scratch()'s `scratch_m_ >= m` test -- -2147483648 <= anything --
+// so the function returns without allocating any scratch, and the callers below it are handed
+// that negative m as a length. The constructor validates its own dimensions; this entry point
+// validated nothing.
+TEST_F(TransformerBlockTest, ForwardRejectsShapesWhoseRowCountOverflows) {
+    const int hidden = 8, heads = 4, hd = 2, inter = 16;
+    TransformerBlock block(uninitialized_ctx(), hidden, heads, hd, inter, 1e-5f);
+
+    std::vector<float> x(64, 0.0f), y(64, 0.0f);
+    cuda::memory::Buffer<float> d_x(64), d_y(64);
+    d_x.copy_from(x.data(), x.size());
+
+    EXPECT_THROW(block.forward(d_x.data(), d_y.data(), 65536, 65536), std::invalid_argument) << "65536 * 65536 is 0 as an int; that row count is not a shape this can run";
+    EXPECT_THROW(block.forward(d_x.data(), d_y.data(), 46341, 46341), std::invalid_argument) << "the product wraps negative";
+    EXPECT_THROW(block.forward(d_x.data(), d_y.data(), -1, 8), std::invalid_argument) << "a negative batch must be refused";
+    EXPECT_THROW(block.forward(d_x.data(), d_y.data(), 8, 0), std::invalid_argument) << "a zero sequence length must be refused";
 }
 
 // Device block backward == host fp64 block reference (grad-input + 11 grads).

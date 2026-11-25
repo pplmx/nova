@@ -2,6 +2,7 @@
 
 #include "cuda/neural/activations.h"
 
+#include <limits>
 #include <stdexcept>
 
 namespace cuda::neural {
@@ -90,10 +91,34 @@ namespace cuda::neural {
         mlp_->set_weight_shards(wg, wu, wd);
     }
 
+    namespace {
+
+        /// Row count for a [batch x seq] activation, refusing anything that does not fit an int.
+        ///
+        /// forward() and backward() both open with `const int m = batch * seq;` and then use m as the
+        /// row count for every buffer. Nothing rejected a negative argument or a wrapping product: with
+        /// batch = seq = 65536 the product is 0, and 46341 * 46341 wraps to a negative. A negative m
+        /// then passes ensure_scratch()'s `scratch_m_ >= m` early return, so no scratch is allocated at
+        /// all and the kernels below are handed that negative number. Measured before this guard: the
+        /// call dumped core instead of reporting the shape.
+        int checked_row_count(int batch, int seq) {
+            if (batch <= 0 || seq <= 0) {
+                throw ::std::invalid_argument("TransformerBlock: batch and seq must be positive, got batch=" + ::std::to_string(batch) + " seq=" + ::std::to_string(seq));
+            }
+            const auto product = static_cast<long long>(batch) * static_cast<long long>(seq);
+            if (product > static_cast<long long>(std::numeric_limits<int>::max())) {
+                throw ::std::invalid_argument("TransformerBlock: batch * seq = " + std::to_string(batch) + " * " + std::to_string(seq)
+                                              + " does not fit the int row count the scratch buffers are sized with");
+            }
+            return static_cast<int>(product);
+        }
+
+    }  // namespace
+
     void TransformerBlock::forward(const float* input, float* output, int batch, int seq) {
         // All activations are [batch*seq x hidden]; LayerNorm normalizes per row
         // (sequence positions are independent rows), so the row count is m.
-        const int m = batch * seq;
+        const int m = checked_row_count(batch, seq);
         ensure_scratch(m);
         const int total = m * hidden_;
         ln1_->forward(input, h1_->data(), m);
@@ -121,7 +146,7 @@ namespace cuda::neural {
                                     int batch,
                                     int seq) {
         // Same m = batch*seq row semantics as forward (LayerNorm is per-row).
-        const int m = batch * seq;
+        const int m = checked_row_count(batch, seq);
         ensure_scratch(m);
         const int total = m * hidden_;
         // out = h2 + m_out with m_out = MLP(h3), h3 = LN2(h2):
