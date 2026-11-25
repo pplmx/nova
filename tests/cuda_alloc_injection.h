@@ -61,4 +61,26 @@ namespace cuda_test {
     /// Zeroes the allocation counter.
     void reset_allocation_count();
 
+    /// Makes the next host allocation (operator new) fail, throwing std::bad_alloc.
+    ///
+    /// Separate from fail_allocation_after(), which covers cudaMalloc: a constructor that takes host
+    /// arrays with new[] and a constructor that takes device buffers with cudaMalloc fail through
+    /// different functions, and the guards for them need different hooks. Replacing operator new is
+    /// ordinary C++; the replacement in cuda_alloc_injection.cpp forwards to malloc, so it changes
+    /// nothing while idle -- the rest of the suite allocates through it and passes.
+    void fail_host_allocation_after(int n);
+
+    /// Returns operator new to forwarding every request.
+    void stop_failing_host_allocations();
+
+    /// Host allocations attempted since the last fail_host_allocation_after/stop.
+    int host_allocation_attempts();
+
+    /// Host allocations that have been made and not yet freed. Lets a case assert that an object
+    /// which threw out of its constructor released what it took, instead of only that it threw.
+    int live_host_allocation_count();
+
+    /// Zeroes the live host allocation count. Call right before the code under test.
+    void reset_live_host_allocation_count();
+
 }  // namespace cuda_test

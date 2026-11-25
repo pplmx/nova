@@ -3,6 +3,8 @@
 #include <cuda_runtime.h>
 
 #include <atomic>
+#include <new>
+#include <cstdlib>
 
 // Provided by the linker for each --wrap=cudaMalloc that a library links against.
 extern "C" cudaError_t __real_cudaMalloc(void** ptr, size_t size);
@@ -94,6 +96,81 @@ namespace cuda_test {
 
     void reset_allocation_count() {
         g_live_allocations = 0;
+    }
+
+}  // namespace cuda_test
+
+// ---------------------------------------------------------------------------------------------
+// Host allocation injection. Replacing operator new is standard C++ and affects every allocation in
+// the binary, so the replacement forwards to malloc unless a case has armed it; the suite allocates
+// through it constantly and passes.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+    thread_local int g_host_fail_from = -1;
+    thread_local int g_host_attempts = 0;
+    thread_local int g_live_host = 0;
+
+}  // namespace
+
+void* operator new(std::size_t size) {
+    const int attempt = g_host_attempts++;
+    if (g_host_fail_from >= 0 && attempt >= g_host_fail_from) {
+        throw std::bad_alloc();
+    }
+    if (void* p = std::malloc(size)) {
+        ++g_live_host;
+        return p;
+    }
+    throw std::bad_alloc();
+}
+
+void* operator new[](std::size_t size) {
+    return ::operator new(size);
+}
+
+void operator delete(void* p) noexcept {
+    if (p != nullptr) {
+        --g_live_host;
+    }
+    std::free(p);
+}
+
+void operator delete(void* p, std::size_t) noexcept {
+    ::operator delete(p);
+}
+
+void operator delete[](void* p) noexcept {
+    ::operator delete(p);
+}
+
+void operator delete[](void* p, std::size_t) noexcept {
+    ::operator delete(p);
+}
+
+namespace cuda_test {
+
+    void fail_host_allocation_after(int n) {
+        g_host_fail_from = n < 0 ? 0 : n;
+        g_host_attempts = 0;
+    }
+
+    void stop_failing_host_allocations() {
+        g_host_fail_from = -1;
+        g_host_attempts = 0;
+    }
+
+    int host_allocation_attempts() {
+        return g_host_attempts;
+    }
+
+    int live_host_allocation_count() {
+        return g_live_host;
+    }
+
+    void reset_live_host_allocation_count() {
+        g_live_host = 0;
     }
 
 }  // namespace cuda_test

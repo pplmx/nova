@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <stdexcept>
+#include <new>
+#include "cuda_alloc_injection.h"
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -274,4 +276,21 @@ TEST(CsrGraphOwnershipTest, MoveTransfersTheBuffersAndEmptiesTheSource) {
     EXPECT_EQ(moved.vertices(), 4);
     EXPECT_EQ(source.d_row_offsets, nullptr) << "the source must not free what it no longer owns";
     EXPECT_EQ(source.vertices(), 0);
+}
+
+// The constructor takes three host arrays in a row: row_offsets, columns, weights. A later new[]
+// throwing bad_alloc leaves the earlier ones with no owner, because a constructor that throws does
+// not run its destructor. Without a hook the only way to reach it was to ask for a graph larger than
+// the host's memory, which skipped on any machine with enough RAM -- this fails the allocation
+// directly instead, so the case runs everywhere.
+TEST(CsrGraphOwnershipTest, AConstructorThatCannotAllocateItsArraysReleasesTheEarlierOnes) {
+    cuda_test::reset_live_host_allocation_count();
+
+    // The constructor allocates row_offsets, then columns, then weights, and nothing else. Failing the
+    // second means row_offsets was taken and the constructor threw before anything could own it.
+    cuda_test::fail_host_allocation_after(1);
+    EXPECT_THROW(cuda::graph::CSRGraph graph(16, 32), std::bad_alloc);
+    cuda_test::stop_failing_host_allocations();
+
+    EXPECT_EQ(cuda_test::live_host_allocation_count(), 0) << "the array allocated before the failure must be released, not left with no owner";
 }
