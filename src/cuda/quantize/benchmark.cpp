@@ -98,10 +98,30 @@ namespace nova {
                 result.batch_size = static_cast<int>(data.size());
                 result.num_samples = config_.benchmark_runs;
 
-                float* d_data;
+                // Released by a guard rather than by a CUDA_CHECK at the end of the function: the
+                // copy, both kernel loops and both synchronizes in between can throw, and the two
+                // pointers were not even initialised.
+                float* d_data = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_data, data.size() * sizeof(float)));
-                int8_t* d_quantized;
+                struct DataGuard {
+                    float*& p;
+                    ~DataGuard() {
+                        if (p != nullptr) {
+                            (void)cudaFree(p);
+                        }
+                    }
+                } data_guard {d_data};
+
+                int8_t* d_quantized = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_quantized, data.size() * sizeof(int8_t)));
+                struct QuantizedGuard {
+                    int8_t*& p;
+                    ~QuantizedGuard() {
+                        if (p != nullptr) {
+                            (void)cudaFree(p);
+                        }
+                    }
+                } quantized_guard {d_quantized};
 
                 CUDA_CHECK(cudaMemcpy(d_data, data.data(), data.size() * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -128,9 +148,6 @@ namespace nova {
                 result.throughput_gbps = total_bytes / (static_cast<float>(duration.count()) * 1e3f);
                 result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
 
-                CUDA_CHECK(cudaFree(d_data));
-                CUDA_CHECK(cudaFree(d_quantized));
-
                 results_.push_back(result);
                 return result;
             }
@@ -144,10 +161,30 @@ namespace nova {
                 result.batch_size = static_cast<int>(data.size());
                 result.num_samples = config_.benchmark_runs;
 
-                int8_t* d_quantized;
+                // Same shape as benchmark_int8_quantization above: both buffers released by a
+                // guard, because everything between the acquisitions and the old cudaFree calls can
+                // throw.
+                int8_t* d_quantized = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_quantized, data.size() * sizeof(int8_t)));
-                float* d_output;
+                struct QuantizedGuard {
+                    int8_t*& p;
+                    ~QuantizedGuard() {
+                        if (p != nullptr) {
+                            (void)cudaFree(p);
+                        }
+                    }
+                } quantized_guard {d_quantized};
+
+                float* d_output = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_output, data.size() * sizeof(float)));
+                struct OutputGuard {
+                    float*& p;
+                    ~OutputGuard() {
+                        if (p != nullptr) {
+                            (void)cudaFree(p);
+                        }
+                    }
+                } output_guard {d_output};
 
                 CUDA_CHECK(cudaMemcpy(d_quantized, data.data(), data.size() * sizeof(int8_t), cudaMemcpyHostToDevice));
 
@@ -177,9 +214,6 @@ namespace nova {
                 // The output precision names what the caller asked the values to be interpreted as;
                 // recording it keeps the result self-describing rather than assuming FP32 downstream.
                 result.name += (precision == Precision::FP32) ? " (FP32)" : " (mixed)";
-
-                CUDA_CHECK(cudaFree(d_quantized));
-                CUDA_CHECK(cudaFree(d_output));
 
                 results_.push_back(result);
                 return result;
@@ -226,10 +260,28 @@ namespace nova {
                 std::vector<FP8E4M3> b(elements_b);
                 std::vector<float> c(elements_c);
 
-                float *d_a, *d_b, *d_c;
+                // Three buffers, each released by its own guard: the copies, both kernel loops and
+                // both synchronizes below can throw, and the frees used to sit after all of them.
+                struct DeviceGuard {
+                    float*& p;
+                    ~DeviceGuard() {
+                        if (p != nullptr) {
+                            (void)cudaFree(p);
+                        }
+                    }
+                };
+
+                float* d_a = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_a, elements_a * sizeof(FP8E4M3)));
+                DeviceGuard a_guard {d_a};
+
+                float* d_b = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_b, elements_b * sizeof(FP8E4M3)));
+                DeviceGuard b_guard {d_b};
+
+                float* d_c = nullptr;
                 CUDA_CHECK(cudaMalloc(&d_c, elements_c * sizeof(float)));
+                DeviceGuard c_guard {d_c};
 
                 CUDA_CHECK(cudaMemcpy(d_a, a.data(), elements_a * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
                 CUDA_CHECK(cudaMemcpy(d_b, b.data(), elements_b * sizeof(FP8E4M3), cudaMemcpyHostToDevice));
@@ -258,10 +310,6 @@ namespace nova {
                 const float total_bytes = static_cast<float>(operand_bytes) * config_.benchmark_runs;
                 result.throughput_gbps = total_bytes / (static_cast<float>(duration.count()) * 1e3f);
                 result.latency_us = static_cast<float>(duration.count()) / config_.benchmark_runs;
-
-                CUDA_CHECK(cudaFree(d_a));
-                CUDA_CHECK(cudaFree(d_b));
-                CUDA_CHECK(cudaFree(d_c));
 
                 return result;
             }

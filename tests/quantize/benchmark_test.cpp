@@ -312,6 +312,50 @@ namespace nova {
                     EXPECT_GT(result.latency_us, 0.0f);
                 }
 
+                // Three entry points in this file took their device buffers with cudaMalloc and released
+                // them with CUDA_CHECK(cudaFree(...)) after the work. Everything the work does -- the
+                // copies, both kernel loops, both synchronizes -- can throw, so a failure anywhere in
+                // between leaked whatever had already been allocated. These cases fail the allocation
+                // after the first buffer is in hand.
+                TEST_F(QuantizationBenchmarkIntegrationTest, FailedAllocationInInt8QuantizationReleasesTheFirstBuffer) {
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
+                    auto data = bench.generate_random_data(256);
+
+                    cuda_test::reset_allocation_count();
+
+                    cuda_test::fail_allocation_after(1);
+                    EXPECT_THROW((void)bench.benchmark_int8_quantization(data), std::exception);
+                    cuda_test::stop_failing_allocations();
+
+                    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the buffer taken before the failure must be released";
+                }
+
+                TEST_F(QuantizationBenchmarkIntegrationTest, FailedAllocationInDequantizationReleasesTheFirstBuffer) {
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
+                    std::vector<int8_t> data(256, 3);
+
+                    cuda_test::reset_allocation_count();
+
+                    cuda_test::fail_allocation_after(1);
+                    EXPECT_THROW((void)bench.benchmark_dequantization(data, Precision::FP32), std::exception);
+                    cuda_test::stop_failing_allocations();
+
+                    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the buffer taken before the failure must be released";
+                }
+
+                TEST_F(QuantizationBenchmarkIntegrationTest, FailedAllocationInFP8GEMMReleasesTheBuffersAlreadyTaken) {
+                    QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
+
+                    cuda_test::reset_allocation_count();
+
+                    // Let two of the three buffers through, fail the third.
+                    cuda_test::fail_allocation_after(2);
+                    EXPECT_THROW((void)bench.benchmark_fp8_gemm(16, 32, 16), std::exception);
+                    cuda_test::stop_failing_allocations();
+
+                    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the buffers taken before the failure must be released";
+                }
+
                 TEST_F(QuantizationBenchmarkIntegrationTest, BenchmarkFP8GEMMProducesResult) {
                     QuantizationBenchmark bench(QuantizationBenchmark::Config {1, 1, 256, false, false});
 
