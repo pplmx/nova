@@ -422,7 +422,25 @@ namespace cuda::topology {
         BenchmarkResult result;
         result.algorithm = CollectiveAlgorithm::Ring;
 
-        cudaEvent_t start, stop;
+        // Both events released by a guard: the creates, the records, the synchronize and the
+        // elapsed-time query between them all can throw, and the destroys used to sit after all of
+        // them. Neither handle was initialised, so a failure on the second create left nothing a
+        // cleanup could have released even in principle.
+        cudaEvent_t start = nullptr;
+        cudaEvent_t stop = nullptr;
+        struct EventGuard {
+            cudaEvent_t& start;
+            cudaEvent_t& stop;
+            ~EventGuard() noexcept {
+                if (start != nullptr) {
+                    (void)cudaEventDestroy(start);
+                }
+                if (stop != nullptr) {
+                    (void)cudaEventDestroy(stop);
+                }
+            }
+        } guard {start, stop};
+
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
 
@@ -440,9 +458,6 @@ namespace cuda::topology {
 
         result.latency_us = ms * 1000.0;
         result.bandwidth_gbps = (count * sizeof(float)) / (ms * 1e-3) / 1e9;
-
-        CUDA_CHECK(cudaEventDestroy(start));
-        CUDA_CHECK(cudaEventDestroy(stop));
 
         return result;
     }

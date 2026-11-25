@@ -7,6 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
+#include "cuda_alloc_injection.h"
 #include "cuda/topology/topology_map.h"
 
 namespace cuda::topology {
@@ -375,6 +378,30 @@ namespace cuda::topology {
     // file (bonding_masters is the one on this host). directory_iterator lists them, and
     // without a check they became NicInfo records of type Unknown -- and because
     // bonding_masters sorts first, it won select_best_nic() on an otherwise idle machine.
+    // CollectiveProfiler::profile_allreduce creates two events, records both, synchronizes and reads
+    // the elapsed time, and only then destroys them. Every step in between is a CUDA_CHECK, so a
+    // failure on the second create (or anywhere after it) used to leak whatever had been taken, and
+    // neither handle was initialised.
+    TEST(CollectiveProfilerLeakTest, AFailedSecondEventCreateLeavesNothingBehind) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        CollectiveProfiler profiler;
+
+        cuda_test::reset_event_count();
+
+        // Let the first event through, fail the second.
+        cuda_test::fail_event_after(1);
+        EXPECT_THROW((void)profiler.profile_allreduce(nullptr, nullptr, 16, nullptr), std::exception);
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the event created before the failure must be destroyed";
+    }
+
     TEST_F(TopologyMapTest, OnlyRealInterfacesAreEnumerated) {
         const TopologyMap map = TopologyDetector::detect();
         for (const auto& nic : map.nics) {
