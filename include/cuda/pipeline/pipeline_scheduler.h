@@ -121,6 +121,14 @@ namespace cuda::pipeline {
         [[nodiscard]] int num_microbatches() const;
 
         /**
+         * @brief Get samples per microbatch
+         *
+         * The constructor rejects a non-positive value, so the number is part of the shape the
+         * object was built with; without this accessor it was validated and then unreadable.
+         */
+        [[nodiscard]] int microbatch_size() const;
+
+        /**
          * @brief Calculate bubble overhead percentage
          * @return Bubble overhead as percentage
          */

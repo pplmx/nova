@@ -141,6 +141,10 @@ namespace cuda::pipeline {
         return num_microbatches_;
     }
 
+    int PipelineScheduler::microbatch_size() const {
+        return microbatch_size_;
+    }
+
     float PipelineScheduler::bubble_overhead_percent() const {
         if (num_stages_ <= 1) {
             return 0.0f;

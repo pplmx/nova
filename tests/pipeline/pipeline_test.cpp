@@ -36,6 +36,22 @@ TEST_F(PipelineTest, BubbleOverheadMultipleStages) {
     EXPECT_LE(overhead, 25.0f);
 }
 
+// The constructor validates all three of its numeric arguments and refuses a bad one, but only two
+// of them can be read back afterwards: num_stages() and num_microbatches() exist and
+// microbatch_size() did not. A caller that hands the scheduler a shape -- or a test that wants to
+// confirm what it was given -- had no way to ask what the object was actually built with, and
+// microbatch_size_ was stored and then never read by anything.
+TEST_F(PipelineTest, MicrobatchSizeIsReadableBack) {
+    ::cuda::nccl::NcclContext ctx;
+    ctx.initialize();
+
+    PipelineScheduler scheduler(ctx, 4, 16, 32);
+
+    EXPECT_EQ(scheduler.microbatch_size(), 32) << "the value the constructor validated must be readable back";
+    EXPECT_EQ(scheduler.num_stages(), 4);
+    EXPECT_EQ(scheduler.num_microbatches(), 16);
+}
+
 TEST_F(PipelineTest, RecommendMicrobatches) {
     int recommended = recommend_microbatches(4);
     EXPECT_GE(recommended, 16);
