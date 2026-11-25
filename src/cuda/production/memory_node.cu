@@ -24,6 +24,7 @@ namespace cuda::production {
             allocations_.push_back({ptr, size, MemoryType::Device});
         } catch (...) {
             (void)cudaFree(ptr);
+            ++released_count_;
             throw;
         }
         total_allocated_ += size;
@@ -40,6 +41,7 @@ namespace cuda::production {
             CUDA_CHECK(cudaMalloc(&device_ptr, size));
         } catch (...) {
             (void)cudaFreeHost(host_ptr);
+            ++released_count_;
             throw;
         }
 
@@ -53,6 +55,7 @@ namespace cuda::production {
         } catch (...) {
             (void)cudaFreeHost(host_ptr);
             (void)cudaFree(device_ptr);
+            released_count_ += 2;
             throw;
         }
         total_allocated_ += size * 2;
@@ -70,6 +73,7 @@ namespace cuda::production {
             allocations_.push_back({ptr, size, MemoryType::Managed});
         } catch (...) {
             (void)cudaFree(ptr);
+            ++released_count_;
             throw;
         }
         total_allocated_ += size;

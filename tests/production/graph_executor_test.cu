@@ -357,34 +357,24 @@ TEST_F(MemoryNodeTest, AllocationNeedsOnlyTheGraphHandle) {
 // threw between the two -- cudaGraphAddEmptyNode on a graph that is mid-capture or already
 // instantiated, or push_back's bad_alloc -- leaked the allocation, because nothing but that stack
 // frame knew the pointer. A null graph makes the node call fail after the malloc succeeded.
-// The leak is not visible through total_allocated() or allocation_count(): the increment sits after
-// the throwing call, so a leaked buffer never reaches the accounting either way. Device memory is the
-// only place it shows, which makes this case sensitive to anything else on the device -- it passed
-// alone and failed in a full -j8 run where other tests were allocating. ctest serialises it via the
-// RUN_SERIAL property set below; do not relax that, and do not replace the measurement with an
-// accounting check, which reports zero whether or not the buffer was freed.
+// A buffer whose registration throws is released before the exception leaves, so it never reaches
+// total_allocated_ or allocations_ -- both read the same whether or not the release happened.
+//
+// Measuring cudaMemGetInfo() was tried twice and abandoned: the first version subtracted two size_t
+// and underflowed whenever another process released memory during the loop, and even with a signed
+// difference and retries a sibling GPU workload produced a 1.2 GB swing that reads exactly like a
+// leak. Device free memory belongs to the whole device, so it cannot arbitrate this.
+//
+// released_count() exists for this case: it is incremented on every release the manager performs,
+// including the ones on throwing paths.
 TEST(GraphMemoryManagerExceptionSafetyTest, ADeviceAllocationThatCannotBeAnchoredIsReleased) {
     cuda::production::GraphMemoryManager manager;
 
-    constexpr size_t kPerCall = size_t {4} << 20;
-    constexpr int kCalls = 64;
+    EXPECT_THROW((void)manager.add_device_allocation(nullptr, 4096), std::exception);
 
-    try {
-        (void)manager.add_device_allocation(nullptr, kPerCall);
-    } catch (...) {}
-
-    size_t free_before = 0;
-    size_t total = 0;
-    ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
-
-    for (int i = 0; i < kCalls; ++i) {
-        EXPECT_THROW((void)manager.add_device_allocation(nullptr, kPerCall), std::exception);
-    }
-
-    size_t free_after = 0;
-    ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
-
-    EXPECT_LT(free_before - free_after, kPerCall * 2) << "each failed call must release its buffer; " << kCalls << " leaks of " << kPerCall << " bytes would show up here";
+    EXPECT_EQ(manager.released_count(), 1u) << "the buffer must be freed when the node cannot be added";
+    EXPECT_EQ(manager.total_allocated(), 0u);
+    EXPECT_EQ(manager.allocation_count(), 0u);
 }
 
 TEST(GraphMemoryManagerExceptionSafetyTest, AManagedAllocationThatCannotBeAnchoredIsReleased) {
@@ -392,6 +382,7 @@ TEST(GraphMemoryManagerExceptionSafetyTest, AManagedAllocationThatCannotBeAnchor
 
     EXPECT_THROW((void)manager.add_managed_allocation(nullptr, 4096), std::exception);
 
+    EXPECT_EQ(manager.released_count(), 1u);
     EXPECT_EQ(manager.total_allocated(), 0u);
 }
 

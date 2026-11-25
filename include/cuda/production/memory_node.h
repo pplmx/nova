@@ -64,6 +64,17 @@ namespace cuda::production {
         [[nodiscard]] size_t total_allocated() const { return total_allocated_; }
         [[nodiscard]] size_t allocation_count() const { return allocations_.size(); }
 
+        /// How many allocations this manager has released.
+        ///
+        /// Exists so a failed add_*_allocation can be checked from outside. The three entry points
+        /// allocate first and register afterwards, and the registration is what can throw, so a buffer
+        /// that is correctly released on that path never reaches total_allocated_ or allocations_ --
+        /// both read the same whether or not the release happened. Measuring cudaMemGetInfo() instead
+        /// works only when nothing else is using the device: it was reproducible to make the
+        /// exception-safety case fail by running another GPU workload alongside, and a net change of
+        /// 1.2 GB from an unrelated process is indistinguishable from a leak.
+        [[nodiscard]] size_t released_count() const { return released_count_; }
+
     private:
         struct Allocation {
             void* ptr;
@@ -73,6 +84,7 @@ namespace cuda::production {
 
         std::vector<Allocation> allocations_;
         size_t total_allocated_ = 0;
+        size_t released_count_ = 0;
     };
 
     template <typename T>
