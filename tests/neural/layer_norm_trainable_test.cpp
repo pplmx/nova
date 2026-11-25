@@ -17,6 +17,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "cuda_alloc_injection.h"
 
 #include <cmath>
 #include <random>
@@ -417,4 +418,22 @@ TEST(LayerNormBoundsTest, ANonPositiveNormalizedShapeIsRejected) {
 
     EXPECT_THROW(cuda::neural::layer_norm(in.data(), g.data(), b.data(), out.data(), nullptr, nullptr, 1, 0, 1e-5f, nullptr), std::invalid_argument);
     EXPECT_THROW(cuda::neural::layer_norm(in.data(), g.data(), b.data(), out.data(), nullptr, nullptr, 1, -4, 1e-5f, nullptr), std::invalid_argument);
+}
+
+// LayerNormResult's constructor makes six allocations: three host arrays with new[] and three device
+// buffers with cudaMalloc. A constructor that throws does not run its destructor, so everything taken
+// before the failure used to have no owner.
+//
+// Note what this took to get right: the members are only null-initialised by the default constructor,
+// so calling clear() from the catch of the sized one read uninitialised pointers and crashed with
+// "free(): invalid pointer". The initialiser list now sets all six, which the guard depends on.
+TEST(LayerNormResultExceptionSafetyTest, AFailedHostAllocationReleasesWhatWasAlreadyTaken) {
+    cuda_test::reset_live_host_allocation_count();
+
+    // Let the first array through, fail the second.
+    cuda_test::fail_host_allocation_after(1);
+    EXPECT_THROW((void)cuda::neural::LayerNormResult(1024), std::bad_alloc);
+    cuda_test::stop_failing_host_allocations();
+
+    EXPECT_EQ(cuda_test::live_host_allocation_count(), 0) << "the array allocated before the failure must be released, not left with no owner";
 }

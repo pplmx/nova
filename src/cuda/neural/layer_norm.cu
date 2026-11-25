@@ -10,14 +10,30 @@
 namespace cuda::neural {
 
     LayerNormResult::LayerNormResult(int size)
-        : size(size) {
-        output = new float[size];
-        mean = new float[size];
-        variance = new float[size];
+        : output(nullptr),
+          mean(nullptr),
+          variance(nullptr),
+          d_output(nullptr),
+          d_mean(nullptr),
+          d_variance(nullptr),
+          size(size) {
+        // Six allocations, any of which can fail: three host arrays and three device buffers. A
+        // constructor that throws does not run its destructor, so everything taken before the failure
+        // had no owner. BFSResult and PageRankResult in this tree already guard this shape; this one
+        // did not. clear() is safe to call on a partly-built object -- it null-checks the device
+        // pointers and delete[] accepts nullptr.
+        try {
+            output = new float[size];
+            mean = new float[size];
+            variance = new float[size];
 
-        CUDA_CHECK(cudaMalloc(&d_output, size * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&d_mean, size * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&d_variance, size * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&d_output, size * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&d_mean, size * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&d_variance, size * sizeof(float)));
+        } catch (...) {
+            clear();
+            throw;
+        }
     }
 
     LayerNormResult::~LayerNormResult() {
