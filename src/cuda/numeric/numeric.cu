@@ -111,9 +111,11 @@ namespace cuda::numeric {
         const float h = (b - a) / (2.0f * static_cast<float>(n));
 
         memory::Buffer<float> f0(n), f1(n), f2(n);
-        float* h_f0 = static_cast<float*>(malloc(n * sizeof(float)));
-        float* h_f1 = static_cast<float*>(malloc(n * sizeof(float)));
-        float* h_f2 = static_cast<float*>(malloc(n * sizeof(float)));
+        // std::vector rather than three bare malloc()s: those were never checked for null, and the
+        // three CUDA_CHECK copies below can throw, which left all three arrays with no owner. This
+        // file includes no Thrust or libcu++ header, so unqualified std:: is ::std:: here (see
+        // docs/include-order.md).
+        std::vector<float> h_f0(n), h_f1(n), h_f2(n);
 
         for (size_t i = 0; i < n; ++i) {
             float x0 = a + (2 * i) * h;
@@ -124,9 +126,9 @@ namespace cuda::numeric {
             h_f2[i] = func(x2);
         }
 
-        CUDA_CHECK(cudaMemcpy(f0.data(), h_f0, n * sizeof(float), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(f1.data(), h_f1, n * sizeof(float), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(f2.data(), h_f2, n * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(f0.data(), h_f0.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(f1.data(), h_f1.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(f2.data(), h_f2.data(), n * sizeof(float), cudaMemcpyHostToDevice));
 
         float sum0 = cuda::algo::reduce_sum(f0.data(), n);
         float sum1 = cuda::algo::reduce_sum(f1.data(), n);
@@ -136,10 +138,6 @@ namespace cuda::numeric {
         result.intervals = n;
         result.error_estimate = std::abs(h * h * h * h * (b - a) / 180.0f);
         result.converged = result.error_estimate < 1e-5f;
-
-        free(h_f0);
-        free(h_f1);
-        free(h_f2);
 
         return result;
     }
