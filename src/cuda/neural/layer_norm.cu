@@ -1,4 +1,5 @@
 #include "cuda/neural/layer_norm.h"
+#include <string>
 
 #include "cuda/device/error.h"
 
@@ -105,6 +106,18 @@ namespace cuda::neural {
                     int normalized_shape,
                     float eps,
                     cudaStream_t stream) {
+        // A non-positive batch makes grid_size invalid for the launch config, and a non-positive
+        // normalized_shape leaves the per-row reduction with nothing to average. Neither was checked:
+        // layer_norm(..., batch_size = 0, ...) launched <<<0, 256>>> and left CUDA_CHECK to report
+        // whatever cudaGetLastError made of it, and layer_norm_inference sized its scratch
+        // Buffer<float>(batch_size), whose parameter is size_t, so -1 became a 2^64-1 request.
+        if (batch_size <= 0) {
+            throw std::invalid_argument("layer_norm: batch_size must be positive, got " + std::to_string(batch_size));
+        }
+        if (normalized_shape <= 0) {
+            throw std::invalid_argument("layer_norm: normalized_shape must be positive, got " + std::to_string(normalized_shape));
+        }
+
         int block_size = 256;
         int grid_size = batch_size;
 

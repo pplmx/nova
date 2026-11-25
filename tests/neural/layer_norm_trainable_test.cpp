@@ -388,3 +388,33 @@ TEST_F(LayerNormTrainableTest, ParallelBackwardMatchesHostFp64LargeHidden) {
     EXPECT_TRUE(arrays_near(ref_dg.data(), dg.data(), h, 2e-4f)) << "parallel LayerNorm d_gamma differs from the host fp64 reference";
     EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), h, 2e-4f)) << "parallel LayerNorm d_beta differs from the host fp64 reference";
 }
+
+// layer_norm launches with grid_size = batch_size, so a non-positive batch reads as an invalid grid
+// dimension; and layer_norm_inference sizes its scratch Buffer(batch_size), whose argument is size_t,
+// so a negative batch becomes a huge allocation request instead of a message about the argument.
+// Neither entry point checked.
+TEST(LayerNormBoundsTest, ANonPositiveBatchSizeIsRejected) {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    std::vector<float> in(16, 1.0f), out(16, 0.0f), g(16, 1.0f), b(16, 0.0f);
+
+    EXPECT_THROW(cuda::neural::layer_norm(in.data(), g.data(), b.data(), out.data(), nullptr, nullptr, 0, 16, 1e-5f, nullptr), std::invalid_argument);
+    EXPECT_THROW(cuda::neural::layer_norm(in.data(), g.data(), b.data(), out.data(), nullptr, nullptr, -1, 16, 1e-5f, nullptr), std::invalid_argument);
+}
+
+TEST(LayerNormBoundsTest, ANonPositiveNormalizedShapeIsRejected) {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "no CUDA device";
+    }
+
+    std::vector<float> in(16, 1.0f), out(16, 0.0f), g(16, 1.0f), b(16, 0.0f);
+
+    EXPECT_THROW(cuda::neural::layer_norm(in.data(), g.data(), b.data(), out.data(), nullptr, nullptr, 1, 0, 1e-5f, nullptr), std::invalid_argument);
+    EXPECT_THROW(cuda::neural::layer_norm(in.data(), g.data(), b.data(), out.data(), nullptr, nullptr, 1, -4, 1e-5f, nullptr), std::invalid_argument);
+}
