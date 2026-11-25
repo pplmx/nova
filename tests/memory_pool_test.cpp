@@ -1035,6 +1035,31 @@ TEST(MemoryPoolReuseTest, ReleasingTheSamePointerTwiceIsANoOp) {
     pool.deallocate(b, 256);
 }
 
+// num_active_streams and get_allocations_by_stream() describe the same thing and used to disagree.
+// The metric counted Block::stream_id, which only records the stream of the most recent allocate()
+// into that block; the map walks every live allocation. Four 256-byte allocations on streams 0, 1, 2
+// and 1 all fit one 4096-byte block, so the block was tagged stream 1 and the metric reported 1 while
+// the map reported 3.
+TEST(MemoryPoolReuseTest, ActiveStreamCountMatchesThePerStreamBreakdown) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 8;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    EXPECT_NE(pool.allocate(256, 0), nullptr);
+    EXPECT_NE(pool.allocate(256, 1), nullptr);
+    EXPECT_NE(pool.allocate(256, 2), nullptr);
+    EXPECT_NE(pool.allocate(256, 1), nullptr);
+
+    const auto by_stream = pool.get_allocations_by_stream();
+    const auto metrics = pool.get_metrics();
+
+    EXPECT_EQ(by_stream.size(), 3u) << "three distinct streams hold allocations";
+    EXPECT_EQ(static_cast<size_t>(metrics.num_active_streams), by_stream.size()) << "the metric must count the same streams the breakdown reports";
+    EXPECT_EQ(pool.num_blocks(), 1u) << "all four allocations fit one block, which is what hid the bug";
+}
+
 // get_metrics() used to lock metrics_mutex_ while walking blocks_, which allocate_block() grows
 // under mutex_. Two locks over one vector means a concurrent get_metrics() could iterate it
 // mid-reallocation, and metrics_mutex_ had exactly one user -- get_metrics() itself -- so it

@@ -279,9 +279,19 @@ namespace cuda::memory {
             if (block.ptr) {
                 total_block_space += block.size;
                 total_free_space += (block.size - block.offset);
-                if (block.stream_id >= 0) {
-                    active_streams.insert(block.stream_id);
-                }
+            }
+        }
+
+        // Count the streams that hold live allocations, from allocation_map_, not the streams the
+        // blocks happen to be tagged with. Block::stream_id only records the stream of the most
+        // recent allocate() into that block, so a block holding allocations from three streams
+        // reports one of them. Measured: four 256-byte allocations on streams 0, 1, 2 and 1 all fit
+        // one 4096-byte block; get_allocations_by_stream() returned 3 entries while
+        // num_active_streams reported 1. The two accessors describe the same state and have to agree.
+        for (const auto& [ptr, info] : allocation_map_) {
+            (void)ptr;
+            if (info.stream_id >= 0) {
+                active_streams.insert(info.stream_id);
             }
         }
         metrics.num_active_streams = static_cast<int>(active_streams.size());
