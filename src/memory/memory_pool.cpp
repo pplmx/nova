@@ -19,8 +19,25 @@ namespace cuda::memory {
             // max_blocks=4, preallocate=true: get_metrics() reported hits=0 misses=4 straight after
             // construction, and the first allocate() left misses at 4 even though it was served from
             // a block that was already there.
-            for (size_t i = 0; i < config_.max_blocks; ++i) {
-                (void)allocate_block();
+            //
+            // A cudaMalloc failure part-way through throws out of the constructor, and a constructor
+            // that throws never runs its destructor -- so the blocks taken before that point had no
+            // owner. BFSResult and PageRankResult in this tree already guard that shape; this one did
+            // not. Measured with 4 blocks of 1 MiB and the second allocation failed: 2 MiB stayed
+            // allocated with no object left to free it.
+            try {
+                for (size_t i = 0; i < config_.max_blocks; ++i) {
+                    (void)allocate_block();
+                }
+            } catch (...) {
+                for (auto& block : blocks_) {
+                    if (block.ptr != nullptr) {
+                        (void)cudaFree(block.ptr);
+                        block.ptr = nullptr;
+                    }
+                }
+                blocks_.clear();
+                throw;
             }
         }
     }

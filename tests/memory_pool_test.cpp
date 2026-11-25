@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "cuda_alloc_injection.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 #include "cuda/memory/memory_pool.h"
@@ -1180,4 +1181,32 @@ TEST(MemoryPoolConcurrencyTest, MetricsAndAllocationCanRunAtTheSameTime) {
 
     EXPECT_GT(reads.load(), 0L) << "the reader must have observed at least one snapshot";
     EXPECT_EQ(pool.total_allocated(), 0u) << "everything was released";
+}
+
+// The constructor's preallocation loop calls allocate_block() max_blocks times. If a later
+// cudaMalloc fails, CUDA_CHECK throws out of the constructor -- and a constructor that throws does
+// not run its destructor, so every block taken before the failure leaks. BFSResult and PageRankResult
+// in this tree already guard the same shape; this constructor did not.
+TEST(MemoryPoolExceptionSafetyTest, AFailedPreallocationReleasesTheBlocksItAlreadyTook) {
+    using namespace cuda::memory;
+
+    MemoryPool::Config config;
+    config.block_size = 1u << 20;  // 1 MiB per block so the accounting is visible
+    config.max_blocks = 4;
+    config.preallocate = true;
+
+    size_t free_before = 0;
+    size_t total = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_before, &total), cudaSuccess);
+
+    // Let the first block through, fail the second.
+    cuda_test::fail_allocation_after(1);
+    EXPECT_THROW((void)MemoryPool(config), std::exception) << "a failed preallocation must surface, not be swallowed";
+    cuda_test::stop_failing_allocations();
+
+    size_t free_after = 0;
+    ASSERT_EQ(cudaMemGetInfo(&free_after, &total), cudaSuccess);
+
+    const long long reclaimed = static_cast<long long>(free_after) - static_cast<long long>(free_before);
+    EXPECT_GE(reclaimed, -(static_cast<long long>(config.block_size) / 2)) << "the block allocated before the failure must be released; losing one block shows up here";
 }
