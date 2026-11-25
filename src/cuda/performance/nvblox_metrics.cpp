@@ -44,16 +44,32 @@ namespace cuda::performance {
 
     void NVBloxMetricsCollector::add_sample(const std::string& name, double value) {
         uint64_t timestamp = 0;
-        cudaEvent_t start, stop;
-        if (cudaEventCreate(&start) == cudaSuccess && cudaEventCreate(&stop) == cudaSuccess) {
-            CUDA_CHECK(cudaEventRecord(start));
-            CUDA_CHECK(cudaEventRecord(stop));
-            CUDA_CHECK(cudaEventSynchronize(stop));
+        // The two creates used to share a short-circuiting condition. When the second failed the body
+        // was skipped, including the cudaEventDestroy(start) inside it, so the first event was never
+        // released -- the code tolerated the failure but leaked the success that preceded it. The
+        // same shape leaked both events when one of the CUDA_CHECKs in the body threw.
+        //
+        // A local guard releases whatever was created on every exit, including a throw.
+        struct EventPair {
+            cudaEvent_t start = nullptr;
+            cudaEvent_t stop = nullptr;
+            ~EventPair() noexcept {
+                if (start != nullptr) {
+                    cudaEventDestroy(start);
+                }
+                if (stop != nullptr) {
+                    cudaEventDestroy(stop);
+                }
+            }
+        } events;
+
+        if (cudaEventCreate(&events.start) == cudaSuccess && cudaEventCreate(&events.stop) == cudaSuccess) {
+            CUDA_CHECK(cudaEventRecord(events.start));
+            CUDA_CHECK(cudaEventRecord(events.stop));
+            CUDA_CHECK(cudaEventSynchronize(events.stop));
             float dummy_time_ms = 0.0f;
-            CUDA_CHECK(cudaEventElapsedTime(&dummy_time_ms, start, stop));
+            CUDA_CHECK(cudaEventElapsedTime(&dummy_time_ms, events.start, events.stop));
             timestamp = static_cast<uint64_t>(dummy_time_ms * 1e6);
-            CUDA_CHECK(cudaEventDestroy(start));
-            CUDA_CHECK(cudaEventDestroy(stop));
         }
 
         std::lock_guard<std::mutex> lock(mutex_);

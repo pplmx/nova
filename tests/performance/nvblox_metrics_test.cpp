@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <stdexcept>
+
+#include "cuda_alloc_injection.h"
 
 #include <cuda/performance/nvblox_metrics.h>
 #include <cuda/performance/kernel_profiler.h>
@@ -64,6 +67,28 @@ namespace cuda::performance::test {
         EXPECT_EQ(samples.size(), 2u);
         EXPECT_DOUBLE_EQ(samples[0].value, 1.5);
         EXPECT_DOUBLE_EQ(samples[1].value, 2.5);
+    }
+
+    // add_sample() takes two events through a short-circuiting condition:
+    //
+    //     if (cudaEventCreate(&start) == cudaSuccess && cudaEventCreate(&stop) == cudaSuccess) { ... }
+    //
+    // When the second create fails the body is skipped, including the cudaEventDestroy(start) inside
+    // it -- so the first event is never destroyed. The awkward condition is what makes this easy to
+    // miss: the code reads as if it tolerates a failed create, and it does tolerate the failure, but
+    // it leaks the success that preceded it.
+    TEST_F(NVBloxMetricsTest, AFailedSecondEventCreateDoesNotLeakTheFirst) {
+        auto& collector = NVBloxMetricsCollector::instance();
+        collector.register_metric("probe", MetricType::Latency);
+
+        cuda_test::reset_event_count();
+
+        // Let the first event through, fail the second.
+        cuda_test::fail_event_after(1);
+        collector.add_sample("probe", 1.0);
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the event created before the failure must be destroyed";
     }
 
     TEST_F(NVBloxMetricsTest, RecordKernel) {
