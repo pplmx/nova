@@ -60,6 +60,11 @@ namespace cuda::neural {
         float momentum() const { return momentum_; }
 
     private:
+        /// Frees every device buffer this object owns and nulls it. Called by the destructor
+        /// and by the constructor when a later allocation fails -- a constructor that throws does
+        /// not run its destructor, so it has to release what it took itself.
+        void release_buffers() noexcept;
+
         int num_features_;
         float eps_;
         float momentum_;

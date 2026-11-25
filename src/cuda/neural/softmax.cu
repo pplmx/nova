@@ -8,11 +8,23 @@
 namespace cuda::neural {
 
     SoftmaxResult::SoftmaxResult(int outer_dim, int inner_dim)
-        : outer_dim(outer_dim),
+        : output(nullptr),
+          d_output(nullptr),
+          outer_dim(outer_dim),
           inner_dim(inner_dim) {
         size = outer_dim * inner_dim;
-        output = new float[size];
-        CUDA_CHECK(cudaMalloc(&d_output, size * sizeof(float)));
+        // Two allocations, and the second can fail: a throwing constructor does not run its
+        // destructor, so output was left with no owner when cudaMalloc failed. The pointers are also
+        // set here rather than only in the default constructor -- the guard calls clear(), which
+        // delete[]s output, and running that on an indeterminate pointer is how LayerNormResult
+        // crashed the test binary last round.
+        try {
+            output = new float[size];
+            CUDA_CHECK(cudaMalloc(&d_output, size * sizeof(float)));
+        } catch (...) {
+            clear();
+            throw;
+        }
     }
 
     SoftmaxResult::~SoftmaxResult() {
@@ -29,6 +41,7 @@ namespace cuda::neural {
 
     void SoftmaxResult::clear() {
         delete[] output;
+        output = nullptr;
         if (d_output) {
             cudaFree(d_output);
             d_output = nullptr;

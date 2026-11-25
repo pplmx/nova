@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "cuda_alloc_injection.h"
 #include <vector>
 #include <cmath>
 #include "cuda/neural/softmax.h"
@@ -73,4 +74,19 @@ TEST_F(SoftmaxTest, SoftmaxIsTranslationInvariant) {
         float expected2 = std::exp(input2[i] - max2) / sum2;
         EXPECT_NEAR(expected1, expected2, 0.001f);
     }
+}
+
+// SoftmaxResult's constructor takes a host array and then a device buffer. A constructor that throws
+// does not run its destructor, so the array was left with no owner when cudaMalloc failed. The
+// initialiser list also sets both pointers now: the guard calls clear(), which delete[]s output, and
+// that on an indeterminate pointer crashed LayerNormResult's first guard last round.
+TEST(SoftmaxResultExceptionSafetyTest, AFailedDeviceAllocationReleasesTheHostArray) {
+    cuda_test::reset_live_host_allocation_count();
+
+    // Let the host array through, fail the cudaMalloc that follows it.
+    cuda_test::fail_allocation_after(0);
+    EXPECT_THROW((void)cuda::neural::SoftmaxResult(4, 8), std::exception);
+    cuda_test::stop_failing_allocations();
+
+    EXPECT_EQ(cuda_test::live_host_allocation_count(), 0) << "the host array must be released when the device buffer cannot be allocated";
 }

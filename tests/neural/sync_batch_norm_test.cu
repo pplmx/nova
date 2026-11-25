@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <stdexcept>
 #include <cuda_runtime.h>
+#include "cuda_alloc_injection.h"
 #include "cuda/neural/sync_batch_norm.h"
 #include "cuda/mesh/device_mesh.h"
 #include "cuda/device/error.h"
@@ -580,6 +581,27 @@ namespace cuda::neural {
 
         EXPECT_THROW(bn.forward_training(in.data(), out.data(), 0, 8, nullptr), std::invalid_argument) << "batch_size 0 divides by zero in inv_n";
         EXPECT_THROW(bn.forward_training(in.data(), out.data(), 4, 0, nullptr), std::invalid_argument) << "spatial_size 0 divides by zero in inv_n";
+    }
+
+    // The constructor takes nine device buffers in a row. A constructor that throws does not run its
+    // destructor, so a failure part way through used to leave every buffer taken before it with no
+    // owner.
+    TEST(SyncBatchNormConstructorExceptionSafetyTest, AFailedAllocationReleasesTheBuffersAlreadyTaken) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        cuda_test::reset_allocation_count();
+
+        // Let two buffers through, fail the third.
+        cuda_test::fail_allocation_after(2);
+        EXPECT_THROW((void)SyncBatchNorm(8, 1e-5f, 0.1f), std::exception);
+        cuda_test::stop_failing_allocations();
+
+        EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "buffers taken before the failure must be released, not left with no owner";
     }
 
 }  // namespace cuda::neural

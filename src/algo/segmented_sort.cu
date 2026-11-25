@@ -62,12 +62,12 @@ namespace cuda::algo::segmented {
             // thrust pulls in cuda::std, whose <vector> is incomplete in this
             // translation unit; a plain array keeps the host-side scan independent
             // of the standard library configuration.
-            int* host_segments = new int[count];
+            std::unique_ptr<int[]> host_segments(new int[count]);
             // The segment scan is host-side, so it has to see the device data. Order the
             // copy on the caller's stream and wait for it, rather than issuing it on the
             // default stream where it would be unordered with respect to work the caller
             // queued on `stream`.
-            CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaMemcpyAsync(host_segments.get(), segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
             CUDA_CHECK(cudaStreamSynchronize(stream));
 
             size_t begin = 0;
@@ -90,7 +90,6 @@ namespace cuda::algo::segmented {
                 }
                 begin = end;
             }
-            delete[] host_segments;
         }
 
         thrust::device_ptr<T> d_out_keys_ptr(out_keys);
@@ -128,8 +127,8 @@ namespace cuda::algo::segmented {
         thrust::device_ptr<Key> keys_ptr(d_keys.get());
         thrust::device_ptr<Value> values_ptr(d_values.get());
 
-        int* host_segments = new int[count];
-        CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
+        std::unique_ptr<int[]> host_segments(new int[count]);
+        CUDA_CHECK(cudaMemcpyAsync(host_segments.get(), segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
         const auto policy = thrust::cuda::par.on(stream);
         thrust::sequence(policy, indices_ptr, indices_ptr + count);
@@ -157,7 +156,7 @@ namespace cuda::algo::segmented {
             }
             begin = end;
         }
-        delete[] host_segments;
+
         (void)num_segments;
 
         thrust::gather(policy, indices_ptr, indices_ptr + count, thrust::device_ptr<const Key>(d_keys_original.get()), thrust::device_ptr<Key>(out_keys));
@@ -181,10 +180,10 @@ namespace cuda::algo::segmented {
         thrust::device_ptr<T> d_keys(keys);
         thrust::device_ptr<int> d_segments(segment_ids);
 
-        int* host_segments = new int[count];
+        std::unique_ptr<int[]> host_segments(new int[count]);
         // The scan is host-side, so it must wait for the device data -- on the caller's
         // stream, not the default one.
-        CUDA_CHECK(cudaMemcpyAsync(host_segments, segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaMemcpyAsync(host_segments.get(), segment_ids, count * sizeof(int), cudaMemcpyDeviceToHost, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
         const auto policy = thrust::cuda::par.on(stream);
 
@@ -205,7 +204,7 @@ namespace cuda::algo::segmented {
             }
             begin = end;
         }
-        delete[] host_segments;
+
         (void)num_segments;
         (void)stream;
     }

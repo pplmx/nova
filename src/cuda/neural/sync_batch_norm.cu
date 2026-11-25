@@ -308,16 +308,24 @@ namespace cuda::neural {
             throw ::std::invalid_argument("SyncBatchNorm: num_features must be positive, got " + ::std::to_string(num_features_));
         }
 
-        CUDA_CHECK(cudaMalloc(&running_mean_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&running_var_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&gamma_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&beta_, num_features * sizeof(float)));
+        // Nine device buffers. A throwing constructor does not run its destructor, so a failure part
+        // way through used to leave every buffer taken before it with no owner. The h_data guard
+        // further down already existed; these nine did not.
+        try {
+            CUDA_CHECK(cudaMalloc(&running_mean_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&running_var_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&gamma_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&beta_, num_features * sizeof(float)));
 
-        CUDA_CHECK(cudaMalloc(&saved_mean_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&saved_var_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&saved_input_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&saved_output_, num_features * sizeof(float)));
-        CUDA_CHECK(cudaMalloc(&normalized_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&saved_mean_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&saved_var_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&saved_input_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&saved_output_, num_features * sizeof(float)));
+            CUDA_CHECK(cudaMalloc(&normalized_, num_features * sizeof(float)));
+        } catch (...) {
+            release_buffers();
+            throw;
+        }
 
         float* h_data = new float[num_features];
         try {
@@ -340,6 +348,9 @@ namespace cuda::neural {
     }
 
     SyncBatchNorm::~SyncBatchNorm() {
+        release_buffers();
+    }
+    void SyncBatchNorm::release_buffers() noexcept {
         // Not using CUDA_CHECK here: throwing in a destructor is undefined
         // behavior (C++11 destructors default to noexcept).
         if (running_mean_) {
