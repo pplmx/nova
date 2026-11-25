@@ -3,6 +3,7 @@
 #include "cuda/device/error.h"
 
 #include <algorithm>
+#include <memory>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -194,11 +195,14 @@ namespace cuda::graph {
 
         auto graph = std::make_unique<CSRGraph>(num_vertices, num_edges);
 
-        int* counts = new int[num_vertices]();
+        // Both scratch arrays are held by a unique_ptr: the second new[] can throw bad_alloc, and the
+        // explicit delete[] calls below only cover the two range-check throws. A bad_alloc unwound
+        // straight past them, so counts was left with no owner. Measured before the change: failing
+        // the current_offset allocation leaves one host allocation live.
+        std::unique_ptr<int[]> counts(new int[num_vertices]());
         for (int i = 0; i < num_edges; ++i) {
             const int src = src_vertices[i];
             if (src < 0 || src >= num_vertices) {
-                delete[] counts;
                 throw ::std::out_of_range("create_csr_from_edges: src_vertices[" + ::std::to_string(i) + "] = " + ::std::to_string(src) + " is outside [0, "
                                           + ::std::to_string(num_vertices) + ")");
             }
@@ -210,7 +214,7 @@ namespace cuda::graph {
             graph->row_offsets[v + 1] = graph->row_offsets[v] + counts[v];
         }
 
-        int* current_offset = new int[num_vertices]();
+        std::unique_ptr<int[]> current_offset(new int[num_vertices]());
         for (int i = 0; i < num_edges; ++i) {
             int src = src_vertices[i];
             const int dst = dst_vertices[i];
@@ -218,8 +222,6 @@ namespace cuda::graph {
             // invalid. validate_csr reports that afterwards, but storing it silently leaves the
             // constructor's own output malformed and makes the caller responsible for noticing.
             if (dst < 0 || dst >= num_vertices) {
-                delete[] counts;
-                delete[] current_offset;
                 throw ::std::out_of_range("create_csr_from_edges: dst_vertices[" + ::std::to_string(i) + "] = " + ::std::to_string(dst) + " is outside [0, "
                                           + ::std::to_string(num_vertices) + ")");
             }
@@ -227,9 +229,6 @@ namespace cuda::graph {
             graph->columns[pos] = dst;
             graph->weights[pos] = weights ? weights[i] : 1.0f;
         }
-
-        delete[] counts;
-        delete[] current_offset;
 
         return graph;
     }

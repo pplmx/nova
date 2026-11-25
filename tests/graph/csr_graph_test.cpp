@@ -294,3 +294,26 @@ TEST(CsrGraphOwnershipTest, AConstructorThatCannotAllocateItsArraysReleasesTheEa
 
     EXPECT_EQ(cuda_test::live_host_allocation_count(), 0) << "the array allocated before the failure must be released, not left with no owner";
 }
+
+// create_csr_from_edges takes two host scratch arrays with a bare new[] each: counts, then
+// current_offset. counts is released by an explicit delete[] on the two range-check throws, but not
+// when the SECOND allocation throws bad_alloc -- that unwinds straight past the delete[] at the end
+// of the function, so counts is left with no owner.
+//
+// The allocation index was measured rather than assumed. Sweeping fail_host_allocation_after over
+// 0..8 on this call: 0..4 throw from inside the CSRGraph constructor (whose own guard covers them)
+// and leave nothing live, 5 throws at current_offset and leaves 1 live, and 6 does not throw at all.
+// So 5 is the one index that reaches this path; failing an earlier one would only re-test the
+// constructor's guard.
+TEST(CsrGraphOwnershipTest, CreateFromEdgesReleasesItsCountsArrayWhenTheSecondAllocationFails) {
+    const std::vector<int> src = {0, 1, 2, 3};
+    const std::vector<int> dst = {1, 2, 3, 0};
+
+    cuda_test::reset_live_host_allocation_count();
+
+    cuda_test::fail_host_allocation_after(5);
+    EXPECT_THROW((void)create_csr_from_edges(src.data(), dst.data(), nullptr, 4, 4), std::bad_alloc);
+    cuda_test::stop_failing_host_allocations();
+
+    EXPECT_EQ(cuda_test::live_host_allocation_count(), 0) << "the counts array taken before the failure must be released";
+}
