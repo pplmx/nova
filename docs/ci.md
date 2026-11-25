@@ -64,7 +64,27 @@ cmake --build build --parallel
 
 # ASan + UBSan
 make sanitize
+
+# ThreadSanitizer (separate build: TSan cannot share one with ASan)
+make tsan
 ```
+
+### What `make tsan` covers, and what it cannot
+
+It builds its own tree with `-fsanitize=thread` and runs the suite at `-j2`.
+Scope matters for reading the result: TSan only reports races in code it
+instruments, and a test linked against `libcuda_impl.a` would check the test body
+alone. This target compiles the library with the sanitizer as well, which is the
+reason it exists -- an earlier attempt that instrumented only the tests reported
+nothing while a race inside `MemoryPool` was live.
+
+`-j2` rather than the `-j8` the other targets use, because
+`MemoryPoolMetricsTest`'s context-gone case calls `cudaDeviceReset()` on purpose
+and a parallel run let that reset land on another case's device.
+
+It needs the GPU to itself. Running it beside `ctest` in another build directory
+makes both runs meaningless -- the device is shared, and cases that synchronise or
+reset it interfere. Run the suites one at a time.
 
 ### `make lint` does not complete
 
