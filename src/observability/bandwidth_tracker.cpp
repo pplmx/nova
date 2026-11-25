@@ -5,13 +5,54 @@
 
 namespace cuda::observability {
 
+    namespace {
+
+        /// Releases whatever measure_transfer() has taken so far, on any exit.
+        ///
+        /// Every acquisition in that function used to carry its release at the bottom, behind a run
+        /// of CUDA_CHECK calls that can all throw. A cudaEventCreate that failed therefore leaked
+        /// the two buffers, and a failure on the second create also leaked the first event --
+        /// measured at one allocation plus one event, and two allocations plus one event.
+        ///
+        /// The members are the raw handles the function works with; it assigns each one as soon as
+        /// the acquisition succeeds, so the guard always knows exactly what it owns. Destructor does
+        /// not throw: it releases without CUDA_CHECK, which a destructor must not do anyway.
+        struct TransferResources {
+            void* device = nullptr;
+            void* host = nullptr;
+            cudaEvent_t start = nullptr;
+            cudaEvent_t end = nullptr;
+
+            TransferResources() = default;
+            TransferResources(const TransferResources&) = delete;
+            TransferResources& operator=(const TransferResources&) = delete;
+
+            ~TransferResources() {
+                if (start != nullptr) {
+                    cudaEventDestroy(start);
+                }
+                if (end != nullptr) {
+                    cudaEventDestroy(end);
+                }
+                if (device != nullptr) {
+                    cudaFree(device);
+                }
+                if (host != nullptr) {
+                    cudaFreeHost(host);
+                }
+            }
+        };
+
+    }  // namespace
+
     BandwidthResult BandwidthTracker::measure_transfer(MemoryTransferType type, uint64_t size_bytes, cudaStream_t stream) {
         BandwidthResult result {};
         result.type = type;
         result.bytes_transferred = size_bytes;
 
-        void* d_ptr = nullptr;
-        void* h_ptr = nullptr;
+        TransferResources owned;
+        void*& d_ptr = owned.device;
+        void*& h_ptr = owned.host;
 
         if (type == MemoryTransferType::DeviceToDevice) {
             if (cudaMalloc(&d_ptr, size_bytes) != cudaSuccess) {
@@ -26,47 +67,39 @@ namespace cuda::observability {
             // d_ptr, so measure_device_to_host() copied from a null d_ptr and
             // failed with cudaErrorInvalidValue.
             if (cudaMalloc(&d_ptr, size_bytes) != cudaSuccess) {
-                CUDA_CHECK(cudaFreeHost(h_ptr));
                 return result;
             }
         }
 
-        cudaEvent_t start, end;
-        CUDA_CHECK(cudaEventCreate(&start));
-        CUDA_CHECK(cudaEventCreate(&end));
+        CUDA_CHECK(cudaEventCreate(&owned.start));
+        CUDA_CHECK(cudaEventCreate(&owned.end));
 
-        CUDA_CHECK(cudaEventRecord(start, stream));
+        CUDA_CHECK(cudaEventRecord(owned.start, stream));
 
         if (type == MemoryTransferType::HostToDevice) {
             CUDA_CHECK(cudaMemcpyAsync(d_ptr, h_ptr, size_bytes, cudaMemcpyHostToDevice, stream));
         } else if (type == MemoryTransferType::DeviceToHost) {
             CUDA_CHECK(cudaMemcpyAsync(h_ptr, d_ptr, size_bytes, cudaMemcpyDeviceToHost, stream));
         } else {
-            void* d_ptr2 = nullptr;
-            if (cudaMalloc(&d_ptr2, size_bytes) == cudaSuccess) {
-                CUDA_CHECK(cudaMemcpyAsync(d_ptr2, d_ptr, size_bytes, cudaMemcpyDeviceToDevice, stream));
-                cudaFree(d_ptr2);
+            // The second device buffer is local: the guard above does not cover it, so it has its
+            // own. Released even when the copy throws.
+            TransferResources second;
+            if (cudaMalloc(&second.device, size_bytes) == cudaSuccess) {
+                CUDA_CHECK(cudaMemcpyAsync(second.device, d_ptr, size_bytes, cudaMemcpyDeviceToDevice, stream));
             }
         }
 
-        CUDA_CHECK(cudaEventRecord(end, stream));
+        CUDA_CHECK(cudaEventRecord(owned.end, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
 
         float elapsed_ms = 0;
-        CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, end));
+        CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, owned.start, owned.end));
 
         result.elapsed_ms = elapsed_ms;
         result.bandwidth_gbps = (size_bytes * 1000.0) / (elapsed_ms * 1e9);
 
         total_bytes_transferred_ += size_bytes;
         total_time_ns_ += static_cast<uint64_t>(elapsed_ms * 1e6);
-
-        CUDA_CHECK(cudaEventDestroy(start));
-        CUDA_CHECK(cudaEventDestroy(end));
-        CUDA_CHECK(cudaFree(d_ptr));
-        if (h_ptr) {
-            CUDA_CHECK(cudaFreeHost(h_ptr));
-        }
 
         return result;
     }

@@ -53,6 +53,21 @@ namespace cuda_test {
     /// Zeroes the event counter. Call before the code under test, then check live_event_count() after.
     void reset_event_count();
 
+    /// Fails every cudaEventCreate from the nth onward. 0 fails the next one, and the counter resets
+    /// whenever this is called.
+    ///
+    /// Separate from fail_allocation_after() on purpose: a case that wants "the second event fails"
+    /// should not have to know how many cudaMalloc calls happen in between, and arithmetic on a
+    /// shared counter breaks as soon as either side gains an allocation. Events are not heap
+    /// allocations, so this is the only way to reach the failure paths of code that creates them.
+    void fail_event_after(int n);
+
+    /// Returns to forwarding every event creation.
+    void stop_failing_events();
+
+    /// Event creations attempted since the last fail_event_after/stop.
+    int event_attempts();
+
     /// Device allocations that went through the wrapper and have not been freed yet. Unlike
     /// live_event_count() this does work for code compiled into the library, because the calls it
     /// counts are in .cpp/.cu files rather than in a header-only template.

@@ -18,6 +18,11 @@ namespace {
     thread_local int g_fail_from = -1;
     thread_local int g_attempts = 0;
 
+    /// The same arm, for cudaEventCreate. Kept separate from the allocation counter so that failing
+    /// an event does not depend on -- or disturb -- the sequence of cudaMalloc calls.
+    thread_local int g_event_fail_from = -1;
+    thread_local int g_event_attempts = 0;
+
     /// Events created minus destroyed, per thread. Only counts what went through the wrapper, which
     /// is every call in the test binary.
     thread_local int g_live_events = 0;
@@ -51,6 +56,16 @@ extern "C" cudaError_t __wrap_cudaFree(void* ptr) {
 }
 
 extern "C" cudaError_t __wrap_cudaEventCreate(cudaEvent_t* event) {
+    // Event failures have their own arm rather than sharing the allocation counter: a case that
+    // wants "the second cudaMalloc fails" must not also depend on how many events some unrelated
+    // call in between happens to create. See fail_event_after().
+    const int attempt = g_event_attempts++;
+    if (g_event_fail_from >= 0 && attempt >= g_event_fail_from) {
+        if (event != nullptr) {
+            *event = nullptr;
+        }
+        return cudaErrorInitializationError;
+    }
     const cudaError_t status = __real_cudaEventCreate(event);
     if (status == cudaSuccess) {
         ++g_live_events;
@@ -80,6 +95,20 @@ namespace cuda_test {
 
     int allocation_attempts() {
         return g_attempts;
+    }
+
+    void fail_event_after(int n) {
+        g_event_fail_from = n < 0 ? 0 : n;
+        g_event_attempts = 0;
+    }
+
+    void stop_failing_events() {
+        g_event_fail_from = -1;
+        g_event_attempts = 0;
+    }
+
+    int event_attempts() {
+        return g_event_attempts;
     }
 
     int live_event_count() {
