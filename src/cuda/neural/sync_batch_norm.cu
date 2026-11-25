@@ -376,6 +376,17 @@ namespace cuda::neural {
     }
 
     void SyncBatchNorm::forward_training(const float* input, float* output, int batch_size, int spatial_size, cudaStream_t stream) {
+        // A zero extent divides by zero in inv_n below, and the resulting inf multiplies every mean,
+        // so the saved statistics and the normalised output all become NaN with no error raised.
+        // batch_size 0 and spatial_size 0 both take that path; forward_inference in this file got the
+        // same guard earlier, this entry point did not.
+        if (batch_size <= 0 || spatial_size <= 0) {
+            throw ::std::invalid_argument(
+                "SyncBatchNorm::forward_training: batch_size and spatial_size must be positive, got "
+                "batch_size="
+                + ::std::to_string(batch_size) + " spatial_size=" + ::std::to_string(spatial_size));
+        }
+
         int n = batch_size * num_features_ * spatial_size;
         float inv_n = 1.0f / static_cast<float>(batch_size * spatial_size);
 

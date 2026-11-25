@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <cuda_runtime.h>
 #include "cuda/neural/sync_batch_norm.h"
 #include "cuda/mesh/device_mesh.h"
@@ -559,6 +560,26 @@ namespace cuda::neural {
                 EXPECT_NEAR(dbeta_shards[r][c], ref_d_beta[c], 1e-3f) << "d_beta[" << c << "]";
             }
         }
+    }
+
+    // forward_training computes inv_n = 1.0f / (batch_size * spatial_size) before launching, so a zero
+    // extent divides by zero: inv_n becomes inf and every mean, variance and normalised value follows
+    // it to NaN. num_features 0 gives grid_size = (0 + 255)/256 = 0, an invalid launch configuration.
+    // Neither was checked on this path; forward_inference got its guard earlier.
+    TEST(SyncBatchNormBoundsTest, AZeroExtentIsRejectedByForwardTraining) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        SyncBatchNorm bn(4, 1e-5f, 0.1f);
+        std::vector<float> in(4 * 8 * 8, 1.0f);
+        std::vector<float> out(4 * 8 * 8, 0.0f);
+
+        EXPECT_THROW(bn.forward_training(in.data(), out.data(), 0, 8, nullptr), std::invalid_argument) << "batch_size 0 divides by zero in inv_n";
+        EXPECT_THROW(bn.forward_training(in.data(), out.data(), 4, 0, nullptr), std::invalid_argument) << "spatial_size 0 divides by zero in inv_n";
     }
 
 }  // namespace cuda::neural
