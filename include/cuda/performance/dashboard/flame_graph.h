@@ -47,7 +47,9 @@ namespace cuda::performance::dashboard {
 
     private:
         void aggregate_events();
-        FlameGraphNode build_node(const std::string& name, const std::vector<ChromeTraceEvent>& events) const;
+        // A private build_node(name, events) helper used to be declared here and was never defined
+        // or called: build_flame_graph() groups the events itself. A declaration with no definition
+        // is invisible while nothing calls it, so it sat in the class unnoticed.
 
         std::vector<ChromeTraceEvent> events_;
         std::map<std::string, uint64_t> aggregated_;
