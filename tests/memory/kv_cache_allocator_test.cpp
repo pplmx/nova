@@ -280,6 +280,37 @@ namespace cuda::memory::test {
         EXPECT_EQ(blocks.size(), 1);
     }
 
+    // append() looked its sequence up once and then called evict(), which can erase that very
+    // sequence from sequence_blocks_: it evicts the least recently used one, and when this sequence
+    // is the oldest its blocks go first -- the last pop empties the vector and evict() erases the
+    // entry. The code after the call then used the stale iterator.
+    //
+    // Measured under ASan before the fix, on a four-block pool: heap-use-after-free reading
+    // it->second.back(), with evict's erase in the free stack. The pool sizes here are chosen so
+    // that the appended-to sequence is the one eviction reaches first.
+    TEST_F(KVCacheAllocatorTest, AppendSurvivesEvictionOfItsOwnSequence) {
+        KVCacheAllocatorConfig small = config_;
+        small.num_blocks = 4;
+        small.enable_prefix_caching = false;
+        small.enable_sink_separation = false;
+
+        auto allocator = std::make_unique<KVCacheAllocator>(small);
+
+        // Sequence 1 takes a single block and is then left alone, so it is the LRU victim.
+        auto first = allocator->allocate(1, 16);
+        ASSERT_EQ(first.size(), 1u);
+        // Sequence 2 takes the remaining three blocks, marking them most recently used.
+        auto second = allocator->allocate(2, 48);
+        ASSERT_EQ(second.size(), 3u);
+        ASSERT_EQ(allocator->get_stats().free_blocks, 0) << "the pool must be full for eviction to run";
+
+        // Appending to sequence 1 needs a block, so eviction runs and this sequence is the victim.
+        auto appended = allocator->append(1, 16);
+
+        EXPECT_EQ(appended.size(), 1u) << "the append must still hand back the block it obtained";
+        EXPECT_EQ(allocator->get_blocks(1).size(), 1u) << "the sequence must be usable again after being evicted";
+    }
+
     TEST_F(KVCacheAllocatorTest, BlockIdsUnique) {
         auto allocator = std::make_unique<KVCacheAllocator>(config_);
 

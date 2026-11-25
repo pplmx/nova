@@ -309,7 +309,15 @@ namespace cuda::memory {
 
         if (static_cast<int>(free_list_.size()) < new_blocks_needed) {
             const int need = new_blocks_needed - free_list_.size();
+            // evict() can erase this sequence from sequence_blocks_, and `it` is not usable after
+            // that. It picks the least recently used sequence, and when this one is the oldest --
+            // its last block has the smallest last_access -- its blocks are the first to go; when
+            // the last of them is popped, evict() erases the whole entry. Measured under ASan on a
+            // 4-block pool: append() then read it->second.back() out of the freed hash node
+            // (heap-use-after-free at this line).
             evict(need);
+            // Re-find rather than reuse: the sequence may have been evicted in whole.
+            it = sequence_blocks_.find(sequence_id);
         }
 
         if (static_cast<int>(free_list_.size()) < new_blocks_needed) {
@@ -317,7 +325,9 @@ namespace cuda::memory {
             return {};
         }
 
-        KVCacheBlock* last_block = &blocks_[it->second.back()];
+        // Null when the sequence was just evicted, which is the case where this append starts a new
+        // chain rather than extending an existing one.
+        KVCacheBlock* last_block = (it != sequence_blocks_.end() && !it->second.empty()) ? &blocks_[it->second.back()] : nullptr;
         std::vector<KVCacheBlock*> result;
 
         for (int i = 0; i < new_blocks_needed; ++i) {
@@ -330,11 +340,15 @@ namespace cuda::memory {
             block.last_access = ++access_counter_;
             block.prev = last_block;
             block.next = nullptr;
-            last_block->next = &block;
+            if (last_block != nullptr) {
+                last_block->next = &block;
+            }
             last_block = &block;
 
             result.push_back(&block);
-            it->second.push_back(block_idx);
+            // operator[] re-creates the entry if evict() removed it above, which is what makes the
+            // append succeed after losing its own sequence.
+            sequence_blocks_[sequence_id].push_back(block_idx);
 
             stats_.allocated_blocks++;
             stats_.free_blocks--;
