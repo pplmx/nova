@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include "cuda/graph/csr_graph.h"
 #include "cuda/memory/buffer.h"
@@ -247,4 +249,29 @@ TEST_F(CSRGraphTest, ComputeInDegreesPopulatesBuffer) {
     for (int v = 0; v < 4; ++v) {
         EXPECT_EQ(in[v], expected_in[v]);
     }
+}
+
+// CSRGraph owns six raw pointers and cudaFree()s the device trio in its destructor. It used to
+// declare none of the special members, so the compiler generated copy and move: either one shared
+// the pointers, and the second destructor freed memory the first had already released.
+// std::is_copy_constructible_v<CSRGraph> was true for a type with a cudaFree in its destructor.
+TEST(CsrGraphOwnershipTest, CopyIsDeleted) {
+    EXPECT_FALSE(std::is_copy_constructible_v<cuda::graph::CSRGraph>);
+    EXPECT_FALSE(std::is_copy_assignable_v<cuda::graph::CSRGraph>);
+}
+
+TEST(CsrGraphOwnershipTest, MoveTransfersTheBuffersAndEmptiesTheSource) {
+    EXPECT_TRUE(std::is_move_constructible_v<cuda::graph::CSRGraph>) << "returning a graph from a factory is how the cases in this file build one";
+
+    cuda::graph::CSRGraph source(4, 3);
+    source.allocate_device();
+    int* const device_rows = source.d_row_offsets;
+    ASSERT_NE(device_rows, nullptr);
+
+    cuda::graph::CSRGraph moved(std::move(source));
+
+    EXPECT_EQ(moved.d_row_offsets, device_rows) << "the buffers move with the graph";
+    EXPECT_EQ(moved.vertices(), 4);
+    EXPECT_EQ(source.d_row_offsets, nullptr) << "the source must not free what it no longer owns";
+    EXPECT_EQ(source.vertices(), 0);
 }

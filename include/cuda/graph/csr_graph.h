@@ -25,6 +25,27 @@ namespace cuda::graph {
         CSRGraph(int num_vertices, int num_edges);
         ~CSRGraph();
 
+        // Copy is deleted, move transfers ownership.
+        //
+        // The struct owns six raw pointers and its destructor cudaFree()s the device trio, but it
+        // declared none of the special members, so the compiler generated all of them: a copy shared
+        // every pointer, so whichever object was destroyed second freed memory that was already gone.
+        // Before this change std::is_copy_constructible_v<CSRGraph> was true for a type with a
+        // cudaFree in its destructor.
+        //
+        // Copy stays deleted -- giving it deep-copy semantics would mean a cudaMalloc and a
+        // device-to-device copy that no caller asked for, and silent ownership duplication is the bug
+        // being fixed.
+        //
+        // Move is implemented rather than deleted, because returning a graph from a factory is how
+        // every test in tests/graph/ builds one, and with the implicit move that path shared pointers
+        // between the local and the returned object. The move nulls the source so its destructor has
+        // nothing to free.
+        CSRGraph(const CSRGraph&) = delete;
+        CSRGraph& operator=(const CSRGraph&) = delete;
+        CSRGraph(CSRGraph&& other) noexcept;
+        CSRGraph& operator=(CSRGraph&& other) noexcept;
+
         void allocate_device();
         void upload();
         void free_device();

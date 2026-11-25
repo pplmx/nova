@@ -33,6 +33,55 @@ namespace cuda::graph {
         weights = new float[num_edges];
     }
 
+    CSRGraph::CSRGraph(CSRGraph&& other) noexcept
+        : num_vertices(other.num_vertices),
+          num_edges(other.num_edges),
+          row_offsets(other.row_offsets),
+          columns(other.columns),
+          weights(other.weights),
+          d_row_offsets(other.d_row_offsets),
+          d_columns(other.d_columns),
+          d_weights(other.d_weights) {
+        // The source must not free what this object now owns.
+        other.row_offsets = nullptr;
+        other.columns = nullptr;
+        other.weights = nullptr;
+        other.d_row_offsets = nullptr;
+        other.d_columns = nullptr;
+        other.d_weights = nullptr;
+        other.num_vertices = 0;
+        other.num_edges = 0;
+    }
+
+    CSRGraph& CSRGraph::operator=(CSRGraph&& other) noexcept {
+        if (this != &other) {
+            free_device();
+            // new[]/delete[] pairs with how the constructor allocates these.
+            delete[] row_offsets;
+            delete[] columns;
+            delete[] weights;
+
+            num_vertices = other.num_vertices;
+            num_edges = other.num_edges;
+            row_offsets = other.row_offsets;
+            columns = other.columns;
+            weights = other.weights;
+            d_row_offsets = other.d_row_offsets;
+            d_columns = other.d_columns;
+            d_weights = other.d_weights;
+
+            other.row_offsets = nullptr;
+            other.columns = nullptr;
+            other.weights = nullptr;
+            other.d_row_offsets = nullptr;
+            other.d_columns = nullptr;
+            other.d_weights = nullptr;
+            other.num_vertices = 0;
+            other.num_edges = 0;
+        }
+        return *this;
+    }
+
     CSRGraph::~CSRGraph() {
         clear();
     }
