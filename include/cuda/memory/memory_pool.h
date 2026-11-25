@@ -74,6 +74,18 @@ namespace cuda::memory {
         }
 
         PoolMetrics get_metrics() const;
+        /// Releases and reallocates each used block, shrinking it to the bytes in use.
+        ///
+        /// @warning Does nothing while any allocation is live, and cannot be made to: the body frees
+        /// each used block and allocates a replacement, which moves the memory every pointer returned
+        /// by allocate() refers to. allocation_map_ keeps the old addresses, so deallocate() would
+        /// stop finding them too. Measured before the guard: defragment() moved a block holding 1000
+        /// used bytes, cudaMemcpy from the caller's pointer returned cudaErrorInvalidValue, and
+        /// because Block::size was left at the old block_size the pool then advertised 4096 free bytes
+        /// in a 1000-byte block and served allocate(3000) out of memory that did not exist.
+        ///
+        /// Call it when the pool holds no live allocations -- between phases, or after releasing
+        /// everything -- and it reclaims the unused tail of each block.
         void defragment();
 
         /// Bytes currently handed out, grouped by the stream_id each allocation was made with.

@@ -1035,6 +1035,34 @@ TEST(MemoryPoolReuseTest, ReleasingTheSamePointerTwiceIsANoOp) {
     pool.deallocate(b, 256);
 }
 
+// defragment() frees and reallocates each used block, which moves the memory that every live
+// allocation points into. Nothing in the API lets a caller learn that its pointer moved, so the
+// operation is refused while anything is live. Measured before the guard: with one block holding 1000
+// used bytes, cudaMemcpy from the caller's pointer after defragment() returned cudaErrorInvalidValue,
+// and total_available() had risen from 3096 to 4096 because Block::size still claimed the old size.
+TEST(MemoryPoolReuseTest, DefragmentLeavesLiveAllocationsAlone) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 2;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* a = pool.allocate(1000);
+    ASSERT_NE(a, nullptr);
+    CUDA_CHECK(cudaMemset(a, 0xAB, 1000));
+    const size_t available_before = pool.total_available();
+
+    pool.defragment();
+
+    // The caller's pointer must still refer to its own data.
+    unsigned char probe = 0;
+    ASSERT_EQ(cudaMemcpy(&probe, a, 1, cudaMemcpyDeviceToHost), cudaSuccess) << "defragment() must not move memory a live allocation points into";
+    EXPECT_EQ(probe, 0xAB) << "the data must be unchanged";
+    EXPECT_EQ(pool.total_available(), available_before) << "nothing should have been reclaimed while in use";
+
+    pool.deallocate(a, 1000);
+}
+
 // num_active_streams and get_allocations_by_stream() describe the same thing and used to disagree.
 // The metric counted Block::stream_id, which only records the stream of the most recent allocate()
 // into that block; the map walks every live allocation. Four 256-byte allocations on streams 0, 1, 2

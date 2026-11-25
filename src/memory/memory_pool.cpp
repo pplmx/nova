@@ -307,6 +307,23 @@ namespace cuda::memory {
     void MemoryPool::defragment() {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        // Refuse while any allocation is live.
+        //
+        // The body frees each used block and mallocs a replacement, which moves the memory. Every
+        // pointer this pool handed out becomes dangling, and allocation_map_ still records the old
+        // addresses, so deallocate() would no longer find them. Measured before this guard, with one
+        // block holding 1000 used bytes: defragment() moved it, and cudaMemcpy from the caller's
+        // pointer returned cudaErrorInvalidValue. It also left Block::size at the old block_size while
+        // the allocation was shrunk to used bytes, so total_available() rose from 3096 to 4096 and a
+        // later allocate(3000) was served out of memory that no longer existed.
+        //
+        // Making the move safe needs a way to tell callers their pointers changed, which the API has
+        // no room for: allocate() returns a raw void*. So the operation is defined for the case where
+        // it can be correct -- no live allocations, nothing to invalidate -- and rejected otherwise.
+        if (!allocation_map_.empty()) {
+            return;
+        }
+
         for (auto& block : blocks_) {
             if (block.ptr && block.offset > 0) {
                 size_t used_size = block.offset;
