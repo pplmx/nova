@@ -945,6 +945,61 @@ TEST(MemoryPoolReuseTest, AnEmptyBlockIsReusedFromItsBeginning) {
     pool.deallocate(second, 4000);
 }
 
+// The shape most callers actually use: allocate, release, allocate the same size again. The
+// interior-release fix in this file stops the bump offset from rewinding while other allocations in
+// the block are still live -- it must not stop the block from being reused when it is empty, and it
+// must not force a second cudaMalloc for the second request.
+TEST(MemoryPoolReuseTest, AllocateReleaseAllocateReusesTheSameBlock) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 4;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* first = pool.allocate(256);
+    ASSERT_NE(first, nullptr);
+    pool.deallocate(first, 256);
+
+    void* second = pool.allocate(256);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(second, first) << "the pool must hand back the address it just took";
+
+    // One block was ever allocated: the release must not have cost a fresh cudaMalloc.
+    const auto metrics = pool.get_metrics();
+    EXPECT_EQ(metrics.misses, 1u) << "the first request missed; the second must not";
+    EXPECT_EQ(metrics.hits, 1u) << "the second request must be served from the pool";
+    EXPECT_EQ(pool.num_blocks(), 1u) << "no second block should have been allocated";
+
+    pool.deallocate(second, 256);
+}
+
+// Releasing the same pointer twice must not corrupt the accounting or let one address be handed out
+// to two live callers. deallocate() finds the allocation in allocation_map_ and returns when the
+// entry is gone, so the second call is a no-op rather than a second credit.
+TEST(MemoryPoolReuseTest, ReleasingTheSamePointerTwiceIsANoOp) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 4;
+    config.preallocate = false;
+    cuda::memory::MemoryPool pool(config);
+
+    void* first = pool.allocate(256);
+    ASSERT_NE(first, nullptr);
+    pool.deallocate(first, 256);
+    pool.deallocate(first, 256);
+
+    EXPECT_EQ(pool.total_allocated(), 0u) << "the second release must not drive the count negative";
+
+    void* a = pool.allocate(256);
+    void* b = pool.allocate(256);
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    EXPECT_NE(a, b) << "a double release must not let one address serve two live allocations";
+
+    pool.deallocate(a, 256);
+    pool.deallocate(b, 256);
+}
+
 // get_metrics() used to lock metrics_mutex_ while walking blocks_, which allocate_block() grows
 // under mutex_. Two locks over one vector means a concurrent get_metrics() could iterate it
 // mid-reallocation, and metrics_mutex_ had exactly one user -- get_metrics() itself -- so it
