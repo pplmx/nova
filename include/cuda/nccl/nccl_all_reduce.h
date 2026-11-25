@@ -55,9 +55,13 @@ namespace cuda::nccl {
         NcclAllReduce(const NcclAllReduce&) = delete;
         NcclAllReduce& operator=(const NcclAllReduce&) = delete;
 
-        // Movable
-        NcclAllReduce(NcclAllReduce&&) = default;
-        NcclAllReduce& operator=(NcclAllReduce&&) = default;
+        // Not movable. These read `= default` under a `// Movable` comment, which claimed a
+        // capability the type does not have: NcclCollective declares a destructor and deleted
+        // copies but no moves, so it has no move operation and any derived `= default` move is
+        // defined as deleted. Nothing in the tree moves one; declaring `= delete` puts the fact
+        // and its reason at the declaration instead of leaving it to a call site's error.
+        NcclAllReduce(NcclAllReduce&&) = delete;
+        NcclAllReduce& operator=(NcclAllReduce&&) = delete;
 
         /**
          * @brief Async all-reduce across all devices

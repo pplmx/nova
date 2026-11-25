@@ -65,9 +65,13 @@ namespace cuda::nccl {
         NcclGroupHandle(const NcclGroupHandle&) = delete;
         NcclGroupHandle& operator=(const NcclGroupHandle&) = delete;
 
-        // Movable
+        // Move construction is available and move assignment is not, and only one of these was ever
+        // true. Both were `= default` under a `// Movable` comment, but ctx_ is a reference member:
+        // a reference cannot be reseated, so the implicit move assignment is ill-formed while move
+        // construction still works. Declaring the assignment `= delete` states the asymmetry at the
+        // declaration. Nothing in the tree moves a handle either way.
         NcclGroupHandle(NcclGroupHandle&&) = default;
-        NcclGroupHandle& operator=(NcclGroupHandle&&) = default;
+        NcclGroupHandle& operator=(NcclGroupHandle&&) = delete;
 
         /**
          * @brief Add all-reduce to the group

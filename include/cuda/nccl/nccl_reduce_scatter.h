@@ -49,9 +49,13 @@ namespace cuda::nccl {
         NcclReduceScatter(const NcclReduceScatter&) = delete;
         NcclReduceScatter& operator=(const NcclReduceScatter&) = delete;
 
-        // Movable
-        NcclReduceScatter(NcclReduceScatter&&) = default;
-        NcclReduceScatter& operator=(NcclReduceScatter&&) = default;
+        // Not movable. These read `= default` under a `// Movable` comment, which claimed a
+        // capability the type does not have: NcclCollective declares a destructor and deleted
+        // copies but no moves, so it has no move operation and any derived `= default` move is
+        // defined as deleted. Nothing in the tree moves one; declaring `= delete` puts the fact
+        // and its reason at the declaration instead of leaving it to a call site's error.
+        NcclReduceScatter(NcclReduceScatter&&) = delete;
+        NcclReduceScatter& operator=(NcclReduceScatter&&) = delete;
 
         /**
          * @brief Async reduce-scatter across all devices
