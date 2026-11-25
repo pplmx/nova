@@ -38,23 +38,41 @@ namespace cuda::performance {
             return;
         }
 
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = records_.find(kernel_name);
-        if (it != records_.end() && it->second) {
-            auto& record = it->second;
-            if (record->start_event && !record->completed) {
-                CUDA_CHECK(cudaEventRecord(record->stop_event, stream));
-                CUDA_CHECK(cudaEventSynchronize(record->stop_event));
+        // The callback is copied out and invoked after the lock is released.
+        //
+        // It used to be called straight from inside the lock_guard, and every other member of this
+        // class takes the same non-recursive mutex_ -- get_kernel_latency_ns, reset, record_start.
+        // A callback that asks the profiler anything therefore re-entered the lock it was called
+        // under. Measured with a callback calling get_kernel_latency_ns(): record_start followed by
+        // record_end never returned (timeout, exit 124). Same defect and same remedy as
+        // Profiler::stop_timer, which deadlocked through record_kernel for exactly this reason, and
+        // as timeout_manager's callbacks.
+        bool measured = false;
+        uint64_t latency_ns = 0;
+        ProfilerCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = records_.find(kernel_name);
+            if (it != records_.end() && it->second) {
+                auto& record = it->second;
+                if (record->start_event && !record->completed) {
+                    CUDA_CHECK(cudaEventRecord(record->stop_event, stream));
+                    CUDA_CHECK(cudaEventSynchronize(record->stop_event));
 
-                float elapsed_ms = 0.0f;
-                CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, record->start_event, record->stop_event));
-                record->latency_ns = static_cast<uint64_t>(elapsed_ms * 1e6);
-                record->completed = true;
+                    float elapsed_ms = 0.0f;
+                    CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, record->start_event, record->stop_event));
+                    record->latency_ns = static_cast<uint64_t>(elapsed_ms * 1e6);
+                    record->completed = true;
 
-                if (callback_) {
-                    callback_(kernel_name, record->latency_ns);
+                    measured = true;
+                    latency_ns = record->latency_ns;
+                    callback = callback_;
                 }
             }
+        }
+
+        if (measured && callback) {
+            callback(kernel_name, latency_ns);
         }
     }
 

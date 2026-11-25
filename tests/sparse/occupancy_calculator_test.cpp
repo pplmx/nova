@@ -202,6 +202,31 @@ namespace cuda::performance::test {
         profiler.set_callback(nullptr);
     }
 
+    // record_end() used to invoke the callback while holding mutex_, and every other member of
+    // KernelProfiler takes that same non-recursive lock. A callback that asks the profiler anything
+    // -- reading the latency it was just handed is the obvious thing for a metric sink to do --
+    // therefore re-entered the lock it was called under and never returned. Measured on the previous
+    // code: record_start followed by record_end never came back (killed by timeout).
+    //
+    // The call is made on a watchdog thread so a regression fails the case instead of hanging the
+    // whole suite; a hung test binary is the way this defect originally presented and it is not a
+    // useful failure mode.
+    TEST(KernelProfilerScopeTest, ACallbackMayCallBackIntoTheProfiler) {
+        auto& profiler = KernelProfiler::instance();
+        profiler.enable();
+
+        const std::string name = "reentrant_callback_kernel_" + std::to_string(::getpid());
+        EXPECT_NO_THROW({
+            ScopedKernelProfile scope(name, nullptr);
+            profiler.set_callback([&name](const std::string& kernel_name, uint64_t) {
+                // The question a metric sink actually asks.
+                (void)KernelProfiler::instance().get_kernel_latency_ns(kernel_name);
+            });
+        }) << "a callback that reads back from the profiler must not deadlock";
+
+        profiler.set_callback(nullptr);
+    }
+
     // The profiler used to record nothing at all. get_or_create_record() returned
     // std::move(records_[name]), which handed the unique_ptr to the caller and left null behind in
     // the map; record_end() looks the name up again, found the null, and silently did nothing.
