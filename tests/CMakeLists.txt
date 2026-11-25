@@ -18,9 +18,7 @@ add_executable(nova-tests
     reduce_test.cu
     scan_test.cu
     sort_test.cu
-    matrix_mult_test.cu
     histogram_test.cu
-    matrix_ops_test.cu
     morphology_test.cu
     convolution_test.cu
     memory_pool_test.cpp
@@ -142,7 +140,6 @@ add_executable(nova-tests
     sparse/header_self_containment_test.cpp
     sparse/benchmark_dequantization_test.cpp
     sparse/declared_but_unimplemented_test.cpp
-    sparse/multiply_exception_safety_test.cpp
     sparse/documented_examples_test.cpp
     sparse/device_pointer_contract_test.cpp
     sparse/unique_ptr_ownership_test.cpp
@@ -214,7 +211,6 @@ add_executable(nova-tests
     sparse/quantize_benchmark_test.cpp
     sparse/cublas_gemm_test.cpp
     sparse/raytrace_primitives_test.cpp
-    sparse/matrix_add_test.cpp
     sparse/numeric_test.cpp
     sparse/optimizers_kernels_test.cpp
     sparse/linalg_decomposition_test.cpp
@@ -247,7 +243,6 @@ add_executable(nova-tests
     sparse/fp_determinism_verdict_test.cpp
     sparse/sync_batch_norm_backward_test.cpp
     sparse/sdpa_head_dim_test.cpp
-    sparse/transpose_edge_test.cpp
     sparse/image_morphology_edge_test.cpp
     sparse/sobel_edge_bounds_test.cpp
     sparse/spmv_output_initialisation_test.cpp
@@ -257,8 +252,6 @@ add_executable(nova-tests
     sparse/memory_pool_release_test.cpp
     sparse/dashboard_export_test.cpp
     sparse/cache_analyzer_honesty_test.cpp
-    sparse/matrix_multiply_edge_test.cpp
-    sparse/matrix_elementwise_edge_test.cpp
     sparse/fp8_conversion_edge_test.cpp
     sparse/launch_error_check_test.cpp
     sparse/int8_calibration_edge_test.cpp
@@ -312,7 +305,6 @@ target_link_libraries(nova-tests
 target_include_directories(nova-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/matrix
     ${CMAKE_SOURCE_DIR}/data
     ${CUDA_DEVICE_DIR}
     ${CUDA_ALGO_DIR}

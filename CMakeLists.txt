@@ -337,7 +337,6 @@ set(CUDA_SRC_ALGO ${CMAKE_SOURCE_DIR}/src/cuda/algo)
 
 set(IMAGE_DIR ${CMAKE_SOURCE_DIR}/src/image)
 set(PARALLEL_DIR ${CMAKE_SOURCE_DIR}/src/parallel)
-set(MATRIX_DIR ${CMAKE_SOURCE_DIR}/src/matrix)
 set(CONVOLUTION_DIR ${CMAKE_SOURCE_DIR}/src/convolution)
 set(MEMORY_DIR ${CMAKE_SOURCE_DIR}/src/memory)
 set(CUDA_FFT_DIR ${CMAKE_SOURCE_DIR}/src/cuda/fft)
@@ -468,12 +467,6 @@ set(PARALLEL_SOURCES
         ${PARALLEL_DIR}/histogram.cu
         ${PARALLEL_DIR}/scan.cu
         ${PARALLEL_DIR}/sort.cu
-)
-
-set(MATRIX_SOURCES
-        ${MATRIX_DIR}/add.cu
-        ${MATRIX_DIR}/mult.cu
-        ${MATRIX_DIR}/ops.cu
 )
 
 set(CONVOLUTION_SOURCES
@@ -694,7 +687,6 @@ set(ALL_CUDA_SOURCES
         ${PRODUCTION_SOURCES}
         ${IMAGE_SOURCES}
         ${PARALLEL_SOURCES}
-        ${MATRIX_SOURCES}
         ${CONVOLUTION_SOURCES}
         ${MEMORY_SOURCES}
         ${MEMORY_DISTRIBUTED_SOURCES}
