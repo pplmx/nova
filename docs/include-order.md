@@ -80,8 +80,8 @@ order remains the contract for that case, and the section below still applies.
 
 ## Scope
 
-While `fp8_types.hpp` pulled libcu++ in, 99 of the 177 headers under `include/` failed this way (measured
-by compiling each with `<cuda/std/cstdint>` in front), across 13 modules -- `performance` (13), `nccl`
+With `<cuda/std/cstdint>` placed in front of them, 99 of the 177 headers under `include/` fail this
+way, across 13 modules -- `performance` (13), `nccl`
 (12), `neural` (11), `production` (9), `algo` (8), `distributed` (7), `testing` (5), `memory` (4),
 `inference` (4), `pipeline` (3), and others. Counted by compiling each header with
 `#include <cuda/std/cstdint>` placed before it.
@@ -100,4 +100,14 @@ Two fixes exist and both need a decision that belongs to whoever owns the projec
    of 1,405 edits, and verified to work on a reproduction. It also injects a `std` alias into `cuda::`,
    which may collide with what libcu++ users expect from `cuda::std`.
 
-Until one of those lands, include order is the contract.
+## The two scenarios, kept distinct
+
+**Nova headers on their own.** A translation unit that includes only Nova headers compiles. This is the
+normal case and it now holds for every header -- measured by compiling 30 of them with no libcu++
+include in front: 0 failures. Before the `fp8_types.hpp` change it did not hold, because that one header
+put `cuda::std` into the unit for everything after it.
+
+**libcu++ or Thrust before Nova.** This is what fails: `cuda::std` comes from libcu++ itself, and no
+change inside Nova can prevent it. Include order is the contract here, or qualify the uses as `::std::`.
+
+Until one of the two fixes above lands, include order is the contract.
