@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <type_traits>
 #include <cuda_runtime.h>
 #include <cuda/neural/transformer/attention.h>
@@ -208,23 +209,52 @@ namespace cuda::neural::transformer::test {
         EXPECT_EQ(cudaGetLastError(), cudaSuccess);
     }
 
+    // MultiHeadAttention owns three cudaMalloc'd float buffers and cudaFree()s them in its destructor.
+    // It used to declare none of the special members, so the compiler generated copy and move: a copy
+    // shared all three pointers and whichever object was destroyed second freed memory already gone.
+    // std::is_copy_constructible_v<MultiHeadAttention> reported true before this change.
+    TEST(MultiHeadAttentionOwnershipTest, CopyAndMoveAreDeleted) {
+        EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::transformer::MultiHeadAttention>) << "a copy would share the three device buffers with the original";
+        EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::MultiHeadAttention>);
+        EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::MultiHeadAttention>);
+    }
+
+    // PositionalEncoding owns d_encoding_buffer_ (cudaMalloc'd) and cudaFree()s it in its destructor.
+    // Like MultiHeadAttention it declared no copy or move control, so a copy shared the pointer and the
+    // second destructor freed it again.
+    TEST(PositionalEncodingOwnershipTest, CopyAndMoveAreDeleted) {
+        EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::transformer::PositionalEncoding>);
+        EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::PositionalEncoding>);
+        EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::PositionalEncoding>);
+    }
+
+    // compute_sinusoidal_encoding frees d_encoding_buffer_ and reallocates. It used to free without
+    // nulling the member, then allocate into that same member: a failed cudaMalloc left the member
+    // holding a freed address, and the destructor freed it again.
+    //
+    // The path is reachable through the public API -- both forward() and get_encoding() recompute when
+    // asked for a longer sequence than max_seq_len -- so the release-and-replace cycle is exercised here
+    // rather than only through private code. A double free on this path is what ASan reports; the
+    // assertion here is that the cycle completes and the object is still usable afterwards.
+    TEST_F(PositionalEncodingTest, GrowingTheSequenceLengthReplacesTheBuffer) {
+        PositionalEncoding encoding(PositionalEncodingConfig {.type = PositionalEncodingType::Sinusoidal, .max_seq_len = 8, .embed_dim = 16, .dropout_rate = 0.0f});
+
+        // get_encoding copies device-to-device, so the destination has to be a device buffer.
+        cuda::memory::Buffer<float> out(static_cast<size_t>(64) * 16);
+
+        encoding.get_encoding(out.data(), 16, stream_);
+        encoding.get_encoding(out.data(), 32, stream_);
+        encoding.get_encoding(out.data(), 64, stream_);
+        encoding.get_encoding(out.data(), 16, stream_);  // back below max_seq_len: no recompute
+
+        ASSERT_EQ(cudaStreamSynchronize(stream_), cudaSuccess) << "the release-and-replace cycle must leave a usable buffer";
+
+        // Read one value back: the replaced buffer must hold real encoding data, not garbage.
+        std::vector<float> host(static_cast<size_t>(16) * 16);
+        ASSERT_EQ(cudaMemcpy(host.data(), out.data(), host.size() * sizeof(float), cudaMemcpyDeviceToHost), cudaSuccess);
+        for (float v : host) {
+            EXPECT_TRUE(std::isfinite(v));
+        }
+    }
+
 }  // namespace cuda::neural::transformer::test
-
-// MultiHeadAttention owns three cudaMalloc'd float buffers and cudaFree()s them in its destructor.
-// It used to declare none of the special members, so the compiler generated copy and move: a copy
-// shared all three pointers and whichever object was destroyed second freed memory already gone.
-// std::is_copy_constructible_v<MultiHeadAttention> reported true before this change.
-TEST(MultiHeadAttentionOwnershipTest, CopyAndMoveAreDeleted) {
-    EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::transformer::MultiHeadAttention>) << "a copy would share the three device buffers with the original";
-    EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::MultiHeadAttention>);
-    EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::MultiHeadAttention>);
-}
-
-// PositionalEncoding owns d_encoding_buffer_ (cudaMalloc'd) and cudaFree()s it in its destructor.
-// Like MultiHeadAttention it declared no copy or move control, so a copy shared the pointer and the
-// second destructor freed it again.
-TEST(PositionalEncodingOwnershipTest, CopyAndMoveAreDeleted) {
-    EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::transformer::PositionalEncoding>);
-    EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::PositionalEncoding>);
-    EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::PositionalEncoding>);
-}
