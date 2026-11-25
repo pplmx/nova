@@ -16,12 +16,18 @@
 #ifndef NOVA_CUDA_QUANTIZE_FP8_TYPES_HPP
 #define NOVA_CUDA_QUANTIZE_FP8_TYPES_HPP
 
-#include <cuda/std/cstdint>
-#include <cuda/std/limits>
 #include <type_traits>
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
+
+// <cuda/std/limits> used to be here for numeric_limits in fp8_to_float(), which is __host__
+// __device__. std::numeric_limits is not available in device code, but the two values needed are:
+// __builtin_huge_valf() and __builtin_nanf(""), both nvcc built-ins. Dropping the libcu++ include is
+// worth doing because including anything under <cuda/std/> creates a cuda::std namespace, and every
+// Nova header that writes unqualified `std::` inside namespace cuda:: then resolves it there instead
+// of to ::std. See docs/include-order.md -- this header was the only place in the tree that pulled
+// libcu++ in.
 
 #if defined(__CUDA_ARCH__)
 #define NOVA_HD __host__ __device__
@@ -135,13 +141,13 @@ namespace nova {
                     return -0.0f;
                 }
                 if (bits == POS_INF) {
-                    return std::numeric_limits<float>::infinity();
+                    return __builtin_huge_valf();
                 }
                 if (bits == NEG_INF) {
-                    return -std::numeric_limits<float>::infinity();
+                    return -__builtin_huge_valf();
                 }
                 if (bits == NAN_VAL) {
-                    return std::numeric_limits<float>::quiet_NaN();
+                    return __builtin_nanf("");
                 }
 
                 bool negative = (bits & 0x80) != 0;
@@ -255,13 +261,13 @@ namespace nova {
                     return -0.0f;
                 }
                 if (bits == POS_INF) {
-                    return std::numeric_limits<float>::infinity();
+                    return __builtin_huge_valf();
                 }
                 if (bits == NEG_INF) {
-                    return -std::numeric_limits<float>::infinity();
+                    return -__builtin_huge_valf();
                 }
                 if (bits == NAN_VAL) {
-                    return std::numeric_limits<float>::quiet_NaN();
+                    return __builtin_nanf("");
                 }
 
                 bool negative = (bits & 0x80) != 0;

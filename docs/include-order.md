@@ -63,9 +63,25 @@ not.
 If a header is precompiled or force-included by your build and you cannot reorder, the alternative is to
 qualify the uses inside Nova as `::std::`, which requires editing the headers.
 
+## Nova no longer creates `cuda::std` itself
+
+`include/cuda/quantize/fp8_types.hpp` was the only place in the tree that included anything under
+`<cuda/std/>` -- it needed `numeric_limits` for `fp8_to_float()`, which is `__host__ __device__`, and
+`std::numeric_limits` is not available in device code. That single include was enough to put
+`cuda::std` into any translation unit that touched FP8, and from then on every other Nova header in
+that unit failed. Including `fp8_types.hpp` and then `nccl_context.h` failed; it now compiles.
+
+It uses `__builtin_huge_valf()` and `__builtin_nanf("")` instead -- both nvcc built-ins, both valid in
+device code. Verified by compiling and by the 119 FP8 and quantization tests.
+
+What this does **not** fix: a user who includes `<cuda/std/...>` or a Thrust header *before* Nova's
+headers still hits the same shadowing, because `cuda::std` comes from libcu++ in that case. Include
+order remains the contract for that case, and the section below still applies.
+
 ## Scope
 
-99 of the 177 headers under `include/` fail this way, across 13 modules -- `performance` (13), `nccl`
+While `fp8_types.hpp` pulled libcu++ in, 99 of the 177 headers under `include/` failed this way (measured
+by compiling each with `<cuda/std/cstdint>` in front), across 13 modules -- `performance` (13), `nccl`
 (12), `neural` (11), `production` (9), `algo` (8), `distributed` (7), `testing` (5), `memory` (4),
 `inference` (4), `pipeline` (3), and others. Counted by compiling each header with
 `#include <cuda/std/cstdint>` placed before it.
