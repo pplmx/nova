@@ -5,6 +5,7 @@
 #include "cuda/memory/memory_pool.h"
 #include "cuda/memory/unique_ptr.h"
 #include <atomic>
+#include <new>
 #include <numeric>
 #include <thread>
 #include <vector>
@@ -41,6 +42,39 @@ TEST_F(BufferTest, DefaultConstruction) {
     cuda::memory::Buffer<int> buffer;
     EXPECT_EQ(buffer.data(), nullptr);
     EXPECT_EQ(buffer.size(), 0);
+}
+
+// The injection helper replaces operator new/delete so a case can fail a host allocation
+// (tests/cuda_alloc_injection.cpp). A replacement must cover EVERY form of the operator, because
+// the delete that eventually runs is chosen by the form used to allocate. Replacing only
+// `operator new(std::size_t)` left `operator new(std::size_t, std::nothrow_t)` -- which googletest's
+// std::get_temporary_buffer uses -- going to the system allocator while the matching delete went to
+// the replacement, which calls std::free. ASan reports that as
+//
+//     alloc-dealloc-mismatch (operator new vs free)
+//
+// from inside testing::TestSuite::Run(), with no nova frame anywhere in the stack, and it aborted
+// 2639 of 2672 cases under `make sanitize`. The sanitizer build is a documented gate, so this is
+// asserted directly rather than left to that run: both allocation styles must be usable, and each
+// must be releasable by the delete that belongs to it.
+TEST_F(BufferTest, BothTheThrowingAndTheNothrowFormsOfOperatorNewAreReplaced) {
+    // Throwing form, then the plain delete.
+    void* throwing = ::operator new(64);
+    ASSERT_NE(throwing, nullptr);
+    ::operator delete(throwing);
+
+    // Nothrow form, which returns null instead of throwing, then the plain delete. This is the pair
+    // that used to mismatch.
+    void* nothrow = ::operator new(64, std::nothrow);
+    ASSERT_NE(nothrow, nullptr) << "the nothrow form must not fail on a normal request";
+    ::operator delete(nothrow);
+
+    // Array forms, which a replacement also covers.
+    void* array = ::operator new[](64);
+    ASSERT_NE(array, nullptr);
+    ::operator delete[](array);
+
+    SUCCEED() << "reaching here without an alloc-dealloc-mismatch report is the assertion";
 }
 
 TEST_F(BufferTest, ConstructionWithSize) {

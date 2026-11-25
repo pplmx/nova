@@ -143,13 +143,43 @@ namespace {
 
 }  // namespace
 
-void* operator new(std::size_t size) {
-    const int attempt = g_host_attempts++;
-    if (g_host_fail_from >= 0 && attempt >= g_host_fail_from) {
-        throw std::bad_alloc();
+namespace {
+
+    /// Every replaced form of operator new must reach the same allocator, because ASan classifies
+    /// an allocation by the function that produced it and reports
+    ///
+    ///     alloc-dealloc-mismatch (operator new vs free)
+    ///
+    /// when the matching delete belongs to a different family. Replacing only
+    /// operator new(std::size_t) left the nothrow form -- which std::get_temporary_buffer uses, and
+    /// googletest calls that per test suite -- going to the runtime's own allocator while the delete
+    /// for it resolved to the replacement below, which frees with std::free. The result aborted 2639
+    /// of 2672 cases under `make sanitize`, all of them with no nova frame in the stack.
+    void* host_allocate(std::size_t size, bool count_attempt) noexcept {
+        if (count_attempt) {
+            const int attempt = g_host_attempts++;
+            if (g_host_fail_from >= 0 && attempt >= g_host_fail_from) {
+                return nullptr;
+            }
+        }
+        if (void* p = std::malloc(size)) {
+            ++g_live_host;
+            return p;
+        }
+        return nullptr;
     }
-    if (void* p = std::malloc(size)) {
-        ++g_live_host;
+
+    void host_release(void* p) noexcept {
+        if (p != nullptr) {
+            --g_live_host;
+            std::free(p);
+        }
+    }
+
+}  // namespace
+
+void* operator new(std::size_t size) {
+    if (void* p = host_allocate(size, true)) {
         return p;
     }
     throw std::bad_alloc();
@@ -159,23 +189,41 @@ void* operator new[](std::size_t size) {
     return ::operator new(size);
 }
 
+/// The nothrow form returns null instead of throwing, and deliberately does NOT participate in
+/// fail_host_allocation_after(): the counters that drive that are per-attempt indices, and secretly
+/// counting the allocations googletest makes between two library calls would change the index a case
+/// has to pass. It still has to be replaced so that its memory comes from the same family as the
+/// delete that releases it.
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    return host_allocate(size, false);
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    return host_allocate(size, false);
+}
+
 void operator delete(void* p) noexcept {
-    if (p != nullptr) {
-        --g_live_host;
-    }
-    std::free(p);
+    host_release(p);
 }
 
 void operator delete(void* p, std::size_t) noexcept {
-    ::operator delete(p);
+    host_release(p);
 }
 
 void operator delete[](void* p) noexcept {
-    ::operator delete(p);
+    host_release(p);
 }
 
 void operator delete[](void* p, std::size_t) noexcept {
-    ::operator delete(p);
+    host_release(p);
+}
+
+void operator delete(void* p, const std::nothrow_t&) noexcept {
+    host_release(p);
+}
+
+void operator delete[](void* p, const std::nothrow_t&) noexcept {
+    host_release(p);
 }
 
 namespace cuda_test {
