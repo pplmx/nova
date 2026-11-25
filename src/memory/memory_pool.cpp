@@ -34,11 +34,22 @@ namespace cuda::memory {
           blocks_(std::move(other.blocks_)),
           allocation_map_(std::move(other.allocation_map_)),
           total_allocated_(other.total_allocated_),
-          total_available_(other.total_available_) {
+          total_available_(other.total_available_),
+          // The counters and the failure policy describe the pool that the blocks belong to, so they
+          // move with it. They did not: a moved-from pool kept its hits, misses and peak while the
+          // moved-to one started at zero, and throw_on_failure_ reverted to its default of true, so a
+          // caller who had turned exceptions off got them back on the far side of the move.
+          peak_allocated_bytes_(other.peak_allocated_bytes_),
+          hits_(other.hits_),
+          misses_(other.misses_),
+          throw_on_failure_(other.throw_on_failure_) {
         other.blocks_.clear();
         other.allocation_map_.clear();
         other.total_allocated_ = 0;
         other.total_available_ = 0;
+        other.peak_allocated_bytes_ = 0;
+        other.hits_ = 0;
+        other.misses_ = 0;
     }
 
     MemoryPool& MemoryPool::operator=(MemoryPool&& other) noexcept {
@@ -49,10 +60,17 @@ namespace cuda::memory {
             allocation_map_ = std::move(other.allocation_map_);
             total_allocated_ = other.total_allocated_;
             total_available_ = other.total_available_;
+            peak_allocated_bytes_ = other.peak_allocated_bytes_;
+            hits_ = other.hits_;
+            misses_ = other.misses_;
+            throw_on_failure_ = other.throw_on_failure_;
             other.blocks_.clear();
             other.allocation_map_.clear();
             other.total_allocated_ = 0;
             other.total_available_ = 0;
+            other.peak_allocated_bytes_ = 0;
+            other.hits_ = 0;
+            other.misses_ = 0;
         }
         return *this;
     }

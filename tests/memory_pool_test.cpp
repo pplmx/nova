@@ -1063,6 +1063,57 @@ TEST(MemoryPoolReuseTest, DefragmentLeavesLiveAllocationsAlone) {
     pool.deallocate(a, 1000);
 }
 
+// A move transfers the blocks, so it has to transfer what describes them: the counters and the
+// failure policy. They stayed behind. A moved-to pool reported hits=0 misses=0 peak=0 for blocks it
+// had just taken ownership of, and throw_on_failure_ reverted to its default of true, so a caller who
+// had turned exceptions off got them back without being told.
+TEST(MemoryPoolReuseTest, MoveTransfersCountersAndFailurePolicy) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 4;
+    config.preallocate = false;
+
+    cuda::memory::MemoryPool source(config);
+    source.set_throw_on_failure(false);
+    ASSERT_NE(source.allocate(1000), nullptr);
+    ASSERT_NE(source.allocate(2000), nullptr);
+
+    const auto before = source.get_metrics();
+    EXPECT_EQ(before.hits, 1u);
+    EXPECT_EQ(before.misses, 1u);
+    const size_t peak = before.peak_allocated_bytes;
+
+    cuda::memory::MemoryPool moved(std::move(source));
+
+    const auto after = moved.get_metrics();
+    EXPECT_EQ(after.hits, before.hits) << "the hit count belongs to the blocks that moved";
+    EXPECT_EQ(after.misses, before.misses);
+    EXPECT_EQ(after.peak_allocated_bytes, peak);
+    EXPECT_EQ(moved.total_allocated(), 3000u);
+    EXPECT_FALSE(moved.get_throw_on_failure()) << "a caller that turned exceptions off must not get them back across a move";
+}
+
+TEST(MemoryPoolReuseTest, MoveAssignmentTransfersCountersAndFailurePolicy) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 4;
+    config.preallocate = false;
+
+    cuda::memory::MemoryPool source(config);
+    source.set_throw_on_failure(false);
+    ASSERT_NE(source.allocate(1000), nullptr);
+    const auto before = source.get_metrics();
+
+    cuda::memory::MemoryPool target(config);
+    target = std::move(source);
+
+    const auto after = target.get_metrics();
+    EXPECT_EQ(after.hits, before.hits);
+    EXPECT_EQ(after.misses, before.misses);
+    EXPECT_EQ(after.peak_allocated_bytes, before.peak_allocated_bytes);
+    EXPECT_FALSE(target.get_throw_on_failure());
+}
+
 // num_active_streams and get_allocations_by_stream() describe the same thing and used to disagree.
 // The metric counted Block::stream_id, which only records the stream of the most recent allocate()
 // into that block; the map walks every live allocation. Four 256-byte allocations on streams 0, 1, 2
