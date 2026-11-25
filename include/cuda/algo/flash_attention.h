@@ -74,7 +74,6 @@ namespace cuda::algo {
     private:
         FlashAttentionConfig config_;
         memory::Buffer<void> workspace_;
-        void* dropout_state_ = nullptr;
     };
 
     std::unique_ptr<FlashAttention> create_flash_attention(const FlashAttentionConfig& config);
