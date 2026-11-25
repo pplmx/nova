@@ -8,6 +8,8 @@
 #include <cuda/performance/kernel_profiler.h>
 #include <cuda/performance/metric_aggregators.h>
 
+#include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -136,6 +138,62 @@ namespace cuda::performance::test {
         // line is removed rather than made to look meaningful. What this case actually checks is
         // that four threads hammering add_sample() concurrently leave total_kernel_count() at zero,
         // which the line above does.
+    }
+
+    // The move assignment took its two mutexes with two separate lock_guards, in the order written.
+    // Two threads moving into each other therefore lock in opposite orders and deadlock:
+    //
+    //     a = std::move(b);   // holds a.mutex_, waits for b.mutex_
+    //     b = std::move(a);   // holds b.mutex_, waits for a.mutex_
+    //
+    // Measured with a two-thread, 200-round loop and a barrier per round: the run hung until a
+    // watchdog fired. Now a std::scoped_lock, which orders the two acquisitions internally.
+    //
+    // A deadlock would hang the suite rather than fail it, so the body runs on a worker thread the
+    // case can wait on with a deadline. That way a regression is a failed assertion with a message,
+    // not a stuck test binary.
+    TEST_F(NVBloxMetricsTest, TwoCollectorsCanMoveAssignIntoEachOther) {
+        std::atomic<bool> finished {false};
+
+        std::thread worker([&finished] {
+            for (int round = 0; round < 200; ++round) {
+                NVBloxMetricsCollector a;
+                NVBloxMetricsCollector b;
+                std::atomic<int> ready {0};
+                std::atomic<bool> go {false};
+
+                std::thread t1([&] {
+                    ready.fetch_add(1);
+                    while (!go.load(std::memory_order_acquire)) {}
+                    a = std::move(b);
+                });
+                std::thread t2([&] {
+                    ready.fetch_add(1);
+                    while (!go.load(std::memory_order_acquire)) {}
+                    b = std::move(a);
+                });
+                while (ready.load() < 2) {}
+                go.store(true, std::memory_order_release);
+
+                t1.join();
+                t2.join();
+            }
+            finished.store(true, std::memory_order_release);
+        });
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds {20};
+        while (!finished.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds {10});
+        }
+
+        if (finished.load(std::memory_order_acquire)) {
+            worker.join();
+            SUCCEED() << "200 rounds of opposing move assignments completed";
+        } else {
+            // The worker is wedged in the deadlock; detaching lets the case report instead of hanging.
+            worker.detach();
+            FAIL() << "opposing move assignments deadlocked within 20s";
+        }
     }
 
     TEST_F(NVBloxMetricsTest, ToJson) {

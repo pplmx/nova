@@ -26,8 +26,12 @@ namespace cuda::performance {
 
     NVBloxMetricsCollector& NVBloxMetricsCollector::operator=(NVBloxMetricsCollector&& other) noexcept {
         if (this != &other) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            std::lock_guard<std::mutex> other_lock(other.mutex_);
+            // scoped_lock, not two lock_guards: two lock_guards take the mutexes in the order written,
+            // so one thread doing a = std::move(b) and another doing b = std::move(a) each hold the
+            // one the other needs and neither can proceed. std::scoped_lock uses std::lock, which
+            // orders the acquisitions internally. Measured before the change: a two-thread,
+            // 200-round stress with a barrier per round hung until a watchdog fired.
+            std::scoped_lock lock(mutex_, other.mutex_);
             registered_metrics_ = std::move(other.registered_metrics_);
             metric_samples_ = std::move(other.metric_samples_);
             kernel_metrics_ = std::move(other.kernel_metrics_);
