@@ -1,4 +1,6 @@
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cuda/algo/kernel_launcher.h"
@@ -61,6 +63,27 @@ namespace {
 namespace cuda::algo {
 
     void gaussianBlur(const memory::Buffer<uint8_t>& input, memory::Buffer<uint8_t>& output, size_t width, size_t height, float sigma, int kernel_size) {
+        // Neither argument was checked, and both have a way to produce a kernel of NaNs that silently
+        // turns the image into garbage:
+        //
+        //   sigma 0      -> the exponent is -(x*x)/(2*sigma*sigma), which divides by zero. Every
+        //                   weight becomes exp(-inf) = 0, sum stays 0, and the normalisation below
+        //                   computes 0/0 = NaN.
+        //   kernel_size 0 -> the fill loop never runs, sum stays 0, d_kernel is empty, and the two
+        //                   passes read and write nothing.
+        //
+        // A negative size makes std::vector<float> throw a length_error instead of a message about
+        // the argument, and an even size -- while the separable passes do run -- gives an asymmetric
+        // kernel because the centre index half = size/2 sits one past the true middle.
+        if (width == 0 || height == 0) {
+            return;
+        }
+        if (!(sigma > 0.0f)) {
+            throw std::invalid_argument("gaussianBlur: sigma must be positive, got " + std::to_string(sigma));
+        }
+        if (kernel_size <= 0 || kernel_size % 2 == 0) {
+            throw std::invalid_argument("gaussianBlur: kernel size must be odd and positive, got " + std::to_string(kernel_size));
+        }
         const int half = kernel_size / 2;
 
         std::vector<float> h_kernel(kernel_size);

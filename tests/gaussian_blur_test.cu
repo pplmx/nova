@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <stdexcept>
 #include <cublas_v2.h>
 
 #include <gtest/gtest.h>
@@ -142,4 +143,22 @@ TEST_F(GaussianBlurTest, LargeKernel) {
     for (size_t i = 0; i < size_; ++i) {
         EXPECT_NEAR(h_output_[i], 100, 10);
     }
+}
+
+// Neither argument was validated. sigma 0 makes the exponent -(x*x)/(2*sigma*sigma) divide by zero,
+// every weight becomes 0, the normaliser sums to 0, and 0/0 gives NaN weights -- the image comes back
+// as NaN rounded to bytes with no error. kernel_size 0 leaves the kernel empty and does nothing.
+TEST_F(GaussianBlurTest, AZeroSigmaIsRejected) {
+    EXPECT_THROW(cuda::algo::gaussianBlur(d_input_, d_output_, width_, height_, 0.0f, 5), std::invalid_argument);
+    EXPECT_THROW(cuda::algo::gaussianBlur(d_input_, d_output_, width_, height_, -1.0f, 5), std::invalid_argument);
+}
+
+TEST_F(GaussianBlurTest, AnEmptyOrEvenKernelSizeIsRejected) {
+    EXPECT_THROW(cuda::algo::gaussianBlur(d_input_, d_output_, width_, height_, 1.0f, 0), std::invalid_argument);
+    EXPECT_THROW(cuda::algo::gaussianBlur(d_input_, d_output_, width_, height_, 1.0f, 4), std::invalid_argument);
+    EXPECT_THROW(cuda::algo::gaussianBlur(d_input_, d_output_, width_, height_, 1.0f, -3), std::invalid_argument);
+}
+
+TEST_F(GaussianBlurTest, TheOrdinaryArgumentsStillWork) {
+    EXPECT_NO_THROW(cuda::algo::gaussianBlur(d_input_, d_output_, width_, height_, 1.0f, 5));
 }
