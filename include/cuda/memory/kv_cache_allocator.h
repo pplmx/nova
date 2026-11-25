@@ -75,8 +75,22 @@ namespace cuda::memory {
 
         KVCacheAllocator(const KVCacheAllocator&) = delete;
         KVCacheAllocator& operator=(const KVCacheAllocator&) = delete;
-        KVCacheAllocator(KVCacheAllocator&&) = default;
-        KVCacheAllocator& operator=(KVCacheAllocator&&) = default;
+
+        /// Deleted rather than defaulted.
+        ///
+        /// These were `= default`, which reads as "movable" but is not: the class holds a
+        /// std::recursive_mutex and a std::atomic<uint64_t>, neither of which is movable, so the
+        /// defaulted move is implicitly deleted. The declaration therefore promised something the
+        /// type cannot do, and a caller only found out at the point of use:
+        ///
+        ///     KVCacheAllocator b(std::move(a));
+        ///     error: use of deleted function 'KVCacheAllocator(KVCacheAllocator&&)'
+        ///     note: 'std::recursive_mutex::recursive_mutex(const std::recursive_mutex&)' is deleted
+        ///
+        /// Nothing in the tree moves one, so saying so in the declaration costs nothing and moves the
+        /// error from the call site to the reader.
+        KVCacheAllocator(KVCacheAllocator&&) = delete;
+        KVCacheAllocator& operator=(KVCacheAllocator&&) = delete;
 
         std::vector<KVCacheBlock*> allocate(int64_t sequence_id, int num_tokens);
         std::vector<KVCacheBlock*> append(int64_t sequence_id, int num_tokens);
