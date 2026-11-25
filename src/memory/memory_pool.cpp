@@ -13,10 +13,14 @@ namespace cuda::memory {
     MemoryPool::MemoryPool(const Config& config)
         : config_(config) {
         if (config_.preallocate) {
+            // Filling the pool at construction is setup, not a miss. misses_ counts requests that
+            // found no block with room, and no request has been made yet -- counting these made the
+            // counters start at max_blocks before the first allocate(). Measured with
+            // max_blocks=4, preallocate=true: get_metrics() reported hits=0 misses=4 straight after
+            // construction, and the first allocate() left misses at 4 even though it was served from
+            // a block that was already there.
             for (size_t i = 0; i < config_.max_blocks; ++i) {
-                if (allocate_block()) {
-                    ++misses_;
-                }
+                (void)allocate_block();
             }
         }
     }

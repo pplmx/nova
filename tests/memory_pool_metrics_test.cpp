@@ -85,6 +85,30 @@ TEST_F(MemoryPoolMetricsTest, AllocateIncrementsMisses) {
     pool.deallocate(ptr, 256);
 }
 
+// Preallocating is setup, not a request. The counters used to start at max_blocks because the
+// constructor incremented misses_ for each block it created, so a caller reading get_metrics() before
+// asking for anything saw a non-zero miss count, and the first real request did not change it.
+TEST_F(MemoryPoolMetricsTest, PreallocationIsNotCountedAsAMiss) {
+    cuda::memory::MemoryPool::Config config;
+    config.block_size = 4096;
+    config.max_blocks = 4;
+    config.preallocate = true;
+    cuda::memory::MemoryPool pool(config);
+
+    const auto before = pool.get_metrics();
+    EXPECT_EQ(before.misses, 0) << "no request has been made; filling the pool is not a miss";
+    EXPECT_EQ(before.hits, 0);
+
+    auto* p = pool.allocate(1024);
+    ASSERT_NE(p, nullptr);
+
+    const auto after = pool.get_metrics();
+    EXPECT_EQ(after.misses, 0) << "the request was served from a preallocated block";
+    EXPECT_EQ(after.hits, 1) << "and it counts as a hit";
+
+    pool.deallocate(p, 1024);
+}
+
 TEST_F(MemoryPoolMetricsTest, MultipleAllocationsFromSameBlock) {
     cuda::memory::MemoryPool::Config config;
     config.block_size = 1024;
@@ -92,8 +116,13 @@ TEST_F(MemoryPoolMetricsTest, MultipleAllocationsFromSameBlock) {
     config.preallocate = true;
     cuda::memory::MemoryPool pool(config);
 
+    // This used to expect 1: preallocate=true created the block in the constructor and counted that
+    // as a miss. A miss is a request that found no block with room, and no request has been made yet,
+    // so the counter starts at zero. The old expectation described the setup cost as a request
+    // outcome.
     auto metrics_before = pool.get_metrics();
-    EXPECT_EQ(metrics_before.misses, 1);
+    EXPECT_EQ(metrics_before.misses, 0) << "nothing has been requested yet";
+    EXPECT_EQ(metrics_before.hits, 0);
 
     auto* ptr1 = pool.allocate(256);
     auto metrics_after1 = pool.get_metrics();
