@@ -1,0 +1,40 @@
+#pragma once
+
+/**
+ * @file cuda_alloc_injection.h
+ * @brief Make the next matching CUDA allocation fail, from a test.
+ *
+ * Some of the library's error paths only run when an allocation fails -- a cudaMalloc that returns
+ * cudaErrorMemoryAllocation inside a constructor, a reallocation half-way through a resize, a guard
+ * that releases what it took before rethrowing. Those paths could not be tested before this: the
+ * failure cannot be requested through any public API, and exhausting device memory on purpose is both
+ * unreliable and destructive to the rest of the suite.
+ *
+ * The mechanism is the linker's --wrap. tests/CMakeLists.txt passes --wrap=cudaMalloc (and the other
+ * allocation entry points) when linking nova-tests, so a call to cudaMalloc from anywhere in the
+ * library resolves to this file's __wrap_cudaMalloc, which either fails on request or forwards to
+ * __real_cudaMalloc. Production code is untouched and the wrapper is not part of any shipped library.
+ *
+ * Usage:
+ *
+ *     cuda_test::fail_allocation_after(0);   // the next cudaMalloc fails
+ *     EXPECT_THROW(pool.allocate(1024), std::runtime_error);
+ *     cuda_test::stop_failing_allocations();
+ *
+ * The counter is per-thread and counts only allocations that did NOT fail, so
+ * fail_allocation_after(1) lets one through and fails the second.
+ */
+namespace cuda_test {
+
+    /// Fails every allocation from the nth onward. 0 fails the next one. The counter resets whenever
+    /// this is called, so successive calls do not accumulate.
+    void fail_allocation_after(int n);
+
+    /// Returns to forwarding every allocation. Call this even when a case fails, so one broken case
+    /// does not poison the ones after it.
+    void stop_failing_allocations();
+
+    /// How many allocations have been attempted since the last fail_allocation_after/stop.
+    int allocation_attempts();
+
+}  // namespace cuda_test

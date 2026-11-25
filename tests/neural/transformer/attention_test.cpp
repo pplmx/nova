@@ -6,6 +6,8 @@
 #include <cuda/memory/buffer.h>
 #include <cuda/memory/buffer-inl.h>
 
+#include "cuda_alloc_injection.h"
+
 #include <vector>
 
 namespace cuda::neural::transformer::test {
@@ -255,6 +257,26 @@ namespace cuda::neural::transformer::test {
         for (float v : host) {
             EXPECT_TRUE(std::isfinite(v));
         }
+    }
+
+    // compute_sinusoidal_encoding frees the previous buffer and reallocates without clearing the member in
+    // between; when the allocation failed, the member kept a freed address and the destructor freed it
+    // again. Reaching that needs cudaMalloc to fail on a specific call, which no public API can request --
+    // this is what tests/cuda_alloc_injection.h is for.
+    TEST_F(PositionalEncodingTest, AFailedReallocationLeavesTheEncodingUsable) {
+        PositionalEncoding encoding(PositionalEncodingConfig {.type = PositionalEncodingType::Sinusoidal, .max_seq_len = 8, .embed_dim = 16, .dropout_rate = 0.0f});
+
+        cuda::memory::Buffer<float> out(static_cast<size_t>(64) * 16);
+
+        // Make the next device allocation fail, then ask for a longer sequence so the object tries to
+        // grow its buffer. The growth path frees the old buffer first.
+        cuda_test::fail_allocation_after(0);
+        EXPECT_THROW(encoding.get_encoding(out.data(), 64, stream_), std::exception) << "the reallocation must report the failure rather than hand back a stale buffer";
+        cuda_test::stop_failing_allocations();
+
+        // Destroying the object now must not double-free the buffer that was released on the failed path.
+        // ASan runs report it directly if it does.
+        SUCCEED();
     }
 
 }  // namespace cuda::neural::transformer::test

@@ -294,6 +294,10 @@ set(CUDA_QUANTIZE_DIR ${CMAKE_SOURCE_DIR}/include/cuda/quantize)
 set(CUDA_GNN_DIR ${CMAKE_SOURCE_DIR}/include/cuda/gnn)
 set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
+# cuda_alloc_injection.cpp defines __wrap_cudaMalloc, which the --wrap flags below route every
+# cudaMalloc in the library through. Without the flags the wrapper is simply never called.
+target_sources(nova-tests PRIVATE cuda_alloc_injection.cpp)
+
 target_link_libraries(nova-tests
     PRIVATE
     GTest::gtest_main
@@ -301,6 +305,14 @@ target_link_libraries(nova-tests
     CUDA::cudart
     cuda_api
     cuda_impl
+)
+
+# Lets a test make the next allocation fail. A few library error paths only run when cudaMalloc
+# returns cudaErrorMemoryAllocation and cannot be reached through any public API otherwise; see
+# tests/cuda_alloc_injection.h. This affects the test binary only -- the shipped libraries are built
+# without it -- and is inert unless a case calls cuda_test::fail_allocation_after().
+target_link_options(nova-tests PRIVATE
+    "LINKER:--wrap=cudaMalloc"
 )
 target_include_directories(nova-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
