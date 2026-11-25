@@ -3,9 +3,11 @@
 
 #include <atomic>
 #include <limits>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
+#include "cuda_alloc_injection.h"
 #include "cuda/production/error_injection.h"
 #include "cuda/device/error.h"
 
@@ -222,4 +224,23 @@ TEST_F(StressTest, ConcurrentStreamTest) {
     config.allocation_size = 1024 * 1024;
 
     EXPECT_TRUE(cuda::production::run_concurrent_stream_test(config));
+}
+
+// run_concurrent_stream_test allocates one buffer per stream in a loop, each guarded by CUDA_CHECK,
+// and frees them in a separate loop after every stream has been synchronised. A cudaMalloc that
+// fails part way through -- or a synchronize that throws -- leaves the buffers taken before it with
+// no owner, because the free loop is never reached.
+TEST_F(StressTest, AFailedStreamAllocationReleasesTheBuffersAlreadyTaken) {
+    cuda::production::StressTestConfig config;
+    config.max_concurrent_streams = 8;
+    config.allocation_size = 1024 * 1024;
+
+    cuda_test::reset_allocation_count();
+
+    // Let two buffers through, fail the third.
+    cuda_test::fail_allocation_after(2);
+    EXPECT_THROW((void)cuda::production::run_concurrent_stream_test(config), std::exception);
+    cuda_test::stop_failing_allocations();
+
+    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the buffers taken before the failure must be released, not left with no owner";
 }

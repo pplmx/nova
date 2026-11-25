@@ -1,6 +1,7 @@
 #include "cuda/production/error_injection.h"
 #include "cuda/device/error.h"
 
+#include "cuda/memory/unique_ptr.h"
 #include "cuda/stream/stream.h"
 #include <thread>
 
@@ -207,21 +208,24 @@ namespace cuda::production {
             streams.emplace_back();
         }
 
-        std::vector<int*> d_data(streams.size(), nullptr);
+        // One device buffer per stream, owned by a RAII slot each. The allocation loop and the free
+        // loop used to be separate passes over a std::vector<int*>: a cudaMalloc or cudaMemset that
+        // failed part way through, or a synchronize() below that threw, left every buffer taken
+        // before it with no owner, because the free loop was never reached. The slots release them
+        // on every way out, including the throwing ones.
+        //
+        // Counted in unsigned char so the slot's count is the byte count: unique_ptr<T> allocates
+        // count * sizeof(T) bytes, and an int count would allocate allocation_size rounded down.
+        std::vector<cuda::memory::unique_ptr<unsigned char>> d_data;
+        d_data.reserve(streams.size());
 
         for (size_t i = 0; i < streams.size(); ++i) {
-            CUDA_CHECK(cudaMalloc(&d_data[i], config.allocation_size));
-            CUDA_CHECK(cudaMemset(d_data[i], 0, config.allocation_size));
+            d_data.emplace_back(config.allocation_size > 0 ? config.allocation_size : 1);
+            CUDA_CHECK(cudaMemset(d_data.back().get(), 0, config.allocation_size));
         }
 
         for (auto& stream : streams) {
             stream.synchronize();
-        }
-
-        for (size_t i = 0; i < streams.size(); ++i) {
-            if (d_data[i]) {
-                CUDA_CHECK(cudaFree(d_data[i]));
-            }
         }
 
         return true;
