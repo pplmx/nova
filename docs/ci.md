@@ -111,6 +111,20 @@ communicator fails the run on a leak this project cannot release. The suppressio
 file states the reason; keep it to third-party libraries only, or the run stops
 meaning "something nova did".
 
+One thing to know before adding a replacement for `operator new` to a test
+helper. C++ has several forms of it, and the `operator delete` that runs is
+chosen by the form used to allocate. Replacing only `operator new(std::size_t)`
+leaves `operator new(std::size_t, std::nothrow_t)` going to the runtime's
+allocator while the delete for it resolves to the replacement.
+`std::get_temporary_buffer` uses the nothrow form and googletest calls it once
+per test suite, so ASan then aborts every process with
+`alloc-dealloc-mismatch (operator new vs free)` from inside
+`testing::TestSuite::Run()`, before any case runs -- a report with no nova frame,
+2639 of 2672 cases failing, and nothing pointing at the helper that caused it.
+Replace all six points (throwing, nothrow, array, each with its matching delete)
+through one pair of helpers. `tests/cuda_alloc_injection.cpp` does this, and a
+case in `BufferTest` fails if a future change covers only one form.
+
 ```bash
 # Coverage
 cmake -G Ninja -B build-coverage -DNOVA_COVERAGE=ON
