@@ -24,6 +24,13 @@ namespace cuda::neural::fusion {
         explicit FusedMatmulBiasAct(const MatmulBiasActConfig& config);
         ~FusedMatmulBiasAct();
 
+        // Copy and move are deleted: the destructor destroys the cuBLAS handles it owns, so a copy
+        // would hold the same handles and destroy them twice.
+        FusedMatmulBiasAct(const FusedMatmulBiasAct&) = delete;
+        FusedMatmulBiasAct& operator=(const FusedMatmulBiasAct&) = delete;
+        FusedMatmulBiasAct(FusedMatmulBiasAct&&) = delete;
+        FusedMatmulBiasAct& operator=(FusedMatmulBiasAct&&) = delete;
+
         void forward(const float* A, const float* B, const float* bias, float* C, int m, int n, int k, cudaStream_t stream = nullptr);
 
         void set_activation(ActivationType activation);

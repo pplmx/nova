@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <type_traits>
 #include <cuda_runtime.h>
 #include <cuda/neural/fusion/fused_matmul_bias_act.h>
 #include <cuda/neural/fusion/kernel_fusion.h>
@@ -206,3 +207,11 @@ namespace cuda::neural::fusion::test {
     }
 
 }  // namespace cuda::neural::fusion::test
+
+// FusedMatmulBiasAct owns a cuBLAS handle (or an owned cublasLt handle) and its destructor destroys
+// it. It declared no copy or move control, so a copy held the same handle and destroyed it twice.
+TEST(FusedMatmulBiasActOwnershipTest, CopyAndMoveAreDeleted) {
+    EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::fusion::FusedMatmulBiasAct>);
+    EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::fusion::FusedMatmulBiasAct>);
+    EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::fusion::FusedMatmulBiasAct>);
+}

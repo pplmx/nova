@@ -219,3 +219,12 @@ TEST(MultiHeadAttentionOwnershipTest, CopyAndMoveAreDeleted) {
     EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::MultiHeadAttention>);
     EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::MultiHeadAttention>);
 }
+
+// PositionalEncoding owns d_encoding_buffer_ (cudaMalloc'd) and cudaFree()s it in its destructor.
+// Like MultiHeadAttention it declared no copy or move control, so a copy shared the pointer and the
+// second destructor freed it again.
+TEST(PositionalEncodingOwnershipTest, CopyAndMoveAreDeleted) {
+    EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::transformer::PositionalEncoding>);
+    EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::PositionalEncoding>);
+    EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::PositionalEncoding>);
+}

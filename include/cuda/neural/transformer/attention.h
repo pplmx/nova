@@ -66,6 +66,13 @@ namespace cuda::neural::transformer {
         explicit PositionalEncoding(const PositionalEncodingConfig& config);
         ~PositionalEncoding();
 
+        // Copy and move are deleted: the destructor cudaFree()s d_encoding_buffer_, so a copy would
+        // share it and free it twice. Same shape as MultiHeadAttention above.
+        PositionalEncoding(const PositionalEncoding&) = delete;
+        PositionalEncoding& operator=(const PositionalEncoding&) = delete;
+        PositionalEncoding(PositionalEncoding&&) = delete;
+        PositionalEncoding& operator=(PositionalEncoding&&) = delete;
+
         void forward(const float* input, float* output, int batch_size, int seq_len, cudaStream_t stream = nullptr);
 
         void get_encoding(float* output, int seq_len, cudaStream_t stream = nullptr);
