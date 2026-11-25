@@ -118,6 +118,46 @@ TEST_F(BufferTest, CopyFromHost) {
     EXPECT_EQ(result, host);
 }
 
+// resize() freed the old buffer and published the new size before it allocated, so a failed
+// cudaMalloc left the object holding a pointer to freed device memory together with the size it
+// now claimed to own. Two things then go wrong: the destructor cudaFree()s that dangling pointer a
+// second time, and every accessor after the throw describes a buffer that cannot be read. Nothing
+// in the tree called resize(), so nothing had ever exercised it.
+TEST_F(BufferTest, AFailedResizeKeepsTheExistingBuffer) {
+    cuda::memory::Buffer<int> buffer(16);
+    ASSERT_NE(buffer.data(), nullptr);
+    int* const original = buffer.data();
+    std::vector<int> host(16);
+    std::iota(host.begin(), host.end(), 1);
+    buffer.copy_from(host.data(), 16);
+
+    cuda_test::fail_allocation_after(0);
+    EXPECT_THROW(buffer.resize(4096), std::exception);
+    cuda_test::stop_failing_allocations();
+
+    EXPECT_EQ(buffer.data(), original) << "a resize that could not allocate must leave the original buffer owned, not dangling";
+    EXPECT_EQ(buffer.size(), 16u) << "the reported size must still describe the buffer that is actually held";
+
+    std::vector<int> result(16);
+    buffer.copy_to(result.data(), 16);
+    EXPECT_EQ(result, host) << "the surviving buffer must still hold its data";
+}
+
+TEST_F(BufferTest, ResizeToASmallerOrZeroSizeReleasesTheOldBuffer) {
+    cuda_test::reset_allocation_count();
+    {
+        cuda::memory::Buffer<int> buffer(64);
+        buffer.resize(0);
+        EXPECT_EQ(buffer.data(), nullptr);
+        EXPECT_EQ(buffer.size(), 0u);
+
+        buffer.resize(32);
+        EXPECT_NE(buffer.data(), nullptr);
+        EXPECT_EQ(buffer.size(), 32u);
+    }
+    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "every buffer resize replaced must be released exactly once";
+}
+
 TEST_F(BufferTest, CopyToHost) {
     cuda::memory::Buffer<int> buffer(5);
     std::vector<int> expected = {10, 20, 30, 40, 50};

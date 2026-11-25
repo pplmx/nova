@@ -101,15 +101,20 @@ namespace cuda::memory {
         if (new_size == size_) {
             return;
         }
+        // Allocate the replacement BEFORE releasing the original, and publish new_size only once it
+        // exists. The old order freed first and then set size_ = new_size, so a failed cudaMalloc
+        // destroyed a buffer the caller already held, left data_ pointing at the freed block (the
+        // destructor then cudaFree()d it a second time), and reported a size the object did not own
+        // -- with the `new_size == size_` early return above making no later resize() repair it.
+        T* replacement = nullptr;
+        if (new_size > 0) {
+            NOVA_CUDA_MEM_CHECK(cudaMalloc(&replacement, new_size * sizeof(T)));
+        }
         if (data_) {
             cudaFree(data_);
         }
+        data_ = replacement;
         size_ = new_size;
-        if (size_ > 0) {
-            NOVA_CUDA_MEM_CHECK(cudaMalloc(&data_, size_ * sizeof(T)));
-        } else {
-            data_ = nullptr;
-        }
     }
 
     template <>
