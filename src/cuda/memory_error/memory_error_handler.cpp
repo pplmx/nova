@@ -12,10 +12,22 @@ namespace nova::memory {
     struct DeviceHealthMonitor::Impl {
         std::atomic<bool> running {false};
         std::thread monitor_thread;
-        std::chrono::milliseconds check_interval {5000};
-        float warning_threshold = 0.9f;
-        float critical_threshold = 0.95f;
+
+        // Read by the monitor thread on every pass and assigned by the setters on any thread. They
+        // were plain members, so every set_* call raced the loop using them. TSan reports the
+        // callback specifically, because reading and assigning a std::function touch its internal
+        // pointers. comm_error_recovery.cpp's equivalent already made its interval atomic and takes
+        // its callback under a mutex; this is the same treatment.
+        //
+        // The interval is stored as a millisecond count because std::chrono::milliseconds is not an
+        // atomic-friendly type; the store and the load convert at the edges.
+        std::atomic<int64_t> check_interval_ms {5000};
+        std::atomic<float> warning_threshold {0.9f};
+        std::atomic<float> critical_threshold {0.95f};
         HealthCallback health_callback;
+        /// Guards health_callback only; the two thresholds and the interval above are atomic.
+        mutable std::mutex callback_mutex;
+
         std::unordered_map<int, DeviceHealth> health_cache;
         mutable std::shared_mutex cache_mutex;
         std::chrono::steady_clock::time_point start_time;
@@ -55,7 +67,7 @@ namespace nova::memory {
                 cudaError_t err = cudaGetDeviceCount(&device_count);
 
                 if (err != cudaSuccess) {
-                    std::this_thread::sleep_for(impl_->check_interval);
+                    std::this_thread::sleep_for(std::chrono::milliseconds {impl_->check_interval_ms.load()});
                     continue;
                 }
 
@@ -65,13 +77,13 @@ namespace nova::memory {
 
                     cudaError_t set_err = cudaSetDevice(i);
                     if (set_err != cudaSuccess) {
-                        std::this_thread::sleep_for(impl_->check_interval);
+                        std::this_thread::sleep_for(std::chrono::milliseconds {impl_->check_interval_ms.load()});
                         continue;
                     }
 
                     size_t free_mem = 0, total_mem = 0;
                     if (cudaMemGetInfo(&free_mem, &total_mem) != cudaSuccess) {
-                        std::this_thread::sleep_for(impl_->check_interval);
+                        std::this_thread::sleep_for(std::chrono::milliseconds {impl_->check_interval_ms.load()});
                         continue;
                     }
 
@@ -81,12 +93,12 @@ namespace nova::memory {
                     float utilization = static_cast<float>(health.memory_used) / total_mem;
                     health.utilization = utilization;
 
-                    health.is_healthy = (utilization < impl_->critical_threshold);
+                    health.is_healthy = (utilization < impl_->critical_threshold.load());
                     health.ecc_errors = 0;
 
-                    if (utilization >= impl_->critical_threshold) {
+                    if (utilization >= impl_->critical_threshold.load()) {
                         health.status_message = "Critical: Memory usage above " + std::to_string(static_cast<int>(utilization * 100)) + "%";
-                    } else if (utilization >= impl_->warning_threshold) {
+                    } else if (utilization >= impl_->warning_threshold.load()) {
                         health.status_message = "Warning: Memory usage above " + std::to_string(static_cast<int>(utilization * 100)) + "%";
                     } else {
                         health.status_message = "Healthy";
@@ -97,12 +109,20 @@ namespace nova::memory {
                         impl_->health_cache[i] = health;
                     }
 
-                    if (impl_->health_callback) {
-                        impl_->health_callback(health);
+                    // Copied under the mutex and invoked outside it, so the assignment in
+                    // set_health_callback cannot be read mid-write, and a callback that calls back
+                    // into the monitor cannot deadlock on callback_mutex.
+                    HealthCallback callback;
+                    {
+                        std::lock_guard lock(impl_->callback_mutex);
+                        callback = impl_->health_callback;
+                    }
+                    if (callback) {
+                        callback(health);
                     }
                 }
 
-                std::this_thread::sleep_for(impl_->check_interval);
+                std::this_thread::sleep_for(std::chrono::milliseconds {impl_->check_interval_ms.load()});
             }
         });
     }
@@ -155,15 +175,16 @@ namespace nova::memory {
     }
 
     void DeviceHealthMonitor::set_check_interval(std::chrono::milliseconds interval) {
-        impl_->check_interval = interval;
+        impl_->check_interval_ms.store(interval.count());
     }
 
     void DeviceHealthMonitor::set_memory_threshold(float warning_threshold, float critical_threshold) {
-        impl_->warning_threshold = warning_threshold;
-        impl_->critical_threshold = critical_threshold;
+        impl_->warning_threshold.store(warning_threshold);
+        impl_->critical_threshold.store(critical_threshold);
     }
 
     void DeviceHealthMonitor::set_health_callback(HealthCallback callback) {
+        std::lock_guard lock(impl_->callback_mutex);
         impl_->health_callback = std::move(callback);
     }
 

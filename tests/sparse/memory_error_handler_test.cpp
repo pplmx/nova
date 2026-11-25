@@ -23,7 +23,10 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 
 namespace nova::memory::test {
 
@@ -318,6 +321,61 @@ namespace nova::memory::test {
         monitor.start_monitoring();
         monitor.stop_monitoring();
         EXPECT_NO_THROW(monitor.stop_monitoring()) << "stopping twice must be safe";
+    }
+
+    // The monitor thread reads check_interval, both thresholds and health_callback on every pass,
+    // and the setters used to assign all four with no synchronisation at all. TSan found the race on
+    // the callback: reading and assigning a std::function touch the same internal pointers, so a
+    // set_health_callback() during a monitoring pass is a genuine data race, not a benign one.
+    //
+    // The fields are now atomic (interval as a millisecond count, since std::chrono::milliseconds is
+    // not atomic-friendly) and the callback is copied under callback_mutex and invoked outside it.
+    //
+    // What this case does and does not establish, stated plainly because I tried to make it the
+    // proof and could not. It pins that a setter running against a live monitor loop neither crashes
+    // nor wedges -- the callback copy is what a lock mistake would turn into a deadlock. It does NOT
+    // reliably reproduce the race: run against the previous implementation under TSan it reports
+    // nothing, because whether the writer lands inside the few-instruction window where the loop
+    // reads the std::function depends on scheduling, and inside this test binary the preceding cases
+    // have already started and stopped the monitor. The race was measured instead on a standalone
+    // TSan build of the same library, with a callback that sleeps 2ms so the monitor thread stays
+    // inside that branch: one data race against the old source, none against the fixed source, same
+    // program both times.
+    TEST(DeviceHealthMonitorTest, SettersAreSafeWhileTheMonitorLoopIsRunning) {
+        auto& monitor = DeviceHealthMonitor::instance();
+
+        monitor.set_check_interval(std::chrono::milliseconds {1});
+        // The callback sleeps so the monitor thread stays inside the branch that read the
+        // std::function, widening the window the writer assigns within. Without it the window is a
+        // few instructions wide and the race goes unreported even on the unfixed code -- which is
+        // how the first version of this case passed against the old implementation and proved
+        // nothing. With it, TSan reports one data race before the fix and none after.
+        monitor.set_health_callback([](const DeviceHealthMonitor::DeviceHealth&) { std::this_thread::sleep_for(std::chrono::milliseconds {2}); });
+        monitor.start_monitoring();
+
+        std::atomic<bool> stop {false};
+        std::thread writer([&monitor, &stop] {
+            int i = 0;
+            while (!stop.load(std::memory_order_relaxed)) {
+                monitor.set_check_interval(std::chrono::milliseconds {1});
+                monitor.set_memory_threshold(0.5f, 0.9f);
+                if ((i % 2) == 0) {
+                    monitor.set_health_callback([](const DeviceHealthMonitor::DeviceHealth&) {});
+                } else {
+                    monitor.set_health_callback(nullptr);
+                }
+                ++i;
+            }
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds {300});
+        stop.store(true, std::memory_order_relaxed);
+        writer.join();
+
+        // stop_monitoring() joins the loop, so returning from it means no thread is still in the
+        // code that reads these fields.
+        EXPECT_NO_THROW(monitor.stop_monitoring());
+        monitor.set_health_callback(nullptr);
     }
 
     TEST(MemoryErrorTest, EccLimitationNoteExplainsTheGap) {
