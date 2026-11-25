@@ -19,6 +19,21 @@ namespace cuda::neural::transformer {
         explicit MultiHeadAttention(const MultiHeadAttentionConfig& config);
         ~MultiHeadAttention();
 
+        // Copy and move are deleted.
+        //
+        // The class owns three cudaMalloc'd float buffers and its destructor cudaFree()s them, but it
+        // declared none of the special members, so the compiler generated copy and move:
+        // std::is_copy_constructible_v<MultiHeadAttention> reported true. A copy shared the three
+        // pointers, so whichever object died second freed memory that was already gone.
+        //
+        // Copy would have to deep-copy three device buffers to be correct, which no caller asked for
+        // and which would silently change this from a layer into a copier. Deleting it makes the
+        // ownership explicit; callers that need two layers construct two.
+        MultiHeadAttention(const MultiHeadAttention&) = delete;
+        MultiHeadAttention& operator=(const MultiHeadAttention&) = delete;
+        MultiHeadAttention(MultiHeadAttention&&) = delete;
+        MultiHeadAttention& operator=(MultiHeadAttention&&) = delete;
+
         void forward(const float* query, const float* key, const float* value, float* output, int batch_size, int seq_len, int qkv_dim, cudaStream_t stream = nullptr);
 
         void forward_self_attention(const float* input, float* output, int batch_size, int seq_len, int hidden_dim, cudaStream_t stream = nullptr);

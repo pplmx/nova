@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <type_traits>
 #include <cuda_runtime.h>
 #include <cuda/neural/transformer/attention.h>
 #include <cuda/memory/buffer.h>
@@ -208,3 +209,13 @@ namespace cuda::neural::transformer::test {
     }
 
 }  // namespace cuda::neural::transformer::test
+
+// MultiHeadAttention owns three cudaMalloc'd float buffers and cudaFree()s them in its destructor.
+// It used to declare none of the special members, so the compiler generated copy and move: a copy
+// shared all three pointers and whichever object was destroyed second freed memory already gone.
+// std::is_copy_constructible_v<MultiHeadAttention> reported true before this change.
+TEST(MultiHeadAttentionOwnershipTest, CopyAndMoveAreDeleted) {
+    EXPECT_FALSE(std::is_copy_constructible_v<cuda::neural::transformer::MultiHeadAttention>) << "a copy would share the three device buffers with the original";
+    EXPECT_FALSE(std::is_copy_assignable_v<cuda::neural::transformer::MultiHeadAttention>);
+    EXPECT_FALSE(std::is_move_constructible_v<cuda::neural::transformer::MultiHeadAttention>);
+}
