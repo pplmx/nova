@@ -183,4 +183,49 @@ namespace cuda::testing {
         return cudaDeviceSynchronize();
     }
 
+    // ScopedTestIsolation was declared in the header with a constructor, a destructor and a
+    // current() accessor, and none of the three was ever defined: using it produced
+    // "undefined reference to cuda::testing::ScopedTestIsolation::ScopedTestIsolation()" at link
+    // time. Nothing in the tree used it, which is why the gap went unnoticed.
+    //
+    // The documented behaviour comes from the declaration itself: it holds a TestIsolationContext
+    // for the duration of a scope. Construction reset the singletons and the CUDA context the same
+    // way execute_isolated() does -- that ordering is not incidental, see the comment there about
+    // MeshStreams crashing inside cuEventDestroy when the resetters ran after cudaDeviceReset().
+    namespace {
+        /// The guard whose scope is currently open, or nullptr.
+        ScopedTestIsolation*& active_guard() {
+            static ScopedTestIsolation* active = nullptr;
+            return active;
+        }
+    }  // namespace
+
+    ScopedTestIsolation::ScopedTestIsolation()
+        : context_(TestIsolationContext::create()) {
+        context_->reset_singletons();
+        context_->reset_cuda_context();
+        active_guard() = this;
+    }
+
+    ScopedTestIsolation::~ScopedTestIsolation() {
+        // Destructors cannot throw; a failure to synchronise here is recorded by the context and
+        // surfaces through the next check rather than as a terminate().
+        if (context_) {
+            context_->synchronize();
+        }
+        if (active_guard() == this) {
+            active_guard() = nullptr;
+        }
+    }
+
+    ScopedTestIsolation& ScopedTestIsolation::current() {
+        ScopedTestIsolation* const active = active_guard();
+        if (active == nullptr) {
+            // Returning a reference to a freshly constructed instance would reset the context as a
+            // side effect of merely asking which guard is current, so say what happened instead.
+            throw std::logic_error("ScopedTestIsolation::current() called with no ScopedTestIsolation in scope");
+        }
+        return *active;
+    }
+
 }  // namespace cuda::testing

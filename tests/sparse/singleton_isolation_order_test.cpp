@@ -101,4 +101,19 @@ namespace singleton_isolation_order_test {
         EXPECT_TRUE(profiler.get_kernel_metrics().empty());
     }
 
+    // ScopedTestIsolation was declared in include/cuda/testing/test_isolation.h with a constructor,
+    // a destructor and a current() accessor, and none of the three had a definition. Instantiating
+    // one produced "undefined reference to ScopedTestIsolation::ScopedTestIsolation()" at link time,
+    // which no test noticed because nothing in the tree used the type.
+    TEST(ScopedTestIsolationTest, ConstructsAndReportsTheActiveGuard) {
+        EXPECT_THROW(cuda::testing::ScopedTestIsolation::current(), std::logic_error) << "with no guard in scope, current() must report rather than construct one as a side effect";
+
+        {
+            cuda::testing::ScopedTestIsolation guard;
+            EXPECT_EQ(&cuda::testing::ScopedTestIsolation::current(), &guard) << "inside the scope, current() must be the live guard";
+        }
+
+        EXPECT_THROW(cuda::testing::ScopedTestIsolation::current(), std::logic_error) << "after the scope closes, current() must report again";
+    }
+
 }  // namespace singleton_isolation_order_test
