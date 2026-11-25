@@ -30,7 +30,12 @@ TEST_F(TimeoutPropagationTest, ChildInheritsParentDeadline) {
     EXPECT_GT(remaining.count(), 0);
 }
 
-TEST_F(TimeoutPropagationTest, ExplicitChildTimeoutOverridesParent) {
+// This case was named "ExplicitChildTimeoutOverridesParent" but passed a null parent, so it never
+// exercised a parent and a child together and could not have shown which way the two combine. The
+// parent it registered was unrelated to the child it built, and the assertion holds whether or not a
+// child is constrained by its parent. It is kept for what it does verify -- an explicit timeout is
+// honoured when there is no parent -- and renamed for that.
+TEST_F(TimeoutPropagationTest, AnExplicitTimeoutIsHonouredWithoutAParent) {
     auto parent_id = timeout_manager::instance().start_operation("parent", std::chrono::milliseconds {200});
 
     timeout_context child(nullptr, std::chrono::milliseconds {50});
@@ -39,6 +44,44 @@ TEST_F(TimeoutPropagationTest, ExplicitChildTimeoutOverridesParent) {
     EXPECT_LT(remaining.count(), 60);
 
     timeout_manager::instance().end_operation(parent_id);
+}
+
+// The header says "The effective deadline is min(parent_deadline, start_time + timeout)", and the
+// destructor-only parent_ member suggests the parent is meant to constrain the child. The
+// implementation consulted the parent only when timeout was zero, so a child asking for a longer
+// timeout than its parent had left outlived the parent:
+//
+//     parent(50ms); child(&parent, 5000ms);
+//     measured before this change: child.remaining() = 4999ms, child.is_expired() = 0,
+//     and 120ms later the parent had expired while the child still reported 4879ms.
+//
+// A child that outlives the operation it belongs to is the case hierarchical timeouts exist to
+// prevent, so the shorter of the two wins now.
+TEST_F(TimeoutPropagationTest, AChildIsNeverGrantedMoreTimeThanItsParentHasLeft) {
+    timeout_context parent(nullptr, std::chrono::milliseconds {100});
+    timeout_context child(&parent, std::chrono::milliseconds {5000});
+
+    EXPECT_LE(child.remaining().count(), parent.remaining().count()) << "a child asking for 5000ms under a parent with 100ms must not receive more than the parent has";
+    EXPECT_LE(child.remaining().count(), 100) << "the documented effective deadline is min(parent, own)";
+}
+
+TEST_F(TimeoutPropagationTest, AChildExpiresWhenItsParentExpiresEvenWithALongerOwnTimeout) {
+    timeout_context parent(nullptr, std::chrono::milliseconds {30});
+    timeout_context child(&parent, std::chrono::milliseconds {5000});
+
+    std::this_thread::sleep_for(std::chrono::milliseconds {120});
+
+    EXPECT_TRUE(parent.is_expired()) << "the parent's 30ms must have elapsed";
+    EXPECT_TRUE(child.is_expired()) << "the child must not outlive the parent that bounds it";
+}
+
+TEST_F(TimeoutPropagationTest, AChildWithAShorterTimeoutStillUsesItsOwn) {
+    // The other half of min(): asking for less than the parent allows must not be extended to the
+    // parent's budget.
+    timeout_context parent(nullptr, std::chrono::milliseconds {5000});
+    timeout_context child(&parent, std::chrono::milliseconds {40});
+
+    EXPECT_LE(child.remaining().count(), 50) << "the child's own, shorter timeout must win";
 }
 
 TEST_F(TimeoutPropagationTest, CallbackInvokedOnTimeout) {
