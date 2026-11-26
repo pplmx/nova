@@ -1,12 +1,26 @@
 #include "cuda/inference/block_manager.h"
 #include "cuda/device/error.h"
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 #include <chrono>
 
 namespace cuda::inference {
 
     BlockManager::BlockManager(const BlockManagerConfig& config)
         : config_(config) {
+        // block_size is the divisor that sizes each sequence's block budget, and nothing validated it.
+        // A zero divided inside a constructor: measured, the process dumps core before an object
+        // exists to inspect. The neighbouring KVCacheAllocator rejects a bad block_size_tokens in its
+        // own constructor, so this layer already treats a malformed block geometry as something the
+        // library reports rather than something the caller is trusted with.
+        if (config_.block_size <= 0) {
+            throw ::std::invalid_argument("BlockManager: block_size must be positive, got " + ::std::to_string(config_.block_size));
+        }
+        if (config_.max_model_len < 0) {
+            throw ::std::invalid_argument("BlockManager: max_model_len must not be negative, got " + ::std::to_string(config_.max_model_len));
+        }
+
         max_blocks_per_sequence_ = (config_.max_model_len + config_.block_size - 1) / config_.block_size;
 
         // num_gpu_blocks (the manager's hand-out pool) and kv_cache_config.num_blocks

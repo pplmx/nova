@@ -62,6 +62,29 @@ namespace cuda::inference::test {
         BlockManagerConfig config_;
     };
 
+    // The constructor divides by block_size to size each sequence's block budget:
+    //
+    //     max_blocks_per_sequence_ = (max_model_len + block_size - 1) / block_size;
+    //
+    // block_size is a plain config field and nothing validates it, so a zero is an integer division
+    // by zero inside the constructor -- SIGFPE, before an object exists to inspect. The neighbouring
+    // KVCacheAllocator rejects a bad block_size_tokens in its own constructor, so the layer already
+    // treats this kind of config as the caller's responsibility to get right and the library's to
+    // check.
+    TEST(BlockManagerConfigValidationTest, AZeroBlockSizeIsRefusedRatherThanDividedBy) {
+        BlockManagerConfig config = small_block_manager_config();
+        config.block_size = 0;
+
+        EXPECT_THROW((void)BlockManager(config), std::invalid_argument) << "a zero block_size must be reported, not divided by";
+    }
+
+    TEST(BlockManagerConfigValidationTest, ANegativeBlockSizeIsRefused) {
+        BlockManagerConfig config = small_block_manager_config();
+        config.block_size = -8;
+
+        EXPECT_THROW((void)BlockManager(config), std::invalid_argument);
+    }
+
     TEST_F(BlockManagerEdgeTest, CreateSequenceWithMaxTokens) {
         auto manager = std::make_unique<BlockManager>(config_);
 
