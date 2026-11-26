@@ -81,7 +81,13 @@ namespace cuda::observability {
                 return stat;
             }
         }
-        return KernelStats {};
+        // Same sentinel, same reasoning as record_launch() above: the default struct carries
+        // min_time_us = DBL_MAX so the first timing replaces it, and returning that default verbatim
+        // handed the caller a record with a minimum of 1.797e308 beside max_time_us == 0 and
+        // invocations == 0. Nothing was measured for this name, so nothing is minimal.
+        KernelStats unknown;
+        unknown.min_time_us = 0.0;
+        return unknown;
     }
 
     ScopedKernelTiming::ScopedKernelTiming(const char* name, KernelStatsCollector& collector, size_t blocks, size_t threads_per_block)

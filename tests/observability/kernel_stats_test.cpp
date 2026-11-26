@@ -177,9 +177,21 @@ namespace cuda::observability::test {
         EXPECT_EQ(cuda_test::live_event_count(), 0);
     }
 
-    TEST_F(KernelStatsTest, GetStatsReturnsEmptyForUnknown) {
+    // The default-constructed struct carries min_time_us = DBL_MAX so that the first real timing
+    // replaces it. get_stats() returned that default verbatim for a name it has never seen, so the
+    // caller received a record claiming a minimum time of 1.797e308 next to max_time_us == 0 and
+    // invocations == 0 -- min > max, for a kernel nobody measured.
+    //
+    // record_launch() eighteen lines up was already fixed for exactly this ("reporting DBL_MAX
+    // leaked that sentinel to callers ... Nothing has been measured, so nothing is minimal"); the
+    // unknown-name path kept it.
+    TEST_F(KernelStatsTest, GetStatsReportsNoTimingForUnknown) {
         auto stats = collector_.get_stats("nonexistent");
         EXPECT_EQ(stats.invocations, 0);
+        EXPECT_EQ(stats.min_time_us, 0.0) << "an unmeasured kernel must not report the DBL_MAX sentinel as its minimum";
+        EXPECT_EQ(stats.max_time_us, 0.0);
+        EXPECT_EQ(stats.avg_time_us, 0.0);
+        EXPECT_LE(stats.min_time_us, stats.max_time_us) << "min > max is not a record any measurement could produce";
     }
 
     TEST_F(KernelStatsTest, OccupancyMetricsMeasure) {

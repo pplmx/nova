@@ -168,9 +168,15 @@ namespace cuda::observability::test {
         EXPECT_TRUE(missing.kernel_name.empty());
         EXPECT_EQ(missing.invocations, 0u);
         EXPECT_EQ(missing.total_time_us, 0.0);
-        // get_stats returns a default-constructed record, whose min is still the
-        // sentinel by design — that value never reached a caller through record_launch.
         EXPECT_EQ(missing.max_time_us, 0.0);
+        // The min must not be the DBL_MAX sentinel either. record_launch() was fixed for
+        // leaking it, but this path returned the default record verbatim, so an unknown
+        // name produced min_time_us = 1.797e308 beside max_time_us = 0 and
+        // invocations = 0 -- min > max, for something never measured. The previous
+        // comment here said the sentinel was "by design ... never reached a caller
+        // through record_launch", which was true of that path and not of this one.
+        EXPECT_EQ(missing.min_time_us, 0.0) << "an unmeasured kernel must not report the sentinel as its minimum";
+        EXPECT_LE(missing.min_time_us, missing.max_time_us);
     }
 
 }  // namespace cuda::observability::test
