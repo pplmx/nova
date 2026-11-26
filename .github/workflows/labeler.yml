@@ -35,7 +35,7 @@ jobs:
             # by its own rules, and the file being edited silently has no
             # effect on the run that edits it.
             -   name: Checkout
-                uses: actions/checkout@v5
+                uses: actions/checkout@v7
 
             -   name: Apply Labels
                 uses: srvaroa/labeler@v1.14.0

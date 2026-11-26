@@ -20,7 +20,7 @@ jobs:
       # `make fmt-check` so CI and local runs cannot drift apart.
       CLANG_FORMAT_VERSION: '18'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install clang-format
         run: |
@@ -49,7 +49,7 @@ jobs:
     # renamed or removed members, and call signatures that no longer match.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install CUDA headers
         run: |
@@ -71,7 +71,7 @@ jobs:
     # the test registry, not a device) and checks the count in README.md against it.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -111,7 +111,7 @@ jobs:
       # commit is absent. `git diff` against a missing object exits non-zero,
       # and with `|| true` the deletion check would have silently passed —
       # the same kind of gate that cannot fail as the one being replaced.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

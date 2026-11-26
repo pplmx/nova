@@ -21,7 +21,7 @@ jobs:
         name: ${{ matrix.os }}
         runs-on: ${{ matrix.os }}
         steps:
-            -   uses: actions/checkout@v5
+            -   uses: actions/checkout@v7
 
             # v0.2.29 is the first release that disables the GitHub cache on
             # Windows. Up to v0.2.27 the action failed at this step with
