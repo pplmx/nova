@@ -27,15 +27,42 @@ namespace cuda::pipeline {
         const bool had_previous = cudaGetDevice(&previous_device) == cudaSuccess;
         CUDA_CHECK(cudaSetDevice(src_device_));
 
+        // Everything from here to the end of the constructor acquires something, and a throwing
+        // constructor never runs the destructor -- so the events are created without throwing and
+        // released here if a later step fails. Measured before this guard: failing the second
+        // cudaEventCreate left send_event_ owned by nobody.
         CUDA_CHECK(cudaEventCreate(&send_event_));
 
         // send_event_ records on src_device_ (send_async) and recv_event_ records on
         // dst_device_ (recv_async). A cudaEvent_t belongs to the device that created
         // it, so both events on one device made the receive-side record fail with
         // "invalid resource handle".
-        CUDA_CHECK(cudaSetDevice(dst_device_));
-        CUDA_CHECK(cudaEventCreate(&recv_event_));
-        CUDA_CHECK(cudaSetDevice(src_device_));
+        auto release_events_and_rethrow = [this](cudaError_t err) {
+            // Both events belong to the device that created them; send_event_ was made on
+            // src_device_, which is the device current when this runs.
+            if (recv_event_) {
+                cudaEventDestroy(recv_event_);
+                recv_event_ = nullptr;
+            }
+            if (send_event_) {
+                cudaEventDestroy(send_event_);
+                send_event_ = nullptr;
+            }
+            CUDA_CHECK(err);
+        };
+
+        cudaError_t err = cudaSetDevice(dst_device_);
+        if (err == cudaSuccess) {
+            err = cudaEventCreate(&recv_event_);
+        }
+        if (err != cudaSuccess) {
+            release_events_and_rethrow(err);
+        }
+
+        err = cudaSetDevice(src_device_);
+        if (err != cudaSuccess) {
+            release_events_and_rethrow(err);
+        }
 
         int can_access = 0;
         const cudaError_t can_err = cudaDeviceCanAccessPeer(&can_access, src_device_, dst_device_);

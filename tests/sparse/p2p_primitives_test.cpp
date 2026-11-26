@@ -27,6 +27,8 @@
 
 #include <cuda_runtime.h>
 
+#include "cuda_alloc_injection.h"
+
 #include <string>
 
 #include <stdexcept>
@@ -61,6 +63,32 @@ namespace cuda::pipeline::test {
         }
 
     }  // namespace
+
+    // The constructor creates send_event_ and then keeps going:
+    //
+    //     CUDA_CHECK(cudaEventCreate(&send_event_));
+    //     CUDA_CHECK(cudaSetDevice(dst_device_));
+    //     CUDA_CHECK(cudaEventCreate(&recv_event_));      // or the peer-access probe below
+    //
+    // Anything that throws after the first creation unwinds the constructor without running the
+    // destructor, so send_event_ is left with no owner. Neither handle has a default initialiser
+    // either, so a partial construction is not even recognisable.
+    TEST(P2PSendRecvTest, ReleasesTheSendEventWhenConstructionFails) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "needs two visible devices, found " << device_count;
+        }
+
+        cuda_test::reset_event_count();
+
+        // The first creation succeeds, the second fails.
+        cuda_test::fail_event_after(1);
+        EXPECT_THROW((void)P2PSendRecv(kSrcDevice, kDstDevice), std::exception) << "the second event creation was expected to fail";
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the send event must be destroyed when the receive event cannot be created";
+    }
 
     TEST(P2PSendRecvTest, ExposesTheDevicePairItWasBuiltFor) {
         // Constructing the pair needs both devices to exist, independently of whether

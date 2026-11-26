@@ -94,8 +94,8 @@ namespace cuda::pipeline {
         bool peer_access_;
         void* dst_ptr_ = nullptr;
         size_t bytes_ = 0;
-        cudaEvent_t send_event_;
-        cudaEvent_t recv_event_;
+        cudaEvent_t send_event_ = nullptr;
+        cudaEvent_t recv_event_ = nullptr;
     };
 
     /**
