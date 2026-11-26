@@ -86,8 +86,16 @@ namespace cuda::performance {
     public:
         MemoryBandwidthTracker() = default;
 
+        /// Accumulates the bandwidth of one copy. A non-positive duration contributes nothing.
+        ///
+        /// The quotient is (bytes / 1e9) / (time_ms / 1e3), so a zero duration makes it infinite --
+        /// and the field is accumulated, so one such reading left get_average_bandwidth() returning
+        /// inf permanently, with no later finite value able to move it. Profiler::record_memory_op
+        /// computes the identical expression behind `if (time_ms > 0.0f)`; this path had no check.
         void record_copy(size_t bytes, float time_ms) {
-            bandwidth_gbps_ += (bytes / (1e9)) / (time_ms / 1e3);
+            if (time_ms > 0.0f) {
+                bandwidth_gbps_ += (bytes / (1e9)) / (time_ms / 1e3);
+            }
             num_copies_++;
         }
 

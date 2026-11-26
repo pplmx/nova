@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <stdexcept>
 #include <fstream>
 #include "cuda/performance/profiler.h"
@@ -78,6 +79,32 @@ namespace cuda::performance {
         cuda_test::stop_failing_events();
 
         EXPECT_EQ(cuda_test::live_event_count(), 0) << "the first event must be destroyed when the second cannot be created";
+    }
+
+    // MemoryBandwidthTracker::record_copy accumulates
+    //
+    //     bandwidth_gbps_ += (bytes / (1e9)) / (time_ms / 1e3);
+    //
+    // with no check on time_ms. A zero -- an ordinary reading from a coarse timer, or from a stubbed
+    // backend -- makes the quotient infinite, and because the field is accumulated rather than
+    // assigned, get_average_bandwidth() then returns inf permanently: every later copy adds to an
+    // infinity that no finite value can move. Profiler::record_memory_op computes the identical
+    // expression and guards it with `if (time_ms > 0.0f)`; this class had no test at all.
+    TEST_F(ProfilerTest, BandwidthTrackerIgnoresAZeroDuration) {
+        cuda::performance::MemoryBandwidthTracker tracker;
+
+        tracker.record_copy(1000000000, 1.0f);  // 1 GB in 1 ms -> 1000 GB/s
+        const float after_real = tracker.get_average_bandwidth();
+        EXPECT_TRUE(std::isfinite(after_real));
+        EXPECT_NEAR(after_real, 1000.0f, 1.0f);
+
+        // A zero-duration copy must not poison the accumulator. The average halves because the copy
+        // still counts towards num_copies_ while contributing no bytes -- the point is that it stays
+        // finite and does not add an infinite sample.
+        tracker.record_copy(1000000000, 0.0f);
+        const float after_zero = tracker.get_average_bandwidth();
+        EXPECT_TRUE(std::isfinite(after_zero)) << "a zero-duration copy made the average infinite";
+        EXPECT_NEAR(after_zero, 500.0f, 1.0f) << "the zero-duration copy contributed a bandwidth instead of nothing";
     }
 
     TEST_F(ProfilerTest, EnableDisable) {
