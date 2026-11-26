@@ -57,6 +57,38 @@ TEST_F(SortTest, RandomArray) {
     EXPECT_EQ(h_output_, expected);
 }
 
+// The padding launch covered the wrong range. padWithMaxKernel writes where
+// `i >= size && i < paddedSize`, so it needs threads over the WHOLE padded array:
+//
+//     launcher.grid(detail::calc_grid_1d(paddedSize - size, {256, 1, 1}));
+//     launcher.launch(padWithMaxKernel<T>, d_data.data(), size, paddedSize, maxVal);
+//
+// The grid was sized from the PAD COUNT, so the threads it created had indices 0..pad-1,
+// every one of them below `size` -- the kernel's condition never held and not a single
+// pad slot was written. Those slots kept whatever cudaMalloc returned, and the bitonic
+// network then sorted them into the result.
+//
+// The other cases here use fewer than 256 elements, where the pad count is smaller than
+// one block and the wrong grid still happened to cover enough indices. 1000 elements pad
+// to 1024, a pad of 24.
+TEST_F(SortTest, SortsASizeThatNeedsPadding) {
+    size_t size = 1000;
+    h_input_.resize(size);
+    h_output_.resize(size);
+    d_input_ = cuda::memory::Buffer<int>(size);
+    d_output_ = cuda::memory::Buffer<int>(size);
+
+    for (size_t i = 0; i < size; ++i) {
+        h_input_[i] = static_cast<int>((i * 29 + 7) % 1000);
+    }
+
+    runSort(size);
+
+    std::vector<int> expected = h_input_;
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(h_output_, expected) << "the padded tail was left uninitialised and sorted into the result";
+}
+
 TEST_F(SortTest, AlreadySorted) {
     h_input_ = {1, 2, 3, 4, 5, 6, 7, 8};
     h_output_.resize(h_input_.size());

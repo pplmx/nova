@@ -129,7 +129,13 @@ namespace cuda::parallel {
         if (paddedSize > size) {
             detail::KernelLauncher launcher;
             launcher.block({256, 1, 1});
-            launcher.grid(detail::calc_grid_1d(paddedSize - size, {256, 1, 1}));
+            // padWithMaxKernel writes where `i >= size && i < paddedSize`, so its threads must span
+            // the whole padded array. The grid used to be sized from the pad count instead, which
+            // gave thread indices 0..pad-1 -- all below `size` -- so the condition never held and no
+            // slot was written. Those slots held whatever cudaMalloc returned, and the bitonic
+            // network sorted them into the result. Measured with size = 1000 (pad 24): wrong entries
+            // in the sorted output.
+            launcher.grid(detail::calc_grid_1d(paddedSize, {256, 1, 1}));
             launcher.launch(padWithMaxKernel<T>, d_data.data(), size, paddedSize, maxVal);
             launcher.synchronize();
         }
