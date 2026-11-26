@@ -54,6 +54,15 @@ namespace cuda::observability {
         /// would otherwise escape into std::terminate.
         ~ScopedKernelTiming() noexcept;
 
+        /// Exclusive to its scope: the constructor creates two events and the destructor destroys
+        /// them, so a copy would have two objects destroying the same handles. Moving is refused for
+        /// a different reason -- the timing is recorded when the object dies, so relocating it would
+        /// move the record boundary somewhere the caller did not write.
+        ScopedKernelTiming(const ScopedKernelTiming&) = delete;
+        ScopedKernelTiming& operator=(const ScopedKernelTiming&) = delete;
+        ScopedKernelTiming(ScopedKernelTiming&&) = delete;
+        ScopedKernelTiming& operator=(ScopedKernelTiming&&) = delete;
+
         void record_blocks(size_t blocks, size_t threads_per_block) {
             blocks_ = blocks;
             threads_per_block_ = threads_per_block;

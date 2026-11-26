@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <stdexcept>
+#include <type_traits>
 
 #include "cuda_alloc_injection.h"
 #include "cuda/observability/kernel_stats.h"
@@ -33,6 +34,23 @@ namespace cuda::observability::test {
 
         cudaEventDestroy(start);
         cudaEventDestroy(end);
+    }
+
+    // ScopedKernelTiming owns two cudaEvent_t and destroys both in its destructor, and declared no
+    // copy or move operations. The compiler-generated copy therefore made two objects own the same
+    // two events, and both destructors destroyed them -- the second on a handle that no longer
+    // exists. Its scope semantics also make a copy meaningless: the timing is recorded when the
+    // object dies, and two copies cannot both record it.
+    TEST_F(KernelStatsTest, ScopedTimingIsExclusiveToItsScope) {
+        static_assert(!std::is_copy_constructible_v<ScopedKernelTiming>, "a copy would destroy the same events twice");
+        static_assert(!std::is_copy_assignable_v<ScopedKernelTiming>, "a copy would destroy the same events twice");
+        static_assert(!std::is_move_constructible_v<ScopedKernelTiming>, "the timing records on destruction, so it must not be relocatable");
+        static_assert(!std::is_move_assignable_v<ScopedKernelTiming>, "the timing records on destruction, so it must not be relocatable");
+
+        // A scope still works normally.
+        cuda_test::reset_event_count();
+        { ScopedKernelTiming timing("exclusive-probe", collector_); }
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "both events must be released when the scope ends";
     }
 
     TEST_F(KernelStatsTest, MultipleInvocationsAccumulate) {
