@@ -142,13 +142,26 @@ namespace cuda::neural {
     }
 
     void layer_norm_inference(const float* input, const float* gamma, const float* beta, float* output, int batch_size, int normalized_shape, float eps, cudaStream_t stream) {
+        // The scratch below takes batch_size through Buffer<float>'s size_t parameter, so this has
+        // to be checked HERE and not only inside layer_norm(): a negative batch would already have
+        // become a 2^64-1 allocation request by the time that function's guard ran. Measured:
+        // layer_norm_inference(..., -1, ...) surfaced as "CUDA error: out of memory" from
+        // buffer-inl.h, naming neither the parameter nor the call -- which is the hazard
+        // layer_norm()'s own comment describes, left unguarded one frame above where it happens.
+        if (batch_size <= 0) {
+            throw std::invalid_argument("layer_norm_inference: batch_size must be positive, got " + std::to_string(batch_size));
+        }
+        if (normalized_shape <= 0) {
+            throw std::invalid_argument("layer_norm_inference: normalized_shape must be positive, got " + std::to_string(normalized_shape));
+        }
+
         // Inference normalizes with internally computed per-row stats (the API
         // takes no mean/variance). Route through layer_norm() with scratch — the
         // previous dedicated kernel dereferenced null mean/var unconditionally (a
         // latent device fault if ever called; dead in-tree — fixed while the file
         // was in the v2.28 review surface).
-        cuda::memory::Buffer<float> mean(batch_size);
-        cuda::memory::Buffer<float> var(batch_size);
+        cuda::memory::Buffer<float> mean(static_cast<size_t>(batch_size));
+        cuda::memory::Buffer<float> var(static_cast<size_t>(batch_size));
         layer_norm(input, gamma, beta, output, mean.data(), var.data(), batch_size, normalized_shape, eps, stream);
     }
 

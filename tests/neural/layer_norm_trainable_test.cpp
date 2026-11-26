@@ -20,6 +20,7 @@
 #include "cuda_alloc_injection.h"
 
 #include <cmath>
+#include <stdexcept>
 #include <random>
 #include <vector>
 
@@ -332,6 +333,28 @@ TEST_F(LayerNormTrainableTest, LegacyInferenceMatchesHostReference) {
     d_y.copy_to(y.data(), y.size());
 
     EXPECT_TRUE(arrays_near(ref.data(), y.data(), y.size(), 2e-4f)) << "layer_norm_inference differs from the host fp64 reference";
+}
+
+// layer_norm_inference sizes two scratch buffers from batch_size BEFORE it calls layer_norm(),
+// and those buffers take a size_t:
+//
+//     cuda::memory::Buffer<float> mean(batch_size);
+//     cuda::memory::Buffer<float> var(batch_size);
+//     layer_norm(...);           // <- the guard lives in here, after the allocation
+//
+// layer_norm()'s own comment names this exact hazard -- "-1 became a 2^64-1 request" -- but the
+// check was added to layer_norm() only, where it runs too late to prevent the allocation that
+// already happened one frame up.
+TEST_F(LayerNormTrainableTest, LegacyInferenceRejectsANonPositiveBatchBeforeAllocating) {
+    const int h = 8;
+    const float eps = 1e-5f;
+
+    cuda::memory::Buffer<float> d_x(h), d_y(h), d_g(h), d_b(h);
+
+    // -1 here is a request for 2^64-1 elements if it reaches Buffer<float>'s size_t parameter.
+    EXPECT_THROW(layer_norm_inference(d_x.data(), d_g.data(), d_b.data(), d_y.data(), -1, h, eps), std::invalid_argument)
+        << "a negative batch must be refused before it is used as a buffer size";
+    EXPECT_THROW(layer_norm_inference(d_x.data(), d_g.data(), d_b.data(), d_y.data(), 0, h, eps), std::invalid_argument);
 }
 
 // One AdamW step on gamma/beta must actually move them (trainable surface).
