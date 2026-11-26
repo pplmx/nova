@@ -17,9 +17,21 @@ namespace cuda::performance {
             return;
         }
 
+        // The two events are created by throwing calls, and the destructor skips everything when
+        // !valid_ -- so a failure between them left the first event owned by nobody. Measured: failing
+        // the second creation left one live event. Creation is guarded here instead, so whichever of
+        // the three calls throws releases what exists.
         CUDA_CHECK(cudaEventCreate(&start_));
-        CUDA_CHECK(cudaEventCreate(&stop_));
-        CUDA_CHECK(cudaEventRecord(start_, 0));
+        cudaError_t err = cudaEventCreate(&stop_);
+        if (err == cudaSuccess) {
+            err = cudaEventRecord(start_, 0);
+        }
+        if (err != cudaSuccess) {
+            cudaEventDestroy(start_);
+            start_ = nullptr;
+            stop_ = nullptr;
+            CUDA_CHECK(err);
+        }
         valid_ = true;
     }
 

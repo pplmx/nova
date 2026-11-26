@@ -22,7 +22,7 @@ namespace cuda::performance {
     private:
         const char* name_;
         Profiler& profiler_;
-        cudaEvent_t start_, stop_;
+        cudaEvent_t start_ = nullptr, stop_ = nullptr;
         bool valid_;
     };
 

@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <fstream>
 #include "cuda/performance/profiler.h"
+
+#include "cuda_alloc_injection.h"
 
 namespace cuda::performance {
 
@@ -16,6 +19,28 @@ namespace cuda::performance {
             Profiler::instance().reset();
         }
     };
+
+    // ScopedTimer creates two events and only marks itself valid once both exist and the first is
+    // recorded:
+    //
+    //     CUDA_CHECK(cudaEventCreate(&start_));
+    //     CUDA_CHECK(cudaEventCreate(&stop_));      // <- a throw here leaves start_ owned by nobody
+    //     CUDA_CHECK(cudaEventRecord(start_, 0));
+    //     valid_ = true;
+    //
+    // Its destructor returns early when !valid_, so the failure path releases nothing. The members
+    // have no default initialiser either, so even without the early return there would be no way to
+    // tell which handle had been created.
+    TEST_F(ProfilerTest, ScopedTimerReleasesTheEventItCreatedWhenConstructionFails) {
+        cuda_test::reset_event_count();
+
+        // Let the first create through, fail the second.
+        cuda_test::fail_event_after(1);
+        EXPECT_THROW(ScopedTimer("kernel", Profiler::instance()), std::exception) << "the second event creation was expected to fail";
+        cuda_test::stop_failing_events();
+
+        EXPECT_EQ(cuda_test::live_event_count(), 0) << "the first event must be destroyed when the second cannot be created";
+    }
 
     TEST_F(ProfilerTest, EnableDisable) {
         EXPECT_TRUE(Profiler::instance().is_enabled());
