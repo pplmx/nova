@@ -260,6 +260,35 @@ TEST_F(LayerNormTrainableTest, BackwardMatchesHostReference) {
     EXPECT_TRUE(arrays_near(ref_db.data(), db.data(), db.size(), 2e-4f)) << "device d_beta differs from host fp64 reference";
 }
 
+// LayerNorm::backward hands `batch` straight to a grid dimension:
+//
+//     void LayerNorm::backward(..., int batch, cudaStream_t stream) {
+//         ensure_stats(batch);
+//         ln_backward_stats_kernel<<<batch, kLnBlock, 0, stream>>>(...);
+//
+// Nothing rejects a non-positive value. ensure_stats() makes it worse rather than better: its
+// `d_stats_ && stats_batch_ >= batch` early return is true for any negative batch (0 >= -1), so it
+// skips the allocation and the launch below is asked for a negative grid.
+//
+// The two free functions in the same file -- layer_norm_forward_trainable and
+// layer_norm_backward_trainable -- both throw invalid_argument for m <= 0. The class method was the
+// one entry point that did not, which is the shape this file has produced before: a guard added to
+// the functions and not to the method that wraps them.
+TEST_F(LayerNormTrainableTest, BackwardRejectsANonPositiveBatch) {
+    const int h = 8;
+    const float eps = 1e-5f;
+
+    LayerNorm ln(h, eps);
+    std::vector<float> g(h, 1.0f), b(h, 0.0f);
+    ln.set_weight(g.data(), b.data());
+
+    cuda::memory::Buffer<float> d_x(h), d_dy(h), d_dx(h), d_dg(h), d_db(h);
+
+    EXPECT_THROW(ln.backward(d_x.data(), d_dy.data(), d_dx.data(), d_dg.data(), d_db.data(), 0), std::invalid_argument) << "a zero batch must be reported, not launched as a grid";
+    EXPECT_THROW(ln.backward(d_x.data(), d_dy.data(), d_dx.data(), d_dg.data(), d_db.data(), -1), std::invalid_argument)
+        << "a negative batch must be reported; ensure_stats()'s early return would otherwise skip the allocation";
+}
+
 // copy_weights must round-trip what set_weight uploaded.
 TEST_F(LayerNormTrainableTest, CopyWeightsRoundTrips) {
     const int h = 8;

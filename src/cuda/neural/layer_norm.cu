@@ -1,11 +1,11 @@
 #include "cuda/neural/layer_norm.h"
-#include <string>
 
 #include "cuda/device/error.h"
 
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace cuda::neural {
 
@@ -352,6 +352,14 @@ namespace cuda::neural {
     }
 
     void LayerNorm::backward(const float* input, const float* grad_output, float* grad_input, float* grad_gamma, float* grad_beta, int batch, cudaStream_t stream) {
+        // batch is a grid dimension below, and ensure_stats()'s early return is true for any negative
+        // value (stats_batch_ starts at 0), so a non-positive batch skipped the allocation and then
+        // asked for an invalid grid -- reported as "invalid configuration argument" from inside the
+        // kernel line, with no indication that the batch was the problem. The two free functions in
+        // this file reject the same input with invalid_argument; this method did not.
+        if (batch <= 0) {
+            throw std::invalid_argument("LayerNorm::backward: batch must be positive, got " + std::to_string(batch));
+        }
         ensure_stats(batch);
         CUDA_CHECK(cudaMemsetAsync(grad_gamma, 0, sizeof(float) * hidden_, stream));
         CUDA_CHECK(cudaMemsetAsync(grad_beta, 0, sizeof(float) * hidden_, stream));
