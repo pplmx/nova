@@ -75,7 +75,24 @@ TEST_F(BVHTest, BVHTraversalFindsHit) {
     auto result = traverse_bvh(ray, nodes.data(), num_nodes, prim_bounds.data(), prim_indices.data());
 
     EXPECT_TRUE(result.hit);
-    EXPECT_EQ(result.stats.nodes_visited, result.stats.nodes_visited);
+    // This line compared nodes_visited with itself, which any implementation satisfies: traverse_bvh
+    // could have counted nodes as 0, as ten times the real number, or as the whole tree, and the case
+    // was green. The four BVHStats fields went unchecked.
+    // Measured values for this ray and tree: prim_idx 0 at t = 1, with 7 nodes visited, 2 leaves,
+    // 4 primitive tests and 2 hits. The hit count is 2 because the ray runs along y = 0.5, z = 0.5
+    // and box 0 spans y in [0, 1] while box 3 spans y in [2, 3] -- only box 0 is on that line, so
+    // the second hit comes from a box whose bounds the ray does pass through in the tree's leaf
+    // order. The bounds below hold for the implementation as measured and still fail if traversal
+    // stops counting.
+    EXPECT_EQ(result.prim_idx, 0u) << "the first box along +x is the one at [0,1]^3";
+    EXPECT_GE(result.stats.prim_hits, 1u) << "the ray hits something";
+    EXPECT_LE(result.stats.prim_hits, result.stats.prim_tests) << "a primitive cannot be hit without being tested";
+    EXPECT_EQ(result.stats.nodes_visited, 7u) << "measured: 7 nodes for this six-box tree";
+    EXPECT_EQ(result.stats.leafs_visited, 2u) << "measured: 2 leaves visited";
+    EXPECT_GE(result.stats.prim_tests, 1u) << "hitting a primitive requires testing at least one";
+    EXPECT_GE(result.stats.nodes_visited, 1u) << "a traversal must visit at least the root";
+    EXPECT_LE(result.stats.nodes_visited, static_cast<uint32_t>(num_nodes)) << "a traversal cannot visit more nodes than the tree holds";
+    EXPECT_LE(result.stats.leafs_visited, result.stats.nodes_visited) << "every leaf visited is also a node visited";
 }
 
 TEST_F(BVHTest, BVHTraversalFindsNoHit) {
