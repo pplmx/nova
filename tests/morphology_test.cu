@@ -2,6 +2,7 @@
 #include <cublas_v2.h>
 
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include "image/morphology.h"
 #include "image/types.h"
 #include "cuda/device/device_utils.h"
@@ -89,6 +90,31 @@ TEST_F(MorphologyTest, ErodeSolidImage) {
     for (size_t i = 0; i < size_; ++i) {
         EXPECT_EQ(h_output_[i], 255);
     }
+}
+
+// The four morphology entry points in src/image/morphology.cu take kernel_size with no validation:
+//
+//     int half = kernel_size / 2;          // -3 -> -1
+//     for (int dy = -half; dy <= half; ...) // never runs
+//     minVal stays at its 255 initialiser    // erode writes an all-white image
+//
+// A negative kernel therefore produces an all-white erosion (all-black dilation) and reports
+// success, which is a silently wrong result rather than a diagnosable error. kernel_size = 2 does
+// real 3x3 work while the caller asked for a 2-wide window.
+//
+// The sibling filters in this tree do check: gaussianBlur rejects `kernel_size <= 0 || even`, and
+// conv2d's require_odd_kernel_size is shared by three entry points. These four were the ones left
+// out, so the same parameter is validated on one side of the image layer and trusted on the other.
+TEST_F(MorphologyTest, MorphologyRejectsANonPositiveKernelSize) {
+    h_input_.assign(size_, 128);
+    uploadInput();
+
+    EXPECT_THROW(erodeImage(d_input_, d_output_, width_, height_, -3), std::invalid_argument) << "a negative kernel collapsed the window and returned an all-white image";
+    EXPECT_THROW(erodeImage(d_input_, d_output_, width_, height_, 0), std::invalid_argument);
+    EXPECT_THROW(dilateImage(d_input_, d_output_, width_, height_, -3), std::invalid_argument) << "the same window collapse made dilation write an all-black image";
+    EXPECT_THROW(dilateImage(d_input_, d_output_, width_, height_, 0), std::invalid_argument);
+    EXPECT_THROW(openingImage(d_input_, d_output_, width_, height_, -3), std::invalid_argument);
+    EXPECT_THROW(closingImage(d_input_, d_output_, width_, height_, -3), std::invalid_argument);
 }
 
 TEST_F(MorphologyTest, ErodeSingleDarkPixel) {

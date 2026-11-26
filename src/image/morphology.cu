@@ -1,4 +1,6 @@
 #include <cuda_runtime.h>
+#include <stdexcept>
+#include <string>
 
 #include "cuda/device/device_utils.h"
 #include <cuda/memory/unique_ptr.h>
@@ -125,10 +127,28 @@ __global__ __launch_bounds__(256, 2) void erodeKernel(const uint8_t* input, uint
     }
 }
 
+namespace {
+
+    /// A morphology window must be an odd positive length.
+    ///
+    /// Without this the four entry points below computed `half = kernel_size / 2`, so a negative
+    /// size gave a negative half and the window loop never ran: minVal kept its 255 initialiser and
+    /// erosion wrote an all-white image, dilation wrote all-black, and both reported success. A size
+    /// of 2 silently did 3x3 work. gaussianBlur and conv2d both reject this (`kernel_size <= 0 ||
+    /// even`), so the parameter was checked on one side of the image layer and trusted on the other.
+    void require_odd_positive_kernel(int kernel_size, const char* fn) {
+        if (kernel_size <= 0 || (kernel_size % 2) == 0) {
+            throw std::invalid_argument(std::string(fn) + ": kernel size must be odd and positive, got " + std::to_string(kernel_size));
+        }
+    }
+
+}  // namespace
+
 void erodeImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t height, int kernel_size) {
     if (width == 0 || height == 0) {
         return;
     }
+    require_odd_positive_kernel(kernel_size, "erodeImage");
     int half = kernel_size / 2;
     dim3 block(16, 16);
     dim3 grid((width + 15) / 16, (height + 15) / 16);
@@ -170,6 +190,7 @@ void dilateImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_t
     if (width == 0 || height == 0) {
         return;
     }
+    require_odd_positive_kernel(kernel_size, "dilateImage");
     int half = kernel_size / 2;
     dim3 block(16, 16);
     dim3 grid((width + 15) / 16, (height + 15) / 16);
@@ -183,6 +204,7 @@ void openingImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_
     if (width == 0 || height == 0) {
         return;
     }
+    require_odd_positive_kernel(kernel_size, "openingImage");
     // RAII rather than a raw cudaMalloc/cudaFree pair: erodeImage and its partner both
     // throw on a CUDA failure, and the freeing call sat after them, so any exception
     // leaked the whole intermediate buffer. This is the same defect that
@@ -196,6 +218,7 @@ void closingImage(const uint8_t* d_input, uint8_t* d_output, size_t width, size_
     if (width == 0 || height == 0) {
         return;
     }
+    require_odd_positive_kernel(kernel_size, "closingImage");
     // RAII rather than a raw cudaMalloc/cudaFree pair: dilateImage and its partner both
     // throw on a CUDA failure, and the freeing call sat after them, so any exception
     // leaked the whole intermediate buffer. This is the same defect that
