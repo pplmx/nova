@@ -149,6 +149,11 @@ namespace nova {
         }
 
         void FP8E5M2GEMM::forward(const FP8E5M2* a, const FP8E5M2* b, float* output, int m, int k, int n, Config config, cudaStream_t stream) {
+            // Same geometry as FP8GEMM::forward above, and it was the entry left out when that one
+            // gained the check: a non-positive m or n asks for a zero-sized grid, and the error was
+            // reported only with a fprintf.
+            require_positive_dims(m, k, n, "FP8E5M2GEMM::forward");
+
             constexpr int BLOCK_SIZE = 16;
 
             dim3 block_dim(BLOCK_SIZE, BLOCK_SIZE);
@@ -160,10 +165,7 @@ namespace nova {
             // pattern is not 3.0 in E4M3.
             detail::fp8_gemm_naive_kernel<BLOCK_SIZE, FP8E5M2><<<grid_dim, block_dim, 0, stream>>>(a, b, output, m, k, n, config.scale_a, config.scale_b, config.scale_out);
 
-            cudaError_t err = cudaGetLastError();
-            if (err != cudaSuccess) {
-                fprintf(stderr, "CUDA error in FP8E5M2GEMM::forward: %s\n", cudaGetErrorString(err));
-            }
+            CUDA_CHECK(cudaGetLastError());
         }
 
     }  // namespace quantize

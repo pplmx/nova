@@ -60,7 +60,11 @@ namespace cuda::algo::spmv {
     template <typename T>
     void multiply_csr(const T* values, const int* row_offsets, const int* col_indices, const T* x, T* y, int num_rows, cudaStream_t stream) {
         const int block_size = 256;
-        const int num_blocks = (num_rows + block_size - 1) / block_size;
+        // The grid was ceil(num_rows / block_size), which is zero for an empty matrix -- and CUDA
+        // rejects a zero-block launch, so the CUDA_CHECK below raised "invalid configuration
+        // argument" for a request that should do nothing. multiply_csc below already clamps the
+        // same expression with std::max(1, ...); this one did not.
+        const int num_blocks = std::max(1, (num_rows + block_size - 1) / block_size);
 
         spmv_csr_kernel<T><<<num_blocks, block_size, 0, stream>>>(values, row_offsets, col_indices, x, y, num_rows);
         CUDA_CHECK(cudaGetLastError());

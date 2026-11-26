@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cuda_runtime.h>
 #include <vector>
 
 #include "cuda/algo/spmv.h"
@@ -12,6 +13,21 @@ namespace cuda::algo::spmv::test {
         void SetUp() override {}
         void TearDown() override {}
     };
+    // multiply_csr sized its grid as ceil(num_rows / block_size), which is zero for an empty
+    // matrix. CUDA rejects a zero-block launch, and the CUDA_CHECK below turned that into an
+    // exception -- for a request that should do nothing. multiply_csc, right beside it, already
+    // clamps with std::max(1, ...) for exactly this reason.
+    TEST(SpmvEmptyTest, AZeroRowCountIsANoOp) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        EXPECT_NO_THROW(cuda::algo::spmv::multiply_csr<float>(nullptr, nullptr, nullptr, nullptr, nullptr, 0)) << "an empty matrix multiply should do nothing, not fail to launch";
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "a no-op must not leave a pending launch error";
+    }
 
     TEST_F(SpMVTest, MultiplyCSRSimple) {
         std::vector<float> values = {1.0f, 2.0f, 3.0f, 4.0f};

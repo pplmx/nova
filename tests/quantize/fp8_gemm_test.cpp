@@ -85,6 +85,28 @@ namespace nova {
                 (void)cudaGetLastError();
             }
 
+            // FP8E5M2GEMM::forward shares FP8GEMM::forward's geometry -- both grid dimensions come from m
+            // and n -- and was the entry left out when its sibling gained a dimension check. Same symptom: a
+            // zero-sized grid is rejected by CUDA and the error was printed to stderr rather than raised.
+            TEST_F(FP8GEMMTest, E5M2RejectsNonPositiveDimensions) {
+                int device_count = 0;
+                if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+                    (void)cudaGetLastError();
+                    GTEST_SKIP() << "no CUDA device";
+                }
+                (void)cudaGetLastError();
+
+                FP8E5M2GEMM::Config config;
+                auto* null_a = static_cast<const FP8E5M2*>(nullptr);
+                auto* null_c = static_cast<float*>(nullptr);
+
+                EXPECT_THROW(FP8E5M2GEMM::forward(null_a, null_a, null_c, 0, 4, 4, config, nullptr), std::invalid_argument);
+                EXPECT_THROW(FP8E5M2GEMM::forward(null_a, null_a, null_c, 4, 4, 0, config, nullptr), std::invalid_argument);
+                EXPECT_THROW(FP8E5M2GEMM::forward(null_a, null_a, null_c, -1, 4, 4, config, nullptr), std::invalid_argument);
+
+                (void)cudaGetLastError();
+            }
+
             TEST_F(FP8GEMMTest, SmallMatrixMultiplication) {
                 int m = 4, k = 4, n = 4;
 
