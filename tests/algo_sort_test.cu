@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include "cuda/algo/sort.h"
+#include "cuda_alloc_injection.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 #include <algorithm>
@@ -210,6 +211,39 @@ protected:
     cuda::memory::Buffer<float> d_keys_;
     cuda::memory::Buffer<float> d_values_;
 };
+
+// select_top_k acquires four things and releases all of them at the end:
+//
+//     if (temp_storage_bytes > 0) { CUDA_CHECK(cudaMalloc(&d_temp_storage, ...)); }
+//     CUDA_CHECK(cudaMemcpyAsync(result.keys.data(), sorted_keys.data(), ...));   // <- throws here
+//     size_t* h_indices = static_cast<size_t*>(malloc(...));
+//     size_t* h_all_values = static_cast<Value*>(malloc(...));
+//     CUDA_CHECK(cudaMemcpyAsync(h_all_values, values, ...));
+//     CUDA_CHECK(cudaStreamSynchronize(stream));
+//     ...
+//     free(h_indices); free(h_all_values); free(h_values);
+//     if (d_temp_storage) { CUDA_CHECK(cudaFree(d_temp_storage)); }
+//
+// Any throwing call in between leaves the already-taken ones with no owner. sort_keys and
+// binary_search in the same file were converted to cuda::memory::unique_ptr with a comment saying
+// why; select_top_k was the one left on the raw-pointer pattern.
+TEST_F(TopKTest, SelectTopKReleasesItsTempStorageWhenACopyFails) {
+    std::vector<float> keys = {1.0f, 5.0f, 3.0f, 9.0f, 7.0f}, values = keys;
+    cuda::memory::Buffer<float> d_keys(keys.size()), d_values(values.size());
+    d_keys.copy_from(keys.data(), keys.size());
+    d_values.copy_from(values.data(), values.size());
+
+    cuda_test::reset_allocation_count();
+
+    // sort.cu's first cudaMemcpyAsync is inside the sort_keys call, before the temp storage is
+    // allocated; the second (line 135) copies the top-k keys into the result and runs after it.
+    // Index 0 would fail before any allocation exists and prove nothing, so fail index 1.
+    cuda_test::fail_memcpy_after(1);
+    EXPECT_THROW((void)select_top_k(d_keys.data(), d_values.data(), keys.size(), 3, Order::Descending), std::exception) << "the injected copy failure was expected to surface";
+    cuda_test::stop_failing_memcpys();
+
+    EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the temp storage taken before the failing copy must be released";
+}
 
 TEST_F(TopKTest, SelectTopKDescending) {
     h_keys_ = {5.0f, 2.0f, 8.0f, 1.0f, 9.0f, 3.0f, 7.0f, 4.0f, 6.0f, 10.0f};

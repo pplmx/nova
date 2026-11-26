@@ -16,6 +16,7 @@ extern "C" cudaError_t __real_cudaStreamDestroy(cudaStream_t stream);
 extern "C" cudaError_t __real_cudaMallocAsync(void** ptr, size_t size, cudaStream_t stream);
 extern "C" cudaError_t __real_cudaFreeAsync(void* ptr, cudaStream_t stream);
 extern "C" cudaError_t __real_cudaMemsetAsync(void* ptr, int value, size_t count, cudaStream_t stream);
+extern "C" cudaError_t __real_cudaMemcpyAsync(void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream);
 
 namespace {
 
@@ -51,6 +52,11 @@ namespace {
     /// needing a broken stream or a bad pointer.
     thread_local int g_memset_fail_from = -1;
     thread_local int g_memset_attempts = 0;
+
+    /// cudaMemcpyAsync. The failure point for code that copies into or out of scratch it has not
+    /// released yet, where there is no memset to fail instead.
+    thread_local int g_memcpy_fail_from = -1;
+    thread_local int g_memcpy_attempts = 0;
 
     /// Allocations from the wrapper that have not been released.
     thread_local int g_live_allocations = 0;
@@ -152,6 +158,14 @@ extern "C" cudaError_t __wrap_cudaMemsetAsync(void* ptr, int value, size_t count
     return __real_cudaMemsetAsync(ptr, value, count, stream);
 }
 
+extern "C" cudaError_t __wrap_cudaMemcpyAsync(void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream) {
+    const int attempt = g_memcpy_attempts++;
+    if (g_memcpy_fail_from >= 0 && attempt >= g_memcpy_fail_from) {
+        return cudaErrorInvalidValue;
+    }
+    return __real_cudaMemcpyAsync(dst, src, count, kind, stream);
+}
+
 extern "C" cudaError_t __wrap_cudaFreeAsync(void* ptr, cudaStream_t stream) {
     const cudaError_t status = __real_cudaFreeAsync(ptr, stream);
     if (status == cudaSuccess) {
@@ -178,6 +192,15 @@ namespace cuda_test {
     void reset_stream_count() {
         g_stream_attempts = 0;
         g_live_streams = 0;
+    }
+
+    void fail_memcpy_after(int n) {
+        g_memcpy_fail_from = n < 0 ? 0 : n;
+        g_memcpy_attempts = 0;
+    }
+
+    void stop_failing_memcpys() {
+        g_memcpy_fail_from = -1;
     }
 
     void fail_memset_after(int n) {

@@ -86,6 +86,13 @@ namespace cuda_test {
     /// because they are a different API: the free is asynchronous and takes the stream.
     void fail_async_allocation_after(int n);
 
+    /// Fails every cudaMemcpyAsync from the nth onward. The failure point for code that copies into
+    /// or out of scratch it has not released yet, where there is no memset to fail instead.
+    void fail_memcpy_after(int n);
+
+    /// Returns to forwarding every cudaMemcpyAsync.
+    void stop_failing_memcpys();
+
     /// Fails every cudaMemsetAsync from the nth onward. This is the injectable failure point for
     /// code that allocates scratch, initialises it, and releases it later -- the fill sits between
     /// the allocation and the release, so failing it reaches the unwind.

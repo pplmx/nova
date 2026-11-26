@@ -3,6 +3,7 @@
 #include <cub/cub.cuh>
 #include <cstdlib>
 #include <algorithm>
+#include <memory>
 
 #include "cuda/device/error.h"
 #include "cuda/memory/unique_ptr.h"
@@ -118,8 +119,12 @@ namespace cuda::sort {
                 d_temp_storage, temp_storage_bytes, sorted_keys.data(), sorted_keys.data(), sorted_indices.data(), sorted_indices.data(), count, 0, sizeof(Key) * 8, stream);
         }
 
+        // Held by an owner for the same reason sort_keys above changed: the copies and the sync that
+        // follow all throw, and the raw cudaFree at the end of the function was unreachable from any
+        // of them. Measured: failing the copy of the top-k keys left the temp storage behind.
+        cuda::memory::unique_ptr<unsigned char> temp_storage(temp_storage_bytes > 0 ? temp_storage_bytes : 1);
         if (temp_storage_bytes > 0) {
-            CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
+            d_temp_storage = reinterpret_cast<void*>(temp_storage.get());
         }
 
         // Second call: perform the sort.
@@ -138,29 +143,21 @@ namespace cuda::sort {
         // For very large K this becomes a host-device roundtrip; for correctness over a
         // small K (the common case) this is simple and reliable. A device-side gather
         // kernel could replace it later if perf matters.
-        size_t* h_indices = static_cast<size_t*>(malloc(actual_k * sizeof(size_t)));
-        sorted_indices.copy_to(h_indices, actual_k);
+        std::unique_ptr<size_t[]> h_indices(new size_t[actual_k]);
+        sorted_indices.copy_to(h_indices.get(), actual_k);
 
         // Copy the full values array once, then gather the K needed entries into h_values.
         // A device-side gather kernel could replace this host roundtrip later.
-        Value* h_all_values = static_cast<Value*>(malloc(count * sizeof(Value)));
-        CUDA_CHECK(cudaMemcpyAsync(h_all_values, values, count * sizeof(Value), cudaMemcpyDeviceToHost, stream));
+        std::unique_ptr<Value[]> h_all_values(new Value[count]);
+        CUDA_CHECK(cudaMemcpyAsync(h_all_values.get(), values, count * sizeof(Value), cudaMemcpyDeviceToHost, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
 
-        Key* h_values = static_cast<Key*>(malloc(actual_k * sizeof(Key)));
+        std::unique_ptr<Key[]> h_values(new Key[actual_k]);
         for (size_t i = 0; i < actual_k; ++i) {
             const size_t idx = h_indices[i];
             h_values[i] = (idx < count) ? static_cast<Key>(h_all_values[idx]) : Key {};
         }
-        result.values.copy_from(h_values, actual_k);
-
-        free(h_indices);
-        free(h_all_values);
-        free(h_values);
-
-        if (d_temp_storage != nullptr) {
-            CUDA_CHECK(cudaFree(d_temp_storage));
-        }
+        result.values.copy_from(h_values.get(), actual_k);
 
         return result;
     }
