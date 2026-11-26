@@ -195,6 +195,32 @@ TEST_F(OddEvenSortTest, RandomArray) {
     EXPECT_EQ(h_output_, expected);
 }
 
+// The launch grid for the compare-exchange pass divided by the block size twice:
+//
+//     size_t elementsPerBlock = blockSize * 2;                                   // 512
+//     launcher.grid(calc_grid_1d((size + elementsPerBlock - 1) / elementsPerBlock, {blockSize, 1, 1}));
+//
+// The inner expression is already a BLOCK COUNT, and calc_grid_1d divides its argument by
+// block.x again. For size = 1024 that is ceil(2 / 256) = 1 block, so 256 threads compared the
+// first 512 elements and the remaining half was never touched -- and the function still
+// returned normally. The existing cases used 9 and 100 elements, both under the 512 that one
+// block can reach, which is why the bug survived them.
+TEST_F(OddEvenSortTest, SortsMoreThanOneBlockCanCover) {
+    size_t size = 1024;
+    h_input_.resize(size);
+    h_output_.resize(size);
+
+    for (size_t i = 0; i < size; ++i) {
+        h_input_[i] = static_cast<int>((i * 37 + 11) % 1024);
+    }
+
+    runAndDownload(size);
+
+    std::vector<int> expected = h_input_;
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(h_output_, expected) << "elements past the first 512 were never compared";
+}
+
 TEST_F(OddEvenSortTest, LargeArray) {
     size_t size = 100;
     h_input_.resize(size);

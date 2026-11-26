@@ -99,8 +99,13 @@ namespace cuda::parallel {
             launcher.synchronize();
 
             bool evenPhase = (phase % 2 == 0);
-            size_t elementsPerBlock = blockSize * 2;
-            launcher.grid(detail::calc_grid_1d((size + elementsPerBlock - 1) / elementsPerBlock, {blockSize, 1, 1}));
+            // calc_grid_1d divides its argument by block.x, so it takes an ELEMENT count. The
+            // argument used to be (size + elementsPerBlock - 1) / elementsPerBlock -- already a
+            // block count -- and was therefore divided by the block size a second time. For
+            // size = 1024 that gave ceil(2 / 256) = 1 block: 256 threads compared the first 512
+            // elements, the rest were never touched, and the function returned normally. Passing
+            // the element count directly lets the helper do its own rounding.
+            launcher.grid(detail::calc_grid_1d(size, {blockSize, 1, 1}));
             launcher.launch(oddEvenPhaseKernel<T>, input.data(), output.data(), size, evenPhase);
             launcher.synchronize();
         }
