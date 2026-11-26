@@ -5,6 +5,9 @@
 #include <cmath>
 #include <numeric>
 #include "cuda/neural/layer_norm.h"
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
+#include <cuda_runtime.h>
 
 using namespace cuda::neural;
 
@@ -109,10 +112,54 @@ TEST_F(LayerNormTest, LayerNormOutputHasCorrectSize) {
     EXPECT_EQ(result.size, batch_size * normalized_shape);
 }
 
-TEST_F(LayerNormTest, RSqrtComputation) {
-    float var = 2.0f;
-    float eps = 1e-5f;
-    float expected = 1.0f / std::sqrt(var + eps);
+// This case used to compute 1/sqrt(var + eps) with std::sqrt and compare it to a hardcoded
+// constant. It called no nova code at all: delete the rsqrt in layer_norm_kernel, or scale the
+// epsilon wrongly, and it still passed -- it was testing libm.
+//
+// It now drives layer_norm over a row whose mean and variance are known by hand ({1, 3} has mean 2
+// and population variance 1) and checks the normalised values, which is what the kernel's rsqrt
+// feeds into.
+TEST_F(LayerNormTest, NormalisesARowWithKnownStatistics) {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "no CUDA device";
+    }
+    (void)cudaGetLastError();
 
-    EXPECT_NEAR(expected, 0.707106f, 0.001f);
+    const int width = 2;
+    const float eps = 1e-5f;
+    // Variance 4, not 1: with a variance of 1 the scale factor is 1/sqrt(1 + eps) ~= 1.0, so a
+    // kernel that stopped normalising entirely would still produce these values.
+    const std::vector<float> input = {0.0f, 4.0f};
+    const std::vector<float> gamma = {1.0f, 1.0f};
+    const std::vector<float> beta = {0.0f, 0.0f};
+
+    cuda::memory::Buffer<float> d_in(input.size()), d_out(input.size());
+    cuda::memory::Buffer<float> d_gamma(gamma.size()), d_beta(beta.size());
+    cuda::memory::Buffer<float> d_mean(1), d_var(1);
+    d_in.copy_from(input.data(), input.size());
+    d_gamma.copy_from(gamma.data(), gamma.size());
+    d_beta.copy_from(beta.data(), beta.size());
+
+    layer_norm(d_in.data(), d_gamma.data(), d_beta.data(), d_out.data(), d_mean.data(), d_var.data(), 1, width, eps);
+    CUDA_CHECK(cudaStreamSynchronize(nullptr));
+
+    std::vector<float> out(input.size());
+    d_out.copy_to(out.data(), out.size());
+
+    // mean = 2, population variance = 4 -> (x - mean) / sqrt(var + eps) is -2/sqrt(4+eps) and
+    // +2/sqrt(4+eps), i.e. about -0.999999 and +0.999999.
+    const float scale = 2.0f / std::sqrt(4.0f + eps);
+    EXPECT_NEAR(out[0], -scale, 1e-4f);
+    EXPECT_NEAR(out[1], scale, 1e-4f);
+    // The distinguishing property is not the sign but the division: a kernel that skipped the
+    // normalisation would return the raw input (0 and 4), not +-1.
+    EXPECT_LT(out[1], 1.5f) << "the output must be normalised, not the raw input";
+
+    std::vector<float> h_mean(1), h_var(1);
+    d_mean.copy_to(h_mean.data(), 1);
+    d_var.copy_to(h_var.data(), 1);
+    EXPECT_NEAR(h_mean[0], 2.0f, 1e-5f);
+    EXPECT_NEAR(h_var[0], 4.0f, 1e-5f);
 }
