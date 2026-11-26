@@ -96,6 +96,35 @@ namespace nova::sparse::test {
         EXPECT_DOUBLE_EQ(x[1], 0.0);
     }
 
+    // GMRESGPU divides by its restart length to bound the outer loop:
+    //
+    //     for (int outer = 0; outer < this->config_.max_iterations / restart_; ++outer)
+    //
+    // restart_ comes straight from the constructor and nothing validates it. A restart of 0 is an
+    // integer division by zero -- SIGFPE, the process dies inside solve() with no result to inspect.
+    // The plain GMRES above guards exactly this:
+    //
+    //     const int m = restart_;
+    //     if (m <= 0) { result.error_code = SolverError::INVALID_MATRIX; return result; }
+    //
+    // so the two solvers disagree about whether a nonsensical restart is a caller error or a crash.
+    TEST(KrylovZeroRhsTest, GmresGpuRefusesAZeroRestartInsteadOfDividingByIt) {
+        auto A = diagonal_matrix();
+        std::vector<double> b = {1.0, 1.0};
+        std::vector<double> x = {kSentinel, kSentinel};
+
+        GMRESGPU<double> solver(SolverConfig<double> {}, 0);
+        const auto result = solver.solve(A, b.data(), x.data());
+
+        EXPECT_EQ(result.error_code, SolverError::INVALID_MATRIX) << "a zero restart must be reported, not divided by";
+
+        // A negative restart is the same class of input: it makes the outer bound negative, so the
+        // loop never runs and solve() returns MAX_ITERATIONS as if the budget had been exhausted.
+        GMRESGPU<double> negative(SolverConfig<double> {}, -1);
+        const auto negative_result = negative.solve(A, b.data(), x.data());
+        EXPECT_EQ(negative_result.error_code, SolverError::INVALID_MATRIX);
+    }
+
     // The zero solution must overwrite an initial guess as well, not just garbage:
     // x = 0 is the unique solution of A x = 0 and the solvers do not otherwise seed
     // from the caller's x.

@@ -544,6 +544,19 @@ namespace nova {
                     return result;
                 }
 
+                // restart_ bounds the outer loop by division:
+                //     for (int outer = 0; outer < config_.max_iterations / restart_; ++outer)
+                // so a restart of 0 is an integer division by zero and the process dies inside
+                // solve() before a result exists to inspect. A negative one makes the bound negative,
+                // the loop never runs, and the function reports MAX_ITERATIONS as though the budget
+                // had run out. GMRES above refuses both with the same error code; this entry point
+                // was the one that did not.
+                const int restart = restart_;
+                if (restart <= 0) {
+                    result.error_code = SolverError::INVALID_MATRIX;
+                    return result;
+                }
+
                 memory::Buffer<T> d_b(n), d_x(n);
                 std::vector<T> h_x(n, T {0}), h_r(n), h_w(n);
 
