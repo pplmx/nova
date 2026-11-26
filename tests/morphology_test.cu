@@ -210,10 +210,21 @@ TEST_F(MorphologyTest, SharpenOutputInRange) {
     sharpenImage(d_input_, d_output_, width_, height_, 0.5f);
     downloadOutput();
 
+    // The two assertions here used to be EXPECT_GE(h_output_[i], 0) and EXPECT_LE(..., 255) on a
+    // std::vector<uint8_t>, which are true for every possible byte: sharpenImage could have written
+    // nothing, written zeros, or written uninitialised memory and this case stayed green.
+    //
+    // The input is a sawtooth (i % 256), which has hard discontinuities every 256 pixels, so the
+    // sharpened image must differ from it somewhere. Counting the changes distinguishes a sharpen
+    // that ran from one that returned the input untouched or wrote a constant.
+    size_t changed = 0;
     for (size_t i = 0; i < size_; ++i) {
-        EXPECT_GE(h_output_[i], 0);
-        EXPECT_LE(h_output_[i], 255);
+        if (h_output_[i] != h_input_[i]) {
+            ++changed;
+        }
     }
+    EXPECT_GT(changed, 0u) << "sharpenImage did not change a sawtooth input, so it did nothing";
+    EXPECT_LT(changed, size_) << "every pixel changed, which a Laplacian sharpen does not do to flat regions";
 }
 
 TEST_F(MorphologyTest, SharpenPreservesDimensions) {
@@ -236,7 +247,12 @@ TEST_F(MorphologyTest, SharpenPreservesDimensions) {
     sharpenImage(d_input_, d_output_, width_, height_, 1.0f);
     downloadOutput();
 
-    EXPECT_EQ(h_output_.size(), size_);
+    // The only assertion here used to be that the output vector kept its size, which the fixture
+    // guarantees. A uniform image has a zero Laplacian everywhere, so any strength must leave it
+    // untouched -- a sharpen that scaled, inverted or cleared the image fails this.
+    for (size_t i = 0; i < size_; ++i) {
+        EXPECT_EQ(h_output_[i], 128) << "a uniform image has no edges to sharpen (index " << i << ")";
+    }
 }
 
 TEST_F(MorphologyTest, ErodeLargerKernel) {
