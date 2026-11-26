@@ -95,10 +95,17 @@ namespace cuda::observability::test {
     TEST_F(OccupancyAnalyzerTest, RecommendedGridSizeCalculation) {
         auto rec = analyzer_->recommend(nullptr, 0);
 
-        // Same null-kernel contract as analyze(). The assertion here used to be `>= 0` on a size,
-        // true by construction and checking nothing.
+        // Same null-kernel contract as analyze(). The comment above this line used to say the
+        // assertion "used to be `>= 0` on a size, true by construction and checking nothing" --
+        // and the assertion right below it still was exactly that. recommended_grid_size is a
+        // size_t, so `>= 0` holds for every value, including a grid computed from a null kernel.
+        //
+        // recommend() with no kernel returns early with a fixed record, so the contract is an
+        // exact zero rather than a bound.
         EXPECT_DOUBLE_EQ(rec.expected_occupancy, 0.0) << "a null kernel has no occupancy to recommend against";
-        EXPECT_GE(rec.recommended_grid_size, 0);
+        EXPECT_EQ(rec.recommended_grid_size, 0u) << "a null kernel cannot be given a grid to launch";
+        EXPECT_EQ(rec.recommended_block_size, 256u) << "the documented default block size for the empty recommendation";
+        EXPECT_EQ(rec.shared_memory_bytes, 0u);
     }
 
 }  // namespace cuda::observability::test
