@@ -23,6 +23,7 @@
 #include <cuda/sparse/solver_workspace.hpp>
 
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 #include <cmath>
 #include <limits>
@@ -167,6 +168,22 @@ namespace cuda::numeric::test {
             EXPECT_EQ(result.n, 0u);
             EXPECT_EQ(result.coeffs.size(), 0u);
         });
+    }
+
+    // The segment slope divides by (x[i+1] - x[i]). A repeated or decreasing knot makes that zero or
+    // negative, so the slope becomes inf and the intercept y - slope*x becomes inf - inf = NaN --
+    // both written into the coefficient buffer and evaluated by every later sample, with no error
+    // reported. cubic_spline_interpolation in the same file rejects exactly this input
+    // ("a repeated or decreasing knot makes the segment width zero or negative and the system is not
+    // solvable"); the linear form had no such check.
+    TEST(LinearInterpolationTest, RejectsNonIncreasingKnots) {
+        const float repeated_x[] = {0.0f, 0.0f, 1.0f};
+        const float repeated_y[] = {0.0f, 1.0f, 2.0f};
+        EXPECT_THROW((void)linear_interpolation(repeated_x, repeated_y, 3), std::invalid_argument) << "a zero-width segment divides by zero";
+
+        const float decreasing_x[] = {0.0f, 5.0f, 2.0f};
+        const float decreasing_y[] = {0.0f, 1.0f, 2.0f};
+        EXPECT_THROW((void)linear_interpolation(decreasing_x, decreasing_y, 3), std::invalid_argument) << "a negative segment inverts the slope";
     }
 
     TEST(LinearInterpolationTest, OnePointHasNoSegments) {

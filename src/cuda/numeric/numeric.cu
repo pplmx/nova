@@ -273,6 +273,19 @@ namespace cuda::numeric {
         CUDA_CHECK(cudaMemcpy(result.x.data(), x, n * sizeof(float), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(result.y.data(), y, n * sizeof(float), cudaMemcpyHostToDevice));
 
+        // Each slope divides by the segment width. A repeated or decreasing knot makes that zero or
+        // negative, turning the slope into inf and the intercept into inf - inf = NaN, both of which
+        // were written into the coefficients and evaluated by every later sample with no error
+        // reported. cubic_spline_interpolation below rejects the same input for the same reason.
+        for (size_t i = 0; i < n - 1; ++i) {
+            if (!(x[i + 1] - x[i] > 0.0f)) {
+                throw std::invalid_argument(
+                    "linear_interpolation: the x values must be strictly increasing; a repeated or decreasing knot makes the segment width zero or negative "
+                    "and the slope is not defined (index "
+                    + std::to_string(i) + ")");
+            }
+        }
+
         float* h_coeffs = static_cast<float*>(malloc((n - 1) * 2 * sizeof(float)));
         for (size_t i = 0; i < n - 1; ++i) {
             h_coeffs[i * 2] = (y[i + 1] - y[i]) / (x[i + 1] - x[i]);
