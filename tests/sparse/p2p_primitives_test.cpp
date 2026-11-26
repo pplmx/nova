@@ -100,8 +100,9 @@ namespace cuda::pipeline::test {
         // library's own call can be inlined past the wrapper, in which case the injection has no
         // effect on the subject. That is a property of the build, so restrict the case to
         // unoptimised builds instead of guessing.
-#ifdef __OPTIMIZE__
-        GTEST_SKIP() << "cudaEventCreate injection is not reliable in an optimised build (library call may be inlined past --wrap)";
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || defined(__OPTIMIZE__)
+        GTEST_SKIP() << "cudaEventCreate injection does not reach library-internal calls in this build "
+                        "(sanitizer instrumentation or optimisation resolves the symbol past --wrap)";
 #endif
 
         cuda_test::reset_event_count();

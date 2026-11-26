@@ -65,8 +65,9 @@ namespace cuda::performance {
         // and then fail_event_after() has no effect on it even though the test's own call is
         // intercepted. That is a property of the build, not of the code under test, so the case is
         // restricted to unoptimised builds rather than made to guess.
-#ifdef __OPTIMIZE__
-        GTEST_SKIP() << "cudaEventCreate injection is not reliable in an optimised build (library call may be inlined past --wrap)";
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__) || defined(__OPTIMIZE__)
+        GTEST_SKIP() << "cudaEventCreate injection does not reach library-internal calls in this build "
+                        "(sanitizer instrumentation or optimisation resolves the symbol past --wrap)";
 #endif
 
         cuda_test::reset_event_count();
