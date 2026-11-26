@@ -366,18 +366,49 @@ namespace cuda::neural::loss {
         // an offending index into this flag instead, and we read the single int afterwards.
         // Zero means "all in range"; anything else is either an offending class index or the
         // sentinel -1 for an offending target of 0.
+        // The scratch is released on the last line, and four throwing calls sit between the
+        // allocation and that line. A failure in any of them unwound without reaching the free:
+        // measured, failing the memset that initialises the flag left one stream-ordered
+        // allocation behind. The business check for an offending target is placed after the free
+        // and was always correct -- it is the CUDA error path that lacked the release.
         int* bad_target = nullptr;
         CUDA_CHECK(cudaMallocAsync(&bad_target, sizeof(int), stream));
-        CUDA_CHECK(cudaMemsetAsync(bad_target, 0, sizeof(int), stream));
+        auto release_scratch = [&bad_target, stream]() noexcept {
+            if (bad_target != nullptr) {
+                (void)cudaFreeAsync(bad_target, stream);
+                bad_target = nullptr;
+            }
+        };
+
+        const cudaError_t scratch_err = cudaMemsetAsync(bad_target, 0, sizeof(int), stream);
+        if (scratch_err != cudaSuccess) {
+            release_scratch();
+            CUDA_CHECK(scratch_err);
+        }
+
         ce_loss_rows_kernel<<<batch_size, kCeLossBlock, shmem, stream>>>(logits, targets, loss_out, batch_size, num_classes, loss_scale, bad_target);
         // async launch errors surface on the next sync; check immediately so a
         // bad launch is reported here, not in a caller's later cudaStreamSync.
-        CUDA_CHECK(cudaGetLastError());
+        const cudaError_t launch_err = cudaGetLastError();
+        if (launch_err != cudaSuccess) {
+            release_scratch();
+            CUDA_CHECK(launch_err);
+        }
 
         int offending = 0;
-        CUDA_CHECK(cudaMemcpyAsync(&offending, bad_target, sizeof(int), cudaMemcpyDeviceToHost, stream));
-        CUDA_CHECK(cudaStreamSynchronize(stream));
+        const cudaError_t copy_err = cudaMemcpyAsync(&offending, bad_target, sizeof(int), cudaMemcpyDeviceToHost, stream);
+        if (copy_err != cudaSuccess) {
+            release_scratch();
+            CUDA_CHECK(copy_err);
+        }
+        const cudaError_t sync_err = cudaStreamSynchronize(stream);
+        if (sync_err != cudaSuccess) {
+            release_scratch();
+            CUDA_CHECK(sync_err);
+        }
         CUDA_CHECK(cudaFreeAsync(bad_target, stream));
+
+        bad_target = nullptr;
         if (offending != 0) {
             throw std::invalid_argument("cross_entropy_loss_device: a target is outside [0, " + std::to_string(num_classes)
                                         + "); the host cross_entropy_loss rejects the same inputs");

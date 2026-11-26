@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <cuda/neural/loss/loss_functions.h>
+#include "cuda_alloc_injection.h"
 #include "cuda/memory/buffer.h"
 #include "cuda/memory/buffer-inl.h"
 
@@ -288,6 +289,50 @@ namespace cuda::neural::loss::test {
         for (size_t i = 0; i < grad.size(); ++i) {
             EXPECT_NEAR(ref[i], grad[i], 1e-5f) << "grad_logits mismatch at " << i;
         }
+    }
+
+    // cross_entropy_loss_device takes scratch with cudaMallocAsync and releases it on its last
+    // line, with four throwing calls in between:
+    //
+    //     CUDA_CHECK(cudaMallocAsync(&bad_target, sizeof(int), stream));
+    //     CUDA_CHECK(cudaMemsetAsync(bad_target, 0, sizeof(int), stream));   // <- fail this
+    //     ... kernel launch, cudaGetLastError, cudaMemcpyAsync, cudaStreamSynchronize ...
+    //     CUDA_CHECK(cudaFreeAsync(bad_target, stream));    // reached only if all of the above succeed
+    //
+    // A failure in any of them unwinds without reaching the free, so the stream-ordered allocation
+    // leaks. The business check (the invalid_argument for an offending target) sits after the free
+    // and is fine; it is the CUDA error path that lacks the release.
+    TEST_F(LossFunctionsTest, DeviceLossReleasesItsScratchWhenALaterCallFails) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        const int batch = 4, C = 5;
+        CrossEntropyConfig config;
+        config.reduction_mean = true;
+
+        std::vector<float> logits(static_cast<size_t>(batch) * C, 0.5f);
+        std::vector<int> targets(batch, 0);
+        cuda::memory::Buffer<float> d_logits(logits.size()), d_loss(1);
+        cuda::memory::Buffer<int> d_targets(targets.size());
+        d_logits.copy_from(logits.data(), logits.size());
+        d_targets.copy_from(targets.data(), targets.size());
+
+        cuda_test::reset_async_allocation_count();
+
+        // The function memsets loss_out first, then takes the scratch and memsets that. Index 0
+        // would fail the very first call, before any scratch exists, so let it through and fail
+        // index 1 -- the memset of bad_target, which is the one after the allocation.
+        cuda_test::fail_memset_after(1);
+        EXPECT_THROW(cross_entropy_loss_device(d_logits.data(), d_targets.data(), d_loss.data(), batch, C, config, stream_), std::exception)
+            << "the injected memset failure was expected to surface";
+        cuda_test::stop_failing_memsets();
+
+        EXPECT_EQ(cuda_test::live_async_allocation_count(), 0) << "the scratch must be released on the failure path, not only on the success one";
+        (void)cudaGetLastError();
     }
 
     // ============================================================================

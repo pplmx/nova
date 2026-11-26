@@ -15,6 +15,7 @@ extern "C" cudaError_t __real_cudaStreamCreate(cudaStream_t* stream);
 extern "C" cudaError_t __real_cudaStreamDestroy(cudaStream_t stream);
 extern "C" cudaError_t __real_cudaMallocAsync(void** ptr, size_t size, cudaStream_t stream);
 extern "C" cudaError_t __real_cudaFreeAsync(void* ptr, cudaStream_t stream);
+extern "C" cudaError_t __real_cudaMemsetAsync(void* ptr, int value, size_t count, cudaStream_t stream);
 
 namespace {
 
@@ -44,6 +45,12 @@ namespace {
     thread_local int g_async_fail_from = -1;
     thread_local int g_async_attempts = 0;
     thread_local int g_live_async = 0;
+
+    /// cudaMemsetAsync. This is the failure point for code that allocates scratch, fills it, and
+    /// releases it later: the fill is between the two, so failing it exercises the unwind without
+    /// needing a broken stream or a bad pointer.
+    thread_local int g_memset_fail_from = -1;
+    thread_local int g_memset_attempts = 0;
 
     /// Allocations from the wrapper that have not been released.
     thread_local int g_live_allocations = 0;
@@ -137,6 +144,14 @@ extern "C" cudaError_t __wrap_cudaMallocAsync(void** ptr, size_t size, cudaStrea
     return status;
 }
 
+extern "C" cudaError_t __wrap_cudaMemsetAsync(void* ptr, int value, size_t count, cudaStream_t stream) {
+    const int attempt = g_memset_attempts++;
+    if (g_memset_fail_from >= 0 && attempt >= g_memset_fail_from) {
+        return cudaErrorInvalidValue;
+    }
+    return __real_cudaMemsetAsync(ptr, value, count, stream);
+}
+
 extern "C" cudaError_t __wrap_cudaFreeAsync(void* ptr, cudaStream_t stream) {
     const cudaError_t status = __real_cudaFreeAsync(ptr, stream);
     if (status == cudaSuccess) {
@@ -163,6 +178,15 @@ namespace cuda_test {
     void reset_stream_count() {
         g_stream_attempts = 0;
         g_live_streams = 0;
+    }
+
+    void fail_memset_after(int n) {
+        g_memset_fail_from = n < 0 ? 0 : n;
+        g_memset_attempts = 0;
+    }
+
+    void stop_failing_memsets() {
+        g_memset_fail_from = -1;
     }
 
     void fail_async_allocation_after(int n) {

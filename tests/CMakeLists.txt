@@ -320,6 +320,7 @@ target_link_options(nova-tests PRIVATE
     "LINKER:--wrap=cudaStreamDestroy"
     "LINKER:--wrap=cudaMallocAsync"
     "LINKER:--wrap=cudaFreeAsync"
+    "LINKER:--wrap=cudaMemsetAsync"
 )
 target_include_directories(nova-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
