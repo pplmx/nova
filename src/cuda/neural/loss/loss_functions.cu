@@ -408,6 +408,38 @@ namespace cuda::neural::loss {
     }
 
     float focal_loss(const float* predictions, const int* targets, float* output, int batch_size, int num_classes, const FocalLossConfig& config, cudaStream_t stream) {
+        // This was the one entry in the file with no validation, and three separate failures
+        // followed from it:
+        //
+        //   batch_size < 0  -> probs(batch_size * num_classes) converts a negative count to size_t
+        //                      (std::length_error naming the container, not the parameter).
+        //   batch_size == 0 -> total_loss / batch_size divides by zero and returns NaN as a loss,
+        //                      where cross_entropy_loss returns 0.0f for the same input.
+        //   target out of range -> probs[b * num_classes + target_class] reads past the end of the
+        //                      vector; measured, the process dumped core.
+        //
+        // cross_entropy_loss, cross_entropy_logits_backward, cross_entropy_loss_device and
+        // accuracy_device all reject the same inputs, so the rules were stated four times and
+        // missed once.
+        if (batch_size < 0) {
+            throw ::std::invalid_argument("focal_loss: batch_size must not be negative, got " + ::std::to_string(batch_size));
+        }
+        if (num_classes <= 0) {
+            throw ::std::invalid_argument("focal_loss: num_classes must be positive, got " + ::std::to_string(num_classes));
+        }
+        if (batch_size == 0) {
+            return 0.0f;
+        }
+        if (predictions == nullptr || targets == nullptr || output == nullptr) {
+            throw ::std::invalid_argument("focal_loss: predictions, targets and output must all be non-null");
+        }
+        for (int b = 0; b < batch_size; ++b) {
+            if (targets[b] < 0 || targets[b] >= num_classes) {
+                throw ::std::invalid_argument("focal_loss: targets[" + std::to_string(b) + "] = " + std::to_string(targets[b]) + " is outside [0, " + std::to_string(num_classes)
+                                              + ")");
+            }
+        }
+
         std::vector<float> probs(batch_size * num_classes);
 
         for (int b = 0; b < batch_size; ++b) {

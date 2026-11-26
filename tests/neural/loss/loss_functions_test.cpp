@@ -5,6 +5,8 @@
 #include "cuda/memory/buffer-inl.h"
 
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <random>
 #include <vector>
 
@@ -73,6 +75,48 @@ namespace cuda::neural::loss::test {
 
         cudaStreamSynchronize(stream_);
         EXPECT_GT(loss, 0.0f);
+    }
+
+    // focal_loss is the one entry in this file that validates nothing, while its four siblings all
+    // do: cross_entropy_loss rejects batch_size < 0 and num_classes <= 0, returns 0.0f for an empty
+    // batch, and range-checks every target; cross_entropy_logits_backward, cross_entropy_loss_device
+    // and accuracy_device do the same. Three separate failures follow from the gap, all measured:
+    //
+    //   batch_size = -1  -> std::vector<float> probs(-1 * num_classes), a negative count converted
+    //                       to size_t: length_error naming the container, not the parameter.
+    //   batch_size = 0   -> `return total_loss / batch_size` divides by zero and returns NaN as
+    //                       though it were a loss. cross_entropy_loss returns 0.0f for the same
+    //                       input.
+    //   target = 99, C=3 -> probs[b * num_classes + target_class] reads past the end of the vector
+    //                       and the resulting loss is computed from whatever is there.
+    TEST_F(LossFunctionsTest, FocalLossRejectsTheInputsItsSiblingsReject) {
+        FocalLossConfig config;
+        config.num_classes = 3;
+        config.alpha = 1.0f;
+        config.gamma = 2.0f;
+
+        const int num_classes = 3;
+        const int batch_size = 4;
+        std::vector<float> predictions(static_cast<size_t>(batch_size) * num_classes, 1.0f);
+        std::vector<int> targets = {0, 1, 2, 0};
+        std::vector<float> output(batch_size);
+
+        EXPECT_THROW((void)focal_loss(predictions.data(), targets.data(), output.data(), -1, num_classes, config, stream_), std::invalid_argument)
+            << "a negative batch must be reported, not converted to a container size";
+        EXPECT_THROW((void)focal_loss(predictions.data(), targets.data(), output.data(), batch_size, 0, config, stream_), std::invalid_argument)
+            << "num_classes 0 has no softmax to take";
+
+        // An empty batch is a zero loss, the way cross_entropy_loss reports it -- not 0/0.
+        std::vector<float> empty_predictions, empty_output;
+        std::vector<int> empty_targets;
+        const float empty_loss = focal_loss(empty_predictions.data(), empty_targets.data(), empty_output.data(), 0, num_classes, config, stream_);
+        EXPECT_FALSE(std::isnan(empty_loss)) << "an empty batch returned NaN";
+        EXPECT_FLOAT_EQ(empty_loss, 0.0f);
+
+        // A target outside [0, num_classes) must be refused, not read past the end of probs.
+        std::vector<int> bad_targets = {0, 1, 99, 0};
+        EXPECT_THROW((void)focal_loss(predictions.data(), bad_targets.data(), output.data(), batch_size, num_classes, config, stream_), std::invalid_argument)
+            << "target 99 indexes past the end of a 12-element probability vector";
     }
 
     // Regression for the focal_loss softmax denominator bug (the same
