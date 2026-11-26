@@ -100,6 +100,43 @@ TEST_F(RegressionTest, NoRegressionWhenPerformanceIsWithinTolerance) {
     EXPECT_TRUE(bench.compare_to_baseline(current));
 }
 
+// A baseline with mean_ms == 0 is division by zero. compute_statistics returns exactly that for an
+// empty measurement set (it fills in samples and returns the default-constructed result), and
+// measurement_iterations is not validated, so "the previous run measured nothing" is an ordinary
+// input:
+//
+//     double delta_percent = std::abs((current_mean - baseline_mean) / baseline_mean) * 100.0;
+//     return delta_percent <= options_.tolerance_percent;      // NaN <= x is false
+//
+// The result is a NEGATIVE verdict -- "regression detected" -- for a comparison that could not be
+// made, and format_regression_report() prints it as an inf/nan percentage. A comparison against a
+// baseline that holds no measurement has no answer; saying so is better than asserting a
+// regression that was never observed.
+TEST_F(RegressionTest, ZeroBaselineDoesNotReportARegression) {
+    cuda::benchmark::BenchmarkOptions options;
+    options.warmup_iterations = 0;
+    options.measurement_iterations = 0;
+    cuda::benchmark::Benchmark bench("zero_baseline", options);
+
+    // The baseline is what a zero-iteration run produces: samples == 0, every timing field left at
+    // its default. Constructed directly so the case does not depend on a device.
+    cuda::benchmark::BenchmarkResult measured_nothing;
+    ASSERT_EQ(measured_nothing.samples, 0u);
+    ASSERT_DOUBLE_EQ(measured_nothing.mean_ms, 0.0);
+
+    bench.set_baseline(measured_nothing);
+
+    cuda::benchmark::BenchmarkResult current;
+    current.mean_ms = 12.0;
+    current.samples = 5;
+
+    EXPECT_TRUE(bench.compare_to_baseline(current)) << "an empty baseline cannot demonstrate a regression";
+
+    const std::string report = bench.format_regression_report(current);
+    EXPECT_EQ(report.find("inf"), std::string::npos) << "report contained an infinite delta: " << report;
+    EXPECT_EQ(report.find("nan"), std::string::npos) << "report contained a NaN delta: " << report;
+}
+
 TEST_F(RegressionTest, RegressionDetectedWhenPerformanceDegrades) {
     cuda::benchmark::BenchmarkOptions options;
     options.tolerance_percent = 10.0;

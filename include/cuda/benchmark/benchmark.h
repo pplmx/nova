@@ -107,6 +107,15 @@ namespace cuda::benchmark {
             double baseline_mean = baseline_.value().mean_ms;
             double current_mean = current.mean_ms;
 
+            // A baseline that holds no measurement has no mean to compare against. Dividing by its
+            // zero gives inf or NaN, and `NaN <= tolerance` is false, so the old form reported a
+            // REGRESSION for a comparison it could not make. compute_statistics produces exactly
+            // such a baseline for an empty measurement set, and measurement_iterations is not
+            // validated, so a zero-iteration run is an ordinary input rather than a caller mistake.
+            if (!(baseline_mean > 0.0)) {
+                return true;  // nothing to regress against
+            }
+
             double delta_percent = std::abs((current_mean - baseline_mean) / baseline_mean) * 100.0;
             return delta_percent <= options_.tolerance_percent;
         }
@@ -118,6 +127,9 @@ namespace cuda::benchmark {
 
             double baseline_mean = baseline_.value().mean_ms;
             double current_mean = current.mean_ms;
+            if (!(baseline_mean > 0.0)) {
+                return "Current: " + current.format() + "\nBaseline: " + baseline_.value().format() + "\nDelta: not comparable (the baseline holds no measurement)";
+            }
             double delta_percent = ((current_mean - baseline_mean) / baseline_mean) * 100.0;
 
             std::string prefix = delta_percent >= 0 ? "+" : "";
