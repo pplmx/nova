@@ -19,6 +19,7 @@
  */
 
 #include <cuda/device/error.h>
+#include "cuda_alloc_injection.h"
 #include <cuda/neural/fusion/kernel_fusion.h>
 
 #include <gtest/gtest.h>
@@ -277,6 +278,39 @@ namespace cuda::neural::fusion::test {
             total += value;
         }
         EXPECT_NEAR(total, 1.0f, 1e-4f) << "each row's weights must sum to one";
+    }
+
+    // forward() takes its scratch buffer before any validation, launches a grid shaped from the two
+    // extents, and frees the scratch only at the end:
+    //
+    //     float* row_sum;
+    //     CUDA_CHECK(cudaMalloc(&row_sum, batch_size * seq_len * sizeof(float)));
+    //     dim3 grid(batch_size, seq_len);
+    //     compute_row_sum_kernel<<<grid, block, 0, stream>>>(...);
+    //     ...
+    //     CUDA_CHECK(cudaFree(row_sum));
+    //
+    // Nothing rejects a non-positive extent, so a zero gives a zero-sized grid, the launch is
+    // rejected, and the CUDA_CHECK that reads it throws before the free is reached -- the scratch
+    // buffer is leaked. The three fused_matmul_bias entry points in the same file all return early
+    // for a non-positive extent; this class method does not.
+    TEST(FusedLayerNormSoftmaxTest, AZeroExtentIsRefusedAndLeavesNoScratchBehind) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        FusedLayerNormSoftmax fusion(4);
+        DeviceArray d_input(4), d_out(4);
+        const std::vector<float> gamma(4, 1.0f), beta(4, 0.0f);
+        DeviceArray d_gamma(gamma), d_beta(beta);
+
+        cuda_test::reset_allocation_count();
+
+        EXPECT_THROW(fusion.forward(d_input.data(), d_out.data(), d_gamma.data(), d_beta.data(), 0, 1, nullptr), std::exception) << "a zero batch must be refused";
+        cuda_test::stop_failing_allocations();
+
+        EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the scratch buffer must not be left allocated when the call is refused";
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "a refused call must not leave a pending launch error behind";
     }
 
     TEST(FusedLayerNormSoftmaxTest, LargerValuesGetLargerWeights) {

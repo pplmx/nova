@@ -1,10 +1,14 @@
 #include "cuda/neural/fusion/kernel_fusion.h"
 
 #include "cuda/device/error.h"
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
 
 #include <cuda_runtime.h>
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 
 namespace cuda::neural::fusion {
 
@@ -227,20 +231,29 @@ namespace cuda::neural::fusion {
     FusedLayerNormSoftmax::~FusedLayerNormSoftmax() {}
 
     void FusedLayerNormSoftmax::forward(const float* input, float* output, const float* gamma, const float* beta, int batch_size, int seq_len, cudaStream_t stream) {
-        float* row_sum;
-        CUDA_CHECK(cudaMalloc(&row_sum, batch_size * seq_len * sizeof(float)));
+        // The scratch buffer is taken before anything is validated and freed only at the end, so a
+        // zero extent -- which gives a zero-sized grid, a rejected launch, and a thrown CUDA_CHECK
+        // before the free -- used to leak it outright. The fused_matmul_bias entry points in this
+        // file return early for a non-positive extent; this method now rejects it the same way, and
+        // the buffer is held by an owner so the release does not depend on reaching the last line.
+        if (batch_size <= 0 || seq_len <= 0) {
+            throw ::std::invalid_argument("FusedLayerNormSoftmax::forward: batch_size and seq_len must be positive, got batch_size=" + ::std::to_string(batch_size)
+                                          + " seq_len=" + ::std::to_string(seq_len));
+        }
+
+        memory::Buffer<float> row_sum(static_cast<size_t>(batch_size) * static_cast<size_t>(seq_len));
 
         dim3 block(256);
         dim3 grid(batch_size, seq_len);
-        compute_row_sum_kernel<float><<<grid, block, 0, stream>>>(input, gamma, beta, row_sum, batch_size, seq_len, hidden_size_, eps_);
+        compute_row_sum_kernel<float><<<grid, block, 0, stream>>>(input, gamma, beta, row_sum.data(), batch_size, seq_len, hidden_size_, eps_);
+        CUDA_CHECK(cudaGetLastError());
 
-        int n = batch_size * seq_len * hidden_size_;
-        int block_size = 256;
-        int grid_size = (n + block_size - 1) / block_size;
+        const int n = batch_size * seq_len * hidden_size_;
+        const int block_size = 256;
+        const int grid_size = (n + block_size - 1) / block_size;
 
-        fused_layernorm_softmax_kernel<float><<<grid_size, block_size, 0, stream>>>(input, gamma, beta, output, row_sum, batch_size, seq_len, hidden_size_, eps_);
-
-        CUDA_CHECK(cudaFree(row_sum));
+        fused_layernorm_softmax_kernel<float><<<grid_size, block_size, 0, stream>>>(input, gamma, beta, output, row_sum.data(), batch_size, seq_len, hidden_size_, eps_);
+        CUDA_CHECK(cudaGetLastError());
     }
 
     bool should_use_fused_kernel(const std::string& op, int batch_size, int num_features) {
