@@ -1,5 +1,6 @@
 #include "cuda/neural/sync_batch_norm.h"
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -308,9 +309,20 @@ namespace cuda::neural {
             throw ::std::invalid_argument("SyncBatchNorm: num_features must be positive, got " + ::std::to_string(num_features_));
         }
 
-        // Nine device buffers. A throwing constructor does not run its destructor, so a failure part
-        // way through used to leave every buffer taken before it with no owner. The h_data guard
-        // further down already existed; these nine did not.
+        // One guard over everything that acquires: the nine device buffers and the host scratch. A
+        // throwing constructor does not run its destructor, so every acquisition before the throw has
+        // to be released here.
+        //
+        // These used to be two guards with the host allocation between them:
+        //
+        //     try { ...nine cudaMalloc...; } catch (...) { release_buffers(); throw; }
+        //     float* h_data = new float[num_features];      // between the guards
+        //     try { ...copies...; } catch (...) { delete[] h_data; throw; }
+        //
+        // A throw from the host allocation ran neither handler, leaving all nine device buffers with
+        // no owner -- measured as nine live allocations -- and the second catch released only h_data,
+        // so a failed copy leaked the same nine.
+        ::std::unique_ptr<float[]> h_data;
         try {
             CUDA_CHECK(cudaMalloc(&running_mean_, num_features * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&running_var_, num_features * sizeof(float)));
@@ -322,29 +334,23 @@ namespace cuda::neural {
             CUDA_CHECK(cudaMalloc(&saved_input_, num_features * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&saved_output_, num_features * sizeof(float)));
             CUDA_CHECK(cudaMalloc(&normalized_, num_features * sizeof(float)));
-        } catch (...) {
-            release_buffers();
-            throw;
-        }
 
-        float* h_data = new float[num_features];
-        try {
+            h_data.reset(new float[static_cast<size_t>(num_features)]);
             for (int i = 0; i < num_features; ++i) {
                 h_data[i] = 0.0f;
             }
-            CUDA_CHECK(cudaMemcpy(running_mean_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(running_var_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
-            CUDA_CHECK(cudaMemcpy(beta_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(running_mean_, h_data.get(), num_features * sizeof(float), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(running_var_, h_data.get(), num_features * sizeof(float), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(beta_, h_data.get(), num_features * sizeof(float), cudaMemcpyHostToDevice));
 
             for (int i = 0; i < num_features; ++i) {
                 h_data[i] = 1.0f;
             }
-            CUDA_CHECK(cudaMemcpy(gamma_, h_data, num_features * sizeof(float), cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(gamma_, h_data.get(), num_features * sizeof(float), cudaMemcpyHostToDevice));
         } catch (...) {
-            delete[] h_data;
+            release_buffers();
             throw;
         }
-        delete[] h_data;
     }
 
     SyncBatchNorm::~SyncBatchNorm() {

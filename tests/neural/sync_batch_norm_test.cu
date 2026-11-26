@@ -634,4 +634,34 @@ namespace cuda::neural {
         EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "buffers taken before the failure must be released, not left with no owner";
     }
 
+    // The nine buffers above are guarded, but the host scratch is allocated outside that guard:
+    //
+    //     try { ...nine cudaMalloc...; } catch (...) { release_buffers(); throw; }
+    //     float* h_data = new float[num_features];      // <- not covered by release_buffers()
+    //     try { ...cudaMemcpy...; } catch (...) { delete[] h_data; throw; }   // <- nor is this one
+    //
+    // If the host allocation throws, or any of the copies in the second try throws, the
+    // constructor unwinds without running its destructor and the nine device buffers have no
+    // owner. The second catch releases h_data but never calls release_buffers(), so it leaks the
+    // nine as well.
+    TEST(SyncBatchNormAllocationFailureTest, HostScratchFailureReleasesTheDeviceBuffers) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        cuda_test::reset_allocation_count();
+        cuda_test::reset_allocation_count();
+
+        // Nothing on the host is allocated before this point inside the constructor, so index 0 is
+        // the new float[] itself.
+        cuda_test::fail_host_allocation_after(0);
+        EXPECT_THROW((void)SyncBatchNorm(8, 1e-5f, 0.1f), std::bad_alloc) << "the host scratch allocation was expected to fail";
+        cuda_test::stop_failing_host_allocations();
+
+        EXPECT_EQ(cuda_test::live_allocation_count(), 0) << "the nine device buffers taken before the host allocation must be released when it throws";
+    }
+
 }  // namespace cuda::neural
