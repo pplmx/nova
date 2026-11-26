@@ -14,6 +14,40 @@ namespace cuda::performance::fusion::test {
         return Operation {name, type, latency_ns, 1024, 64, 1, 1, 1, 128, 1, 1, 0.75f, false};
     }
 
+    // FusionRecommendation divides by the pattern's estimated speedup without checking it:
+    //
+    //     after_latency_us_ = static_cast<uint64_t>(before_latency_us_ / speedup);
+    //     latency_saved_us_ = before_latency_us_ - after_latency_us_;
+    //
+    // FusionPattern is a public aggregate and FusionOpportunity accepts any pattern, so a speedup
+    // below 1 is reachable from caller-constructed input. Then after > before, and the two are
+    // uint64_t: latency_saved_us_ underflows to about 1.8e19 and is summed into the exported
+    // total_latency_saved_us. A speedup of exactly 0 makes the division infinite, and casting that
+    // to uint64_t is undefined behaviour. kernel_fusion_analyzer.cpp guards the same comparison
+    // (potential_latency_saved_ns() checks `speedup > 1.0`); this one did not.
+    TEST_F(FusionAnalyzerTest, ANonPositiveSpeedupSavingsDoesNotUnderflow) {
+        Operation first {"a", OpType::Matmul, 5000000, 1, 1, 1, 1, 1, 1, 1, 1, 1.0f, false};
+        Operation second {"b", OpType::ElementWise, 5000000, 1, 1, 1, 1, 1, 1, 1, 1, 1.0f, false};
+
+        FusionPattern slower {"slower", {OpType::Matmul, OpType::ElementWise}, "speedup below one", 0.8};
+        FusionOpportunity slow_opp(first, second, slower, 0);
+        const FusionRecommendation slow_rec(slow_opp, ConfidenceLevel::HIGH);
+
+        // The latencies have to be large enough that before / speedup exceeds before AFTER the
+        // truncation to uint64_t; a small pair (1000 ns each) divides back to the same integer and
+        // the subtraction stays at zero, which would make this case vacuous.
+        EXPECT_GT(slow_rec.before_latency_us(), 1000u) << "the case needs a latency large enough to expose the difference";
+
+        // A fusion that makes things slower saves nothing; it must not wrap.
+        EXPECT_LE(slow_rec.after_latency_us(), slow_rec.before_latency_us()) << "the fused latency must not exceed the unfused one for the subtraction to be meaningful";
+        EXPECT_LT(slow_rec.latency_saved_us(), 1000000u) << "latency_saved_us underflowed";
+
+        FusionPattern zero {"zero", {OpType::Matmul, OpType::ElementWise}, "speedup zero", 0.0};
+        FusionOpportunity zero_opp(first, second, zero, 1);
+        const FusionRecommendation zero_rec(zero_opp, ConfidenceLevel::HIGH);
+        EXPECT_LT(zero_rec.latency_saved_us(), 1000000u) << "a zero speedup produced an underflowed saving";
+    }
+
     TEST_F(FusionAnalyzerTest, DetectMatmulBiasPattern) {
         analyzer.add_operation(make_op("matmul", OpType::Matmul, 100));
         analyzer.add_operation(make_op("bias", OpType::ElementWise, 50));

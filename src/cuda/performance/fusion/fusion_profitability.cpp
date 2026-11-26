@@ -55,10 +55,23 @@ namespace cuda::performance::fusion {
         pattern_name_ = opp.pattern().name;
         description_ = opp.pattern().description;
 
-        double speedup = opp.pattern().estimated_speedup;
+        // A speedup at or below 1 means the fusion does not make the pair faster, and FusionPattern is
+        // a public aggregate that FusionOpportunity accepts as-is, so such a value is reachable from
+        // caller-constructed input. Dividing by it made after_latency_us_ exceed before_latency_us_,
+        // and the two are uint64_t: the subtraction wrapped to about 1.8e19 and was summed into the
+        // exported total_latency_saved_us. A speedup of exactly 0 made the division infinite, and
+        // casting that to uint64_t is undefined behaviour. kernel_fusion_analyzer.cpp guards the same
+        // comparison in potential_latency_saved_ns(); this path did not.
+        const double speedup = opp.pattern().estimated_speedup;
         before_latency_us_ = opp.combined_latency_ns() / 1000;
-        after_latency_us_ = static_cast<uint64_t>(before_latency_us_ / speedup);
-        latency_saved_us_ = before_latency_us_ - after_latency_us_;
+        if (speedup > 1.0) {
+            after_latency_us_ = static_cast<uint64_t>(static_cast<double>(before_latency_us_) / speedup);
+            latency_saved_us_ = before_latency_us_ - after_latency_us_;
+        } else {
+            // No saving: the fused path is modelled as costing what the unfused one does.
+            after_latency_us_ = before_latency_us_;
+            latency_saved_us_ = 0;
+        }
         speedup_factor_ = speedup;
         profitability_score_ = speedup;
     }
