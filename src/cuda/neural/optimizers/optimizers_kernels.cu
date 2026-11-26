@@ -88,6 +88,12 @@ namespace cuda::neural::optimizers {
                                float beta1_pow,
                                float beta2_pow,
                                cudaStream_t stream) {
+            // Zero elements asks for a zero-block launch, which CUDA rejects; updating nothing is an
+            // ordinary request and should do nothing. Measured: AdamWOptimizer::step(..., 0, 1)
+            // surfaced as "invalid configuration argument" from this line.
+            if (n == 0) {
+                return;
+            }
             const int block = 256;
             const int grid = static_cast<int>((n + block - 1) / block);
             adamw_step_kernel<<<grid, block, 0, stream>>>(params, grads, m, v, n, lr_t, beta1, beta2, eps, wd, beta1_pow, beta2_pow);
@@ -119,6 +125,9 @@ namespace cuda::neural::optimizers {
         }
 
         void clip_device(float* grads, size_t n, float scale, cudaStream_t stream) {
+            if (n == 0) {
+                return;  // same zero-block problem as adamw_step_device
+            }
             const int block = 256;
             const int grid = static_cast<int>((n + block - 1) / block);
             grad_scale_kernel<<<grid, block, 0, stream>>>(grads, n, scale);
@@ -186,6 +195,9 @@ namespace cuda::neural::optimizers {
                               float clamp_val,
                               bool use_layer_adaptation,
                               cudaStream_t stream) {
+            if (n == 0) {
+                return;  // same zero-block problem as adamw_step_device
+            }
             const int block = 256;
             const int grid = static_cast<int>((n + block - 1) / block);
             lamb_step_kernel<<<grid, block, 0, stream>>>(params, grads, m, v, n, lr, beta1, beta2, eps, wd, beta1_pow, beta2_pow, rtw, clamp_val, use_layer_adaptation);

@@ -84,6 +84,18 @@ namespace cuda::neural::optimizers::test {
         }
     }
 
+    // The device update sizes its grid as ceil(n / 256), so n == 0 asks for a zero-block launch,
+    // which CUDA rejects and CUDA_CHECK turns into an exception. Updating zero parameters is an
+    // ordinary request -- a model with an empty tensor, a filtered parameter list -- and should do
+    // nothing rather than fail. The same shape is in clip_device and lamb_step_device.
+    TEST_F(OptimizersTest, AdamWOptimizerStepWithNoElementsIsANoOp) {
+        OptimizerConfig config;
+        AdamWOptimizer optimizer(config);
+
+        EXPECT_NO_THROW(optimizer.step(nullptr, nullptr, 0, 1)) << "an empty parameter set has nothing to update";
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "a no-op must not leave a pending launch error";
+    }
+
     TEST_F(OptimizersTest, AdamWOptimizerConstruction) {
         OptimizerConfig config;
         config.learning_rate = 0.001f;
