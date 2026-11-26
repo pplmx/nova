@@ -2,6 +2,7 @@
 #include <cublas_v2.h>
 
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <cuda/algo/flash_attention.h>
 #include <cuda/memory/buffer.h>
 #include <cuda/stream/stream.h>
@@ -69,6 +70,50 @@ namespace cuda::algo::test {
             EXPECT_GE(h_output[i], -10.0f) << "Output at index " << i << " is too negative";
             EXPECT_LE(h_output[i], 10.0f) << "Output at index " << i << " is too large";
         }
+    }
+
+    // forward() throws when a caller buffer is too small; forward_bf16() and backward() return
+    // silently in the same situation:
+    //
+    //     if (query.size() < qe || ... || dv.size() < qe) {
+    //         return;
+    //     }
+    //
+    // forward()'s own comment explains why that is not acceptable -- BlockManager::forward_batch
+    // hands these entry points caller-provided buffers, and a caller cannot tell a silent return
+    // from a computed result. For backward the consequence is worse than an untouched output: dq,
+    // dk and dv keep whatever the caller left in them, and a training loop reads those as
+    // gradients.
+    TEST_F(FlashAttentionTest, BackwardRejectsAnUndersizedGradientBuffer) {
+        const size_t qe = static_cast<size_t>(default_config_.batch_size) * default_config_.seq_len * default_config_.num_heads * default_config_.head_dim;
+
+        memory::Buffer<float> query(qe), key(qe), value(qe), output(qe), dout(qe);
+        memory::Buffer<float> softmax_lse(default_config_.batch_size * default_config_.num_heads);
+
+        // Half the required size: the silent-return case.
+        memory::Buffer<float> dq(qe / 2), dk(qe), dv(qe);
+
+        auto flash_attn = create_flash_attention(default_config_);
+        ASSERT_NE(flash_attn, nullptr);
+
+        EXPECT_THROW(flash_attn->backward(dq, dk, dv, output, dout, query, key, value, softmax_lse, *stream_), std::invalid_argument)
+            << "an undersized dq must be reported, not silently skipped";
+    }
+
+    TEST_F(FlashAttentionTest, ForwardBf16RejectsAnUndersizedBuffer) {
+        const size_t qe = static_cast<size_t>(default_config_.batch_size) * default_config_.seq_len * default_config_.num_heads * default_config_.head_dim;
+        const size_t bytes = qe * sizeof(__nv_bfloat16);
+
+        memory::Buffer<void> query(bytes), key(bytes), value(bytes), output(bytes / 2);
+        memory::Buffer<float> softmax_lse(default_config_.batch_size * default_config_.num_heads);
+
+        auto config = default_config_;
+        config.is_fp16 = true;
+        auto flash_attn = create_flash_attention(config);
+        ASSERT_NE(flash_attn, nullptr);
+
+        EXPECT_THROW(flash_attn->forward_bf16(output, softmax_lse, query, key, value, *stream_), std::invalid_argument)
+            << "an undersized bf16 output must be reported, not silently skipped";
     }
 
     TEST_F(FlashAttentionTest, StableSoftmaxNoOverflow) {
@@ -257,18 +302,45 @@ namespace cuda::algo::test {
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
     }
 
+    // This case used to allocate 64 bf16 elements per buffer against a geometry that needs 32768,
+    // and asserted only EXPECT_NO_THROW. forward_bf16 returned silently on the size mismatch, so
+    // the case passed while computing nothing at all -- it was asserting that a no-op did not
+    // throw. Now that an undersized buffer is refused (see the BackwardRejects and
+    // ForwardBf16Rejects cases above), the case has to supply buffers the call can actually use,
+    // and then it can check the result rather than the absence of an exception.
     TEST_F(FlashAttentionTest, BF16Support) {
         auto config = default_config_;
         config.is_fp16 = false;
         auto flash_attn = create_flash_attention(config);
 
-        memory::Buffer<void> query(sizeof(__nv_bfloat16) * 64);
-        memory::Buffer<void> key(sizeof(__nv_bfloat16) * 64);
-        memory::Buffer<void> value(sizeof(__nv_bfloat16) * 64);
-        memory::Buffer<void> output(sizeof(__nv_bfloat16) * 64);
-        memory::Buffer<float> softmax_lse(4);
+        const size_t qe = static_cast<size_t>(config.batch_size) * config.seq_len * config.num_heads * config.head_dim;
+        const size_t bytes = qe * sizeof(__nv_bfloat16);
 
-        EXPECT_NO_THROW(flash_attn->forward_bf16(output, softmax_lse, query, key, value, *stream_));
+        memory::Buffer<void> query(bytes), key(bytes), value(bytes), output(bytes);
+        memory::Buffer<float> softmax_lse(static_cast<size_t>(config.batch_size) * config.num_heads);
+
+        // Values small enough that the upcast stays in bf16's range.
+        std::vector<__nv_bfloat16> h_q(qe, __float2bfloat16(0.1f));
+        std::vector<__nv_bfloat16> h_k(qe, __float2bfloat16(0.1f));
+        std::vector<__nv_bfloat16> h_v(qe, __float2bfloat16(1.0f));
+        query.copy_from(h_q.data(), bytes);
+        key.copy_from(h_k.data(), bytes);
+        value.copy_from(h_v.data(), bytes);
+
+        ASSERT_NO_THROW(flash_attn->forward_bf16(output, softmax_lse, query, key, value, *stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        // A real pass now: the output must be finite rather than the untouched allocation.
+        std::vector<__nv_bfloat16> h_out(qe);
+        output.copy_to(h_out.data(), bytes);
+        int finite = 0;
+        for (size_t i = 0; i < qe; ++i) {
+            const float v = __bfloat162float(h_out[i]);
+            if (std::isfinite(v)) {
+                ++finite;
+            }
+        }
+        EXPECT_EQ(finite, static_cast<int>(qe)) << "every output element must hold a finite value";
     }
 
     // Regression: forward_bf16() passed ELEMENT counts to Buffer<void>::copy_to/from,

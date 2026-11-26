@@ -254,9 +254,21 @@ namespace cuda::algo {
         const int KH = std::max(1, config_.num_kv_heads);
         const size_t qe = static_cast<size_t>(B) * S * H * D;
         const size_t kve = static_cast<size_t>(B) * S * KH * D;
-        if (query.size() < qe * sizeof(__nv_bfloat16) || key.size() < kve * sizeof(__nv_bfloat16) || value.size() < kve * sizeof(__nv_bfloat16)
-            || output.size() < qe * sizeof(__nv_bfloat16)) {
-            return;
+        // Throws rather than returning: forward() next door already does, for the reason its comment
+        // gives -- a caller cannot tell a silent return from a computed result. The buffers here are
+        // caller-provided (BlockManager::forward_batch passes them through), so a silent skip leaves
+        // the output untouched while reporting success.
+        {
+            const auto require = [](const char* what, size_t supplied, size_t needed) {
+                if (supplied < needed) {
+                    throw std::invalid_argument(std::string("FlashAttention::forward_bf16: ") + what + " has " + std::to_string(supplied)
+                                                + " bytes but the configured geometry needs " + std::to_string(needed));
+                }
+            };
+            require("query", query.size(), qe * sizeof(__nv_bfloat16));
+            require("key", key.size(), kve * sizeof(__nv_bfloat16));
+            require("value", value.size(), kve * sizeof(__nv_bfloat16));
+            require("output", output.size(), qe * sizeof(__nv_bfloat16));
         }
 
         // Buffer<void>'s copy_to/copy_from take BYTES; Buffer<T>'s take element counts.
@@ -317,14 +329,29 @@ namespace cuda::algo {
             // An empty geometry is a configuration error, not a request for no work; a silent
             // return here was indistinguishable from a successful empty pass.
             throw std::invalid_argument(
-                "FlashAttention::forward: batch_size, num_heads, seq_len and head_dim must all "
+                "FlashAttention::backward: batch_size, num_heads, seq_len and head_dim must all "
                 "be positive");
         }
         const int KH = std::max(1, config_.num_kv_heads);
         const size_t qe = static_cast<size_t>(B) * S * H * D;
         const size_t kve = static_cast<size_t>(B) * S * KH * D;
-        if (query.size() < qe || key.size() < kve || value.size() < kve || dout.size() < qe || dq.size() < qe || dk.size() < qe || dv.size() < qe) {
-            return;
+        // An undersized gradient buffer used to return silently, leaving dq/dk/dv at whatever the
+        // caller had in them. forward() refuses the same situation by throwing; a training loop
+        // reading those buffers as gradients cannot tell the two apart.
+        {
+            const auto require = [](const char* what, size_t supplied, size_t needed) {
+                if (supplied < needed) {
+                    throw std::invalid_argument(std::string("FlashAttention::backward: ") + what + " has " + std::to_string(supplied)
+                                                + " elements but the configured geometry needs " + std::to_string(needed));
+                }
+            };
+            require("query", query.size(), qe);
+            require("key", key.size(), kve);
+            require("value", value.size(), kve);
+            require("dout", dout.size(), qe);
+            require("dq", dq.size(), qe);
+            require("dk", dk.size(), qe);
+            require("dv", dv.size(), qe);
         }
 
         AttentionGeometry g {.batch = B,
