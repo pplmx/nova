@@ -70,6 +70,11 @@ namespace cuda::algo::test {
 
         EXPECT_NO_THROW(flash_attn->forward(output, softmax_lse, query, key, value, *stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_->get()));
+
+        // The two helpers above exist for exactly this reason, and this case was not using either:
+        // EXPECT_NO_THROW alone passes even when forward writes nothing at all. With dropout at zero
+        // and a constant V, the output is determined -- every visible key contributes equally.
+        expect_constant_v_is_reproduced(output, elements, 1.0f, "ZeroDropoutRate");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, FullDropoutRate) {
@@ -173,9 +178,9 @@ namespace cuda::algo::test {
         std::vector<float> h_output(elements);
         output.copy_to(h_output.data(), elements);
 
-        for (size_t i = 0; i < std::min(elements, size_t(100)); ++i) {
-            EXPECT_TRUE(std::isfinite(h_output[i])) << "Output at index " << i << " is not finite";
-        }
+        // Checking that the first 100 values are finite cannot tell a correct result from a zeroed
+        // or mis-scaled one; with a constant V the answer is known, so check all of it.
+        expect_constant_v_is_reproduced(output, elements, 0.01f, "LargeSequenceLength");
     }
 
     TEST_F(FlashAttentionEdgeCaseTest, BatchSizeGreaterThanOne) {
