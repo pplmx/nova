@@ -10,6 +10,11 @@
 
 #include "cuda/multinode/multi_node_context.h"
 
+#include "cuda_alloc_injection.h"
+
+#include <cuda_runtime.h>
+#include <stdexcept>
+
 namespace cuda::multinode {
 
     class MultiNodeContextTest : public ::testing::Test {
@@ -23,6 +28,41 @@ namespace cuda::multinode {
             }
         }
     };
+
+    // initialize() creates two streams and only then sets initialized_ = true:
+    //
+    //     CUDA_CHECK(cudaStreamCreate(&global_stream_));
+    //     CUDA_CHECK(cudaStreamCreate(&local_stream_));   // a throw here
+    //     ...
+    //     initialized_ = true;                            // never reached
+    //
+    // shutdown() is the only place that destroys them, and it starts with
+    // `if (!initialized_) return;`. A failure between the two creations therefore left
+    // global_stream_ alive with no way to release it, and a later initialize() overwrote the
+    // handle rather than reusing it.
+    TEST_F(MultiNodeContextTest, AFailedInitializeReleasesTheStreamItAlreadyCreated) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        auto& ctx = MultiNodeContext::instance();
+        if (ctx.is_initialized()) {
+            ctx.shutdown();
+        }
+
+        cuda_test::reset_stream_count();
+
+        // The first stream creation succeeds, the second fails.
+        cuda_test::fail_stream_after(1);
+        EXPECT_THROW(ctx.initialize(MultiNodeContext::NodeConfig {}), std::exception) << "the second stream creation was expected to fail";
+        cuda_test::stop_failing_streams();
+
+        EXPECT_FALSE(ctx.is_initialized()) << "a failed initialize must not report success";
+        EXPECT_EQ(cuda_test::live_stream_count(), 0) << "the global stream must be destroyed when the local one cannot be created";
+    }
 
     TEST_F(MultiNodeContextTest, GetInstanceReturnsSameObject) {
         auto& instance1 = MultiNodeContext::get_instance();

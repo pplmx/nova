@@ -90,12 +90,40 @@ namespace cuda::multinode {
         num_nodes_ = config.world_size / config.local_size;
 
         CUDA_CHECK(cudaSetDevice(local_rank_));
-        CUDA_CHECK(cudaStreamCreate(&global_stream_));
-        CUDA_CHECK(cudaStreamCreate(&local_stream_));
+
+        // Both streams and the NCCL communicators below are released only by shutdown(), which
+        // begins `if (!initialized_) return;`. A failure before initialized_ is set therefore left
+        // whatever had been created with no way to reach it -- measured: failing the second stream
+        // creation leaked global_stream_ permanently, and a later initialize() overwrote the handle
+        // instead of reusing it. The acquisitions run without throwing and are released here.
+        auto release_streams = [this] {
+            if (local_stream_) {
+                cudaStreamDestroy(local_stream_);
+                local_stream_ = nullptr;
+            }
+            if (global_stream_) {
+                cudaStreamDestroy(global_stream_);
+                global_stream_ = nullptr;
+            }
+        };
+
+        cudaError_t stream_err = cudaStreamCreate(&global_stream_);
+        if (stream_err == cudaSuccess) {
+            stream_err = cudaStreamCreate(&local_stream_);
+        }
+        if (stream_err != cudaSuccess) {
+            release_streams();
+            CUDA_CHECK(stream_err);
+        }
 
 #if NOVA_NCCL_ENABLED
-        initialize_intra_node_comm();
-        initialize_inter_node_comm();
+        try {
+            initialize_intra_node_comm();
+            initialize_inter_node_comm();
+        } catch (...) {
+            release_streams();
+            throw;
+        }
 #else
         if (config.world_size > 1) {
             std::fprintf(stderr,

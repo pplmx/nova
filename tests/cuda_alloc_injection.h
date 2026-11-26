@@ -68,6 +68,33 @@ namespace cuda_test {
     /// Event creations attempted since the last fail_event_after/stop.
     int event_attempts();
 
+    /// Fails every cudaStreamCreate from the nth onward. 0 fails the next one, and the counter resets
+    /// whenever this is called. Separate from the event and allocation arms: a case that wants "the
+    /// second stream fails" should not depend on how many events or allocations happen in between.
+    void fail_stream_after(int n);
+
+    /// Returns to forwarding every stream creation.
+    void stop_failing_streams();
+
+    /// Streams created minus destroyed through the wrapper.
+    int live_stream_count();
+
+    /// Zeroes the stream counter. Call before the code under test.
+    void reset_stream_count();
+
+    /// Fails every cudaMallocAsync from the nth onward. Stream-ordered allocations have their own arm
+    /// because they are a different API: the free is asynchronous and takes the stream.
+    void fail_async_allocation_after(int n);
+
+    /// Returns to forwarding every stream-ordered allocation.
+    void stop_failing_async_allocations();
+
+    /// Stream-ordered allocations that have not been freed yet.
+    int live_async_allocation_count();
+
+    /// Zeroes the stream-ordered allocation counter.
+    void reset_async_allocation_count();
+
     /// Device allocations that went through the wrapper and have not been freed yet. Unlike
     /// live_event_count() this does work for code compiled into the library, because the calls it
     /// counts are in .cpp/.cu files rather than in a header-only template.

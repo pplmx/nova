@@ -296,7 +296,7 @@ set(DISTRIBUTED_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests/distributed)
 
 # cuda_alloc_injection.cpp defines __wrap_cudaMalloc, which the --wrap flags below route every
 # cudaMalloc in the library through. Without the flags the wrapper is simply never called.
-target_sources(nova-tests PRIVATE cuda_alloc_injection.cpp)
+target_sources(nova-tests PRIVATE cuda_alloc_injection.cpp wrap_selfcheck_test.cpp)
 
 target_link_libraries(nova-tests
     PRIVATE
@@ -316,6 +316,10 @@ target_link_options(nova-tests PRIVATE
     "LINKER:--wrap=cudaEventCreate"
     "LINKER:--wrap=cudaEventDestroy"
     "LINKER:--wrap=cudaFree"
+    "LINKER:--wrap=cudaStreamCreate"
+    "LINKER:--wrap=cudaStreamDestroy"
+    "LINKER:--wrap=cudaMallocAsync"
+    "LINKER:--wrap=cudaFreeAsync"
 )
 target_include_directories(nova-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

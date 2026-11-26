@@ -11,6 +11,10 @@ extern "C" cudaError_t __real_cudaMalloc(void** ptr, size_t size);
 extern "C" cudaError_t __real_cudaEventCreate(cudaEvent_t* event);
 extern "C" cudaError_t __real_cudaEventDestroy(cudaEvent_t event);
 extern "C" cudaError_t __real_cudaFree(void* ptr);
+extern "C" cudaError_t __real_cudaStreamCreate(cudaStream_t* stream);
+extern "C" cudaError_t __real_cudaStreamDestroy(cudaStream_t stream);
+extern "C" cudaError_t __real_cudaMallocAsync(void** ptr, size_t size, cudaStream_t stream);
+extern "C" cudaError_t __real_cudaFreeAsync(void* ptr, cudaStream_t stream);
 
 namespace {
 
@@ -26,6 +30,20 @@ namespace {
     /// Events created minus destroyed, per thread. Only counts what went through the wrapper, which
     /// is every call in the test binary.
     thread_local int g_live_events = 0;
+
+    /// The same three counters for streams. Separate from the event arm for the same reason the event
+    /// arm is separate from the allocation one: a case that wants "the second stream fails" should not
+    /// depend on how many events or allocations happen in between.
+    thread_local int g_stream_fail_from = -1;
+    thread_local int g_stream_attempts = 0;
+    thread_local int g_live_streams = 0;
+
+    /// Stream-ordered allocations. Counted separately from the plain allocations because they are a
+    /// different API with a different failure surface (no cudaErrorMemoryAllocation handling, the
+    /// free is asynchronous and takes the stream).
+    thread_local int g_async_fail_from = -1;
+    thread_local int g_async_attempts = 0;
+    thread_local int g_live_async = 0;
 
     /// Allocations from the wrapper that have not been released.
     thread_local int g_live_allocations = 0;
@@ -81,7 +99,89 @@ extern "C" cudaError_t __wrap_cudaEventDestroy(cudaEvent_t event) {
     return status;
 }
 
+extern "C" cudaError_t __wrap_cudaStreamCreate(cudaStream_t* stream) {
+    const int attempt = g_stream_attempts++;
+    if (g_stream_fail_from >= 0 && attempt >= g_stream_fail_from) {
+        if (stream != nullptr) {
+            *stream = nullptr;
+        }
+        return cudaErrorInitializationError;
+    }
+    const cudaError_t status = __real_cudaStreamCreate(stream);
+    if (status == cudaSuccess) {
+        ++g_live_streams;
+    }
+    return status;
+}
+
+extern "C" cudaError_t __wrap_cudaStreamDestroy(cudaStream_t stream) {
+    const cudaError_t status = __real_cudaStreamDestroy(stream);
+    if (status == cudaSuccess) {
+        --g_live_streams;
+    }
+    return status;
+}
+
+extern "C" cudaError_t __wrap_cudaMallocAsync(void** ptr, size_t size, cudaStream_t stream) {
+    const int attempt = g_async_attempts++;
+    if (g_async_fail_from >= 0 && attempt >= g_async_fail_from) {
+        if (ptr != nullptr) {
+            *ptr = nullptr;
+        }
+        return cudaErrorMemoryAllocation;
+    }
+    const cudaError_t status = __real_cudaMallocAsync(ptr, size, stream);
+    if (status == cudaSuccess) {
+        ++g_live_async;
+    }
+    return status;
+}
+
+extern "C" cudaError_t __wrap_cudaFreeAsync(void* ptr, cudaStream_t stream) {
+    const cudaError_t status = __real_cudaFreeAsync(ptr, stream);
+    if (status == cudaSuccess) {
+        --g_live_async;
+    }
+    return status;
+}
+
 namespace cuda_test {
+
+    void fail_stream_after(int n) {
+        g_stream_fail_from = n < 0 ? 0 : n;
+        g_stream_attempts = 0;
+    }
+
+    void stop_failing_streams() {
+        g_stream_fail_from = -1;
+    }
+
+    int live_stream_count() {
+        return g_live_streams;
+    }
+
+    void reset_stream_count() {
+        g_stream_attempts = 0;
+        g_live_streams = 0;
+    }
+
+    void fail_async_allocation_after(int n) {
+        g_async_fail_from = n < 0 ? 0 : n;
+        g_async_attempts = 0;
+    }
+
+    void stop_failing_async_allocations() {
+        g_async_fail_from = -1;
+    }
+
+    int live_async_allocation_count() {
+        return g_live_async;
+    }
+
+    void reset_async_allocation_count() {
+        g_async_attempts = 0;
+        g_live_async = 0;
+    }
 
     void fail_allocation_after(int n) {
         g_fail_from = n < 0 ? 0 : n;
