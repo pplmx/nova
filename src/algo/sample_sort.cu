@@ -1,6 +1,7 @@
 #include "cuda/algo/sample_sort.h"
 
 #include <cuda_runtime.h>
+#include <stdexcept>
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
 #include <thrust/functional.h>
@@ -44,6 +45,13 @@ namespace cuda::algo::sample_sort {
 
     template <typename T>
     SortResult<T> sort_large_dataset(const T* input, size_t count, Order order, size_t sample_rate, cudaStream_t stream) {
+        // sample_rate is a divisor a few lines down, and the header gives it a default without this
+        // file validating it. A zero is an integer division by zero: measured, the process dumps core
+        // inside the sort before the caller sees anything. sort() and sort_inplace() take no divisor,
+        // so this is the one entry in the group that needed the check.
+        if (sample_rate == 0) {
+            throw ::std::invalid_argument("sort_large_dataset: sample_rate must be positive, got 0");
+        }
         if (count <= g_config.threshold_large_dataset) {
             return sort(input, count, order, stream);
         }

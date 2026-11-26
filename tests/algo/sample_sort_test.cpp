@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <vector>
 
 #include "cuda/algo/sample_sort.h"
@@ -78,6 +79,33 @@ namespace cuda::algo::sample_sort::test {
         cudaMemcpy(output.data(), d_input.data(), input.size() * sizeof(int), cudaMemcpyDeviceToHost);
 
         EXPECT_EQ(output, expected);
+    }
+
+    // sort_large_dataset divides by sample_rate to size its sample set:
+    //
+    //     size_t num_samples = count / sample_rate;
+    //
+    // sample_rate is a caller argument with a default of 1024 in the header and no validation
+    // anywhere, so 0 is an integer division by zero -- SIGFPE, the process dies inside the sort.
+    // sort() and sort_inplace() take no divisor, so this is the only entry in the group that can
+    // hit it. The result of the division is not even used, which makes the crash the only thing the
+    // line contributes.
+    TEST_F(SampleSortTest, SortLargeDatasetRejectsAZeroSampleRateInsteadOfDividingByIt) {
+        // Push count past the threshold so the dividing path is taken instead of delegating to
+        // sort(). The config is a process-wide static, so it is restored at the end.
+        const auto original = cuda::algo::sample_sort::get_config();
+        SampleSortConfig config = original;
+        config.threshold_large_dataset = 0;
+        cuda::algo::sample_sort::set_config(config);
+
+        std::vector<float> input = {4.0f, 1.0f, 3.0f, 2.0f};
+        cuda::memory::Buffer<float> d_input(input.size());
+        d_input.copy_from(input.data(), input.size());
+
+        EXPECT_THROW((void)cuda::algo::sample_sort::sort_large_dataset(d_input.data(), input.size(), Order::Ascending, 0), std::invalid_argument)
+            << "a zero sample_rate must be reported, not divided by";
+
+        cuda::algo::sample_sort::set_config(original);
     }
 
     TEST_F(SampleSortTest, ConfigSetters) {
