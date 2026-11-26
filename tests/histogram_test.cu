@@ -2,6 +2,7 @@
 #include <cublas_v2.h>
 
 #include <gtest/gtest.h>
+#include <array>
 #include "parallel/histogram.h"
 #include "cuda/device/device_utils.h"
 #include <vector>
@@ -217,10 +218,27 @@ TEST_F(HistogramTest, EqualizeOutputRange) {
     std::vector<uint8_t> h_output(size_);
     CUDA_CHECK(cudaMemcpy(h_output.data(), d_output, size_ * sizeof(uint8_t), cudaMemcpyDeviceToHost));
 
-    for (size_t i = 0; i < size_; ++i) {
-        EXPECT_GE(h_output[i], 0);
-        EXPECT_LE(h_output[i], 255);
+    // Both bounds used to be tautologies on a std::vector<uint8_t>: `>= 0` and `<= 255` hold for
+    // every byte the implementation could write, including an untouched buffer. The input here is
+    // i % 256, so it already covers the whole value range and its histogram is (nearly) uniform --
+    // an equalisation over a uniform histogram is close to the identity, but it is not required to
+    // be exactly the identity, and asserting that would pin an implementation detail.
+    //
+    // What the contract does require is that the output is not a constant and that every value came
+    // from the input's range: a kernel that wrote zeros, or left the buffer alone, is distinguishable
+    // from one that mapped through the CDF.
+    size_t distinct = 0;
+    {
+        std::array<bool, 256> seen {};
+        for (size_t i = 0; i < size_; ++i) {
+            if (!seen[h_output[i]]) {
+                seen[h_output[i]] = true;
+                ++distinct;
+            }
+        }
     }
+    EXPECT_GT(distinct, 1u) << "a constant output cannot be an equalisation of a 256-value input";
+    EXPECT_LE(distinct, 256u);
 
     CUDA_CHECK(cudaFree(d_output));
 }
