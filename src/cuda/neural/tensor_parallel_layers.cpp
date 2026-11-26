@@ -28,6 +28,7 @@
 #include "cuda/neural/activations.h"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -500,10 +501,21 @@ namespace cuda::neural {
     }
 
     void TensorParallelMLP::forward(const float* input, float* output, int batch, int seq) {
-        const int m = batch * seq;
-        if (m <= 0) {
-            throw_shape_error("TensorParallelMLP::forward requires batch*seq > 0");
+        // batch * seq in int wraps: 65537 * 65537 is 4295098369, which comes back as 131073 -- a
+        // positive number, so the `m <= 0` check below passes and every buffer downstream is sized
+        // for a row count unrelated to the inputs. Measured with the weights in place: the call ran
+        // on into the projections and failed inside cuBLAS as CUBLAS_STATUS_INVALID_VALUE, naming
+        // matmul.cu rather than the shape. TransformerBlock's checked_row_count() does this
+        // correctly one file over; the MLP it calls did not.
+        if (batch <= 0 || seq <= 0) {
+            throw_shape_error("TensorParallelMLP::forward requires batch > 0 and seq > 0");
         }
+        const auto product = static_cast<long long>(batch) * static_cast<long long>(seq);
+        if (product > static_cast<long long>(::std::numeric_limits<int>::max())) {
+            throw_shape_error("TensorParallelMLP::forward is too large: batch * seq does not fit the int row count the buffers are sized with");
+        }
+        const int m = static_cast<int>(product);
+
         ensure_scratch(m);
         gate_proj_->forward(input, gate_buf_->data(), batch, seq);
         up_proj_->forward(input, up_buf_->data(), batch, seq);
@@ -515,10 +527,21 @@ namespace cuda::neural {
 
     void TensorParallelMLP::backward(
         const float* input, const float* grad_output, float* grad_input, float* grad_gate_weight, float* grad_up_weight, float* grad_down_weight, int batch, int seq) {
-        const int m = batch * seq;
-        if (m <= 0) {
-            throw_shape_error("TensorParallelMLP::backward requires batch*seq > 0");
+        // batch * seq in int wraps: 65537 * 65537 is 4295098369, which comes back as 131073 -- a
+        // positive number, so the `m <= 0` check below passes and every buffer downstream is sized
+        // for a row count unrelated to the inputs. Measured with the weights in place: the call ran
+        // on into the projections and failed inside cuBLAS as CUBLAS_STATUS_INVALID_VALUE, naming
+        // matmul.cu rather than the shape. TransformerBlock's checked_row_count() does this
+        // correctly one file over; the MLP it calls did not.
+        if (batch <= 0 || seq <= 0) {
+            throw_shape_error("TensorParallelMLP::backward requires batch > 0 and seq > 0");
         }
+        const auto product = static_cast<long long>(batch) * static_cast<long long>(seq);
+        if (product > static_cast<long long>(::std::numeric_limits<int>::max())) {
+            throw_shape_error("TensorParallelMLP::backward is too large: batch * seq does not fit the int row count the buffers are sized with");
+        }
+        const int m = static_cast<int>(product);
+
         // forward() must have run first: the gate/up/sub activations live in the
         // scratch buffers, and backward chains through them.
         if (!gate_buf_ || !up_buf_ || !sub_buf_) {

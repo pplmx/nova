@@ -20,6 +20,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 #include <cmath>
 #include <random>
@@ -310,6 +311,39 @@ TEST_F(TensorParallelLayersSingleGpuTest, RowParallelLayer_Backward_MatchesRefer
 //   dsub = dY W_d^T            dW_d = sub^T dY
 //   dgate = dsub .* up .* silu'(gate)   dup = dsub .* silu(gate)
 //   dX = dgate W_g^T + dup W_u^T   dW_g = X^T dgate   dW_u = X^T dup
+// TensorParallelMLP computes its row count with a plain int multiply:
+//
+//     const int m = batch * seq;
+//     if (m <= 0) { throw_shape_error(...); }
+//
+// batch = seq = 65537 gives 4295098369, which wraps to 131073 -- a positive number, so the guard
+// passes and the call proceeds with a row count that has nothing to do with the inputs: scratch is
+// sized for 131073 rows and only those are computed, with no error reported.
+//
+// TransformerBlock, one file over, rejects this properly: checked_row_count() multiplies in
+// long long and refuses a product above INT_MAX. The MLP sits downstream of
+// TransformerBlock::forward, so the same shape reaches both and only one of them notices.
+TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_RejectsARowCountThatOverflowsInt) {
+    const int h = 8, inter = 16;
+    TensorParallelMLP mlp(uninitialized_ctx(), h, inter);
+
+    // The weights have to be present, otherwise the downstream layers throw for that reason first
+    // and the row-count guard is never reached -- which is exactly how the wrapped product slipped
+    // through: with weights set, the call proceeded into the projections with m = 131073.
+    std::vector<float> W_gate(static_cast<size_t>(h) * inter, 0.1f);
+    std::vector<float> W_up(static_cast<size_t>(h) * inter, 0.1f);
+    std::vector<float> W_down(static_cast<size_t>(inter) * h, 0.1f);
+    mlp.set_weight(W_gate.data(), W_up.data(), W_down.data());
+
+    // Below the guard's reach: the wrapped product is positive, so the call used to proceed.
+    EXPECT_THROW(mlp.forward(nullptr, nullptr, 65537, 65537), std::invalid_argument) << "65537 * 65537 wraps to 131073 and passed the m <= 0 guard";
+    EXPECT_THROW(mlp.backward(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 65537, 65537), std::invalid_argument);
+
+    // The ordinary refusals still hold.
+    EXPECT_THROW(mlp.forward(nullptr, nullptr, 0, 4), std::invalid_argument);
+    EXPECT_THROW(mlp.forward(nullptr, nullptr, -1, 4), std::invalid_argument);
+}
+
 TEST_F(TensorParallelLayersSingleGpuTest, TensorParallelMLP_Backward_MatchesReference) {
     const int m = 8, h = 16, inter = 48;
     std::vector<float> X(static_cast<size_t>(m) * h);
