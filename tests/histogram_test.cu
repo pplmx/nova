@@ -42,6 +42,26 @@ protected:
     void downloadHistogram() { CUDA_CHECK(cudaMemcpy(h_histogram_.data(), d_histogram_, NUM_BINS * sizeof(uint32_t), cudaMemcpyDeviceToHost)); }
 };
 
+// equalizeHistogram is the one entry in this file that derives a grid from the image size:
+//
+//     size_t total = width * height * 3;
+//     int grid = (total + block - 1) / block;      // 0 for an empty image
+//     float scale = 255.0f / (totalPixels * 3);    // 255/0 = inf
+//
+// A zero extent therefore asks for a zero-block launch, which CUDA rejects as "invalid
+// configuration argument" from the launch line rather than from anything the caller passed.
+// computeHistogram and computeHistogramPerChannel use a constant grid of 256 and are unaffected,
+// and the image layer next door documents zero extents as a no-op ("A zero width or height is a
+// no-op rather than a launch failure", include/image/morphology.h) with sobel_edge and brightness
+// doing exactly that.
+TEST_F(HistogramTest, EqualizeHistogramTreatsAZeroExtentAsANoOp) {
+    // No allocation is needed: the entry point must return before it touches any pointer.
+    EXPECT_NO_THROW(equalizeHistogram(nullptr, nullptr, nullptr, 0, 8)) << "a zero width launched a zero-block grid";
+    EXPECT_NO_THROW(equalizeHistogram(nullptr, nullptr, nullptr, 8, 0));
+    EXPECT_NO_THROW(equalizeHistogram(nullptr, nullptr, nullptr, 0, 0));
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "a no-op must not leave a pending launch error behind";
+}
+
 TEST_F(HistogramTest, UniformDistribution) {
     for (size_t i = 0; i < size_; ++i) {
         h_input_[i] = 128;

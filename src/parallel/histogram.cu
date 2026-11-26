@@ -118,6 +118,17 @@ __global__ __launch_bounds__(256, 2) void histogramEqualizeKernel(const uint8_t*
 }
 
 void equalizeHistogram(const uint8_t* d_input, uint8_t* d_output, const uint32_t* d_histogram, size_t width, size_t height) {
+    // This is the only entry in the file whose grid is derived from the image size, so it is the only
+    // one an empty image breaks: total is 0, the grid is 0, CUDA rejects the launch, and the error
+    // surfaces as "invalid configuration argument" from the launch line. scale would also be 255/0.
+    // The image layer next door documents zero extents as a no-op ("A zero width or height is a no-op
+    // rather than a launch failure", include/image/morphology.h) and sobel_edge and brightness both
+    // return early that way; this matches them. computeHistogram and computeHistogramPerChannel use a
+    // constant grid of 256 and need nothing.
+    if (width == 0 || height == 0) {
+        return;
+    }
+
     size_t total = width * height * 3;
     int block = 256;
     int grid = (total + block - 1) / block;
