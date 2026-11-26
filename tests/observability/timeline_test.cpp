@@ -112,6 +112,35 @@ namespace cuda::observability::test {
         std::filesystem::remove(test_file);
     }
 
+    // ScopedTimelineEvent closes an event in its destructor by calling end_event(), which pops the
+    // exporter's open-event stack. It declared no copy or move operations, so the compiler generated
+    // a copy: N copies each pop the stack once, closing records that belong to other scopes and
+    // leaving the trace with mismatched or negative durations and no error anywhere.
+    //
+    // Moving is refused too, for the same reason as ScopedKernelTiming: the record boundary is where
+    // the object dies, so relocating it would move that boundary.
+    TEST_F(TimelineTest, ScopedEventIsExclusiveToItsScope) {
+        static_assert(!std::is_copy_constructible_v<ScopedTimelineEvent>, "a copy would close another scope's event");
+        static_assert(!std::is_copy_assignable_v<ScopedTimelineEvent>, "a copy would close another scope's event");
+        static_assert(!std::is_move_constructible_v<ScopedTimelineEvent>, "the event closes on destruction, so it must not be relocatable");
+        static_assert(!std::is_move_assignable_v<ScopedTimelineEvent>, "the event closes on destruction, so it must not be relocatable");
+
+        auto& exporter = TimelineExporter::instance();
+        {
+            ScopedTimelineEvent scoped("exclusive-probe", "cat");
+            EXPECT_EQ(exporter.event_count(), 1u);
+        }
+        // One construction, one close -- no more.
+        EXPECT_EQ(exporter.event_count(), 1u) << "the scope must produce exactly one record";
+
+        const std::string path = nova::test::temp_path("timeline-exclusive-", ".json");
+        ASSERT_TRUE(exporter.export_to_file(path));
+        std::ifstream in(path);
+        const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::filesystem::remove(path);
+        EXPECT_NE(json.find("exclusive-probe"), std::string::npos);
+    }
+
     TEST_F(TimelineTest, ClearResetsEventCount) {
         NOVA_TIMELINE_SCOPED("test", "cat");
         EXPECT_EQ(TimelineExporter::instance().event_count(), 1);

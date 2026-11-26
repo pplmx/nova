@@ -125,6 +125,16 @@ namespace cuda::observability {
             TimelineExporter::instance().end_event(name_, category_);
         }
 
+        /// Exclusive to its scope: the destructor closes the event, and closing is not something two
+        /// objects can each do for the same record. The compiler-generated copy would have had every
+        /// copy pop the open-event stack once, closing records that belong to other scopes and leaving
+        /// the trace with mismatched durations and no error. Moving is refused for the same reason as
+        /// ScopedKernelTiming: the record boundary is where the object dies.
+        ScopedTimelineEvent(const ScopedTimelineEvent&) = delete;
+        ScopedTimelineEvent& operator=(const ScopedTimelineEvent&) = delete;
+        ScopedTimelineEvent(ScopedTimelineEvent&&) = delete;
+        ScopedTimelineEvent& operator=(ScopedTimelineEvent&&) = delete;
+
     private:
         const char* name_;
         const char* category_;
