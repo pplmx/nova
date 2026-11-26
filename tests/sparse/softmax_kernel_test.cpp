@@ -269,6 +269,35 @@ namespace cuda::neural::test {
     // a zero grid dimension returns cudaErrorInvalidConfiguration (9). A caller that passed
     // an empty batch got that error surfaced as an exception from CUDA_CHECK, at a line that
     // says nothing about which argument was wrong.
+    // log_softmax() launched softmax_stable_kernel -- the softmax kernel -- so it returned
+    // exp(x - max) / sum rather than log of that. It also passed 0 for the dynamic shared memory
+    // size while the same kernel's other caller passes 2 * block_size * sizeof(float):
+    //
+    //     softmax_stable: <<<outer_dim, block_size, block_size * sizeof(float) * 2, stream>>>
+    //     log_softmax:    <<<grid_size,  block_size, 0,                                 stream>>>
+    //
+    // The kernel writes shared_max[tid] for every thread, so a zero-sized dynamic allocation is an
+    // out-of-bounds write. Both defects are checked here: a two-element row of equal values has
+    // log-softmax [-ln 2, -ln 2], not the [0.5, 0.5] that a softmax returns.
+    TEST(SoftmaxKernelTest, LogSoftmaxReturnsLogProbabilities) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        const std::vector<float> host = {0.0f, 0.0f};
+        DeviceArray d(host);
+
+        log_softmax(d.data(), d.data(), 1, 2, nullptr);
+        (void)cudaStreamSynchronize(nullptr);
+        const std::vector<float> out = d.read();
+
+        const float expected = -std::log(2.0f);
+        EXPECT_NEAR(out[0], expected, 1e-4f) << "log_softmax returned the probability, not its logarithm";
+        EXPECT_NEAR(out[1], expected, 1e-4f);
+        EXPECT_LT(out[0], 0.0f) << "a log-probability of two equal classes is negative";
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess);
+    }
+
     TEST(SoftmaxKernelTest, AZeroRowCountIsANoOp) {
         if (!device_available()) {
             GTEST_SKIP() << "no CUDA device";

@@ -148,6 +148,52 @@ namespace cuda::neural {
             }
         }
 
+        /// log(softmax(x)) computed as (x - max) - log(sum), which keeps the values finite where the
+        /// softmax itself would underflow. Shares the reduction structure with softmax_stable_kernel;
+        /// log_softmax() used to call that kernel instead, so it returned probabilities.
+        __global__ void log_softmax_kernel(const float* input, float* output, int outer_dim, int inner_dim) {
+            extern __shared__ float shared_max[];
+            int tid = threadIdx.x;
+            int block_offset = blockIdx.x * inner_dim;
+
+            float thread_max = -INFINITY;
+            for (int i = tid; i < inner_dim; i += blockDim.x) {
+                thread_max = fmaxf(thread_max, input[block_offset + i]);
+            }
+            shared_max[tid] = thread_max;
+            __syncthreads();
+
+            for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+                if (tid < s) {
+                    shared_max[tid] = fmaxf(shared_max[tid], shared_max[tid + s]);
+                }
+                __syncthreads();
+            }
+
+            float max_val = shared_max[0];
+
+            __shared__ float shared_sum[256];
+            float thread_sum = 0.0f;
+            for (int i = tid; i < inner_dim; i += blockDim.x) {
+                thread_sum += expf(input[block_offset + i] - max_val);
+            }
+            shared_sum[tid] = thread_sum;
+            __syncthreads();
+
+            for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+                if (tid < s) {
+                    shared_sum[tid] += shared_sum[tid + s];
+                }
+                __syncthreads();
+            }
+
+            const float log_sum = logf(shared_sum[0]);
+
+            for (int i = tid; i < inner_dim; i += blockDim.x) {
+                output[block_offset + i] = (input[block_offset + i] - max_val) - log_sum;
+            }
+        }
+
     }  // anonymous namespace
 
     void softmax(const float* input, float* output, int outer_dim, int inner_dim, cudaStream_t stream) {
@@ -196,13 +242,19 @@ namespace cuda::neural {
             return;
         }
 
-        int grid_size = outer_dim;
-        int block_size = 256;
+        const int grid_size = outer_dim;
+        const int block_size = 256;
+        // The dynamic shared-memory size was passed as 0 while the kernel writes shared_max[tid]
+        // for every thread, and softmax_stable -- the other caller of the same kernel -- passes
+        // block_size * sizeof(float) * 2. A zero-sized dynamic allocation with those writes is an
+        // out-of-bounds access.
+        const int shared_mem = block_size * sizeof(float) * 2;
 
-        softmax_stable_kernel<<<grid_size, block_size, 0, stream>>>(input, output, outer_dim, inner_dim);
+        // This launched softmax_stable_kernel, so it produced exp(x - max) / sum rather than the
+        // logarithm of it: log_softmax of two equal classes came back as {0.5, 0.5} where
+        // {-0.693, -0.693} is the answer. log_softmax_kernel is the one that computes x - max - log(sum).
+        log_softmax_kernel<<<grid_size, block_size, shared_mem, stream>>>(input, output, outer_dim, inner_dim);
         CUDA_CHECK(cudaGetLastError());
-
-        output = output;
     }
 
 }  // namespace cuda::neural
