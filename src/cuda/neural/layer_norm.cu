@@ -40,6 +40,48 @@ namespace cuda::neural {
         clear();
     }
 
+    LayerNormResult::LayerNormResult(LayerNormResult&& other) noexcept
+        : output(other.output),
+          mean(other.mean),
+          variance(other.variance),
+          d_output(other.d_output),
+          d_mean(other.d_mean),
+          d_variance(other.d_variance),
+          size(other.size) {
+        other.output = nullptr;
+        other.mean = nullptr;
+        other.variance = nullptr;
+        other.d_output = nullptr;
+        other.d_mean = nullptr;
+        other.d_variance = nullptr;
+        other.size = 0;
+    }
+
+    LayerNormResult& LayerNormResult::operator=(LayerNormResult&& other) noexcept {
+        if (this != &other) {
+            // Release what this object holds before taking the other's, so the buffers are not
+            // orphaned. clear() nulls them, so a moved-from target is left empty either way.
+            clear();
+
+            output = other.output;
+            mean = other.mean;
+            variance = other.variance;
+            d_output = other.d_output;
+            d_mean = other.d_mean;
+            d_variance = other.d_variance;
+            size = other.size;
+
+            other.output = nullptr;
+            other.mean = nullptr;
+            other.variance = nullptr;
+            other.d_output = nullptr;
+            other.d_mean = nullptr;
+            other.d_variance = nullptr;
+            other.size = 0;
+        }
+        return *this;
+    }
+
     void LayerNormResult::upload() {
         CUDA_CHECK(cudaMemcpy(d_output, output, size * sizeof(float), cudaMemcpyHostToDevice));
     }

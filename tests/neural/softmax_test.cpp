@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "cuda_alloc_injection.h"
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include <cmath>
 #include "cuda/neural/softmax.h"
@@ -17,6 +19,25 @@ TEST_F(SoftmaxTest, SoftmaxResultConstruction) {
     EXPECT_EQ(result.outer_dim, 10);
     EXPECT_EQ(result.inner_dim, 5);
     EXPECT_NE(result.d_output, nullptr);
+}
+
+// Same shape as LayerNormResult: SoftmaxResult owns a host array (delete[]) and a device array
+// (cudaFree), and declared no copy or move operations, so the compiler generated a shallow copy.
+// Two objects then own the same two buffers and both destructors release them, and copy assignment
+// additionally leaked the target's previous buffers.
+TEST_F(SoftmaxTest, ResultOwnsItsBuffersExclusively) {
+    static_assert(!std::is_copy_constructible_v<SoftmaxResult>, "an owning result must not be copyable: the copy would double-free its buffers");
+    static_assert(!std::is_copy_assignable_v<SoftmaxResult>, "copy assignment would leak the target's buffers and then double-free");
+    static_assert(std::is_move_constructible_v<SoftmaxResult>, "moving must remain possible so the type can still be returned by value");
+    static_assert(std::is_move_assignable_v<SoftmaxResult>, "moving must remain possible");
+
+    SoftmaxResult a(4, 8);
+    float* original = a.d_output;
+    SoftmaxResult b(std::move(a));
+    EXPECT_EQ(b.d_output, original) << "the move must carry the buffers across";
+    EXPECT_EQ(a.d_output, nullptr) << "the moved-from object must not still own the buffer";
+    EXPECT_EQ(a.size, 0);
+    EXPECT_EQ(a.outer_dim, 0);
 }
 
 TEST_F(SoftmaxTest, SoftmaxResultDefaultConstruction) {

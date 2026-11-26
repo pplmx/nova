@@ -31,6 +31,38 @@ namespace cuda::neural {
         clear();
     }
 
+    SoftmaxResult::SoftmaxResult(SoftmaxResult&& other) noexcept
+        : output(other.output),
+          d_output(other.d_output),
+          size(other.size),
+          outer_dim(other.outer_dim),
+          inner_dim(other.inner_dim) {
+        other.output = nullptr;
+        other.d_output = nullptr;
+        other.size = 0;
+        other.outer_dim = 0;
+        other.inner_dim = 0;
+    }
+
+    SoftmaxResult& SoftmaxResult::operator=(SoftmaxResult&& other) noexcept {
+        if (this != &other) {
+            clear();
+
+            output = other.output;
+            d_output = other.d_output;
+            size = other.size;
+            outer_dim = other.outer_dim;
+            inner_dim = other.inner_dim;
+
+            other.output = nullptr;
+            other.d_output = nullptr;
+            other.size = 0;
+            other.outer_dim = 0;
+            other.inner_dim = 0;
+        }
+        return *this;
+    }
+
     void SoftmaxResult::upload() {
         CUDA_CHECK(cudaMemcpy(d_output, output, size * sizeof(float), cudaMemcpyHostToDevice));
     }

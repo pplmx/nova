@@ -32,6 +32,20 @@ namespace cuda::neural {
         explicit LayerNormResult(int size);
         ~LayerNormResult();
 
+        /// Exclusive ownership: six buffers, released by the destructor through clear().
+        ///
+        /// The compiler-generated copy was shallow, so `LayerNormResult b(a)` made both objects own
+        /// the same six pointers and the two destructors released them twice. Copy assignment also
+        /// leaked whatever the target already held. Nothing in the type said it was exclusive, so a
+        /// by-value return or a container was enough to reach it.
+        ///
+        /// Moves transfer ownership and leave the source empty, which is what lets the type still be
+        /// returned by value.
+        LayerNormResult(const LayerNormResult&) = delete;
+        LayerNormResult& operator=(const LayerNormResult&) = delete;
+        LayerNormResult(LayerNormResult&& other) noexcept;
+        LayerNormResult& operator=(LayerNormResult&& other) noexcept;
+
         void upload();
         void download();
         void clear();

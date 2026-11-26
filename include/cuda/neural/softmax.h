@@ -20,6 +20,15 @@ namespace cuda::neural {
         explicit SoftmaxResult(int outer_dim, int inner_dim);
         ~SoftmaxResult();
 
+        /// Exclusive ownership, for the same reason as LayerNormResult: the destructor releases the
+        /// host array with delete[] and the device array with cudaFree, and the compiler-generated
+        /// copy would have made two objects own both -- a double free at scope exit, plus a leak on
+        /// copy assignment. Moves transfer ownership and leave the source empty.
+        SoftmaxResult(const SoftmaxResult&) = delete;
+        SoftmaxResult& operator=(const SoftmaxResult&) = delete;
+        SoftmaxResult(SoftmaxResult&& other) noexcept;
+        SoftmaxResult& operator=(SoftmaxResult&& other) noexcept;
+
         void upload();
         void download();
         void clear();

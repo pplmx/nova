@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include <cmath>
 #include <numeric>
@@ -30,6 +32,33 @@ TEST_F(LayerNormTest, LayerNormResultClearFreesMemory) {
     EXPECT_EQ(result.d_output, nullptr);
     EXPECT_EQ(result.d_mean, nullptr);
     EXPECT_EQ(result.d_variance, nullptr);
+}
+
+// LayerNormResult owns six raw pointers and its destructor releases them (clear():
+// delete[] on the three host arrays, cudaFree on the three device ones). It declared no copy or
+// move operations, so the compiler generated a shallow copy: copying the struct makes two objects
+// own the same buffers, and both destructors release them.
+//
+//   { LayerNormResult a(100); LayerNormResult b(a); }   // b and a share every pointer
+//
+// That is a double free at scope exit, and the copy assignment additionally leaks the target's
+// previous buffers. Nothing in the type says it is exclusive, so a call returning it by value or a
+// container holding it is enough to trigger it.
+//
+// Asserted at compile time because the defect is a property of the declaration, not of a run.
+TEST_F(LayerNormTest, ResultOwnsItsBuffersExclusively) {
+    static_assert(!std::is_copy_constructible_v<LayerNormResult>, "an owning result must not be copyable: the copy would double-free its buffers");
+    static_assert(!std::is_copy_assignable_v<LayerNormResult>, "copy assignment would leak the target's buffers and then double-free");
+    static_assert(std::is_move_constructible_v<LayerNormResult>, "moving must remain possible so the type can still be returned by value");
+    static_assert(std::is_move_assignable_v<LayerNormResult>, "moving must remain possible");
+
+    // The move leaves the source empty, so exactly one destructor has anything to release.
+    LayerNormResult a(64);
+    float* original = a.d_output;
+    LayerNormResult b(std::move(a));
+    EXPECT_EQ(b.d_output, original) << "the move must carry the buffers across";
+    EXPECT_EQ(a.d_output, nullptr) << "the moved-from object must not still own the buffer";
+    EXPECT_EQ(a.size, 0);
 }
 
 TEST_F(LayerNormTest, NormalizedMeanIsApproximatelyZero) {
