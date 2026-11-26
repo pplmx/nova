@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
@@ -217,6 +219,24 @@ namespace cuda::memory {
         : config_(config) {
         if (config_.block_size_tokens != 16 && config_.block_size_tokens != 32 && config_.block_size_tokens != 64) {
             throw std::invalid_argument("block_size_tokens must be 16, 32, or 64");
+        }
+
+        // The four fields below are multiplied into block_memory_size_ and total_memory as size_t,
+        // and only block_size_tokens used to be checked. A negative num_blocks therefore became a
+        // request for close to 2^64 bytes: measured, it surfaced as "CUDA error: out of memory"
+        // raised from buffer-inl.h, naming neither the field nor the call. Checked here, before any
+        // of them is used in arithmetic, so the message can say which one.
+        if (config_.num_layers <= 0) {
+            throw std::invalid_argument("num_layers must be positive, got " + std::to_string(config_.num_layers));
+        }
+        if (config_.num_heads <= 0) {
+            throw std::invalid_argument("num_heads must be positive, got " + std::to_string(config_.num_heads));
+        }
+        if (config_.head_dim <= 0) {
+            throw std::invalid_argument("head_dim must be positive, got " + std::to_string(config_.head_dim));
+        }
+        if (config_.num_blocks <= 0) {
+            throw std::invalid_argument("num_blocks must be positive, got " + std::to_string(config_.num_blocks));
         }
 
         block_memory_size_ = static_cast<size_t>(config_.num_layers) * static_cast<size_t>(config_.num_heads) * static_cast<size_t>(config_.head_dim)

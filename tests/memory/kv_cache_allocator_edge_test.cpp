@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <cuda/memory/kv_cache_allocator.h>
 #include <thread>
 #include <atomic>
@@ -28,6 +29,42 @@ namespace cuda::memory::test {
 
         KVCacheAllocatorConfig config_;
     };
+
+    // The constructor validates one of its five geometry fields:
+    //
+    //     if (block_size_tokens != 16 && != 32 && != 64) throw ...;
+    //     block_memory_size_ = static_cast<size_t>(num_layers) * static_cast<size_t>(num_heads)
+    //                        * static_cast<size_t>(head_dim) * block_size_tokens * sizeof(float) * 2;
+    //     const size_t total_memory = block_memory_size_ * num_blocks;
+    //     gpu_memory_ = memory::Buffer<void>(total_memory);
+    //
+    // num_layers, num_heads, head_dim and num_blocks are cast to size_t and multiplied with no
+    // check, so a negative one becomes an enormous allocation request. Measured: num_blocks = -1
+    // surfaces as "CUDA error: out of memory" raised from buffer-inl.h, naming neither the field
+    // nor the call. BlockManager's own constructor cites this class as the one that already
+    // rejects a malformed geometry, which was true of exactly one field in five.
+    TEST(KVCacheConfigValidationTest, ANegativeGeometryFieldIsRefusedRatherThanAllocated) {
+        KVCacheAllocatorConfig config;
+        config.num_heads = 4;
+        config.head_dim = 64;
+        config.block_size_tokens = 16;
+        config.num_layers = 1;
+        config.num_blocks = 4;
+        config.enable_prefix_caching = false;
+        config.enable_sink_separation = false;
+
+        auto with_field = [&config](auto apply) {
+            KVCacheAllocatorConfig copy = config;
+            apply(copy);
+            return copy;
+        };
+
+        EXPECT_THROW((void)KVCacheAllocator(with_field([](auto& c) { c.num_blocks = -1; })), std::invalid_argument) << "num_blocks -1 became a 2^64-scale allocation";
+        EXPECT_THROW((void)KVCacheAllocator(with_field([](auto& c) { c.num_layers = -1; })), std::invalid_argument);
+        EXPECT_THROW((void)KVCacheAllocator(with_field([](auto& c) { c.num_heads = -1; })), std::invalid_argument);
+        EXPECT_THROW((void)KVCacheAllocator(with_field([](auto& c) { c.head_dim = -1; })), std::invalid_argument);
+        EXPECT_THROW((void)KVCacheAllocator(with_field([](auto& c) { c.num_blocks = 0; })), std::invalid_argument) << "a pool with no blocks cannot serve an allocation";
+    }
 
     TEST_F(KVCacheAllocatorEdgeTest, AllocateSingleToken) {
         auto allocator = std::make_unique<KVCacheAllocator>(config_);
