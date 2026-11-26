@@ -1,6 +1,9 @@
 #include <cuda/quantize/fp8_gemm.hpp>
 #include <cuda_runtime.h>
+#include "cuda/device/error.h"
 #include <cstdio>
+#include <stdexcept>
+#include <string>
 #include <cstring>
 
 namespace nova {
@@ -77,7 +80,24 @@ namespace nova {
             return total;
         }
 
+        namespace {
+
+            /// Both launch dimensions come from m and n, so a non-positive one asks for a zero-sized
+            /// grid, which CUDA rejects with "invalid configuration argument" at the launch line.
+            /// forward() reported that with a fprintf and returned normally, so the caller saw no
+            /// error; a negative dimension reaches dim3's unsigned constructor instead.
+            void require_positive_dims(int m, int k, int n, const char* fn) {
+                if (m <= 0 || k <= 0 || n <= 0) {
+                    throw ::std::invalid_argument(::std::string(fn) + ": m, k and n must be positive, got m=" + ::std::to_string(m) + " k=" + ::std::to_string(k)
+                                                  + " n=" + ::std::to_string(n));
+                }
+            }
+
+        }  // namespace
+
         void FP8GEMM::forward(const FP8E4M3* a, const FP8E4M3* b, float* output, int m, int k, int n, Config config, cudaStream_t stream) {
+            require_positive_dims(m, k, n, "FP8GEMM::forward");
+
             constexpr int BLOCK_SIZE = 16;
 
             dim3 block_dim(BLOCK_SIZE, BLOCK_SIZE);
@@ -85,10 +105,7 @@ namespace nova {
 
             detail::fp8_gemm_naive_kernel<BLOCK_SIZE, FP8E4M3><<<grid_dim, block_dim, 0, stream>>>(a, b, output, m, k, n, config.scale_a, config.scale_b, config.scale_out);
 
-            cudaError_t err = cudaGetLastError();
-            if (err != cudaSuccess) {
-                fprintf(stderr, "CUDA error in FP8GEMM::forward: %s\n", cudaGetErrorString(err));
-            }
+            CUDA_CHECK(cudaGetLastError());
         }
 
         void FP8GEMM::forward_async(const FP8E4M3* a, const FP8E4M3* b, float* output, int m, int k, int n, Config config, cudaStream_t stream) {
@@ -97,6 +114,7 @@ namespace nova {
 
         void FP8GEMM::backward(
             const FP8E4M3* grad_output, const FP8E4M3* a, const FP8E4M3* b, float* grad_a, float* grad_b, int m, int k, int n, Config config, cudaStream_t stream) {
+            require_positive_dims(m, k, n, "FP8GEMM::backward");
             // For C = A(m x k) * B(k x n) and upstream gradient G(m x n):
             //   grad_a = G * B^T   -> (m x k)
             //   grad_b = A^T * G   -> (k x n)

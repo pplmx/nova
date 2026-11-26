@@ -2,6 +2,7 @@
 #include <cuda/quantize/fp8_types.hpp>
 
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <vector>
 #include <cmath>
 #include <cuda_runtime.h>
@@ -54,6 +55,35 @@ namespace nova {
                     }
                 }
             };
+            // forward() derives both grid dimensions from m and n:
+            //
+            //     dim3 grid_dim((n + BLOCK_SIZE - 1) / BLOCK_SIZE, (m + BLOCK_SIZE - 1) / BLOCK_SIZE);
+            //
+            // With m or n at zero that is a zero-sized grid, which CUDA rejects -- and the only reaction
+            // here is a fprintf to stderr followed by a normal return, so the caller gets no error at all.
+            // A negative dimension produces a negative grid, which the dim3 constructor takes as unsigned.
+            // backward() has the same two launches and no check either.
+            TEST_F(FP8GEMMTest, RejectsNonPositiveDimensions) {
+                int device_count = 0;
+                if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+                    (void)cudaGetLastError();
+                    GTEST_SKIP() << "no CUDA device";
+                }
+                (void)cudaGetLastError();
+
+                FP8GEMM::Config config;
+                auto* null_a = static_cast<const FP8E4M3*>(nullptr);
+                auto* null_c = static_cast<float*>(nullptr);
+
+                EXPECT_THROW(FP8GEMM::forward(null_a, null_a, null_c, 0, 4, 4, config, nullptr), std::invalid_argument) << "m == 0 asks for a zero-row grid";
+                EXPECT_THROW(FP8GEMM::forward(null_a, null_a, null_c, 4, 4, 0, config, nullptr), std::invalid_argument) << "n == 0 asks for a zero-column grid";
+                EXPECT_THROW(FP8GEMM::forward(null_a, null_a, null_c, -1, 4, 4, config, nullptr), std::invalid_argument) << "a negative dimension cannot size a grid";
+
+                EXPECT_THROW(FP8GEMM::backward(null_a, null_a, null_a, null_c, null_c, 0, 4, 4, config, nullptr), std::invalid_argument);
+                EXPECT_THROW(FP8GEMM::backward(null_a, null_a, null_a, null_c, null_c, 4, 0, 4, config, nullptr), std::invalid_argument);
+
+                (void)cudaGetLastError();
+            }
 
             TEST_F(FP8GEMMTest, SmallMatrixMultiplication) {
                 int m = 4, k = 4, n = 4;
