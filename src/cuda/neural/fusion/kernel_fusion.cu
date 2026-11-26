@@ -6,6 +6,7 @@
 
 #include <cuda_runtime.h>
 #include <cmath>
+#include <limits>
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -241,6 +242,24 @@ namespace cuda::neural::fusion {
                                           + " seq_len=" + ::std::to_string(seq_len));
         }
 
+        // The row product and the element product both feed the launch, and neither was bounded:
+        //
+        //     dim3 grid(batch_size, seq_len);                       // gridDim.y caps at 65535
+        //     const int n = batch_size * seq_len * hidden_size_;    // int product, can wrap
+        //
+        // Measured: seq_len = 65536 and the pair 65537 x 65537 both surfaced as "invalid
+        // configuration argument" from the launch line, naming neither argument.
+        const auto rows = static_cast<long long>(batch_size) * static_cast<long long>(seq_len);
+        if (rows > 65535) {
+            throw ::std::invalid_argument("FusedLayerNormSoftmax::forward: batch_size * seq_len = " + ::std::to_string(rows)
+                                          + " exceeds the 65535 rows a gridDim.y dimension can address");
+        }
+        const auto elements = rows * static_cast<long long>(hidden_size_);
+        if (elements > static_cast<long long>(::std::numeric_limits<int>::max())) {
+            throw ::std::invalid_argument("FusedLayerNormSoftmax::forward: batch_size * seq_len * hidden_size = " + ::std::to_string(elements)
+                                          + " does not fit the int element count the second launch is sized with");
+        }
+
         memory::Buffer<float> row_sum(static_cast<size_t>(batch_size) * static_cast<size_t>(seq_len));
 
         dim3 block(256);
@@ -248,7 +267,7 @@ namespace cuda::neural::fusion {
         compute_row_sum_kernel<float><<<grid, block, 0, stream>>>(input, gamma, beta, row_sum.data(), batch_size, seq_len, hidden_size_, eps_);
         CUDA_CHECK(cudaGetLastError());
 
-        const int n = batch_size * seq_len * hidden_size_;
+        const int n = static_cast<int>(elements);
         const int block_size = 256;
         const int grid_size = (n + block_size - 1) / block_size;
 

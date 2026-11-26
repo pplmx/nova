@@ -27,6 +27,7 @@
 #include <cuda_runtime.h>
 
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -337,6 +338,32 @@ namespace cuda::neural::fusion::test {
         for (size_t i = 1; i < result.size(); ++i) {
             EXPECT_GT(result[i], result[i - 1]) << "element " << i << " is not larger than its predecessor";
         }
+    }
+
+    // Two range limits were unguarded in the lines that build the launch:
+    //
+    //     dim3 grid(batch_size, seq_len);                       // gridDim.y caps at 65535
+    //     const int n = batch_size * seq_len * hidden_size_;    // int product, can wrap
+    //
+    // A seq_len past 65535 asks for a y-dimension CUDA rejects; a product past INT_MAX wraps, and a
+    // negative n becomes a huge unsigned grid_size. Either way the launch is rejected at a line that
+    // says nothing about which argument was wrong.
+    TEST(FusedLayerNormSoftmaxTest, RejectsExtentsThatCannotBeLaunched) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        FusedLayerNormSoftmax fusion(1);
+        DeviceArray d_in(1), d_out(1);
+        const std::vector<float> gamma(1, 1.0f), beta(1, 0.0f);
+        DeviceArray d_gamma(gamma), d_beta(beta);
+
+        // gridDim.y is limited to 65535, so 65536 rows cannot be a y-dimension.
+        EXPECT_THROW(fusion.forward(d_in.data(), d_out.data(), d_gamma.data(), d_beta.data(), 1, 65536, nullptr), std::invalid_argument)
+            << "seq_len 65536 exceeds gridDim.y's limit";
+        // 65537 * 65537 * 1 wraps int.
+        EXPECT_THROW(fusion.forward(d_in.data(), d_out.data(), d_gamma.data(), d_beta.data(), 65537, 65537, nullptr), std::invalid_argument) << "the int product overflows";
+        (void)cudaGetLastError();
     }
 
     TEST(FusedLayerNormSoftmaxTest, GammaChangesTheDistribution) {
