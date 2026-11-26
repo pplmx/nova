@@ -570,9 +570,20 @@ namespace cuda::memory::test {
         }
 
         auto report = allocator->analyze_fragmentation();
-        if (report.ratio > 30.0f) {
-            EXPECT_TRUE(allocator->needs_compaction(30.0f));
-        }
+
+        // The assertion used to sit inside `if (report.ratio > 30.0f)`. needs_compaction() calls
+        // analyze_fragmentation() itself, so the guard and the assertion were reading the same
+        // quantity: if that function regressed to always returning ratio = 0, the branch would not
+        // run, no assertion would execute, and the case would pass while needs_compaction() was
+        // permanently false. Both halves were broken together and neither noticed.
+        //
+        // The fixture's allocator has 128 blocks and this case allocates and then frees 50 of them,
+        // so every block is free again and the free percentage is exactly 100 (measured). That is
+        // above any threshold below 100, and a 100% threshold is not itself exceeded.
+        EXPECT_FLOAT_EQ(report.ratio, 100.0f) << "all 128 blocks are free after the frees";
+        EXPECT_TRUE(allocator->needs_compaction(30.0f)) << "100% free is above a 30% threshold";
+        EXPECT_TRUE(allocator->needs_compaction(99.0f)) << "100% free is above a 99% threshold";
+        EXPECT_FALSE(allocator->needs_compaction(100.0f)) << "100% free does not exceed a 100% threshold";
     }
 
     TEST_F(KVCacheAllocatorTest, AnalyzeFragmentationReport) {

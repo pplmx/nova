@@ -340,8 +340,21 @@ namespace nova {
                 RCMReorderer<double> reorderer;
                 auto result = reorderer.reorder(matrix);
 
-                EXPECT_GE(result.original_bandwidth, 0);
-                EXPECT_GE(result.reordered_bandwidth, 0);
+                // Both used to be `>= 0`, which is true by construction for a quantity defined as
+                // max(|i - j|) over the stored entries: returning 0 (an empty loop) or the full
+                // dimension (a wrong index) would both have passed.
+                //
+                // create_band_matrix(10, 5) has exactly bandwidth 5, so the original value is known.
+                // The reordered value is NOT asserted to be no larger: measured, RCM on this band
+                // matrix returns 8, wider than it started. Whether that is the right behaviour for
+                // RCM on an already-banded input is a question about the algorithm, not something
+                // this case should pin -- so the reordered value is only bounded by the matrix
+                // dimension, which is what the definition allows.
+                EXPECT_EQ(result.original_bandwidth, 5);
+                EXPECT_GT(result.reordered_bandwidth, 0) << "a reordered sparse matrix has some bandwidth";
+                EXPECT_LT(result.reordered_bandwidth, 10) << "bandwidth is max|i - j| over a 10x10 matrix";
+                EXPECT_DOUBLE_EQ(result.bandwidth_reduction_ratio, 1.0 - static_cast<double>(result.reordered_bandwidth) / result.original_bandwidth)
+                    << "the reported reduction must be the one implied by the two bandwidths";
             }
 
             TEST_F(RCMReordererTest, ReorderingPreservesNnz) {

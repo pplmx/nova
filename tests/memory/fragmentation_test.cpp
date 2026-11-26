@@ -22,8 +22,19 @@ namespace cuda::memory {
     TEST_F(FragmentationTest, AnalyzeFragmentation) {
         auto report = allocator->analyze_fragmentation();
 
-        EXPECT_GE(report.num_free_blocks, 0);
-        EXPECT_GE(report.ratio, 0.0f);
+        // Both assertions used to be `>= 0` on a freshly built allocator: num_free_blocks is an int
+        // and ratio a float, so the pair held for every value the implementation could return --
+        // including the all-zero report produced by a ratio branch that never runs or fields that
+        // are never filled. That is the same shape as the defect that makes needs_compaction()
+        // permanently false, so the case was blind to the failure it most needed to catch.
+        //
+        // The fixture builds 256 blocks and allocates none, so the answers are exact.
+        EXPECT_EQ(report.num_free_blocks, 256) << "every block is free in a fresh allocator";
+        EXPECT_FLOAT_EQ(report.ratio, 100.0f) << "all 256 blocks free is 100% fragmentation by this report's definition";
+        // The report measures free space in block_size_tokens units, not bytes (see
+        // analyze_fragmentation: total_free accumulates config_.block_size_tokens per free block).
+        EXPECT_FLOAT_EQ(report.avg_free_block_size, 16.0f) << "one free run of uniform blocks, measured in tokens";
+        EXPECT_FLOAT_EQ(report.largest_free_block_size, 16.0f);
     }
 
     TEST_F(FragmentationTest, NeedsCompactionThreshold) {
