@@ -81,16 +81,37 @@ namespace cuda::async {
 
         explicit operator bool() const { return data_ != nullptr; }
 
+        /// Reallocates, leaving the object empty if the new allocation fails.
+        ///
+        /// The previous form freed the current buffer and then allocated without clearing the
+        /// handle between the two:
+        ///
+        ///     if (data_) { cudaFreeHost(data_); }        // data_ still names the freed block
+        ///     size_ = count;
+        ///     if (count > 0) { CUDA_CHECK(cudaMallocHost(&data_, ...)); }   // throws here
+        ///
+        /// A failure therefore left data_ pointing at released memory and size_ already updated, so
+        /// the destructor freed the stale handle a second time and the object reported a size it did
+        /// not hold. The new allocation is taken first and only then swapped in, so the object is
+        /// either fully moved to the new buffer or left empty.
         void reset(size_t count) {
+            if (count == 0) {
+                if (data_) {
+                    cudaFreeHost(data_);
+                }
+                data_ = nullptr;
+                size_ = 0;
+                return;
+            }
+
+            T* fresh = nullptr;
+            CUDA_CHECK(cudaMallocHost(&fresh, count * sizeof(T)));
+
             if (data_) {
                 cudaFreeHost(data_);
             }
+            data_ = fresh;
             size_ = count;
-            if (count > 0) {
-                CUDA_CHECK(cudaMallocHost(&data_, count * sizeof(T)));
-            } else {
-                data_ = nullptr;
-            }
         }
 
         T* release() {

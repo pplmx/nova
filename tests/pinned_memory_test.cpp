@@ -1,5 +1,10 @@
 #include <gtest/gtest.h>
 #include "cuda/async/pinned_memory.h"
+
+#include "cuda_alloc_injection.h"
+
+#include <cuda_runtime.h>
+#include <stdexcept>
 #include "cuda/stream/stream.h"
 
 class PinnedMemoryTest : public ::testing::Test {
@@ -43,6 +48,44 @@ TEST_F(PinnedMemoryTest, SizeBytes) {
     cuda::async::PinnedMemory<double> mem(50);
 
     EXPECT_EQ(mem.size_bytes(), 50 * sizeof(double));
+}
+
+// reset() frees the current buffer and then allocates a new one, without clearing the handle in
+// between:
+//
+//     if (data_) { cudaFreeHost(data_); }        // data_ still points at the freed block
+//     size_ = count;
+//     if (count > 0) { CUDA_CHECK(cudaMallocHost(&data_, count * sizeof(T))); }   // throws here
+//
+// If the reallocation fails, the exception leaves data_ pointing at memory that was already
+// released, and size_ already updated. The destructor then calls cudaFreeHost on that stale handle
+// -- a double free -- and the object reports a size that does not match what it holds.
+TEST_F(PinnedMemoryTest, ResetLeavesTheObjectEmptyWhenTheReallocationFails) {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        (void)cudaGetLastError();
+        GTEST_SKIP() << "no CUDA device";
+    }
+    (void)cudaGetLastError();
+
+    // The allocation inside reset() is a template body compiled into this file, so --wrap does not
+    // reach it (the same limitation recorded in tests/cuda_alloc_injection.h for
+    // Benchmark::run()). Ask for a size the driver cannot satisfy instead: the failure is the
+    // driver's, not an injected one, so it arrives through the same throw.
+    cuda::async::PinnedMemory<float> buffer(16);
+    ASSERT_TRUE(static_cast<bool>(buffer)) << "the initial allocation must have succeeded";
+
+    const size_t impossible = static_cast<size_t>(-1) / sizeof(float) / 2;
+    EXPECT_THROW(buffer.reset(impossible), std::exception) << "an impossible size must fail the reallocation";
+
+    // Strong guarantee: the object keeps what it had. The defect was that it kept a handle to memory
+    // it had already released, together with the size it failed to allocate; keeping the original
+    // buffer intact is the behaviour that makes the failure recoverable.
+    EXPECT_TRUE(static_cast<bool>(buffer)) << "a failed reset must leave the object usable, not holding a freed handle";
+    EXPECT_EQ(buffer.size(), 16u) << "a failed reset must keep the previous size, not the one it failed to allocate";
+    EXPECT_NE(buffer.get(), nullptr);
+
+    (void)cudaGetLastError();
 }
 
 TEST_F(PinnedMemoryTest, MoveSemantics) {
