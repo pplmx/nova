@@ -583,6 +583,36 @@ namespace cuda::neural {
         EXPECT_THROW(bn.forward_training(in.data(), out.data(), 4, 0, nullptr), std::invalid_argument) << "spatial_size 0 divides by zero in inv_n";
     }
 
+    // forward_inference (the member function) computes its element count and both grids from
+    // batch_size and spatial_size with no validation, and neither launch is checked:
+    //
+    //     int n = batch_size * num_features_ * spatial_size;
+    //     inference_normalize_kernel<<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(...);
+    //     scale_bias_kernel<<<...>>>(...);
+    //
+    // With a zero extent n is 0, the grid is 0, and CUDA rejects the launch -- but the error is never
+    // read here, so it stays pending and surfaces on some later unrelated call. forward_training,
+    // backward and the free function sync_batch_norm_forward_inference all reject a non-positive
+    // extent; this member function was the one that did not, and the free function's own comment
+    // ("Every other entry point in this file validates its extents") was not true because of it.
+    TEST(SyncBatchNormExtentValidationTest, ForwardInferenceRejectsANonPositiveExtent) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        SyncBatchNorm bn(4);
+        cuda::memory::Buffer<float> in(64), out(64);
+
+        EXPECT_THROW(bn.forward_inference(in.data(), out.data(), 0, 8, nullptr), std::invalid_argument) << "a zero batch must be reported, not launched as a null grid";
+        EXPECT_THROW(bn.forward_inference(in.data(), out.data(), 4, 0, nullptr), std::invalid_argument) << "a zero spatial extent must be reported";
+        EXPECT_THROW(bn.forward_inference(in.data(), out.data(), -1, 8, nullptr), std::invalid_argument);
+
+        EXPECT_EQ(cudaGetLastError(), cudaSuccess) << "a refused call must not leave a pending launch error behind";
+    }
+
     // The constructor takes nine device buffers in a row. A constructor that throws does not run its
     // destructor, so a failure part way through used to leave every buffer taken before it with no
     // owner.

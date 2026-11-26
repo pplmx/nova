@@ -445,13 +445,27 @@ namespace cuda::neural {
     }
 
     void SyncBatchNorm::forward_inference(const float* input, float* output, int batch_size, int spatial_size, cudaStream_t stream) {
+        // Both grids come from n, and n is zero for a zero extent: the launches are rejected, and
+        // because neither was checked the error stayed pending and surfaced on some later, unrelated
+        // call. forward_training, backward and sync_batch_norm_forward_inference all reject a
+        // non-positive extent with this same message; this member function was the one that did not,
+        // which also made the free function's comment about "every other entry point" untrue.
+        if (batch_size <= 0 || spatial_size <= 0) {
+            throw ::std::invalid_argument(
+                "SyncBatchNorm::forward_inference: batch_size and spatial_size must be positive, "
+                "got batch_size="
+                + ::std::to_string(batch_size) + " spatial_size=" + ::std::to_string(spatial_size));
+        }
+
         int n = batch_size * num_features_ * spatial_size;
         int block_size = 256;
 
         inference_normalize_kernel<float>
             <<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(input, running_mean_, running_var_, output, batch_size, num_features_, spatial_size, eps_);
+        CUDA_CHECK(cudaGetLastError());
 
         scale_bias_kernel<float><<<(n + block_size - 1) / block_size, block_size, 0, stream>>>(output, gamma_, beta_, output, batch_size, num_features_, spatial_size);
+        CUDA_CHECK(cudaGetLastError());
     }
 
     void SyncBatchNorm::backward(const float* input, const float* d_output, float* d_input, float* d_gamma, float* d_beta, int batch_size, int spatial_size, cudaStream_t stream) {
