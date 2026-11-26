@@ -20,6 +20,16 @@ namespace cuda::inference {
         if (config_.max_model_len < 0) {
             throw ::std::invalid_argument("BlockManager: max_model_len must not be negative, got " + ::std::to_string(config_.max_model_len));
         }
+        // num_cpu_blocks sizes block_table_gpu_ through a size_t multiplication a few lines below,
+        // so a negative value asks for an enormous allocation and the caller reads an out-of-memory
+        // error from buffer-inl.h. num_gpu_blocks is the hand-out pool; a non-positive one cannot
+        // serve an allocation at all. Both are checked here so the message can name the field.
+        if (config_.num_cpu_blocks <= 0) {
+            throw ::std::invalid_argument("BlockManager: num_cpu_blocks must be positive, got " + ::std::to_string(config_.num_cpu_blocks));
+        }
+        if (config_.num_gpu_blocks <= 0) {
+            throw ::std::invalid_argument("BlockManager: num_gpu_blocks must be positive, got " + ::std::to_string(config_.num_gpu_blocks));
+        }
 
         max_blocks_per_sequence_ = (config_.max_model_len + config_.block_size - 1) / config_.block_size;
 

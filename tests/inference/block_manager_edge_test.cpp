@@ -78,6 +78,23 @@ namespace cuda::inference::test {
         EXPECT_THROW((void)BlockManager(config), std::invalid_argument) << "a zero block_size must be reported, not divided by";
     }
 
+    // The same constructor's other numeric fields, guarded for the same reason: num_cpu_blocks sizes
+    // block_table_gpu_ through a size_t multiplication, so a negative value became an allocation
+    // request the caller saw as "out of memory" from buffer-inl.h rather than as a bad config.
+    TEST(BlockManagerConfigValidationTest, ANonPositiveBlockCountIsRefused) {
+        BlockManagerConfig config = small_block_manager_config();
+        config.num_cpu_blocks = -1;
+        EXPECT_THROW((void)BlockManager(config), std::invalid_argument) << "a negative cpu block count must be reported, not multiplied into a size_t";
+
+        config = small_block_manager_config();
+        config.num_gpu_blocks = 0;
+        EXPECT_THROW((void)BlockManager(config), std::invalid_argument);
+
+        config = small_block_manager_config();
+        config.max_model_len = -1;
+        EXPECT_THROW((void)BlockManager(config), std::invalid_argument);
+    }
+
     TEST(BlockManagerConfigValidationTest, ANegativeBlockSizeIsRefused) {
         BlockManagerConfig config = small_block_manager_config();
         config.block_size = -8;
