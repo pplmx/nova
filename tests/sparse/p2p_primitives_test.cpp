@@ -80,6 +80,30 @@ namespace cuda::pipeline::test {
             GTEST_SKIP() << "needs two visible devices, found " << device_count;
         }
 
+        // Check the injection reaches this translation unit before asserting on it: --wrap resolves
+        // at link time and a call compiled into the caller bypasses it entirely, in which case this
+        // case would assert on a path it never entered.
+        cuda_test::reset_event_count();
+        cuda_test::fail_event_after(0);
+        cudaEvent_t probe = nullptr;
+        const bool injection_works = cudaEventCreate(&probe) != cudaSuccess;
+        cuda_test::stop_failing_events();
+        if (probe != nullptr) {
+            cudaEventDestroy(probe);
+        }
+        if (!injection_works) {
+            GTEST_SKIP() << "cudaEventCreate injection does not reach this translation unit";
+        }
+
+        // The probe above only shows the wrapper is reachable from this file; P2PSendRecv lives in a
+        // static library and --wrap only rewrites symbols left unresolved at link time. Under -O3 the
+        // library's own call can be inlined past the wrapper, in which case the injection has no
+        // effect on the subject. That is a property of the build, so restrict the case to
+        // unoptimised builds instead of guessing.
+#ifdef __OPTIMIZE__
+        GTEST_SKIP() << "cudaEventCreate injection is not reliable in an optimised build (library call may be inlined past --wrap)";
+#endif
+
         cuda_test::reset_event_count();
 
         // The first creation succeeds, the second fails.
