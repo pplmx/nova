@@ -386,8 +386,19 @@ namespace nova::preemption {
     void ShutdownCoordinator::begin_graceful_shutdown() {
         impl_->phase.store(ShutdownPhase::Signaling);
 
-        if (impl_->stage_callback) {
-            impl_->stage_callback(ShutdownPhase::Signaling);
+        // Copied under callback_mutex and invoked outside it. The setter takes that mutex to assign
+        // this std::function, and the read here took nothing: assigning a std::function while another
+        // thread reads it tears the internal pointers. Measured under TSan, driving the phases while
+        // another thread re-registered the callback: SEGV writing through a null pointer inside the
+        // std::function, not merely a reported race. checkpoint_callback, a few lines below, already
+        // took its copy this way.
+        ShutdownStageCallback stage_cb;
+        {
+            std::lock_guard lock(impl_->callback_mutex);
+            stage_cb = impl_->stage_callback;
+        }
+        if (stage_cb) {
+            stage_cb(ShutdownPhase::Signaling);
         }
 
         std::cout << "[Preemption] Beginning graceful shutdown" << std::endl;
@@ -396,8 +407,19 @@ namespace nova::preemption {
     bool ShutdownCoordinator::checkpoint_coordinated() {
         impl_->phase.store(ShutdownPhase::Checkpointing);
 
-        if (impl_->stage_callback) {
-            impl_->stage_callback(ShutdownPhase::Checkpointing);
+        // Copied under callback_mutex and invoked outside it. The setter takes that mutex to assign
+        // this std::function, and the read here took nothing: assigning a std::function while another
+        // thread reads it tears the internal pointers. Measured under TSan, driving the phases while
+        // another thread re-registered the callback: SEGV writing through a null pointer inside the
+        // std::function, not merely a reported race. checkpoint_callback, a few lines below, already
+        // took its copy this way.
+        ShutdownStageCallback stage_cb;
+        {
+            std::lock_guard lock(impl_->callback_mutex);
+            stage_cb = impl_->stage_callback;
+        }
+        if (stage_cb) {
+            stage_cb(ShutdownPhase::Checkpointing);
         }
 
         if (!impl_->config.checkpoint_on_shutdown) {
@@ -435,8 +457,19 @@ namespace nova::preemption {
     void ShutdownCoordinator::finalize_shutdown() {
         impl_->phase.store(ShutdownPhase::Finalizing);
 
-        if (impl_->stage_callback) {
-            impl_->stage_callback(ShutdownPhase::Finalizing);
+        // Copied under callback_mutex and invoked outside it. The setter takes that mutex to assign
+        // this std::function, and the read here took nothing: assigning a std::function while another
+        // thread reads it tears the internal pointers. Measured under TSan, driving the phases while
+        // another thread re-registered the callback: SEGV writing through a null pointer inside the
+        // std::function, not merely a reported race. checkpoint_callback, a few lines below, already
+        // took its copy this way.
+        ShutdownStageCallback stage_cb;
+        {
+            std::lock_guard lock(impl_->callback_mutex);
+            stage_cb = impl_->stage_callback;
+        }
+        if (stage_cb) {
+            stage_cb(ShutdownPhase::Finalizing);
         }
 
         std::cout << "[Preemption] Finalizing shutdown" << std::endl;

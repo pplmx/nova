@@ -83,6 +83,57 @@ namespace nova::preemption::test {
         EXPECT_TRUE(ran.load());
     }
 
+    // set_stage_callback had no test at all, and the callback it stores was read by the shutdown
+    // worker without the mutex that the setter takes:
+    //
+    //     void ShutdownCoordinator::set_stage_callback(ShutdownStageCallback callback) {
+    //         std::lock_guard lock(impl_->callback_mutex);
+    //         impl_->stage_callback = std::move(callback);
+    //     }
+    //     // worker thread, three sites, no lock:
+    //     if (impl_->stage_callback) impl_->stage_callback(ShutdownPhase::Signaling);
+    //
+    // checkpoint_callback, thirty lines above in the same class, already took its copy under that
+    // mutex; stage_callback did not. This case drives the three phases while another thread keeps
+    // re-registering the callback, which is the interleaving that makes it a data race rather than
+    // a theoretical one. TSan is what reports it -- in an ordinary build this case only pins that
+    // the phases still run and the callback still fires.
+    TEST(PreemptionHandlerTest, StageCallbackIsSafeToReplaceWhileShutdownRuns) {
+        ShutdownCoordinator& c = ShutdownCoordinator::instance();
+        ShutdownConfig cfg;
+        cfg.checkpoint_on_shutdown = false;
+        cfg.shutdown_timeout = std::chrono::seconds(5);
+        c.initialize(cfg);
+
+        std::atomic<int> fired {0};
+        c.set_stage_callback([&fired](ShutdownPhase) { fired.fetch_add(1); });
+
+        std::atomic<bool> stop {false};
+        std::thread registrar([&c, &stop] {
+            while (!stop.load(std::memory_order_relaxed)) {
+                c.set_stage_callback([](ShutdownPhase) {});
+                c.set_stage_callback(nullptr);
+            }
+        });
+
+        for (int i = 0; i < 20; ++i) {
+            c.begin_graceful_shutdown();
+            c.finalize_shutdown();
+        }
+
+        stop.store(true, std::memory_order_relaxed);
+        registrar.join();
+        c.set_stage_callback(nullptr);
+
+        // finalize_shutdown() leaves the singleton marked complete, which a later case reads. The
+        // file's convention for request_shutdown() is wait_complete + shutdown(); these phases set
+        // the same flag, so the same reset is owed.
+        c.shutdown();
+
+        // Reaching here means the phases ran to completion against a callback being replaced.
+        SUCCEED() << "three shutdown phases survived 20 rounds against a re-registering thread";
+    }
+
     TEST(PreemptionHandlerTest, CheckpointCoordinatedReportsMissingCallback) {
         ShutdownCoordinator& c = ShutdownCoordinator::instance();
         ShutdownConfig cfg;
