@@ -253,6 +253,14 @@ namespace cuda::performance::bandwidth {
         if (samples_.empty()) {
             return 0.0;
         }
+        // This was the one accessor in the group without a peak check, while h2d_, d2h_ and d2d_ all
+        // open with `if (peak_ <= 0.0) return 0.0;`. set_peak_bandwidth() documents itself as taking
+        // values read from the device, so a zero is a plausible input rather than a caller mistake;
+        // the division then produced an infinity that dashboard_exporter sums into the report.
+        // Measured: utilization_percent() == inf with peak_d2d_ == 0 and one sample present.
+        if (peak_d2d_ <= 0.0) {
+            return 0.0;
+        }
         return (average_bandwidth_gbs() / peak_d2d_) * 100.0;
     }
 

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include <cuda_runtime.h>
 #include <cuda/performance/bandwidth/roofline_model.h>
 #include <cuda/performance/bandwidth/cache_analyzer.h>
@@ -151,6 +152,32 @@ namespace cuda::performance::bandwidth::test {
         double util = tracker.utilization_percent();
         EXPECT_GE(util, 0.0);
         EXPECT_LE(util, 100.0);
+    }
+
+    // utilization_percent() is the one accessor in this group that does not check its peak:
+    //
+    //     double utilization_percent() const {
+    //         if (samples_.empty()) return 0.0;
+    //         return (average_bandwidth_gbs() / peak_d2d_) * 100.0;    // peak_d2d_ == 0 -> inf
+    //     }
+    //
+    // h2d_, d2h_ and d2d_utilization_percent() all open with `if (peak_ <= 0.0) return 0.0;`.
+    // set_peak_bandwidth documents itself as taking values the caller reads from the device, so a
+    // zero is a plausible input rather than a programming error, and the result is an infinity that
+    // dashboard_exporter sums into the exported report.
+    TEST_F(BandwidthUtilizationTest, UtilizationPercentIsFiniteWhenThePeakIsUnknown) {
+        tracker.set_peak_bandwidth(20.0, 20.0, 0.0);
+        tracker.add_sample(500.0, 1e9, 1e9);
+
+        const double util = tracker.utilization_percent();
+        EXPECT_TRUE(std::isfinite(util)) << "got " << util << " with a zero peak";
+        EXPECT_DOUBLE_EQ(util, 0.0) << "an unknown peak cannot express a utilization";
+
+        // The directional accessors already answer this way.
+        tracker.set_peak_bandwidth(0.0, 0.0, 0.0);
+        tracker.add_sample(500.0, 1e9, 1e9);
+        EXPECT_DOUBLE_EQ(tracker.h2d_utilization_percent(), 0.0);
+        EXPECT_DOUBLE_EQ(tracker.d2d_utilization_percent(), 0.0);
     }
 
     TEST_F(BandwidthUtilizationTest, LowUtilizationWarning) {
