@@ -26,15 +26,22 @@ namespace cuda::production {
         L2PersistenceManager(const L2PersistenceManager&) = delete;
         L2PersistenceManager& operator=(const L2PersistenceManager&) = delete;
 
+        /// persistence_size_ travels with the rest. Without it a moved-to manager reported
+        /// is_active() == true with a size of zero while the moved-from one reported a non-zero size
+        /// and is_active() == false -- both silently wrong for a caller computing L2 occupancy from
+        /// them, and the reason the existing MoveSemantics case did not catch it is that it only
+        /// checked is_active().
         L2PersistenceManager(L2PersistenceManager&& other) noexcept
             : saved_config_(std::exchange(other.saved_config_, std::nullopt)),
-              active_(std::exchange(other.active_, false)) {}
+              active_(std::exchange(other.active_, false)),
+              persistence_size_(std::exchange(other.persistence_size_, 0)) {}
 
         L2PersistenceManager& operator=(L2PersistenceManager&& other) noexcept {
             if (this != &other) {
                 restore_defaults();
                 saved_config_ = std::exchange(other.saved_config_, std::nullopt);
                 active_ = std::exchange(other.active_, false);
+                persistence_size_ = std::exchange(other.persistence_size_, 0);
             }
             return *this;
         }

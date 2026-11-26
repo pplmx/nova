@@ -61,6 +61,29 @@ TEST_F(L2PersistenceTest, MoveSemantics) {
 
     EXPECT_TRUE(manager2.is_active());
 
+    // The size has to move with the activation state. MoveSemantics above only checked is_active(),
+    // which is why this went unnoticed: the move constructor transfers saved_config_ and active_ but
+    // not persistence_size_, so a moved-to manager reports the new object's zero while claiming to be
+    // active, and a moved-from one reports a non-zero size while claiming to be inactive. Both are
+    // silently wrong numbers for a caller computing L2 occupancy from them.
+    EXPECT_EQ(manager2.persistence_size(), 1024u) << "the size must travel with the active state";
+    EXPECT_FALSE(manager1.is_active()) << "the source must be left inactive";
+    EXPECT_EQ(manager1.persistence_size(), 0u) << "the source must not still claim a size";
+
+    manager2.restore_defaults();
+}
+
+TEST_F(L2PersistenceTest, MoveAssignmentTransfersTheSize) {
+    cuda::production::L2PersistenceManager manager1;
+    manager1.set_persistence_size(2048);
+
+    cuda::production::L2PersistenceManager manager2;
+    manager2 = std::move(manager1);
+
+    EXPECT_TRUE(manager2.is_active());
+    EXPECT_EQ(manager2.persistence_size(), 2048u) << "move assignment must carry the size too";
+    EXPECT_EQ(manager1.persistence_size(), 0u);
+
     manager2.restore_defaults();
 }
 
