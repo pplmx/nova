@@ -188,6 +188,29 @@ namespace cuda::neural::loss::test {
         EXPECT_GE(loss, 0.0f);
     }
 
+    // contrastive_loss guards its temperature but not the batch. With batch_size == 0 both loops are
+    // skipped, sum_exp_pos and sum_exp_neg stay 0, and the final
+    //
+    //     float loss = -logf(sum_exp_pos / (sum_exp_pos + sum_exp_neg));    // 0/0
+    //
+    // returns NaN as though it were a loss. The two siblings in this file that also take a batch --
+    // cross_entropy_loss and focal_loss -- both return 0.0f for an empty batch, which is the answer
+    // the mean of no pairs has.
+    TEST_F(LossFunctionsTest, ContrastiveLossReportsZeroForAnEmptyBatch) {
+        ContrastiveLossConfig config;
+        config.embedding_dim = 64;
+
+        std::vector<float> empty_embeddings, empty_output;
+        const float loss = contrastive_loss(empty_embeddings.data(), empty_embeddings.data(), empty_output.data(), 0, 64, config, stream_);
+
+        EXPECT_FALSE(std::isnan(loss)) << "an empty batch returned NaN as a loss value";
+        EXPECT_FLOAT_EQ(loss, 0.0f);
+
+        // A negative batch has no meaning either; both siblings refuse it rather than constructing a
+        // vector from it.
+        EXPECT_THROW((void)contrastive_loss(empty_embeddings.data(), empty_embeddings.data(), empty_output.data(), -1, 64, config, stream_), std::invalid_argument);
+    }
+
     TEST_F(LossFunctionsTest, CrossEntropyLossFunction) {
         CrossEntropyConfig config;
         config.num_classes = 3;

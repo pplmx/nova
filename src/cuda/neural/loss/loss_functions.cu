@@ -520,8 +520,22 @@ namespace cuda::neural::loss {
         if (!(config.temperature > 0.0f)) {
             throw std::invalid_argument("contrastive_loss: config.temperature must be positive, got " + std::to_string(config.temperature));
         }
+        // The batch was unchecked while the temperature was guarded. An empty batch skips both loops,
+        // leaving sum_exp_pos and sum_exp_neg at zero, and the final expression
+        //
+        //     -logf(sum_exp_pos / (sum_exp_pos + sum_exp_neg))     // 0/0
+        //
+        // returned NaN as a loss value. A negative one reached std::vector's size parameter and
+        // surfaced as length_error naming the container. cross_entropy_loss and focal_loss, the two
+        // siblings here that also take a batch, return 0.0f for an empty one and refuse a negative.
+        if (batch_size < 0) {
+            throw std::invalid_argument("contrastive_loss: batch_size must not be negative, got " + std::to_string(batch_size));
+        }
+        if (batch_size == 0) {
+            return 0.0f;
+        }
 
-        std::vector<float> similarities(batch_size);
+        std::vector<float> similarities(static_cast<size_t>(batch_size));
 
         for (int b = 0; b < batch_size; ++b) {
             float dot = 0.0f;
