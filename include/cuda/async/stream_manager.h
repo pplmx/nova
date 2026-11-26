@@ -26,9 +26,26 @@ namespace cuda::async {
         int max_priority;
     };
 
+    /// The priority bounds for this device, in the order std::clamp requires: min_priority is the
+    /// LOWEST numerical value (the highest-priority stream) and max_priority the HIGHEST.
+    ///
+    /// cudaDeviceGetStreamPriorityRange reports the pair the other way round -- its first out
+    /// parameter is the *least* priority, which is the numerically larger value. Passing them
+    /// straight into a struct named min/max therefore inverted the range: measured on this machine
+    /// min_priority = 0 and max_priority = -5, so std::clamp(priority, 0, -5) had lo > hi and
+    /// violated its precondition -- undefined behaviour, and in practice the clamping never took
+    /// effect. The suite's own case asserts the inverted relationship (max - min <= 0), which is how
+    /// the bug stayed visible without being recognised.
     inline PriorityRange get_stream_priority_range() {
+        int least_priority = 0;
+        int greatest_priority = 0;
+        CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&least_priority, &greatest_priority));
+
         PriorityRange range;
-        CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&range.min_priority, &range.max_priority));
+        // greatest_priority is the most privileged stream, which CUDA spells with the smaller
+        // number; the driver reports it second.
+        range.min_priority = greatest_priority;
+        range.max_priority = least_priority;
         return range;
     }
 

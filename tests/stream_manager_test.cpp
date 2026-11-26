@@ -17,8 +17,34 @@ TEST_F(StreamManagerTest, GetStreamReturnsValidHandle) {
 TEST_F(StreamManagerTest, GetStreamPriorityRangeReturnsValidRange) {
     auto range = cuda::async::get_stream_priority_range();
 
-    int range_size = range.max_priority - range.min_priority;
-    EXPECT_TRUE(range_size <= 0);
+    // std::clamp(v, lo, hi) requires lo <= hi, so the bounds have to be ordered that way. This case
+    // used to assert `max_priority - min_priority <= 0`, i.e. the opposite: the accessor forwarded
+    // cudaDeviceGetStreamPriorityRange's two out parameters straight into a struct named min/max,
+    // but that call reports the *least* priority first, and it is the numerically larger value.
+    // Measured: min_priority = 0, max_priority = -5, so get_stream()'s std::clamp had lo > hi and
+    // its precondition was violated.
+    EXPECT_LE(range.min_priority, range.max_priority) << "std::clamp needs lo <= hi; the accessor must order the bounds, not mirror CUDA's argument order";
+    EXPECT_LE(range.min_priority, 0);
+    EXPECT_LE(range.max_priority, 0);
+}
+
+// With the bounds ordered correctly, clamping is a no-op for in-range priorities and pulls
+// out-of-range ones inside. Before the fix the bounds were inverted, so std::clamp's precondition was
+// violated and the request was passed through untested -- an extreme priority reached the driver
+// unchanged instead of being clamped.
+TEST_F(StreamManagerTest, GetStreamClampsAPriorityOutsideTheRange) {
+    auto range = cuda::async::get_stream_priority_range();
+    ASSERT_LE(range.min_priority, range.max_priority);
+
+    cuda::async::StreamManager manager;
+
+    // Wildly out of range in both directions; both must produce a usable stream rather than
+    // forwarding the value.
+    EXPECT_NE(manager.get_stream(range.min_priority - 100), nullptr);
+    EXPECT_NE(manager.get_stream(range.max_priority + 100), nullptr);
+    EXPECT_NE(manager.get_stream(range.min_priority), nullptr);
+    EXPECT_NE(manager.get_stream(range.max_priority), nullptr);
+    CUDA_CHECK(cudaGetLastError());
 }
 
 TEST_F(StreamManagerTest, InitializeCreatesMultipleStreams) {
