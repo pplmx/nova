@@ -412,8 +412,13 @@ namespace cuda::neural {
 
         compute_mean_kernel<float><<<grid_size, block_size, 0, stream>>>(input, saved_mean_, batch_size, num_features_, spatial_size, inv_n);
 
+        // device_count() reports 0 until the mesh has been initialized, so asking it here -- before
+        // anything has called initialize() -- made this branch unreachable on a machine with any
+        // number of GPUs: every rank normalized with its local statistics only, and the loss still
+        // fell, which is why nothing noticed. initialize() is idempotent and cheap; call it first.
         auto& mesh = mesh::DeviceMesh::instance();
-        int device_count = mesh.device_count();
+        mesh.initialize();
+        const int device_count = mesh.device_count();
 
         if (device_count > 1) {
             distributed::DistributedReduce::all_reduce_async(saved_mean_, saved_mean_, num_features_, distributed::ReductionOp::Sum, stream);
@@ -525,7 +530,11 @@ namespace cuda::neural {
         // shard, so fold 1/num_ranks into inv_n to match a single-rank global batch
         // (task-v17c-syncbn-multigpu-backward). d_gamma/d_beta are bare sums and are
         // all-reduced below independently of inv_n.
-        int device_count = mesh::DeviceMesh::instance().device_count();
+        // Same as forward_training: without initialize() the count is 0 and the all-reduce below
+        // never runs, so a multi-GPU backward produced per-rank gradients.
+        auto& mesh = mesh::DeviceMesh::instance();
+        mesh.initialize();
+        const int device_count = mesh.device_count();
         if (device_count > 1) {
             inv_n /= static_cast<float>(device_count);
         }

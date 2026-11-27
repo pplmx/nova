@@ -64,6 +64,31 @@ namespace cuda::neural {
         int original_device_ = 0;
     };
 
+    // forward_training and backward both read DeviceMesh::device_count() to decide whether to
+    // all-reduce. device_count() reports 0 until the mesh has been initialized, and neither entry
+    // point called initialize() -- only the test fixture did, with a comment saying so
+    // ("device_count() is 0 until the mesh is initialized"), which is why the gap never showed up
+    // here.
+    //
+    // The singleton cannot be un-initialized, so this case pins the property the fix relies on:
+    // initialize() is idempotent and leaves a usable count.
+    TEST(SyncBatchNormMeshTest, InitializingTheMeshIsIdempotent) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        auto& mesh = mesh::DeviceMesh::instance();
+        mesh.initialize();
+        const int first = mesh.device_count();
+        EXPECT_GE(first, 1) << "an initialized mesh reports the devices it found";
+
+        mesh.initialize();
+        EXPECT_EQ(mesh.device_count(), first) << "a second initialize must not change the count";
+    }
+
     TEST_F(SyncBatchNormTest, Constructor) {
         SyncBatchNorm bn(128, 1e-5f, 0.1f);
         EXPECT_EQ(bn.num_features(), 128);
