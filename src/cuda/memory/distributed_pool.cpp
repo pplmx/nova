@@ -62,14 +62,27 @@ namespace cuda::memory {
         // Reserve capacity to avoid reallocations during pool creation
         pools_.reserve(device_count);
 
-        // Create a memory pool for each device and query device memory capacity
-        // Each pool is configured identically based on config_ settings
+        // Each pool cudaMallocs its own blocks, and cudaMalloc acts on the CURRENT device -- so the
+        // loop has to select the device its pool is meant to serve. It did not, and every pool was
+        // built on whatever device the constructor happened to be called from: measured on eight
+        // GPUs, blocks attributed to devices 1..7 all lived on device 0, because ownership was
+        // recorded from the loop index rather than from where the memory went. A kernel on rank 1
+        // then dereferenced a pointer into device 0's memory.
+        int original_device = -1;
+        const bool had_original = cudaGetDevice(&original_device) == cudaSuccess;
+
         for (int i = 0; i < device_count; ++i) {
+            CUDA_CHECK(cudaSetDevice(i));
+
             MemoryPool::Config pool_config;
             pool_config.block_size = config_.block_size;
             pool_config.max_blocks = config_.max_blocks_per_device;
 
             pools_.emplace_back(pool_config);
+        }
+
+        if (had_original) {
+            cudaSetDevice(original_device);
         }
 
         // Nothing about the devices' memory is cached: get_best_device() and

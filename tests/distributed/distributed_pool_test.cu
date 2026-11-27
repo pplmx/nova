@@ -67,6 +67,47 @@ TEST_F(DistributedMemoryPoolTest, AllocateOnSpecificDevice) {
     }
 }
 
+// Every pool was constructed on whatever device happened to be current, because the loop
+// never selected the device its pool is meant to serve:
+//
+//     for (int i = 0; i < device_count; ++i) {
+//         pools_.emplace_back(pool_config);      // cudaMalloc on the CURRENT device
+//     }
+//
+// Ownership was still recorded from the loop index, so the bookkeeping said device 1 while
+// the block sat on device 0. The existing cases only compare get_ownership() against the
+// device id that was asked for -- they never ask the driver where the memory actually is,
+// which is the one question that distinguishes the two.
+TEST_F(DistributedMemoryPoolTest, AllocationLivesOnTheDeviceItIsAttributedTo) {
+    auto& mesh = cuda::mesh::DeviceMesh::instance();
+    mesh.initialize();
+    if (mesh.device_count() < 2) {
+        GTEST_SKIP() << "needs two devices";
+    }
+
+    int original = -1;
+    CUDA_CHECK(cudaGetDevice(&original));
+    CUDA_CHECK(cudaSetDevice(0));
+
+    DistributedMemoryPool::Config config;
+    config.block_size = 1 << 20;
+    config.max_blocks_per_device = 2;
+    DistributedMemoryPool pool(config);
+    CUDA_CHECK(cudaSetDevice(original));
+
+    for (int device_id = 0; device_id < mesh.device_count(); ++device_id) {
+        void* ptr = pool.allocate(1024, device_id);
+        ASSERT_NE(ptr, nullptr);
+
+        cudaPointerAttributes attributes {};
+        ASSERT_EQ(cudaPointerGetAttributes(&attributes, ptr), cudaSuccess) << "cannot ask the driver about the block";
+        EXPECT_EQ(attributes.device, device_id) << "a block attributed to device " << device_id << " actually lives on device " << attributes.device;
+
+        pool.deallocate(ptr);
+    }
+    (void)cudaGetLastError();
+}
+
 TEST_F(DistributedMemoryPoolTest, PerDeviceAllocationTracking) {
     // Allocate from multiple devices
     void* ptr0 = pool_->allocate(1024, 0);
