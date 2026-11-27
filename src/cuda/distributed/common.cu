@@ -96,6 +96,12 @@ namespace cuda::distributed {
         // every stream and event created before it unreferenced: the vectors held them, but
         // nothing released them, because the destructor only runs on a fully constructed object.
         // Release the partial set on the way out.
+        // cudaSetDevice is per-thread state, so the loop has to put the caller's device back:
+        // leaving it on the last device made every subsequent kernel and allocation of the calling
+        // thread land there.
+        int caller_device = -1;
+        const bool had_caller_device = cudaGetDevice(&caller_device) == cudaSuccess;
+
         try {
             for (int i = 0; i < device_count; ++i) {
                 // Set device before creating stream/event
@@ -118,7 +124,14 @@ namespace cuda::distributed {
                     streams_[i] = nullptr;
                 }
             }
+            if (had_caller_device) {
+                (void)cudaSetDevice(caller_device);
+            }
             throw;
+        }
+
+        if (had_caller_device) {
+            (void)cudaSetDevice(caller_device);
         }
 
         initialized_ = true;
@@ -160,9 +173,17 @@ namespace cuda::distributed {
             streams = streams_;
         }
 
+        int caller_device = -1;
+        const bool had_caller_device = cudaGetDevice(&caller_device) == cudaSuccess;
+
         for (size_t i = 0; i < streams.size(); ++i) {
             CUDA_CHECK(cudaSetDevice(static_cast<int>(i)));
             CUDA_CHECK(cudaStreamSynchronize(streams[i]));
+        }
+
+        // Synchronising every device's streams must not leave the caller pinned to the last one.
+        if (had_caller_device) {
+            (void)cudaSetDevice(caller_device);
         }
     }
 
@@ -182,8 +203,15 @@ namespace cuda::distributed {
 
         // Set destination device and make it wait on source device's event. Outside the
         // lock: cudaStreamWaitEvent is a driver call and must not block other readers.
+        int caller_device = -1;
+        const bool had_caller_device = cudaGetDevice(&caller_device) == cudaSuccess;
+
         CUDA_CHECK(cudaSetDevice(dst_device));
         CUDA_CHECK(cudaStreamWaitEvent(dst_stream, event, 0));
+
+        if (had_caller_device) {
+            (void)cudaSetDevice(caller_device);
+        }
     }
 
 }  // namespace cuda::distributed

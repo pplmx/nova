@@ -21,6 +21,8 @@
 
 #include <gtest/gtest.h>
 
+#include "cuda/device/error.h"
+
 #include <cuda_runtime.h>
 
 #include <stdexcept>
@@ -39,6 +41,53 @@ namespace mesh_streams_partial_init_test {
         }
 
     }  // namespace
+
+    // cudaSetDevice is per-thread state. synchronize_all() and wait_event() both loop over the
+    // per-device handles, and neither put the caller's device back -- so after either the calling
+    // thread kept running on whichever device happened to be last. Every kernel and allocation
+    // issued afterwards went to the wrong GPU, with no error, because each one is individually
+    // legal.
+    //
+    // The singleton has already been initialized as a single device by the cases above, and a
+    // second initialize() is ignored, so the loop bodies here run once. That still pins the
+    // contract: a function that changes the current device must put it back.
+    TEST(MeshStreamsPartialInitTest, SynchronizeAllAndWaitEventRestoreTheCallersDevice) {
+        if (!device_available()) {
+            GTEST_SKIP() << "no CUDA device";
+        }
+
+        CUDA_CHECK(cudaSetDevice(0));
+        int expected = -1;
+        CUDA_CHECK(cudaGetDevice(&expected));
+        ASSERT_EQ(expected, 0);
+
+        // The singleton is initialized as a single device by the cases above, and a second
+        // initialize() is ignored -- so with one device the loop runs once, lands on device 0, and
+        // a missing restore is indistinguishable from a working one. This case therefore needs
+        // several devices to have any power at all; when the singleton was already pinned to one,
+        // it skips rather than pretending.
+        auto& streams = cuda::distributed::MeshStreams::instance();
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count < 2) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "needs two devices";
+        }
+        (void)cudaGetLastError();
+        streams.initialize(device_count);
+        if (streams.device_count() < 2) {
+            GTEST_SKIP() << "the singleton was already initialized with a single device by an earlier case";
+        };
+
+        streams.synchronize_all();
+        int after_synchronize = -1;
+        CUDA_CHECK(cudaGetDevice(&after_synchronize));
+        EXPECT_EQ(after_synchronize, 0) << "synchronize_all() left the caller on device " << after_synchronize;
+
+        streams.wait_event(0, 0, streams.get_event(0));
+        int after_wait = -1;
+        CUDA_CHECK(cudaGetDevice(&after_wait));
+        EXPECT_EQ(after_wait, 0) << "wait_event() left the caller on device " << after_wait;
+    }
 
     TEST(MeshStreamsPartialInitTest, InitialisingGivesOneStreamAndEventPerDevice) {
         if (!device_available()) {
