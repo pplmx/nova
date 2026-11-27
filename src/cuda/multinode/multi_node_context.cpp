@@ -51,6 +51,26 @@ namespace cuda::multinode {
             }
         }
 
+        /// Copies send into recv for the null-comms fallback, choosing the right arm for where the
+        /// buffers actually live.
+        ///
+        /// The fallback used std::memcpy unconditionally. That is a host function: handing it a
+        /// cudaMalloc'd pointer is an immediate illegal access (measured as a core dump), and the
+        /// comment calling this "single-rank or test stubs" was never a statement about the buffer
+        /// location -- a single-rank device all_reduce is exactly the case that has device buffers.
+        /// Host buffers must keep working too, so the choice is made by asking the driver.
+        void copy_for_identity(void* recv_buf, const void* send_buf, size_t bytes) {
+            cudaPointerAttributes recv_attr {};
+            const bool recv_known = cudaPointerGetAttributes(&recv_attr, recv_buf) == cudaSuccess;
+            if (!recv_known || recv_attr.type == cudaMemoryTypeUnregistered || recv_attr.type == cudaMemoryTypeHost) {
+                (void)cudaGetLastError();  // cudaPointerGetAttributes sets an error for unknown pointers
+                std::memcpy(recv_buf, send_buf, bytes);
+                return;
+            }
+            CUDA_CHECK(cudaMemcpy(recv_buf, send_buf, bytes, cudaMemcpyDeviceToDevice));
+            CUDA_CHECK(cudaStreamSynchronize(nullptr));
+        }
+
     }  // namespace
 
     MultiNodeContext& MultiNodeContext::get_instance() {
@@ -215,11 +235,11 @@ namespace cuda::multinode {
         // Null comms (e.g. single-rank or test stubs): all_reduce is the identity,
         // so fall back to a local copy of the correct element count.
         if (send_buf != recv_buf && count > 0) {
-            std::memcpy(recv_buf, send_buf, count * nccl_type_size(dtype));
+            copy_for_identity(recv_buf, send_buf, count * nccl_type_size(dtype));
         }
 #else
         if (send_buf != recv_buf && count > 0) {
-            std::memcpy(recv_buf, send_buf, count * nccl_type_size(dtype));
+            copy_for_identity(recv_buf, send_buf, count * nccl_type_size(dtype));
         }
         (void)op;
 #endif

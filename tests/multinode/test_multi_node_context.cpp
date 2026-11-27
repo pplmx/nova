@@ -10,6 +10,11 @@
 
 #include "cuda/multinode/multi_node_context.h"
 
+#include <cuda/nccl/nccl_types.h>
+
+#include "cuda/memory/buffer.h"
+#include "cuda/memory/buffer-inl.h"
+
 #include "cuda_alloc_injection.h"
 
 #include <cuda_runtime.h>
@@ -277,6 +282,39 @@ namespace cuda::multinode {
             for (size_t i = written; i < recv.size(); ++i) {
                 ASSERT_EQ(recv[i], 0xCD) << c.name << " wrote past its own count at byte " << i;
             }
+        }
+    }
+
+    // The null-comms fallback copies send into recv with std::memcpy, which is a host function. The
+    // fallback exists for single-rank and stub use, where both buffers are allowed to be DEVICE
+    // pointers -- the two comms being null says nothing about where the data lives. Handing a
+    // cudaMalloc'd buffer to std::memcpy is an immediate illegal access, not a wrong result.
+    //
+    // The case drives the fallback with device buffers; the existing
+    // AllReduceWithNullComms case uses host vectors and stays valid, so the fix has to keep both
+    // working rather than simply switching to cudaMemcpy.
+    TEST_F(HierarchicalAllReduceTest, AllReduceWithNullCommsAcceptsDeviceBuffers) {
+        int device_count = 0;
+        if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+            (void)cudaGetLastError();
+            GTEST_SKIP() << "no CUDA device";
+        }
+        (void)cudaGetLastError();
+
+        HierarchicalAllReduce reducer(nullptr, nullptr, nullptr, nullptr);
+
+        constexpr size_t kCount = 16;
+        std::vector<float> host_send(kCount, 3.5f), host_recv(kCount, 0.0f);
+        cuda::memory::Buffer<float> d_send(kCount), d_recv(kCount);
+        d_send.copy_from(host_send.data(), kCount);
+        d_recv.fill(0.0f);
+
+        ASSERT_NO_THROW(reducer.all_reduce(d_send.data(), d_recv.data(), kCount, ::ncclFloat32, 0)) << "a device-to-device identity copy must not go through std::memcpy";
+        CUDA_CHECK(cudaStreamSynchronize(nullptr));
+
+        d_recv.copy_to(host_recv.data(), kCount);
+        for (size_t i = 0; i < kCount; ++i) {
+            ASSERT_EQ(host_recv[i], 3.5f) << "element " << i << " was not copied";
         }
     }
 
