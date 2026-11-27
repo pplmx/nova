@@ -223,6 +223,63 @@ namespace cuda::multinode {
 #endif
     }
 
+    // The null-comms fallback copies count * nccl_type_size(dtype) bytes, so the table has to
+    // agree with the dtype values the rest of the tree uses. It did not:
+    //
+    //     case 1: // ncclInt32     <- 1 is ncclUint8
+    //     case 2: // ncclHalf      <- 2 is ncclInt32
+    //     case 6: // ncclUint64    <- 6 is ncclFloat16
+    //     case 8: // ncclInt8      <- 8 is ncclFloat64
+    //
+    // Measured against include/cuda/nccl/nccl_types.h, five of the nine entries were wrong.
+    // dtype 6 (float16) was copied as 8 bytes, a four-fold overrun of the destination; dtype 8
+    // (float64) as 1 byte, a silent truncation. The existing case passed because it used dtype 0,
+    // which is one of the four entries that happened to be right.
+    TEST_F(HierarchicalAllReduceTest, NullCommsCopiesTheSizeOfTheGivenType) {
+        // Deliberately NOT guarded on NOVA_NCCL_ENABLED: the null-comms fallback this exercises
+        // exists in both branches of the implementation (the #else branch is *only* that fallback),
+        // so the defect is present in a build without NCCL too.
+        HierarchicalAllReduce reducer(nullptr, nullptr, nullptr, nullptr);
+
+        // Each case uses a destination filled with a recognisable byte and checks that exactly
+        // count * sizeof(type) bytes were overwritten -- a pattern that survives a wrong size.
+        struct Case {
+            int dtype;
+            size_t element_size;
+            const char* name;
+        };
+        const Case cases[] = {
+            {::ncclInt8, 1, "int8"},
+            {::ncclUint8, 1, "uint8"},
+            {::ncclInt32, 4, "int32"},
+            {::ncclUint32, 4, "uint32"},
+            {::ncclInt64, 8, "int64"},
+            {::ncclUint64, 8, "uint64"},
+            {::ncclFloat16, 2, "float16"},
+            {::ncclFloat32, 4, "float32"},
+            {::ncclFloat64, 8, "float64"},
+        };
+
+        for (const auto& c : cases) {
+            constexpr size_t kCount = 4;
+            constexpr size_t kGuard = 64;  // enough slack to see an overrun
+            std::vector<unsigned char> send(kCount * c.element_size, 0xAB);
+            std::vector<unsigned char> recv(kGuard, 0xCD);
+
+            reducer.all_reduce(send.data(), recv.data(), kCount, c.dtype, 0);
+
+            size_t written = 0;
+            while (written < recv.size() && recv[written] == 0xAB) {
+                ++written;
+            }
+            EXPECT_EQ(written, kCount * c.element_size) << c.name << " was copied as the wrong number of bytes";
+            // Nothing past the written region may have been touched.
+            for (size_t i = written; i < recv.size(); ++i) {
+                ASSERT_EQ(recv[i], 0xCD) << c.name << " wrote past its own count at byte " << i;
+            }
+        }
+    }
+
     TEST_F(HierarchicalAllReduceTest, AllReduceWithNullComms) {
 #if NOVA_NCCL_ENABLED
         HierarchicalAllReduce reducer(nullptr, nullptr, nullptr, nullptr);

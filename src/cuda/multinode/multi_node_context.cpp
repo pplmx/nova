@@ -17,24 +17,37 @@ namespace cuda::multinode {
         // codebase. Used by the single-rank/null-comm fallback to copy the right
         // number of bytes (the previous copy used `count` bytes, truncating non-char
         // buffers).
+        // The labels here disagreed with the values in the rest of the tree, and the switch followed
+        // the labels rather than the numbers. Comparing against include/cuda/nccl/nccl_types.h:
+        //
+        //     case 1: // "ncclInt32"     -- 1 is ncclUint8   (returned 4, should be 1)
+        //     case 2: // "ncclHalf"      -- 2 is ncclInt32   (returned 2, should be 4)
+        //     case 4: // "ncclFloat64"   -- 4 is ncclInt64   (returned 8, correct by luck)
+        //     case 6: // "ncclUint64"    -- 6 is ncclFloat16 (returned 8, should be 2)
+        //     case 8: // "ncclInt8"      -- 8 is ncclFloat64 (returned 1, should be 8)
+        //
+        // Five of the nine entries were wrong. float16 was copied as 8 bytes -- a four-fold overrun
+        // of the destination -- and float64 as 1 byte, a silent truncation. Written against the
+        // names so the two cannot drift apart again.
         size_t nccl_type_size(int dtype) {
             switch (dtype) {
-                case 1:  // ncclInt32
-                case 3:  // ncclFloat32
-                case 7:  // ncclUint32
-                    return 4;
-                case 2:  // ncclHalf
-                    return 2;
-                case 4:  // ncclFloat64
-                case 5:  // ncclInt64
-                case 6:  // ncclUint64
-                    return 8;
-                case 0:  // ncclChar
-                case 8:  // ncclInt8
-                case 9:  // ncclUint8
+                case ::ncclInt8:   // 0
+                case ::ncclUint8:  // 1
                     return 1;
-                default:
+                case ::ncclFloat16:   // 6
+                case ::ncclBfloat16:  // 9
+                    return 2;
+                case ::ncclInt32:    // 2
+                case ::ncclUint32:   // 3
+                case ::ncclFloat32:  // 7
                     return 4;
+                case ::ncclInt64:    // 4
+                case ::ncclUint64:   // 5
+                case ::ncclFloat64:  // 8
+                    return 8;
+                default:
+                    // A dtype this function does not know is not something to guess a width for.
+                    throw ::std::invalid_argument("all_reduce: unknown ncclDataType_t value " + ::std::to_string(dtype));
             }
         }
 
